@@ -1,5 +1,8 @@
 from .Device import Device
 import logging
+
+_LOGGER = logging.getLogger(__name__)
+
 class Cooler(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
