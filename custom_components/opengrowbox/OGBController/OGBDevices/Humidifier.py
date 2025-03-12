@@ -1,7 +1,4 @@
 from .Device import Device
-
-
-from .Device import Device
 import logging
 
 _LOGGER = logging.getLogger(__name__)
