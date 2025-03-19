@@ -35,7 +35,10 @@ class OGBDeviceManager:
 
     async def addDevice(self,entity):
         """Gerät aus eigener Geräteliste hinzufügen."""
-              
+ 
+        controlOption = self.dataStore.get("mainControl")
+        if controlOption is not "HomeAssistant": return
+                      
         deviceName = entity["name"]
         deviceData = entity["entities"]
             

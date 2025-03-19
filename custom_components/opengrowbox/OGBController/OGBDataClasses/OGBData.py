@@ -15,6 +15,7 @@ class OGBConf:
     room: str = ""
     tentMode: str = ""
     plantStage: str = ""
+    mainControl: str = ""
     Running: Dict[str, bool] = field(default_factory=lambda: {
         "ON": True,
         "OFF": False,

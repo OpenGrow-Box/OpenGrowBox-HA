@@ -163,7 +163,9 @@ class OpenGrowBox:
         # Mapping von Namen zu Funktionen
         actions = {
             # Basics
-
+            f"ogb_maincontrol_{self.room.lower()}": self._update_control_option,
+            
+            
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
             f"ogb_tentmode_{self.room.lower()}": self._update_tent_mode, 
@@ -225,6 +227,11 @@ class OpenGrowBox:
  
     ## VPD Sensor Update
     async def handleNewVPD(self, data):
+
+        controlOption = self.dataStore.get("mainControl")
+        if controlOption is not "HomeAssistant": return
+        
+        
         # Temperatur- und Feuchtigkeitsdaten laden
         temps = self.dataStore.getDeep("workData.temperature")
         hums = self.dataStore.getDeep("workData.humidity")
@@ -460,7 +467,19 @@ class OpenGrowBox:
             self.dataStore.setDeep("controlOptionData.minmax",controlValues)
 
    
-    ## Controll Update Functions  
+    ## Controll Update Functions 
+    async def _update_control_option(self,data):
+        """
+        Aktualisiere die ControlOption.
+        """
+        value = data.newState[0]
+        current_stage = self.dataStore.get("mainControl")
+        if current_stage != value:
+            self.dataStore.set("mainControl",value)
+            _LOGGER.warn(f"{self.room}: Steuerung geändert von {current_stage} auf {value}")
+            await self.eventManager.emit("mainControlChange",value)
+  
+    
     ## MAIN Updaters
     async def _update_plant_stage(self, data):
         """

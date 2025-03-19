@@ -27,6 +27,10 @@ class OGBModeManager:
         """
         Handhabt Änderungen des Modus basierend auf `tentMode`.
         """
+        
+        controlOption = self.dataStore.get("mainControl")
+        if controlOption != "HomeAssistant": return
+        
         #tentMode = self.dataStore.get("tentMode")
         if isinstance(Publication, OGBModePublication):
             return
