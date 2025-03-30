@@ -1,7 +1,7 @@
 import math
 import logging
 import asyncio
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from .utils.calcs import calculate_avg_value,calculate_dew_point,calculate_current_vpd,calculate_perfect_vpd
 
@@ -817,6 +817,7 @@ class OpenGrowBox:
         """
         Aktualisiert die Pflanzdaten und die entsprechenden Sensoren in Home Assistant.
         """
+        timenow = datetime.now()
         # Definieren der Sensor-Entitäten
         planttotaldays_entity = f"sensor.ogb_planttotaldays_{self.room.lower()}"
         totalbloomdays_entity = f"sensor.ogb_totalbloomdays_{self.room.lower()}"
@@ -896,10 +897,16 @@ class OpenGrowBox:
                 },
                 blocking=True
             )
+            self.autoUpdatePlantStages(timenow)
             _LOGGER.debug(f"Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}' wurden mit Werten aktualisiert: {planttotaldays}, {totalbloomdays}")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Aktualisieren der Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}': {e}")
 
+    async def autoUpdatePlantStages(self,data):
+        """ Ruft _update_plantDates auf und plant die nächste Ausführung. """
+        await self._update_plantDates()
+        await asyncio.sleep(8 * 60 * 60)  # 8 Stunden warten
+        asyncio.create_task(self.autoUpdatePlantStages())  # Nächste Ausführung starten
 
     async def _update_nextFoodTime(self,data):
         """
