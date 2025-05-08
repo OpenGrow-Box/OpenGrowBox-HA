@@ -12,7 +12,6 @@ from homeassistant.components.frontend import (
 )
 
 from .const import DOMAIN, URL_BASE
-#from .hacs_frontend import VERSION as FE_VERSION, locate_dir
 from .OGBController.utils.workarounds import async_register_static_path
 
 if TYPE_CHECKING:
@@ -35,7 +34,8 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
     )
 
     if "ogb-gui" not in hass.data.get("frontend_panels", {}):
-        hass.components.frontend.async_register_built_in_panel(
+        async_register_built_in_panel(
+            hass,
             component_name="custom",
             sidebar_title="OpenGrowBox",
             sidebar_icon="mdi:cannabis",
@@ -55,6 +55,3 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.info("Custom panel registered successfully.")
     else:
         _LOGGER.debug("Custom panel already registered.")
-
-
-
