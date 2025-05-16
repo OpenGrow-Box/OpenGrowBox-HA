@@ -125,6 +125,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         
         
         ## PlantTimes
+        CustomNumber(f"OGB_PlantsCount_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     min_value=0, max_value=10, step=1, unit="Plants", initial_value=0), 
+        
         CustomNumber(f"OGB_BreederBloomDays_{coordinator.room_name}", coordinator.room_name, coordinator,
                      min_value=0, max_value=150, step=1, unit="days", initial_value=0),
         
@@ -156,6 +159,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     min_value=0.0, max_value=0.5, step=0.02, unit="X", initial_value=0.02),
         CustomNumber(f"OGB_DerivativHumFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0.0, max_value=1.0, step=0.1, unit="X", initial_value=0.1),
+   
+        # Hydro Watering 
+        CustomNumber(f"OGB_HydroPumpDuration_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=300, step=1, unit="Sec", initial_value=0),
+        CustomNumber(f"OGB_HydroPumpIntervall_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=1440, step=1, unit="Min", initial_value=0),
    
     ]
 

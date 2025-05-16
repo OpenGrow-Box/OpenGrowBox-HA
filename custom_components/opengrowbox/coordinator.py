@@ -2,12 +2,12 @@ from datetime import timedelta
 import logging
 import json
 import asyncio
-import websockets
 
 from homeassistant.helpers.area_registry import async_get as async_get_area_registry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .select import OpenGrowBoxRoomSelector
+from .text import OpenGrowBoxAccessToken
 from .const import DOMAIN
 from .OGBController.RegistryListener import OGBRegistryEvenListener
 from .OGBController.OGB import OpenGrowBox
@@ -25,7 +25,8 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
 
         
         self.OGB = OpenGrowBox(hass,config_entry.data["room_name"])
-        self.is_ready = False  
+        self.is_ready = False 
+        
         # Entitäten nach Typ initialisieren
         self.entities = {
             "sensor": [],
@@ -33,10 +34,12 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
             "switch": [],
             "select": [],
             "time": [],
-            "dates":[],
+            "date":[],
+            "text":[],
         }
         
         self.room_selector = None  # Store the Room Selector instance
+        self.long_live_token = None # Store the Long Live Token for UI 
         
         super().__init__(
             hass,
@@ -56,7 +59,17 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
             options=room_names
         )
         return self.room_selector
-
+    
+    #def create_long_live_token(self,coordinator,token):
+    #    """Create a new LongLiveToken"""
+    #    self.token_store = OpenGrowBoxAccesToken(
+    #        name="OGB_AccessToken",
+    #        room_name=self.room_name,
+    #        coordinator=coordinator,
+    #        initial_value=token
+    #    )
+    #    return self.token_store
+    
     async def update_room_selector(self):
         """Update the Room Selector with current Home Assistant rooms."""
         area_registry = async_get_area_registry(self.hass)
@@ -98,7 +111,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
         _LOGGER.warning(f"Real Devices  {realDevices} in {self.room_name}")      
         
         if ogbGroup:
-            tasks.append(self.OGB.managerInit(group))
+            tasks.append(self.OGB.managerInit(ogbGroup))
         else:
            _LOGGER.warning(f"No OGB groups found in room {self.room_name}. Proceeding with device initialization.")
         

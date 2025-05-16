@@ -55,3 +55,6 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.info("Custom panel registered successfully.")
     else:
         _LOGGER.debug("Custom panel already registered.")
+
+
+

@@ -37,7 +37,7 @@ class OGBDeviceManager:
         """Gerät aus eigener Geräteliste hinzufügen."""
  
         controlOption = self.dataStore.get("mainControl")
-        if controlOption is not "HomeAssistant": return
+        if controlOption != "HomeAssistant": return
                       
         deviceName = entity["name"]
         deviceData = entity["entities"]
@@ -53,11 +53,10 @@ class OGBDeviceManager:
         devices = self.dataStore.get("devices")
         devices.append(identified_device)
         self.dataStore.set("devices",devices)
-        
+       
+        _LOGGER.warn(f"Added new device: {identified_device}")        
         return identified_device
     
-        _LOGGER.warn(f"Added new device: {identified_device}")
-
     async def removeDevice(self, entity):
         """Entfernt ein Gerät aus der eigenen Geräteliste."""
         
@@ -80,17 +79,17 @@ class OGBDeviceManager:
     async def identify_device(self, device_name, device_data):
         """Gerät anhand des Namens und Typs identifizieren."""
         device_type_mapping = {
-            "Sensor": ["ogb","sun","sensor","water","root","wurzel","blatt","mode", "plant", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee"],
+            "Sensor": ["ogb","sun","sensor","water","root","wurzel","blatt","leaf","mode", "plant", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee"],
             "Dehumidifier": ["dehumidifier", "drying", "dryer", "entfeuchter", "removehumidity"],
-            "Humidifier": ["humidifier", "mist", "befeuchter"],
+            "Humidifier": ["humidifier","befeuchter"],
             "Exhaust": ["exhaust", "abluft", "ruck", "fan"],
             "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet", "outlet"],
             "Heater": ["heater", "heizung", "warm"],
             "Climate": ["climate", "klima"],
-            "Cooler": ["cooler", "kühler", "klima"],
+            "Cooler": ["cooler", "kühler"],
             "Light": ["light", "lamp", "led", "switch.light"],
             "Co2": ["co2", "carbon"],
-            "Pump":["pump"],
+            "Pump":["pump","airpump","mistpump","waterpump","co2pump"],
             "Switch": ["generic", "switch"],
         }
 
@@ -120,6 +119,8 @@ class OGBDeviceManager:
         }
         return device_classes.get(device_type, Device)
 
+
+    ## work on that automatic device refesh and remove 
     def device_Worker(self):
         async def registerWorker():
             currentDevices = self.dataStore.get("devices")

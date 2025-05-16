@@ -3,7 +3,7 @@ import asyncio
 
 _LOGGER = logging.getLogger(__name__)
 
-from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication
+from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication,OGBHydroAction
 
 class OGBActionManager:
     def __init__(self, hass, dataStore, eventManager,room):
@@ -18,7 +18,9 @@ class OGBActionManager:
         self.eventManager.on("increase_vpd", self.increase_vpd)
         self.eventManager.on("reduce_vpd", self.reduce_vpd)
         self.eventManager.on("FineTune_vpd", self.fine_tune_vpd)
-                      
+        self.eventManager.on("PumpAction", self.PumpAction) 
+    
+    
     async def increase_vpd(self, capabilities):
         """
         Erhöht den VPD-Wert durch Anpassung der entsprechenden Geräte.
@@ -447,3 +449,31 @@ class OGBActionManager:
                 await self.eventManager.emit(f"{actionType} Light", actionType)
                 _LOGGER.debug(f"{self.room}: {actionType} Light ausgeführt.")
  
+    async def PumpAction(self, pumpAction: OGBHydroAction):
+        if isinstance(pumpAction, dict):
+            dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
+            action = pumpAction.get("Action") or pumpAction.get("action")
+        else:
+            # your dataclass
+            dev = pumpAction.Device
+            action = pumpAction.Action
+            
+        if action == "on":
+            await self.eventManager.emit(
+                "LogForClient",
+                f"Name: {self.room} Start Pump: {dev}",
+                haEvent=True
+            )
+            await self.eventManager.emit("Increase Pump", pumpAction)
+
+        elif action == "off":
+            await self.eventManager.emit(
+                "LogForClient",
+                f"Name: {self.room} Stop Pump: {dev}",
+                haEvent=True
+            )
+            await self.eventManager.emit("Reduce Pump", pumpAction)
+
+        else:
+            # unknown action
+            return None

@@ -50,6 +50,20 @@ update_time:
       description: Die neue Zeit im Format HH:MM oder HH:MM:SS.
       example: "08:00:00"
 
+update_text:
+  name: Update Text
+  description: Aktualisiert den Texttwert einer Entität.
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Die ID der Zeit-Entität, die aktualisiert werden soll.
+      example: sensor.ogb_time_entity
+    text:
+      name: Text
+      description: Max 100 Chars .
+      example: "Good Job !!"
+
+
 toggle_switch:
   name: Toggle Switch
   description: Schaltet den Zustand des angegebenen Schalters um.

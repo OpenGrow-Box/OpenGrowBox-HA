@@ -9,30 +9,35 @@ _LOGGER = logging.getLogger(__name__)
 class Pump(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
-        self.pumpInterval = 3600  # Mindestintervall zwischen Pumpzyklen (in Sekunden)
-        self.pumpDuration = 10  # Pumpdauer in Sekunden
+        self.isRunning = False
+        self.Interval = None  # Mindestintervall zwischen Pumpzyklen (in Sekunden)
+        self.Duration = None  # Pumpdauer in Sekunden
         self.isAutoRun = False  # Automatikmodus
-        self.OGBAutoMODE = False  # OpenGrowBox Steuerung
         self.lastPumpTime = None  # Zeitpunkt des letzten Pumpvorgangs
-        self.soilMoisture = 0  # Bodenfeuchtigkeit
-        self.soilEC = 0  # Elektrische Leitfähigkeit
+        self.soilMoisture = None  # Bodenfeuchtigkeit
+        self.currentEC = None
+        self.minEC = None  # Elektrische Leitfähigkeit
+        self.maxEC = None  # Maximaler EC-Wert
+
+        #PLANT FEEDING CLASSIC
         self.minSoilMoisture = 25  # Mindestbodenfeuchte
-        self.maxSoilEC = 2.5  # Maximaler EC-Wert
+        self.maxSoilMoisture = 25  # Mindestbodenfeuchte
 
 
         ## Events Register
-        self.eventManager.on("Increase Pump", self.increaseAction)
-        self.eventManager.on("Reduce Pump", self.reduceAction)
-
-    #Actions Helpers
-    
-    async def increaseAction(self, data):
-        """Erhöht den Duty Cycle."""
-        self.log_action("IncreaseAction/TurnOn ")
+        self.eventManager.on("Increase Pump", self.onAction)
+        self.eventManager.on("Reduce Pump", self.offAction)
+       
+    #Actions Helpers           
+    async def onAction(self,data):
+        """Start Pump"""
+        self.log_action("TurnON ")
+        await self.turn_on()
         
-    async def reduceAction(self, data):
-        """Reduziert den Duty Cycle."""
-        self.log_action("ReduceAction/TurnOff ")
+    async def offAction(self,data):
+        """Stop Pump"""
+        self.log_action("TurnOFF ")
+        await self.turn_off()
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""

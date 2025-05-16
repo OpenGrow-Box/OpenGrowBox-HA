@@ -2,7 +2,7 @@ import logging
 import asyncio
 
 from .OGBDataClasses.OGBPublications import OGBModePublication
-from .OGBDataClasses.OGBPublications import OGBModeRunPublication
+from .OGBDataClasses.OGBPublications import OGBModeRunPublication,OGBHydroPublication,OGBHydroAction
 
 from .utils.calcs import calc_dew_vpd,calc_shark_mouse_vpd
 
@@ -19,9 +19,14 @@ class OGBModeManager:
         self.isInitialized = False
 
         self.currentMode = None
-
+        self._hydro_task: asyncio.Task | None = None    
+        
+        
         ## Events
         self.eventManager.on("selectActionMode", self.selectActionMode)
+        self.eventManager.on("HydroModeChange", self.HydroModeChange)  
+        self.eventManager.on("HydroModeStart", self.hydro_Mode) 
+        self.eventManager.on("PlamtWateringStart", self.hydro_PlantWatering)
         
     async def selectActionMode(self, Publication):
         """
@@ -227,7 +232,7 @@ class OGBModeManager:
                 await self.eventManager.emit("Increase Ventilation",None)
 
         # Log die Aktion
-        _LOGGER.info(f"{self.name}: El Classico Phase {currentPhase}, Aktionen: {actions}")
+        _LOGGER.info(f"{self.name}: El Classico Phase ")
 
     async def handle_SharkMouse(self,phaseConfig):
         _LOGGER.warn(f"{self.name} Run Drying 'Shark Mouse'")  
@@ -276,6 +281,151 @@ class OGBModeManager:
                 _LOGGER.warn(f"{self.room}: Dew Point ({currentDewPoint}) above target ({phaseConfig['targetDewPoint']}). Actions: Reduce humidity.")
         else:
             _LOGGER.warn(f"{self.room}: Dew Point ({currentDewPoint}) is within tolerance range. No actions required.")
+
+
+    ## Hydro Modes
+    async def HydroModeChange(self, pumpAction):
+        isActive = self.dataStore.getDeep("Hydro.Active")
+        intervall = self.dataStore.getDeep("Hydro.Intervall")
+        duration = self.dataStore.getDeep("Hydro.Duration")
+        mode = self.dataStore.getDeep("Hydro.Mode")
+        cycle = self.dataStore.getDeep("Hydro.Cycle")
+        PumpDevices = self.dataStore.getDeep("capabilities.canPump")
+        
+        if mode == "OFF":
+            sysmessage = "Hydro mode is OFFLINE"
+            await self.eventManager.emit("PumpAction", {"action": "off"})
+            if self._hydro_task is not None:
+                self._hydro_task.cancel()
+                try:
+                    await self._hydro_task
+                except asyncio.CancelledError:
+                    pass
+                self._hydro_task = None 
+        elif mode == "Hydro":
+            sysmessage = "Aero mode active"
+            await self.hydro_Mode(cycle,intervall,duration,PumpDevices)
+        elif mode == "Plant-Watering":
+            sysmessage = "Plant watering mode active"
+            await self.hydro_PlantWatering(intervall,duration,PumpDevices)
+        else:
+            sysmessage = f"Unknown mode: {mode}"
+
+        actionMap = OGBHydroPublication(
+            Name=self.room,
+            Mode=mode,
+            Cycle=cycle,
+            Active=isActive,
+            Message=sysmessage,
+            Intervall=intervall,
+            Duration=duration,
+            Devices=PumpDevices
+        )
+        await self.eventManager.emit("LogForClient", actionMap, haEvent=True)
+
+    async def hydro_Mode(self, cycle: bool, interval: float, duration: float, pumpDevices,log_prefix: str = "Hydro"):
+        valid_types = ["pump"]
+        devices = pumpDevices["devEntities"]
+        active_pumps = [dev for dev in devices if any(t in dev for t in valid_types)]
+
+        if not active_pumps:
+            await self.eventManager.emit(
+                "LogForClient",
+                f"{log_prefix}: No valid pumps found.",
+                haEvent=True
+            )
+            return
+
+        async def run_cycle():
+            try:
+                while True:
+                    for dev_id in active_pumps:
+                        pumpAction = OGBHydroAction(Name=self.room,Action="on",Device=dev_id,Cycle=cycle)
+                        await self.eventManager.emit("PumpAction", pumpAction)
+                    await asyncio.sleep(float(duration))
+                    for dev_id in active_pumps:
+                        pumpAction = OGBHydroAction(Name=self.room,Action="off",Device=dev_id,Cycle=cycle)
+                        await self.eventManager.emit("PumpAction", pumpAction)
+                    await asyncio.sleep(float(interval)*60)
+            except asyncio.CancelledError:
+                # if we get cancelled, make sure pumps end up off
+                for dev_id in active_pumps:
+                    pumpAction = OGBHydroAction(Name=self.room,Action="off",Device=dev_id,Cycle=cycle)
+                    await self.eventManager.emit("PumpAction", pumpAction)
+                raise
+        # If there's an existing task, cancel it
+        if self._hydro_task is not None:
+            self._hydro_task.cancel()
+            try:
+                await self._hydro_task
+            except asyncio.CancelledError:
+                pass
+            self._hydro_task = None   
+             
+        if cycle:
+            self._hydro_task = asyncio.create_task(run_cycle())
+            msg = (
+                f"{log_prefix} mode started: ON for {duration}s, "
+                f"OFF for {interval}s, repeating."
+            )
+        else:
+            # one-time or permanent ON: just turn pumps on
+            for dev_id in active_pumps:
+                pumpAction = OGBHydroAction(Name=self.room,Action="on",Device=dev_id,Cycle=cycle)
+                await self.eventManager.emit("PumpAction", pumpAction)
+            msg = f"{log_prefix} cycle disabled – pumps set to always ON."
+
+        await self.eventManager.emit("LogForClient", msg, haEvent=True)
+
+    async def hydro_PlantWatering(self,interval: float, duration: float, pumpDevices, cycle: bool = True,log_prefix: str = "Hydro"):
+        valid_types = ["pump"]
+        devices = pumpDevices["devEntities"]
+        active_pumps = [dev for dev in devices if any(t in dev for t in valid_types)]
+
+        if not active_pumps:
+            await self.eventManager.emit(
+                "LogForClient",
+                f"{log_prefix}: No valid pumps found.",
+                haEvent=True
+            )
+            return
+
+        async def run_cycle():
+            try:
+                while True:
+                    for dev_id in active_pumps:
+                        pumpAction = OGBHydroAction(Name=self.room,Action="on",Device=dev_id,Cycle=cycle)
+                        await self.eventManager.emit("PumpAction", pumpAction)
+                    await asyncio.sleep(float(duration))
+                    for dev_id in active_pumps:
+                        pumpAction = OGBHydroAction(Name=self.room,Action="off",Device=dev_id,Cycle=cycle)
+                        await self.eventManager.emit("PumpAction", pumpAction)
+                    await asyncio.sleep(float(interval)*60)
+            except asyncio.CancelledError:
+                # if we get cancelled, make sure pumps end up off
+                for dev_id in active_pumps:
+                    pumpAction = OGBHydroAction(Name=self.room,Action="off",Device=dev_id,Cycle=cycle)
+                    await self.eventManager.emit("PumpAction", pumpAction)
+                raise
+        # If there's an existing task, cancel it
+        if self._hydro_task is not None:
+            self._hydro_task.cancel()
+            try:
+                await self._hydro_task
+            except asyncio.CancelledError:
+                pass
+            self._hydro_task = None   
+            
+        if cycle:
+            self._hydro_task = asyncio.create_task(run_cycle())
+            msg = (
+                f"{log_prefix} mode started: ON for {duration}s, "
+                f"OFF for {interval}s, repeating."
+            )
+        else:
+            return None
+
+        await self.eventManager.emit("LogForClient", msg, haEvent=True)
 
 
     def log(self, log_message):

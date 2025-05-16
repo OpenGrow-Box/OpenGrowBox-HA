@@ -6,8 +6,6 @@ DOMAIN_OVERRIDES = {
     # https://github.com/hacs/integration/issues/2465
     "custom-components/sensor.custom_aftership": "custom_aftership"
 }
-
-
 try:
     from homeassistant.components.http import StaticPathConfig
 

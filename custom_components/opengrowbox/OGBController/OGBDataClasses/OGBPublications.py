@@ -73,3 +73,23 @@ class OGBWeightPublication:
     humDeviation: float
     tempWeight:float
     humWeight:float
+    
+
+@dataclass(frozen=True)
+class OGBHydroPublication:
+    Name: str
+    Mode:str
+    Cycle: str
+    Active: str
+    Intervall: int
+    Duration: int
+    Message: str
+    Devices: List[str]
+
+@dataclass(frozen=True)
+class OGBHydroAction:
+    Name: str
+    Device:str
+    Cycle: str
+    Action: str
+

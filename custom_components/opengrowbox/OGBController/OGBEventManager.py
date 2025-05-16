@@ -11,8 +11,9 @@ class OGBEventManager:
         self.name = "OGB Event Manager"
         self.hass = hass
         self.ogb_model = ogb_model
-        self.listeners = {}  # Speichert alle Listener (synchron + asynchron)
-
+        self.listeners = {}  
+        self.notifications_enabled = False
+        
     def __repr__(self):
         return f"Current Listeners: {self.listeners}"
 
@@ -30,7 +31,7 @@ class OGBEventManager:
     async def _call_listener(self, callback, data):
         """Rufe einen Listener auf, synchron oder asynchron."""
         try:
-            if inspect.iscoroutinefunction(callback):  # Prüfe, ob die Funktion asynchron ist
+            if inspect.iscoroutinefunction(callback):  
                 await callback(data)
             else:
                 callback(data)
@@ -38,21 +39,21 @@ class OGBEventManager:
             _LOGGER.error(f"Fehler beim Aufruf des Listeners für '{callback}': {e}")
 
     async def emit(self, event_name, data, haEvent=False):
-        """Event auslösen, erkennt automatisch synchrone oder asynchrone Listener.
-        Wenn haEvent=True, wird das Event auch an Home Assistant gesendet."""
+        """Event auslösen, inkl. optionalem HA-Event und Notification."""
         
         if haEvent:
-            # Event an Home Assistant senden (nicht blockierend)
             asyncio.create_task(self.emit_to_home_assistant(event_name, data))
+            if self.notifications_enabled:
+                await self.send_notification(event_name, data)
 
-        # Interne Event-Verarbeitung
+
         if event_name in self.listeners:
             for callback in self.listeners[event_name]:
                 if inspect.iscoroutinefunction(callback):
-                    asyncio.create_task(callback(data))  # Asynchronen Listener aufrufen
+                    asyncio.create_task(callback(data))
                 else:
                     try:
-                        callback(data)  # Synchronen Listener aufrufen
+                        callback(data)
                     except Exception as e:
                         _LOGGER.error(f"Fehler beim synchronen Listener: {e}")
 
@@ -75,3 +76,26 @@ class OGBEventManager:
                 _LOGGER.warning(f"Kein gültiger Event-Kanal für '{event_name}' verfügbar!")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Senden des Events '{event_name}': {e}")
+            
+    async def send_notification(self, title: str, data):
+        """
+        Sende eine Push-Notification via notify.notify an alle konfigurierten Notifier.
+        """
+        try:
+            message = json.dumps(data, indent=2) if isinstance(data, dict) else str(data)
+            await self.hass.services.async_call(
+                domain="notify",
+                service="notify", 
+                service_data={
+                    "title": title,
+                    "message": message,
+                },
+                blocking=False
+            )
+            _LOGGER.info(f"Push-Notification für '{title}' gesendet.")
+        except Exception as e:
+            _LOGGER.error(f"Fehler beim Senden der Push-Notification: {e}")
+    
+    def change_notify_set(self,state):
+        self.notifications_enabled = state
+        _LOGGER.warning(f"Notify State jetzt: {self.notifications_enabled}")

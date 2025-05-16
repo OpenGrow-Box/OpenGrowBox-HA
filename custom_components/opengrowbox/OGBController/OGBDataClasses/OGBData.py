@@ -16,10 +16,18 @@ class OGBConf:
     tentMode: str = ""
     plantStage: str = ""
     mainControl: str = ""
+    notifyControl: str = "Disabled"
     Running: Dict[str, bool] = field(default_factory=lambda: {
         "ON": True,
         "OFF": False,
         "Paused": False
+    })
+    Hydro: Dict[str, Any] = field(default_factory=lambda: {
+        "Active": False,
+        "Cycle": False,
+        "Mode": None,
+        "Intervall": None,
+        "Duration": None,
     })
     devices: List[Any] = field(default_factory=list)
     ownDeviceList: List[Any] = field(default_factory=list)
@@ -32,6 +40,7 @@ class OGBConf:
         "canVentilate": {"state": False, "count": 0, "devEntities": []},
         "canExhaust": {"state": False, "count": 0, "devEntities": []},
         "canLight": {"state": False, "count": 0, "devEntities": []},
+        "canPump": {"state": False, "count": 0, "devEntities": []},
         "canCO2": {"state": False, "count": 0, "devEntities": []},
     })
     previousActions: List[Any] = field(default_factory=list)

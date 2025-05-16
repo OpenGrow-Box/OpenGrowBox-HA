@@ -11,7 +11,7 @@ from .frontend import async_register_frontend
 
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["sensor", "number", "select", "time", "switch","date"]
+PLATFORMS = ["sensor", "number", "select", "time", "switch", "date", "text"]
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up the OpenGrowBox integration via the UI."""
