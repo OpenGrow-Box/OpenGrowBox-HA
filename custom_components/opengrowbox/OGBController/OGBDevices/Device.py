@@ -55,7 +55,7 @@ class Device:
         self.identifyCapabilities()
         if(self.initialization == True):
             self.registerListener()
-            _LOGGER.debug(f"Device {self.deviceName} Initialization Completed")
+            _LOGGER.warning(f"Device {self.deviceName} Initialization Completed")
         else:
             raise Exception("Device could not be Initialized ")
 
@@ -78,7 +78,7 @@ class Device:
                 if entity.get("entity_id") == entity_id:
                     old_value = entity.get("value")
                     entity["value"] = new_value
-                    _LOGGER.debug(
+                    _LOGGER.warning(
                         f"{self.deviceName} Updated {entity_id}: Old Value: {old_value}, New Value: {new_value}."
                     )
                     return True
@@ -86,25 +86,25 @@ class Device:
 
         # Aktualisiere Sensor-Werte
         if "sensor." in entity_id:
-            _LOGGER.debug(f"{self.deviceName} Start Update Sensor for {updateData}.")
+            _LOGGER.warning(f"{self.deviceName} Start Update Sensor for {updateData}.")
             await update_entity_value(self.sensors, entity_id, new_value)
-            _LOGGER.warn(f"{self.deviceName} DEBUG {self.__repr__()}.")
+            _LOGGER.warning(f"{self.deviceName} warning {self.__repr__()}.")
 
         # Aktualisiere Switch-Werte
         if any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier."]):
-            _LOGGER.warn(f"{self.deviceName} Start Update Switch for {updateData}.")
+            _LOGGER.warning(f"{self.deviceName} Start Update Switch for {updateData}.")
             await update_entity_value(self.switches, entity_id, new_value)
             self.identifyIfRunningState()
             
         # Aktualisiere weitere spezifische Werte
-        if any(prefix in entity_id for prefix in ["number.", "text.", "time.", "select."]):
-            _LOGGER.warn(f"{self.deviceName} Start Update Switches for {updateData}.")
+        if any(prefix in entity_id for prefix in ["number.", "text.", "time.", "select.", "date."]):
+            _LOGGER.warning(f"{self.deviceName} Start Update Switches for {updateData}.")
             await update_entity_value(self.options, entity_id, new_value)
-            _LOGGER.debug(f"{self.deviceName} DEBUG {self.__repr__()}.")
+            _LOGGER.warning(f"{self.deviceName} warning {self.__repr__()}.")
 
         # Aktualisiere spezifische OGB-Entitäten
         if any(prefix in entity_id for prefix in ["ogb_"]):
-            _LOGGER.warn(f"{self.deviceName} Start Update OGBS for {updateData}.")
+            _LOGGER.warning(f"{self.deviceName} Start Update OGBS for {updateData}.")
             await update_entity_value(self.sensors, entity_id, new_value)
            
     # Eval sensor if Intressted in 
@@ -116,7 +116,7 @@ class Device:
     # Mapp Entity Types to Class vars
     def identifySwitchesAndSensors(self, entitys):
         """Identifiziere Switches und Sensoren aus der Liste der Entitäten und prüfe ungültige Werte."""
-        _LOGGER.debug(f"Identify Switches and Sensors {entitys}")
+        _LOGGER.warning(f"Identify Switches and Sensors {entitys}")
 
         try:
             for entity in entitys:
@@ -125,13 +125,13 @@ class Device:
 
                 # Prüfe, ob die Entität "ogb_" im Namen hat
                 if "ogb_" in entityID:
-                    _LOGGER.debug(f"Entity {entityID} contains 'ogb_'. Adding to switches.")
+                    _LOGGER.warning(f"Entity {entityID} contains 'ogb_'. Adding to switches.")
                     self.ogbsettings.append(entity)
                     continue  # Überspringe die weitere Verarbeitung für diese Entität
 
                 # Prüfe, ob der Wert ungültig ist
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
-                    _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. Fetching current state...")
+                    _LOGGER.warning(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. Fetching current state...")
                     continue
                         
                 # Sortiere die Entität in die richtige Liste
@@ -145,7 +145,7 @@ class Device:
                         self.sensors.append(entity)
             self.initialization = True
         except:
-            _LOGGER.error(f"Device:{self.deviceName} INIT ERROR {e}. Fetching current state...")
+            _LOGGER.error(f"Device:{self.deviceName} INIT ERROR {self.deviceName}. Fetching current state...")
             self.initialization = False
 
     # Identify Action Caps 
@@ -160,6 +160,7 @@ class Device:
             "canExhaust": ["exhaust"],
             "canLight": ["light"],
             "canCO2": ["co2"],
+            "canPump":["pump"],
         }
 
         # Initialisiere capabilities im dataStore, falls nicht vorhanden
@@ -197,11 +198,13 @@ class Device:
                     currentCap["devEntities"].append(self.deviceName)
                 if self.deviceType == "Climate":
                     currentCap["devEntities"].append(self.deviceName)
+                if self.deviceType == "Pump":
+                    currentCap["devEntities"].append(self.deviceName)
                 # Schreibe die aktualisierten Daten zurück
                 self.dataStore.setDeep(capPath, currentCap)
 
         # Log die finalen Capabilities
-        _LOGGER.debug(f"{self.deviceName}: Capabilities identified: {self.dataStore.get('capabilities')}")
+        _LOGGER.warning(f"{self.deviceName}: Capabilities identified: {self.dataStore.get('capabilities')}")
 
     # Bestimme, ob das Gerät gerade läuft
     def identifyIfRunningState(self):
@@ -222,7 +225,7 @@ class Device:
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
-            _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ist nicht in der Liste der dimmbaren Gerätetypen.")
+            _LOGGER.warning(f"{self.deviceName}: {self.deviceType} ist nicht in der Liste der dimmbaren Gerätetypen.")
             return
 
         dimmableKeys = ["duty", "dutycycle", "duty_cycle", "fan.", "light.", "number.", "select."]
@@ -231,61 +234,76 @@ class Device:
         for source in (self.switches, self.options, self.sensors):
             for entity in source:
                 entity_id = entity.get("entity_id", "").lower()
-                _LOGGER.debug(f"{self.deviceName}: EnT_>: {entity}")
                 if any(key in entity_id for key in dimmableKeys):
                     self.isDimmable = True
-                    _LOGGER.debug(f"{self.deviceName}: Gerät als dimmbar erkannt. entity_id: {entity_id}")
+                    _LOGGER.warning(f"{self.deviceName}: Gerät als dimmbar erkannt. entity_id: {entity_id}")
                     return
 
-        _LOGGER.debug(f"{self.deviceName}: Keine dimmbaren Eigenschaften gefunden.")
+        _LOGGER.warning(f"{self.deviceName}: Keine dimmbaren Eigenschaften gefunden.")
     
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend auf Gerätetyp und Daten."""
         if not self.isDimmable:
-            _LOGGER.debug(f"{self.deviceName}: Gerät ist nicht dimmbar.")
+            _LOGGER.warning(f"{self.deviceName}: Gerät ist nicht dimmbar.")
             return
 
         if not self.sensors and not self.options:
-            _LOGGER.debug(f"{self.deviceName}: Keine Sensordaten oder Optionen gefunden.")
+            _LOGGER.warning(f"{self.deviceName}: Keine Sensordaten oder Optionen gefunden.")
             return
 
-        # Suchbegriffe für relevante Werte
+
         relevant_keys = ["duty", "voltage"]
 
-        # Iteriere über Sensoren
+
         for sensor in self.sensors:
-            _LOGGER.debug(f"Prüfe Sensor: {sensor}")
-            # Prüfe relevante Schlüssel
+            _LOGGER.warning(f"Prüfe Sensor: {sensor}")
+
             if any(key in sensor["entity_id"].lower() for key in relevant_keys):
-                _LOGGER.debug(f"{self.deviceName}: Relevanter Sensor gefunden: {sensor['entity_id']}")
+                _LOGGER.warning(f"{self.deviceName}: Relevanter Sensor gefunden: {sensor['entity_id']}")
                 try:
                     value = sensor.get("value", None)
                     if value is None:
-                        _LOGGER.debug(f"{self.deviceName}: Kein Wert im Sensor: {sensor}")
+                        _LOGGER.warning(f"{self.deviceName}: Kein Wert im Sensor: {sensor}")
                         continue
-                    
-                    # Konvertiere den Wert und setze dutyCycle
-                    self.dutyCycle = int(value)
-                    _LOGGER.info(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle}%.")
-                    return  # Beenden, wenn ein relevanter Sensor gefunden wurde
+                    if self.deviceType == "Light":
+                            self.voltage = value
+                            _LOGGER.warning(f"{self.deviceName}: Voltage aus Sensor aktualisiert auf {self.voltage}%.")
+                    else:    
+                        self.dutyCycle = int(value)
+                    _LOGGER.warning(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle}%.")
+                    return
                 except ValueError as e:
                     _LOGGER.error(f"{self.deviceName}: Fehler beim Parsen des Wertes aus {sensor}: {e}")
                     continue
 
-        # Iteriere über Optionen (falls zutreffend)
         for option in self.options:
-            _LOGGER.warn(f"Prüfe Option: {option}")
+            _LOGGER.warning(f"Prüfe Option: {option}")
             if any(key in option["entity_id"] for key in relevant_keys):
+                raw_value = option.get("value", 0)
                 try:
-                    value = int(option.get("value", 0))  # Extrahiere den Wert
-                    self.dutyCycle = value
-                    _LOGGER.info(f"{self.deviceName}: Duty Cycle oder Voltage aus Option aktualisiert auf {self.dutyCycle}%.")
-                    return  # Beenden, wenn eine relevante Option gefunden wurde
-                except ValueError as e:
+                    if isinstance(raw_value, str):
+                        raw_value = float(raw_value)
+                        
+                    if isinstance(raw_value, float):
+                        value = int(raw_value * 10)
+                    else:
+                        value = int(raw_value)
+                    
+                    if self.deviceType == "Light":
+                        self.voltage = value
+                        self.voltageFromNumber = True # Identifier for number control on as voltage Value
+                        _LOGGER.warning(f"{self.deviceName}: Voltage aus Option aktualisiert auf {self.voltage}%.")
+                    else:
+                        self.dutyCycle = value
+                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle aus Option aktualisiert auf {self.dutyCycle}%.")
+                    return 
+
+                except (ValueError, TypeError) as e:
                     _LOGGER.error(f"{self.deviceName}: Fehler beim Parsen des Wertes aus {option}: {e}")
                     continue
 
-        _LOGGER.warn(f"{self.deviceName}: Kein gültiger Duty Cycle oder Voltage-Wert in Sensoren oder Optionen gefunden.")
+
+        _LOGGER.warning(f"{self.deviceName}: Kein gültiger Duty Cycle oder Voltage-Wert in Sensoren oder Optionen gefunden.")
 
     async def turn_on(self, **kwargs):
         """Schaltet das Gerät ein."""
@@ -315,7 +333,7 @@ class Device:
                         },
                     )
                     self.isRunning = True
-                    _LOGGER.info(f"{self.deviceName}: HVAC-Modus auf {hvac_mode} gesetzt.")
+                    _LOGGER.warning(f"{self.deviceName}: HVAC-Modus auf {hvac_mode} gesetzt.")
 
                 # Humidifier einschalten
                 elif self.deviceType == "Humidifier":
@@ -326,7 +344,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Luftbefeuchter eingeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Luftbefeuchter eingeschaltet.")
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -334,32 +352,56 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Standard-Schalter eingeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")
 
                 # Licht mit Helligkeit einschalten
                 elif self.deviceType == "Light":
+                    
                     if self.isDimmable:
+                        if self.voltageFromNumber:
+                            if self.islightON :
+                                await self.hass.services.async_call(
+                                    domain="switch",
+                                    service="turn_on",
+                                    service_data={"entity_id": entity_id},
+                                )
+                                self.isRunning = True
+                                _LOGGER.warning(f"{self.deviceName}: Licht umgestellt auf {float(brightness_pct/10)}.")
+                                await self.set_value(float(brightness_pct/10))                  
+                        else:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.warning(f"{self.deviceName}: Licht mit {brightness_pct}% Helligkeit eingeschaltet.")        
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = True
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")      
+                        
+                # Abluft einschalten
+                elif self.deviceType == "Exhaust":
+                    if self.isTasmota == True:
                         await self.hass.services.async_call(
                             domain="light",
                             service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
-                                "brightness_pct": brightness_pct,
+                                "percentage": brightness_pct,
                             },
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Licht mit {brightness_pct}% Helligkeit eingeschaltet.")
-                    else:
-                        await self.hass.services.async_call(
-                            domain="switch",
-                            service="turn_on",
-                            service_data={"entity_id": entity_id},
-                        )
-                        self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Standard-Schalter eingeschaltet.")      
+                        _LOGGER.warning(f"{self.deviceName}: Abluft mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
                         
-                # Abluft einschalten
-                elif self.deviceType == "Exhaust":
                     if self.isDimmable == True:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -370,7 +412,7 @@ class Device:
                             },
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Abluft mit {percentage}% Geschwindigkeit eingeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Abluft mit {percentage}% Geschwindigkeit eingeschaltet.")
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -378,7 +420,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Standard-Schalter eingeschaltet.")                 
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")                 
 
                 # Ventilator einschalten
                 elif self.deviceType == "Ventilation":
@@ -392,7 +434,7 @@ class Device:
                             },
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Tasmota-Ventilator mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Tasmota-Ventilator mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
                     else:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -403,7 +445,7 @@ class Device:
                             },
                         )
                         self.isRunning = True
-                        _LOGGER.info(f"{self.deviceName}: Ventilator mit {percentage}% Geschwindigkeit eingeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Ventilator mit {percentage}% Geschwindigkeit eingeschaltet.")
 
                 # Standard-Switch einschalten
                 else:
@@ -413,7 +455,7 @@ class Device:
                         service_data={"entity_id": entity_id},
                     )
                     self.isRunning = True
-                    _LOGGER.info(f"{self.deviceName}: Standard-Schalter eingeschaltet.")
+                    _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Einschalten von {self.deviceName}: {e}")
 
@@ -428,7 +470,7 @@ class Device:
             brightness_pct = kwargs.get("brightness_pct")
             percentage = kwargs.get("percentage")
             for entity_id in entity_ids:
-                _LOGGER.debug(f"{self.deviceName}: Service-Aufruf für Entität: {entity_id}")
+                _LOGGER.warning(f"{self.deviceName}: Service-Aufruf für Entität: {entity_id}")
                 
                 # Climate ausschalten
                 if self.deviceType == "Climate":
@@ -441,7 +483,7 @@ class Device:
                         },
                     )
                     self.isRunning = False
-                    _LOGGER.info(f"{self.deviceName}: HVAC-Modus auf 'off' gesetzt.")
+                    _LOGGER.warning(f"{self.deviceName}: HVAC-Modus auf 'off' gesetzt.")
 
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
@@ -452,7 +494,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.info(f"{self.deviceName}: Luftbefeuchter ausgeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Luftbefeuchter ausgeschaltet.")
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -460,18 +502,33 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.info(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
 
                 # Licht ausschalten
                 elif self.deviceType == "Light":
+                    
                     if self.isDimmable:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
-                        self.isRunning = False
-                        _LOGGER.info(f"{self.deviceName}: Licht ausgeschaltet.")
+                        if self.voltageFromNumber:
+                            if not self.islightON :
+                                await self.hass.services.async_call(
+                                    domain="switch",
+                                    service="turn_off",
+                                    service_data={"entity_id": entity_id},
+                                )
+                                self.isRunning = False
+                                _LOGGER.warning(f"{self.deviceName}: Licht ausgeschaltet.")
+                                await self.set_value(0)
+                        else:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_off",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": 0,
+                                },
+                            )
+                            self.isRunning = False
+                            _LOGGER.warning(f"{self.deviceName}: Licht mit {0}% Helligkeit ausgeschaltet.")    
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -479,21 +536,20 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.info(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")                           
-
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")                                            
+                                                    
                 # Abluft ausschalten
-                elif self.deviceType == "Exhaust":
-                    
+                elif self.deviceType == "Exhaust":    
                     if self.isDimmable == True:
                         return
                     else:
                         await self.hass.services.async_call(
-                            domain="fan",
+                            domain="switch",
                             service="turn_off",
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                    _LOGGER.info(f"{self.deviceName}: Abluft ausgeschaltet.")
+                    _LOGGER.warning(f"{self.deviceName}: Abluft ausgeschaltet.")
 
                 # Ventilator ausschalten
                 elif self.deviceType == "Ventilation":
@@ -504,7 +560,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.info(f"{self.deviceName}: Tasmota-Ventilator ausgeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Tasmota-Ventilator ausgeschaltet.")
                     else:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -512,7 +568,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.info(f"{self.deviceName}: Ventilator ausgeschaltet.")
+                        _LOGGER.warning(f"{self.deviceName}: Ventilator ausgeschaltet.")
 
                 # Standard-Switch ausschalten
                 else:
@@ -522,25 +578,34 @@ class Device:
                         service_data={"entity_id": entity_id},
                     )
                     self.isRunning = False
-                    _LOGGER.info(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
+                    _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Ausschalten von {self.deviceName}: {e}")
+            _LOGGER.error(f"Fehler beim Ausschalten von {self.deviceName}: {e} ")
 
     ## Special Changes
     async def set_value(self, value):
-        """Setzt einen numerischen Wert, falls unterstützt."""
+        """Setzt einen numerischen Wert, falls unterstützt und relevant (duty oder voltage)."""
         if not self.options:
             _LOGGER.error(f"{self.deviceName} unterstützt keine numerischen Werte.")
             return
-        try:
-            await self.hass.services.async_call(
-                domain="number",
-                service="set_value",
-                service_data={"entity_id": self.options[0]["entity_id"], "value": value},
-            )
-            _LOGGER.warn(f"Wert für {self.deviceName} wurde auf {value} gesetzt.")
-        except Exception as e:
-            _LOGGER.error(f"Fehler beim Setzen des Wertes für {self.deviceName}: {e}")
+
+        # Suche erste passende Option mit 'duty' oder 'voltage' in der entity_id
+        for option in self.options:
+            entity_id = option.get("entity_id", "")
+            if "duty" in entity_id or "voltage" in entity_id:
+                try:
+                    await self.hass.services.async_call(
+                        domain="number",
+                        service="set_value",
+                        service_data={"entity_id": entity_id, "value": value},
+                    )
+                    _LOGGER.warning(f"Wert für {self.deviceName} wurde für {entity_id} auf {value} gesetzt.")
+                    return
+                except Exception as e:
+                    _LOGGER.error(f"Fehler beim Setzen des Wertes für {self.deviceName}: {e}")
+                    return
+
+        _LOGGER.error(f"{self.deviceName} hat keine passende Option mit 'duty' oder 'voltage' in der entity_id.")
 
     async def set_mode(self, mode):
         """Setzt den Modus des Geräts, falls unterstützt."""
@@ -553,14 +618,14 @@ class Device:
                 service="select_option",
                 service_data={"entity_id": self.options[0]["entity_id"], "option": mode},
             )
-            _LOGGER.warn(f"Modus für {self.deviceName} wurde auf {mode} gesetzt.")
+            _LOGGER.warning(f"Modus für {self.deviceName} wurde auf {mode} gesetzt.")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Setzen des Modus für {self.deviceName}: {e}")
 
     # Update Listener
     def registerListener(self):
         deviceEntitiys = self.getEntitys()
-        _LOGGER.debug(f"UpdateListener für {self.deviceName} registriert for {deviceEntitiys}.")
+        _LOGGER.warning(f"UpdateListener für {self.deviceName} registriert for {deviceEntitiys}.")
         
         async def deviceUpdateListner(event):
             
@@ -586,17 +651,18 @@ class Device:
                 
                 updateData = {"entity_id":entity_id,"newValue":new_state_value,"oldValue":old_state_value}                               
                 
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"Device State-Change für {self.deviceName} an {entity_id} in {self.inRoom}: "
                     f"Alt: {old_state_value}, Neu: {new_state_value}"
                 )
+                self.checkForControlValue()
 
                 # Gib das Update-Publication-Objekt weiter
                 await self.eventManager.emit("DeviceStateUpdate",updateData)
                 
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
-        _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
+        _LOGGER.warning(f"Device-State-Change Listener für {self.deviceName} registriert.")
         
         
         

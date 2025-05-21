@@ -90,8 +90,12 @@ class OpenGrowBox:
 
     ## INIT 
     async def firstInit(self):
+        # Watering Initalisation on Device Start based on OGB-Data
+        Init=True
+        await self.eventManager.emit("HydroModeChange",Init)
+        await self.eventManager.emit("PlantTimeChange",Init)
         _LOGGER.debug(f"OpenGrowBox for {self.room} started successfully State:{self.dataStore}")
-        await asyncio.sleep(0)
+        
         return True
 
     async def handleRoomUpdate(self, entity):
@@ -158,7 +162,7 @@ class OpenGrowBox:
             value = entity['value']
             entityPublication = OGBInitData(Name=entity_id,newState=[value])
             await self.manager(entityPublication) 
-        await self.backWork()  
+
         
     async def manager(self, data):
         """
@@ -206,8 +210,7 @@ class OpenGrowBox:
             f"ogb_breederbloomdays_{self.room.lower()}": self._update_breederbloomdays_value,
             f"ogb_growstartdate_{self.room.lower()}": self._update_growstartdates_value,
             f"ogb_bloomswitchdate_{self.room.lower()}": self._update_bloomswitchdate_value,
-            #f"ogb_planttotaldays{self.room.lower()}": self._updatePlantDates,
-            #f"ogb_totalbloomdays{self.room.lower()}": self._updatePlantDates,
+
 
             # Drying
             f"ogb_minmax_control_{self.room.lower()}": self._update_MinMax_control, 
@@ -343,9 +346,7 @@ class OpenGrowBox:
         lightbyOGBControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
         if lightbyOGBControl == False: return
         
-        isLightNowON = self.dataStore.getDeep("isPlantDay.islightON")
         lightChange = await self.update_light_state()
-
 
         if lightChange == None: return
         self.dataStore.setDeep("isPlantDay.islightON",lightChange)
@@ -393,15 +394,6 @@ class OpenGrowBox:
 
         except Exception as e:
             _LOGGER.error(f"Failed to update min/max values: {e}")        
-
-    async def backWork(self):
-        asyncio.sleep(1)
-        value = "CHECK"
-        HydroData = self.dataStore.get("Hydro")
-        PumpDevice = self.dataStore.getDeep("capabilities.canPump")
-        _LOGGER.error(f" {self.room} Check Hydro Settings For Start {HydroData} and {PumpDevice} ")
-        await self.eventManager.emit("HydroModeChange",value)
-   
    
     # Helpers
     def _stringToBool(self,stringToBool):
@@ -474,6 +466,8 @@ class OpenGrowBox:
             self.dataStore.setDeep("vpd.perfectMax",perfectVPDMax)
 
             await self.update_minMax_settings()
+            await self.eventManager.emit("PlantStageChange",plantStage)
+            
             _LOGGER.debug(f"{self.room}: PlantStage '{plantStage}' erfolgreich in VPD-Daten übertragen.")
         except KeyError as e:
             _LOGGER.error(f"{self.room}: Fehlender Schlüssel in PlantStage-Daten '{e}'")
@@ -863,12 +857,13 @@ class OpenGrowBox:
         """
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdLightControl"))
-        if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update VPD LichtSteuerung auf {value}")
-            self.dataStore.setDeep("controlOptions.vpdLightControl", self._stringToBool(value))
+
+        _LOGGER.warn(f"{self.room}: Update VPD LichtSteuerung auf {value}")
+        self.dataStore.setDeep("controlOptions.vpdLightControl", self._stringToBool(value))
+        
+        await self.eventManager.emit("updateControlModes",self._stringToBool(value))   
+        await self.eventManager.emit("VPDLightControl",self._stringToBool(value))
             
-            await self.eventManager.emit("updateControlModes",self._stringToBool(value))
-             
     async def _update_vpdNightHold_control(self,data):
         """
         Update VPD Nachtsteuerung 
@@ -933,7 +928,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.breederbloomdays")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Breeder Bloom Days auf {value}")
+            _LOGGER.warning(f"{self.room}: Update Breeder Bloom Days auf {value}")
             self.dataStore.setDeep("plantDates.breederbloomdays", value)
             await self.eventManager.emit("PlantTimeChange",value)
             
@@ -944,7 +939,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.growstartdate")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Grow Start auf {value}")
+            _LOGGER.warning(f"{self.room}: Update Grow Start auf {value}")
             self.dataStore.setDeep("plantDates.growstartdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
     
@@ -955,7 +950,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.bloomswitchdate")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Bloom Switch auf {value}")
+            _LOGGER.warning(f"{self.room}: Update Bloom Switch auf {value}")
             self.dataStore.setDeep("plantDates.bloomswitchdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
 
@@ -963,7 +958,6 @@ class OpenGrowBox:
         """
         Aktualisiert die Pflanzdaten und die entsprechenden Sensoren in Home Assistant.
         """
-        timenow = datetime.now()
         # Definieren der Sensor-Entitäten
         planttotaldays_entity = f"sensor.ogb_planttotaldays_{self.room.lower()}"
         totalbloomdays_entity = f"sensor.ogb_totalbloomdays_{self.room.lower()}"
@@ -973,6 +967,9 @@ class OpenGrowBox:
         bloomSwitch = self.dataStore.getDeep("plantDates.bloomswitchdate")
         growstart = self.dataStore.getDeep("plantDates.growstartdate")
         breederDays = self.dataStore.getDeep("plantDates.breederbloomdays")
+
+
+
 
         # Überprüfen, ob breederDays ein gültiger Wert ist
         try:
@@ -985,29 +982,31 @@ class OpenGrowBox:
         planttotaldays = 0
         totalbloomdays = 0
         remaining_bloom_days = 0
+        
         # Aktuelles Datum
         today = datetime.today()
 
         # Berechnung von planttotaldays
-        if growstart:
-            try:
-                growstart_date = datetime.strptime(growstart, '%Y-%m-%d')
-                planttotaldays = (today - growstart_date).days
-                self.dataStore.setDeep("plantDates.planttotaldays", planttotaldays)
-            except ValueError:
-                _LOGGER.warning(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
-
+        try:
+            growstart_date = datetime.strptime(growstart, '%Y-%m-%d')
+            planttotaldays = (today - growstart_date).days
+            self.dataStore.setDeep("plantDates.planttotaldays", planttotaldays)
+            _LOGGER.warning(f"{self.room}: GrowStart Date : {growstart_date} Days: {planttotaldays}")
+        except ValueError:
+            _LOGGER.warning(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
         # Berechnung von totalbloomdays
-        if bloomSwitch:
-            try:
-                bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
-                totalbloomdays = (today - bloomswitch_date).days
-                self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
-            except ValueError:
-                _LOGGER.warning(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
+        try:
+            bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
+            
+            totalbloomdays = (today - bloomswitch_date).days
+            _LOGGER.warning(f"{self.room}: BloomSwitchDate : {bloomswitch_date} Days:{totalbloomdays}")
+            self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
+        except ValueError:
+            _LOGGER.warning(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
         # Warnung bezüglich der verbleibenden Blütetage
         if breeder_bloom_days > 0 and totalbloomdays > 0:
             remaining_bloom_days = breeder_bloom_days - totalbloomdays
+            _LOGGER.warning(f"{self.room}: RestBloomDays : {remaining_bloom_days} Days:{totalbloomdays}")
             if remaining_bloom_days <= 0:
                 _LOGGER.warning(f"{self.room}: Die erwartete Blütezeit von {breeder_bloom_days} Tagen ist erreicht oder überschritten.")
             else:

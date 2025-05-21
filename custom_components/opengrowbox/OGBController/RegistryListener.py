@@ -108,7 +108,7 @@ class OGBRegistryEvenListener:
         }
         
         # Relevante Präfixe und Schlüsselwörter
-        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.", "humidifier.", "fan.")
+        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.","humidifier.", "fan.")
         relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty", "co2",)
         relevant_types = {
             "temperature": "Temperature entity found",
@@ -193,8 +193,7 @@ class OGBRegistryEvenListener:
         # Debug-Ausgabe der gruppierten Ergebnisse
         _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
         return grouped_entities_array
-    
-    
+     
     async def get_filtered_entities_with_valueForDevice(self, room_name, max_retries=5, retry_interval=1):
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
@@ -211,8 +210,8 @@ class OGBRegistryEvenListener:
         }
         
         # Relevante Präfixe und Schlüsselwörter
-        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.", "humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty", "co2",)
+        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.", "humidifier.", "fan.")
+        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage", "co2",)
         relevant_types = {
             "temperature": "Temperature entity found",
             "humidity": "Humidity entity found",

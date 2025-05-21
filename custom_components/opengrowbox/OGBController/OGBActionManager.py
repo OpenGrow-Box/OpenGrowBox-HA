@@ -137,7 +137,6 @@ class OGBActionManager:
         
         ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
         vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
-        lightbyOGBControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
         nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
         islightON = self.dataStore.getDeep("isPlantDay.islightON")
         
@@ -216,7 +215,12 @@ class OGBActionManager:
                     actionMap.append(actionPublication)  
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
-                    actionMap.append(actionPublication)  
+                    actionMap.append(actionPublication)
+                if vpdLightControl == True:
+                    if caps["canLight"]["state"]:
+                        actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                        actionMap.append(actionPublication) 
+                        
             # **Hohe Temperatur + Niedrige Feuchtigkeit**
             elif tempDeviation > 0 and humDeviation < 0:
                 actionMessage = f"{self.name} Fall: Hohe Temperatur + Niedrige Feuchtigkeit in {self.room}."
@@ -241,7 +245,11 @@ class OGBActionManager:
                     actionMap.append(actionPublication)  
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
-                    actionMap.append(actionPublication)  
+                    actionMap.append(actionPublication)
+                if vpdLightControl == True:
+                    if caps["canLight"]["state"]:
+                        actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage)
+                        actionMap.append(actionPublication)  
             # **Niedrige Temperatur + Hohe Feuchtigkeit**
             elif tempDeviation < 0 and humDeviation > 0:
                 actionMessage = f"{self.name} Fall: Niedrige Temperatur + Hohe Feuchtigkeit in {self.room}."
@@ -267,7 +275,11 @@ class OGBActionManager:
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)  
-                    
+                if vpdLightControl == True:
+                    if caps["canLight"]["state"]:
+                        actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                        actionMap.append(actionPublication)
+                                              
             # **Niedrige Temperatur + Niedrige Feuchtigkeit**
             elif tempDeviation < 0 and humDeviation < 0:
                 actionMessage = f"{self.name} Fall: Niedrige Temperatur + Niedrige Feuchtigkeit in {self.room}."
@@ -292,7 +304,11 @@ class OGBActionManager:
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)  
-                    
+                if vpdLightControl == True:
+                    if caps["canLight"]["state"]:
+                        actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                    actionMap.append(actionPublication)
+                                     
         # **Notfallmaßnahmen**
         # **Hohe Temperatur > maxTemp + 5**
         if tentData["temperature"] > tentData["maxTemp"] + 5:
@@ -336,12 +352,17 @@ class OGBActionManager:
             if caps["canVentilate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)  
-
+            if vpdLightControl == True:
+                if caps["canLight"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                    actionMap.append(actionPublication)
+                    
+                    
         # **CO₂-Management**
         co2Control = self.dataStore.getDeep("controlOptions.co2Control")
         co2Level = int(self.dataStore.getDeep("controlOptionData.co2ppm.current"))
         if co2Control == True:
-            if co2Level < 400 and islightON:
+            if co2Level < 500 and islightON:
                 actionMessage = f"{self.name} CO₂-Level zu niedrig in {self.room}, CO₂-Zufuhr erhöht."
                 if caps["canClimate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
@@ -354,7 +375,11 @@ class OGBActionManager:
                     actionMap.append(actionPublication)  
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
-                    actionMap.append(actionPublication)  
+                    actionMap.append(actionPublication)
+                if vpdLightControl == True:
+                    if caps["canLight"]["state"]:
+                        actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage)
+                        actionMap.append(actionPublication)
             elif co2Level > 1200 and islightON:
                 actionMessage = f"{self.name} CO₂-Level zu hoch in {self.room}, Abluft erhöht."
                 if caps["canClimate"]["state"]:
@@ -369,7 +394,10 @@ class OGBActionManager:
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)  
-
+                if vpdLightControl == True:
+                    if caps["canLight"]["state"]:
+                        actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                        actionMap.append(actionPublication)
 
         # **Taupunkt- und Kondensationsschutz**
         if tentData["dewpoint"] >= tentData["temperature"] - 1:
@@ -382,8 +410,13 @@ class OGBActionManager:
                 actionMap.append(actionPublication)  
             if caps["canVentilate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
-                actionMap.append(actionPublication)  
-
+                actionMap.append(actionPublication)
+            if vpdLightControl == True:
+                if caps["canLight"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                    actionMap.append(actionPublication)
+                
+                
         await self.publicationActionHandler(actionMap)
         await self.eventManager.emit("LogForClient",actionMap,haEvent=True)        
     

@@ -22,11 +22,15 @@ class Exhaust(Device):
     
     def init(self):
         if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Gerät ist nicht dimmbar. Initialisierung übersprungen.")
+            _LOGGER.warning(f"{self.deviceName}: Device ist nicht dimmbar. Initialisierung übersprungen.")
             return
         
         if not self.isInitialized:
-            self.checkForControlValue()   
+            self.identify_if_tasmota()
+            if self.isTasmota == True:
+                self.initialize_duty_cycle()
+            else:
+                self.checkForControlValue()   
             self.isInitialized = True
 
     def __repr__(self):
@@ -34,13 +38,19 @@ class Exhaust(Device):
                 f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
                 f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' ")
 
+    def identify_if_tasmota(self):
+        """Prüft, ob das Device ein Tasmota-Device ist."""
+        self.isTasmota = any(
+            switch["entity_id"].startswith("light.") for switch in self.switches
+        )
+        _LOGGER.info(f"{self.deviceName}: Tasmota-Device Found: {self.isTasmota}")
+
+
     def initialize_duty_cycle(self):
-        """Initialisiert den Duty Cycle nur, wenn er aktuell 0 ist."""
-        if self.dutyCycle == 0:
-            self.dutyCycle = 50  # Initialisiere auf 50%
-            _LOGGER.info(f"{self.deviceName}: Duty Cycle wurde initialisiert auf {self.dutyCycle}%.")
-        else:
-            _LOGGER.info(f"{self.deviceName}: Duty Cycle bereits auf {self.dutyCycle}%, keine Initialisierung erforderlich.")
+        """Initialisiert den Duty Cycle auf 50%."""
+        self.dutyCycle = 50  
+        _LOGGER.info(f"{self.deviceName}: Duty Cycle initialisiert auf {self.dutyCycle}%.")
+
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
@@ -54,7 +64,7 @@ class Exhaust(Device):
         Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
         """
         if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Gerät nicht dimmbar ist.")
+            _LOGGER.warning(f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist.")
             return self.dutyCycle
 
         # Berechne neuen Wert basierend auf Schrittweite
@@ -73,9 +83,14 @@ class Exhaust(Device):
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""
         if self.isDimmable:
-            newDuty = self.change_duty_cycle(increase=True)
-            self.log_action("IncreaseAction")
-            await self.turn_on(percentage=newDuty)
+            if self.isTasmota:
+                newDuty = self.change_duty_cycle(increase=True)
+                self.log_action("IncreaseAction")
+                await self.turn_on(brightness_pct=newDuty)   
+            else:          
+                newDuty = self.change_duty_cycle(increase=True)
+                self.log_action("IncreaseAction")
+                await self.turn_on(percentage=newDuty)
         else:
             self.log_action("TurnOn")
             await self.turn_on()
@@ -83,9 +98,14 @@ class Exhaust(Device):
     async def reduceAction(self, data):
         """Reduziert den Duty Cycle."""
         if self.isDimmable:
-            newDuty = self.change_duty_cycle(increase=False)
-            self.log_action("ReduceAction")
-            await self.turn_on(percentage=newDuty)
+            if self.isTasmota:
+                newDuty = self.change_duty_cycle(increase=False)
+                self.log_action("ReduceAction")
+                await self.turn_on(brightness_pct=newDuty)
+            else:
+                newDuty = self.change_duty_cycle(increase=False)
+                self.log_action("ReduceAction")
+                await self.turn_on(percentage=newDuty)
         else:
             self.log_action("TurnOff")
             await self.turn_off()
@@ -94,4 +114,4 @@ class Exhaust(Device):
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
-        _LOGGER.warn(f"{action_name}: {log_message}")
+        _LOGGER.warning(f"{action_name}: {log_message}")
