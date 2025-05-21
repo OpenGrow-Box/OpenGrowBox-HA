@@ -42,23 +42,23 @@ class OGBActionManager:
             actionPublication = OGBActionPublication(capability="canHumidify",action="Increase",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)
         if capabilities["canDehumidify"]["state"]:
-            actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canDehumidify",action="Increase",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)            
         if capabilities["canHeat"]["state"]:
             actionPublication = OGBActionPublication(capability="canHeat",action="Increase",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)                        
         if capabilities["canCool"]["state"]:
-            actionPublication = OGBActionPublication(capability="canHeat",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canCool",action="Increase",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)
         if capabilities["canClimate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)                  
         if capabilities["canCO2"]["state"]:
-                actionPublication = OGBActionPublication(capability="canCO2",action="Reduce",Name=self.room,message=actionMessage)
+                actionPublication = OGBActionPublication(capability="canCO2",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)               
         if vpdLightControl == True:
             if capabilities["canLight"]["state"]:
-                actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage)
+                actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)               
             else:
                 return
@@ -89,13 +89,13 @@ class OGBActionManager:
             actionPublication = OGBActionPublication(capability="canHumidify",action="Reduce",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)
         if capabilities["canDehumidify"]["state"]:
-            actionPublication = OGBActionPublication(capability="canDehumidify",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)
         if capabilities["canHeat"]["state"]:
             actionPublication = OGBActionPublication(capability="canHeat",action="Reduce",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)
         if capabilities["canCool"]["state"]:
-            actionPublication = OGBActionPublication(capability="canCool",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canCool",action="Reduce",Name=self.room,message=actionMessage)
             actionMap.append(actionPublication)
         if capabilities["canClimate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
