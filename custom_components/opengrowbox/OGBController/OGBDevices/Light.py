@@ -430,13 +430,17 @@ class Light(Device):
                     self.log_action("Turn ON via toggle")
         else:
             if self.isRunning:
-                await self.turn_off(brightness_pct=0)
                 self.voltage = 0
+                await self.turn_off()
                 self.log_action("Turn OFF via toggle")
     
     async def increaseAction(self, data):
         """Erhöht die Spannung."""
         new_voltage = None
+        
+        if not self.isDimmable == False:
+            self.log_action("Not Allowed: Device Not Dimmable")
+            return
         if self.islightON == False:
             self.log_action("Not Allowed: LightSchedule is 'OFF'")
             return
@@ -458,6 +462,9 @@ class Light(Device):
     async def reduceAction(self, data):
         """Reduziert die Spannung."""
         new_voltage = None
+        if not self.isDimmable == False:
+            self.log_action("Not Allowed: Device Not Dimmable")
+            return
         if self.islightON == False:
             self.log_action("Not Allowed: LightSchedule is 'OFF'")
             return

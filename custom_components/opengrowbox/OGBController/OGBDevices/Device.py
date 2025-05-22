@@ -467,8 +467,7 @@ class Device:
         try:
             # Prüfen, ob mehrere Entitäten in `self.switches` vorhanden sind
             entity_ids = [switch["entity_id"] for switch in self.switches]
-            brightness_pct = kwargs.get("brightness_pct")
-            percentage = kwargs.get("percentage")
+
             for entity_id in entity_ids:
                 _LOGGER.warning(f"{self.deviceName}: Service-Aufruf für Entität: {entity_id}")
                 
@@ -524,7 +523,6 @@ class Device:
                                 service="turn_off",
                                 service_data={
                                     "entity_id": entity_id,
-                                    "brightness_pct": 0,
                                 },
                             )
                             self.isRunning = False
