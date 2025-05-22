@@ -361,7 +361,7 @@ class Light(Device):
                 
                 await asyncio.sleep(step_duration)
                 next_voltage = min(start_voltage + (voltage_step * i), target_voltage)
-                self.voltage = round(next_voltage,1)
+                self.voltage = next_voltage
                 _LOGGER.warning(f"{self.deviceName}: Sonnenaufgang Schritt {i}: {self.voltage}%")
                 await self.turn_on(brightness_pct=self.voltage)
 
@@ -398,7 +398,7 @@ class Light(Device):
                     
                 await asyncio.sleep(step_duration)
                 next_voltage = max(start_voltage - (voltage_step * i), target_voltage)
-                self.voltage = round(next_voltage,1)
+                self.voltage = next_voltage
                 _LOGGER.warning(f"{self.deviceName}: Sonnenuntergang Schritt {i}: {self.voltage}%")
                 await self.turn_on(brightness_pct=self.voltage)
 
@@ -412,6 +412,7 @@ class Light(Device):
             # Immer sunPhaseActive zurücksetzen, aber sunset_phase_active bleibt bis das Fenster verlassen wird
             self.sunPhaseActive = False
             _LOGGER.warning(f"{self.deviceName}: Sonnenuntergang Task beendet, sunPhaseActive=False")
+    
     ## Actions
     async def toggleLight(self, lightState):
         self.islightON = lightState

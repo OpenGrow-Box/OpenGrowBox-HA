@@ -30,7 +30,9 @@ class Exhaust(Device):
             if self.isTasmota == True:
                 self.initialize_duty_cycle()
             else:
-                self.checkForControlValue()   
+                self.checkForControlValue()
+                if self.dutyCycle == 0 or self.dutyCycle == None:
+                    self.initialize_duty_cycle()
             self.isInitialized = True
 
     def __repr__(self):

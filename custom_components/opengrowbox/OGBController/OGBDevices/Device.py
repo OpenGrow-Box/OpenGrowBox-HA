@@ -137,7 +137,7 @@ class Device:
                 # Sortiere die Entität in die richtige Liste
                 if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.")):
                     self.switches.append(entity)
-                elif entityID.startswith(("select.", "number.", "text.", "time.")):
+                elif entityID.startswith(("select.", "number.","date", "text.", "time.")):
                     self.options.append(entity)
                 elif entityID.startswith("sensor."):
                     # Prüfe, ob der Sensor interessant ist
@@ -228,7 +228,7 @@ class Device:
             _LOGGER.warning(f"{self.deviceName}: {self.deviceType} ist nicht in der Liste der dimmbaren Gerätetypen.")
             return
 
-        dimmableKeys = ["duty", "dutycycle", "duty_cycle", "fan.", "light.", "number.", "select."]
+        dimmableKeys = ["duty", "dutycycle", "duty_cycle", "fan.", "light.", "number.", "select.", "voltage"]
 
         # Prüfen, ob ein Schlüssel in switches, options oder sensors vorhanden ist
         for source in (self.switches, self.options, self.sensors):
