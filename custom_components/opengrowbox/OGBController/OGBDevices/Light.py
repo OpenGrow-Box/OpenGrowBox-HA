@@ -34,24 +34,6 @@ class Light(Device):
         self.sunrise_task = None  # Task reference for sunrise
         self.sunset_task = None   # Task reference for sunset
 
-        self.sunPhases = {
-            "sunRise": {
-                "isSunRise": False,
-                "isRunning": False,
-                "time": "",
-                "minSunRise": 20,
-                "maxSunRise": self.maxVoltage,
-            },
-            "sunSet": {
-                "isSunSet": False,
-                "isRunning": False,
-                "time": "",
-                "minSunSet": 20,
-                "maxSunSet": self.maxVoltage,
-                "startDuty": None,
-            },
-        }
-        
         # Plant Phase
         self.currentPlantStage = ""
 
@@ -271,75 +253,59 @@ class Light(Device):
                 
                 if plantStage in self.PlantStageMinMax:
                     percentRange = self.PlantStageMinMax[plantStage]
-
-                    # Rechne Prozentangaben in Spannungswerte um
                     self.minVoltage = percentRange["min"]
                     self.maxVoltage = percentRange["max"]
                     
                 now = datetime.now().time()
                 
                 # Verbesserte Logging für bessere Diagnose
-                _LOGGER.info(f"{self.deviceName}: Prüfe Sonnenphasen - Aktuelle Zeit: {now}")
-                _LOGGER.info(f"{self.deviceName}: LightOn: {self.islightON}, SunPhaseActive: {self.sunPhaseActive}")
-                _LOGGER.info(f"{self.deviceName}: LightOnTime: {self.lightOnTime}, LightOffTime: {self.lightOffTime}")
-                _LOGGER.info(f"{self.deviceName}: SunRiseDuration: {self.sunRiseDuration} Sek ({self.sunRiseDuration/60} Min)")
-                _LOGGER.info(f"{self.deviceName}: SunSetDuration: {self.sunSetDuration} Sek ({self.sunSetDuration/60} Min)")
-                _LOGGER.info(f"{self.deviceName}: Sunrise_phase_active: {self.sunrise_phase_active}, Sunset_phase_active: {self.sunset_phase_active}")
+                _LOGGER.warning(f"{self.deviceName}: Prüfe Sonnenphasen - Aktuelle Zeit: {now}")
+                _LOGGER.warning(f"{self.deviceName}: LightOn: {self.islightON}, SunPhaseActive: {self.sunPhaseActive}")
+                _LOGGER.warning(f"{self.deviceName}: LightOnTime: {self.lightOnTime}, LightOffTime: {self.lightOffTime}")
+                _LOGGER.warning(f"{self.deviceName}: SunRiseDuration: {self.sunRiseDuration} Sek ({self.sunRiseDuration/60} Min)")
+                _LOGGER.warning(f"{self.deviceName}: SunSetDuration: {self.sunSetDuration} Sek ({self.sunSetDuration/60} Min)")
+                _LOGGER.warning(f"{self.deviceName}: Sunrise_phase_active: {self.sunrise_phase_active}, Sunset_phase_active: {self.sunset_phase_active}")
                 
-                # Detaillierte Prüfung für Sonnenaufgang
+                # Prüfung für Sonnenaufgang
                 if self.sunRiseDuration:
-                    # Konvertiere Sekunden in Minuten für die _in_window Funktion
                     sunRiseDuration_minutes = self.sunRiseDuration / 60
                     in_sunrise_window = self._in_window(now, self.lightOnTime, sunRiseDuration_minutes, is_sunset=False)
-                    _LOGGER.info(f"{self.deviceName}: Im Sonnenaufgangsfenster: {in_sunrise_window}")
+                    _LOGGER.warning(f"{self.deviceName}: Im Sonnenaufgangsfenster: {in_sunrise_window}")
                     
-                    if in_sunrise_window and not self.sunrise_phase_active and self.islightON:
-                        _LOGGER.info(f"{self.deviceName}: Starte Sonnenaufgangsphase")
-                        self.sunrise_phase_active = True
-                        # Start sunrise as a separate task
-                        self.start_sunrise_task()
-                    else:
-                        # Diagnose, warum der Sonnenaufgang nicht gestartet wird
-                        if not in_sunrise_window:
-                            _LOGGER.info(f"{self.deviceName}: Nicht im Sonnenaufgangsfenster")
-                        if self.sunrise_phase_active:
-                            _LOGGER.info(f"{self.deviceName}: Sonnenaufgang bereits aktiv")
-                        if not self.islightON:
-                            _LOGGER.info(f"{self.deviceName}: Licht ist aus - kein Sonnenaufgang möglich")
-                else:
-                    _LOGGER.info(f"{self.deviceName}: Keine Sonnenaufgangsdauer gesetzt")
+                    if in_sunrise_window and self.islightON:
+                        if not self.sunrise_phase_active:
+                            _LOGGER.warning(f"{self.deviceName}: Starte Sonnenaufgangsphase")
+                            self.sunrise_phase_active = True
+                            self.start_sunrise_task()
+                    elif not in_sunrise_window:
+                        # Nur zurücksetzen wenn wir nicht mehr im Fenster sind UND keine Task läuft
+                        if self.sunrise_phase_active and (self.sunrise_task is None or self.sunrise_task.done()):
+                            _LOGGER.warning(f"{self.deviceName}: Sonnenaufgangsfenster verlassen und Task beendet - reset Phase")
+                            self.sunrise_phase_active = False
                 
-                # Detaillierte Prüfung für Sonnenuntergang
+                # Prüfung für Sonnenuntergang
                 if self.sunSetDuration:
-                    # Konvertiere Sekunden in Minuten für die _in_window Funktion
                     sunSetDuration_minutes = self.sunSetDuration / 60
                     in_sunset_window = self._in_window(now, self.lightOffTime, sunSetDuration_minutes, is_sunset=True)
-                    _LOGGER.info(f"{self.deviceName}: Im Sonnenuntergangsfenster: {in_sunset_window}")
+                    _LOGGER.warning(f"{self.deviceName}: Im Sonnenuntergangsfenster: {in_sunset_window}")
                     
-                    if in_sunset_window and not self.sunset_phase_active and self.islightON:
-                        _LOGGER.info(f"{self.deviceName}: Starte Sonnenuntergangsphase")
-                        self.sunset_phase_active = True
-                        # Start sunset as a separate task
-                        self.start_sunset_task()
-                    else:
-                        # Diagnose, warum der Sonnenuntergang nicht gestartet wird
-                        if not in_sunset_window:
-                            _LOGGER.info(f"{self.deviceName}: Nicht im Sonnenuntergangsfenster")
-                        if self.sunset_phase_active:
-                            _LOGGER.info(f"{self.deviceName}: Sonnenuntergang bereits aktiv")
-                        if not self.islightON:
-                            _LOGGER.info(f"{self.deviceName}: Licht ist aus - kein Sonnenuntergang möglich")
-                else:
-                    _LOGGER.info(f"{self.deviceName}: Keine Sonnenuntergangsdauer gesetzt")
-                    
+                    if in_sunset_window and self.islightON:
+                        if not self.sunset_phase_active:
+                            _LOGGER.warning(f"{self.deviceName}: Starte Sonnenuntergangsphase")
+                            self.sunset_phase_active = True
+                            self.start_sunset_task()
+                    elif not in_sunset_window:
+                        # Nur zurücksetzen wenn wir nicht mehr im Fenster sind UND keine Task läuft
+                        if self.sunset_phase_active and (self.sunset_task is None or self.sunset_task.done()):
+                            _LOGGER.warning(f"{self.deviceName}: Sonnenuntergangsfenster verlassen und Task beendet - reset Phase")
+                            self.sunset_phase_active = False
+                        
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName} sun-phase error: {e}")
-                # Print full stack trace for better debugging
                 import traceback
                 _LOGGER.error(traceback.format_exc())
-            await asyncio.sleep(10)
-            
-        
+            await asyncio.sleep(30)
+    
     def _check_should_reset_phases(self):
         """Überprüft, ob die Phasen zurückgesetzt werden sollten (einmal pro Tag) und garantiert, dass beide Phasen zurückgesetzt werden."""
         today = datetime.now().date()
@@ -395,17 +361,18 @@ class Light(Device):
                 
                 await asyncio.sleep(step_duration)
                 next_voltage = min(start_voltage + (voltage_step * i), target_voltage)
-                self.voltage = next_voltage
+                self.voltage = round(next_voltage,1)
                 _LOGGER.warning(f"{self.deviceName}: Sonnenaufgang Schritt {i}: {self.voltage}%")
                 await self.turn_on(brightness_pct=self.voltage)
 
             _LOGGER.warning(f"{self.deviceName}: Sonnenaufgang abgeschlossen")
-            self.sunPhaseActive = False
-            self.sunrise_phase_active = False
+            
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Fehler bei Sonnenaufgang: {e}")
         finally:
+            # Immer sunPhaseActive zurücksetzen, aber sunrise_phase_active bleibt bis das Fenster verlassen wird
             self.sunPhaseActive = False
+            _LOGGER.warning(f"{self.deviceName}: Sonnenaufgang Task beendet, sunPhaseActive=False")
 
     async def _run_sunset(self):
         """Führt die Sonnenuntergangssequenz als separate Task aus."""
@@ -431,20 +398,20 @@ class Light(Device):
                     
                 await asyncio.sleep(step_duration)
                 next_voltage = max(start_voltage - (voltage_step * i), target_voltage)
-                self.voltage = next_voltage
+                self.voltage = round(next_voltage,1)
                 _LOGGER.warning(f"{self.deviceName}: Sonnenuntergang Schritt {i}: {self.voltage}%")
                 await self.turn_on(brightness_pct=self.voltage)
 
             _LOGGER.warning(f"{self.deviceName}: Sonnenuntergang abgeschlossen")
             self.voltage = 0
-            self.sunPhaseActive = False
-            self.sunset_phase_active = False
             await self.turn_off(brightness_pct=self.voltage)
+            
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Fehler bei Sonnenuntergang: {e}")
         finally:
+            # Immer sunPhaseActive zurücksetzen, aber sunset_phase_active bleibt bis das Fenster verlassen wird
             self.sunPhaseActive = False
-     
+            _LOGGER.warning(f"{self.deviceName}: Sonnenuntergang Task beendet, sunPhaseActive=False")
     ## Actions
     async def toggleLight(self, lightState):
         self.islightON = lightState
