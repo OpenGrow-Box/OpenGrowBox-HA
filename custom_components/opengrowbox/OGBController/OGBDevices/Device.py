@@ -499,13 +499,12 @@ class Device:
                         return
                     else:
                         await self.hass.services.async_call(
-                            domain="fan",
-                            service="set_percentage",
+                            domain="switch",
+                            service="turn_on",
                             service_data={
-                                "entity_id": entity_id,
-                                "percentage": percentage,
-                            },
+                                "entity_id": entity_id},
                         )
+                        self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Ventilator mit  eingeschaltet.")
                         return
                                           
