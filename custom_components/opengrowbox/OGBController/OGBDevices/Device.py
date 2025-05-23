@@ -10,6 +10,7 @@ class Device:
         self.dataStore = dataStore
         self.deviceName = deviceName
         self.deviceType = deviceType
+        self.isTasmota = False
         self.isRunning = False
         self.isDimmable = False
         self.inRoom = inRoom
@@ -348,6 +349,7 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Luftbefeuchter eingeschaltet.")
+                        return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -356,10 +358,10 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")
+                        return
 
                 # Licht mit Helligkeit einschalten
-                elif self.deviceType == "Light":
-                    
+                elif self.deviceType == "Light":                  
                     if self.isDimmable:
                         if self.voltageFromNumber:
                             if self.islightON :
@@ -370,7 +372,8 @@ class Device:
                                 )
                                 self.isRunning = True
                                 _LOGGER.warning(f"{self.deviceName}: Licht umgestellt auf {float(brightness_pct/10)}.")
-                                await self.set_value(float(brightness_pct/10))                  
+                                await self.set_value(float(brightness_pct/10))
+                                return             
                         else:
                             await self.hass.services.async_call(
                                 domain="light",
@@ -382,6 +385,7 @@ class Device:
                             )
                             self.isRunning = True
                             _LOGGER.warning(f"{self.deviceName}: Licht mit {brightness_pct}% Helligkeit eingeschaltet.")        
+                            return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -390,7 +394,8 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")      
-                        
+                        return
+                    
                 # Abluft einschalten
                 elif self.deviceType == "Exhaust":
                     if self.isTasmota == True:
@@ -404,7 +409,8 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Abluft mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
-                        
+                        return
+                    
                     if self.isDimmable == True:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -416,6 +422,7 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Abluft mit {percentage}% Geschwindigkeit eingeschaltet.")
+                        return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -424,7 +431,8 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")                 
-
+                        return
+                    
                 # Zuluft einschalten
                 elif self.deviceType == "Inhaust":
                     if self.isTasmota == True:
@@ -438,7 +446,8 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Abluft mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
-                        
+                        return
+                    
                     if self.isDimmable == True:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -450,6 +459,7 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Abluft mit {percentage}% Geschwindigkeit eingeschaltet.")
+                        return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -457,8 +467,8 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = True
-                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")                 
-
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")
+                        return            
 
                 # Ventilator einschalten
                 elif self.deviceType == "Ventilation":
@@ -473,7 +483,9 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Tasmota-Ventilator mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
-                    else:
+                        return
+                    
+                    if self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
                             service="set_percentage",
@@ -484,7 +496,19 @@ class Device:
                         )
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Ventilator mit {percentage}% Geschwindigkeit eingeschaltet.")
-
+                        return
+                    else:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={
+                                "entity_id": entity_id,
+                                "percentage": percentage,
+                            },
+                        )
+                        _LOGGER.warning(f"{self.deviceName}: Ventilator mit  eingeschaltet.")
+                        return
+                                          
                 # Standard-Switch einschalten
                 else:
                     await self.hass.services.async_call(
@@ -521,25 +545,27 @@ class Device:
                     )
                     self.isRunning = False
                     _LOGGER.warning(f"{self.deviceName}: HVAC-Modus auf 'off' gesetzt.")
-
+                    return
+                
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
-                    if self.realHumidifier:
-                        await self.hass.services.async_call(
-                            domain="humidifier",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
-                        self.isRunning = False
-                        _LOGGER.warning(f"{self.deviceName}: Luftbefeuchter ausgeschaltet.")
-                    else:
-                        await self.hass.services.async_call(
-                            domain="switch",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
-                        self.isRunning = False
-                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
+                    #if self.realHumidifier:
+                    #    await self.hass.services.async_call(
+                    #        domain="humidifier",
+                    #        service="turn_off",
+                    #        service_data={"entity_id": entity_id},
+                    #    )
+                    #    self.isRunning = False
+                    #    _LOGGER.warning(f"{self.deviceName}: Luftbefeuchter ausgeschaltet.")
+                    
+                    await self.hass.services.async_call(
+                        domain="switch",
+                        service="turn_off",
+                        service_data={"entity_id": entity_id},
+                    )
+                    self.isRunning = False
+                    _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
+                    return
 
                 # Licht ausschalten
                 elif self.deviceType == "Light":
@@ -555,6 +581,7 @@ class Device:
                                 self.isRunning = False
                                 _LOGGER.warning(f"{self.deviceName}: Light OFF.")
                                 await self.set_value(0)
+                                return
                         else:
                             await self.hass.services.async_call(
                                 domain="light",
@@ -563,7 +590,8 @@ class Device:
                                     "entity_id": entity_id},
                             )
                             self.isRunning = False
-                            _LOGGER.warning(f"{self.deviceName}:Light OFF.")    
+                            _LOGGER.warning(f"{self.deviceName}:Light OFF.")
+                            return  
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -571,11 +599,19 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")                                            
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter ausgeschaltet.")
+                        return                                            
                                                     
                 # Abluft ausschalten
                 elif self.deviceType == "Exhaust":    
                     if self.isDimmable == True:
+                        #await self.hass.services.async_call(
+                        #    domain="fan",
+                        #    service="turn_off",
+                        #    service_data={"entity_id": entity_id},
+                        #)
+                        #self.isRunning = False
+                        #_LOGGER.warning(f"{self.deviceName}: Abluft ausgeschaltet.")
                         return
                     else:
                         await self.hass.services.async_call(
@@ -584,8 +620,9 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                    _LOGGER.warning(f"{self.deviceName}: Abluft ausgeschaltet.")
-
+                        _LOGGER.warning(f"{self.deviceName}: Abluft ausgeschaltet.")
+                        return
+                
                 # Zuluft ausschalten
                 elif self.deviceType == "Inhaust":    
                     if self.isDimmable == True:
@@ -609,7 +646,8 @@ class Device:
                         )
                         self.isRunning = False
                         _LOGGER.warning(f"{self.deviceName}: Tasmota-Ventilator ausgeschaltet.")
-                    else:
+                        return
+                    if self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
                             service="turn_off",
@@ -617,7 +655,17 @@ class Device:
                         )
                         self.isRunning = False
                         _LOGGER.warning(f"{self.deviceName}: Ventilator ausgeschaltet.")
-
+                        return
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        _LOGGER.warning(f"{self.deviceName}: Ventilator ausgeschaltet.")
+                        return                       
+                        
                 # Standard-Switch ausschalten
                 else:
                     await self.hass.services.async_call(

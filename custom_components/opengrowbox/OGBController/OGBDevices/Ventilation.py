@@ -11,6 +11,7 @@ class Ventilation(Device):
         self.maxDuty = 100   # Maximaler Duty Cycle
         self.minDuty = 85     # Minimaler Duty Cycle
         self.steps = 5       # DutyCycle Steps
+        self.isTasmota = False
         self.isInitialized = False
 
         self.init()  # Initialisierung der Klasse

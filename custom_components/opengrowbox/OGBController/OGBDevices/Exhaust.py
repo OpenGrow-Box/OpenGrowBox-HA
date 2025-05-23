@@ -11,7 +11,7 @@ class Exhaust(Device):
         self.maxDuty = 95    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
         self.isInitialized = False
-        
+        self.isTasmota = False
         self.init()
         
         ## Events Register

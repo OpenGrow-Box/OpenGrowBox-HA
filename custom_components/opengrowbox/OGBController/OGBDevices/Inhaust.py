@@ -10,6 +10,7 @@ class Inhaust(Device):
         self.minDuty = 10    # Minimaler Duty Cycle
         self.maxDuty = 95    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
+        self.isTasmota = False
         self.isInitialized = False
         
         self.init()
