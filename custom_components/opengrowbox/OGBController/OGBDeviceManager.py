@@ -3,6 +3,7 @@ from .OGBDevices.Device import Device
 from .OGBDevices.Sensor import Sensor
 from .OGBDevices.Light import Light
 from .OGBDevices.Exhaust import Exhaust
+from .OGBDevices.Inhaust import Inhaust
 from .OGBDevices.Ventilation import Ventilation
 from .OGBDevices.Climate import Climate
 from .OGBDevices.Cooler import Cooler
@@ -89,6 +90,7 @@ class OGBDeviceManager:
             "canDehumidify": ["dehumidifier"],
             "canVentilate": ["ventilation"],
             "canExhaust": ["exhaust"],
+            "canInhaust":["inhaust"],
             "canLight": ["light"],
             "canCO2": ["co2"],
             "canPump": ["pump"],
@@ -113,7 +115,8 @@ class OGBDeviceManager:
         """Gerät anhand des Namens und Typs identifizieren."""
         device_type_mapping = {
             "Sensor": ["ogb","sun","sensor","water","root","wurzel","blatt","leaf","mode", "plant", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160"],
-            "Exhaust": ["exhaust", "abluft", "ruck", "fan"],
+            "Exhaust": ["exhaust", "abluft"],
+            "Inhaust": ["inhaust", "zuluft"],
             "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet", "outlet"],
             "Dehumidifier": ["dehumidifier", "drying", "dryer", "entfeuchter"],
             "Humidifier": ["humidifier","befeuchter"],
@@ -140,6 +143,7 @@ class OGBDeviceManager:
             "Humidifier": Humidifier,
             "Dehumidifier": Dehumidifier,
             "Exhaust": Exhaust,
+            "Inhaust":Inhaust,
             "Ventilation": Ventilation,
             "Heater": Heater,
             "Cooler": Cooler,

@@ -191,6 +191,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     options=["YES","NO"], initial_value="NO"),
      
      
+        # Ambient
+        CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_AmbientBorrow_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_OwnDeviceSets_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -199,6 +202,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         ##Notifications
         CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["Enabled", "Disabled"], initial_value="Disabled"),       
+        
+        #WorkMode
+        CustomSelect(f"OGB_WorkMode_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["YES","NO"], initial_value="NO"),
         
         ##DEVICES
         CustomSelect(f"OGB_Light1_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),

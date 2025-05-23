@@ -110,7 +110,7 @@ class Device:
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
         """Prüft, ob ein Sensor interessant ist (z. B. temperature, humidity, dewpoint, co2)."""
-        interested_mapping = ("temperature", "humidity", "dewpoint", "co2","duty")
+        interested_mapping = ("temperature", "humidity", "dewpoint", "co2","duty","voltage")
         return any(keyword in sensor_id for keyword in interested_mapping)
 
     # Mapp Entity Types to Class vars
@@ -158,6 +158,7 @@ class Device:
             "canDehumidify": ["dehumidifier"],
             "canVentilate": ["ventilation"],
             "canExhaust": ["exhaust"],
+            "canInhaust": ["inhaust"],
             "canLight": ["light"],
             "canCO2": ["co2"],
             "canPump":["pump"],
@@ -183,6 +184,8 @@ class Device:
                 if self.deviceType == "Light":
                     currentCap["devEntities"].append(self.deviceName)
                 if self.deviceType == "Exhaust":
+                    currentCap["devEntities"].append(self.deviceName)
+                if self.deviceType == "Inhaust":
                     currentCap["devEntities"].append(self.deviceName)
                 if self.deviceType == "Ventilation":
                     currentCap["devEntities"].append(self.deviceName)                    
@@ -221,7 +224,7 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust", "light", "fan"]
+        allowedDeviceTypes = ["ventilation", "exhaust","inhaust","light", "fan"]
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
@@ -422,6 +425,41 @@ class Device:
                         self.isRunning = True
                         _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")                 
 
+                # Zuluft einschalten
+                elif self.deviceType == "Inhaust":
+                    if self.isTasmota == True:
+                        await self.hass.services.async_call(
+                            domain="light",
+                            service="turn_on",
+                            service_data={
+                                "entity_id": entity_id,
+                                "percentage": brightness_pct,
+                            },
+                        )
+                        self.isRunning = True
+                        _LOGGER.warning(f"{self.deviceName}: Abluft mit {brightness_pct}% Geschwindigkeit eingeschaltet.")
+                        
+                    if self.isDimmable == True:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={
+                                "entity_id": entity_id,
+                                "percentage": percentage,
+                            },
+                        )
+                        self.isRunning = True
+                        _LOGGER.warning(f"{self.deviceName}: Abluft mit {percentage}% Geschwindigkeit eingeschaltet.")
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = True
+                        _LOGGER.warning(f"{self.deviceName}: Standard-Schalter eingeschaltet.")                 
+
+
                 # Ventilator einschalten
                 elif self.deviceType == "Ventilation":
                     if self.isTasmota == True:
@@ -548,6 +586,19 @@ class Device:
                         self.isRunning = False
                     _LOGGER.warning(f"{self.deviceName}: Abluft ausgeschaltet.")
 
+                # Zuluft ausschalten
+                elif self.deviceType == "Inhaust":    
+                    if self.isDimmable == True:
+                        return
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                    _LOGGER.warning(f"{self.deviceName}: Abluft ausgeschaltet.")
+
                 # Ventilator ausschalten
                 elif self.deviceType == "Ventilation":
                     if self.isTasmota:
@@ -660,7 +711,6 @@ class Device:
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
         _LOGGER.warning(f"Device-State-Change Listener für {self.deviceName} registriert.")
-        
         
         
     #### USAGE

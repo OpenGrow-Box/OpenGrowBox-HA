@@ -225,8 +225,11 @@ class OpenGrowBox:
             f"ogb_hydropumpduration_{self.room.lower()}": self._update_hydro_duration,
             f"ogb_hydropumpintervall_{self.room.lower()}": self._update_hydro_intervall,          
 
-            # Ambient Borrow Feature
-            #f"ogb_ambientborrow_{self.room.lower()}": self._update_ambientBorrow_control,
+            # Ambient/Outdoor Features
+            f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
+            
+            #WorkMode
+            f"ogb_workmode_{self.room.lower()}": self._update_WrokMode_control,
            
         }
 
@@ -667,6 +670,42 @@ class OpenGrowBox:
             self.dataStore.setDeep("isPlantDay.sunSetTime",value)
             await self.eventManager.emit("SunSetTimeUpdates",value)
 
+    ## Workmode 
+    
+    async def _update_WrokMode_control(self,data):
+        """
+        Update OGB Workmode Control
+        """
+        value = data.newState[0]
+        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.workMode"))
+        if current_value != value:
+            boolValue = self._stringToBool(value)
+            if boolValue == False:
+                await self.update_minMax_settings()
+                #self.defaultState()
+            _LOGGER.warn(f"{self.room}: Update Tent Work Mode to {value}")
+            self.dataStore.setDeep("controlOptions.workMode", self._stringToBool(value))
+            await asyncio.sleep(0)
+
+    ## Ambnnient/outsite
+    
+    async def _update_ambient_control(self,data):
+        """
+        Update OGB Ambient Control
+        """
+        value = data.newState[0]
+        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ambientControl"))
+        if current_value != value:
+            boolValue = self._stringToBool(value)
+            if boolValue == False:
+                await self.update_minMax_settings()
+                #self.defaultState()
+            _LOGGER.warn(f"{self.room}: Update Ambient Control to {value}")
+            self.dataStore.setDeep("controlOptions.ambientControl", self._stringToBool(value))
+            await asyncio.sleep(0)
+
+
+
     ##MINMAX Values
     async def _update_MinMax_control(self,data):
         """
@@ -1080,17 +1119,6 @@ class OpenGrowBox:
         await asyncio.sleep(0.001)
         pass
 
-    ## TESTS      
-    async def _update_ambientBorrow_control(self,data):
-        """
-        Update OGB Light Control
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ambientBorrow"))
-        if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Ambient Brrow Control auf {value}")
-            self.dataStore.setDeep("controlOptions.ambientBorrow", self._stringToBool(value))
-            await asyncio.sleep(0.001)            
 
     ## DEBUG NOTES
     def _DEBUGSTATE(self):
