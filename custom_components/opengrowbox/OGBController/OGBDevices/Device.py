@@ -515,18 +515,17 @@ class Device:
                                     service_data={"entity_id": entity_id},
                                 )
                                 self.isRunning = False
-                                _LOGGER.warning(f"{self.deviceName}: Licht ausgeschaltet.")
+                                _LOGGER.warning(f"{self.deviceName}: Light OFF.")
                                 await self.set_value(0)
                         else:
                             await self.hass.services.async_call(
                                 domain="light",
                                 service="turn_off",
                                 service_data={
-                                    "entity_id": entity_id,
-                                },
+                                    "entity_id": entity_id},
                             )
                             self.isRunning = False
-                            _LOGGER.warning(f"{self.deviceName}: Licht mit {0}% Helligkeit ausgeschaltet.")    
+                            _LOGGER.warning(f"{self.deviceName}:Light OFF.")    
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
