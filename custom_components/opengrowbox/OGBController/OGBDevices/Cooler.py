@@ -12,23 +12,22 @@ class Cooler(Device):
 
     #Actions Helpers
     async def increaseAction(self, data):
-        """Erhöht die klima oder Kühlgerät"""
-        
-        if self.isRunning == True:
-            self.log_action("TurnOFF ")
-            await self.turn_off()
-        else:
-            self.log_action("Allready in Desired State ")
-
-
-    async def reduceAction(self, data):
         """Reduziert die klima oder Kühlgerät"""
         if self.isRunning == True:
             self.log_action("Allready in Desired State ")
         else:
             await self.turn_on()
             self.log_action("TurnON ")
-            
+
+
+    async def reduceAction(self, data):
+        """Erhöht die klima oder Kühlgerät"""
+        
+        if self.isRunning == True:
+            self.log_action("TurnOFF ")
+            await self.turn_off()
+        else:
+            self.log_action("Allready in Desired State ")          
 
 
     def log_action(self, action_name):

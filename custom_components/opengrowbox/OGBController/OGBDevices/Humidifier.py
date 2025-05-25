@@ -21,6 +21,17 @@ class Humidifier(Device):
         
         
     async def increaseAction(self, data):
+        """Schaltet Befeuchter an"""
+        if self.isRunning == True:
+            self.log_action("Allready in Desired State ")
+        else:
+            self.log_action("TurnON ")
+            await self.turn_on()
+
+
+        
+        
+    async def reduceAction(self, data):
         """Schaltet Befeuchter aus"""
         
         if self.isRunning == True:
@@ -28,15 +39,6 @@ class Humidifier(Device):
             await self.turn_off()
         else:
             self.log_action("Allready in Desired State ")
-        
-        
-    async def reduceAction(self, data):
-        """Schaltet Befeuchter an"""
-        if self.isRunning == True:
-            self.log_action("Allready in Desired State ")
-        else:
-            self.log_action("TurnON ")
-            await self.turn_on()
             
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
