@@ -81,12 +81,26 @@ class Light(Device):
             
             if self.isDimmable:
                 self.checkForControlValue()
-                self.setPlanStageLight(Init) 
+                self.checkPlantStageLightValue() 
                                 
                 if self.voltage == None or self.voltage == 0:
                     self.initialize_voltage()
                     
             self.isInitialized = True
+         
+    def checkPlantStageLightValue(self):
+        if not self.isDimmable:
+            return None
+
+        plantStage = self.dataStore.get("plantStage")
+        self.currentPlantStage = plantStage
+        
+        if plantStage in self.PlantStageMinMax:
+            percentRange = self.PlantStageMinMax[plantStage]
+
+            # Rechne Prozentangaben in Spannungswerte um
+            self.minVoltage = percentRange["min"]
+            self.maxVoltage = percentRange["max"]     
           
     def initialize_voltage(self):
         """Initialisiert den Voltage auf MinVoltage."""
@@ -304,7 +318,7 @@ class Light(Device):
                 _LOGGER.error(f"{self.deviceName} sun-phase error: {e}")
                 import traceback
                 _LOGGER.error(traceback.format_exc())
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)
     
     def _check_should_reset_phases(self):
         """Überprüft, ob die Phasen zurückgesetzt werden sollten (einmal pro Tag) und garantiert, dass beide Phasen zurückgesetzt werden."""

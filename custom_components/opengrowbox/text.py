@@ -129,7 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     if "access_token_entity" not in hass.data[DOMAIN]:
         access_token_entity = OpenGrowBoxAccessToken(
             name="OGB_AccessToken",
-            room_name="global",  # Kann statisch sein, da global
+            room_name="Ambient",
             coordinator=coordinator,
             initial_value="AccessToken"
         )
