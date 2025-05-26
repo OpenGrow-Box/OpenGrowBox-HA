@@ -79,7 +79,6 @@ class OGBActionManager:
         
         actionMessage = "VPD-Reduce Action"
         
-        
         actionMap = []
         if capabilities["canExhaust"]["state"]:
             actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage)
@@ -328,7 +327,7 @@ class OGBActionManager:
                                      
         # **Notfallmaßnahmen**
         # **Hohe Temperatur > maxTemp + 5**
-        if tentData["temperature"] > tentData["maxTemp"] + 5:
+        if tentData["temperature"] > tentData["maxTemp"] + 3:
             actionMessage = f"{self.name} Kritische Übertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
 
             if caps["canClimate"]["state"]:
@@ -355,7 +354,7 @@ class OGBActionManager:
                     actionMap.append(actionPublication)
 
         # **Niedrige Temperatur < minTemp - 5**
-        if tentData["temperature"] < tentData["minTemp"] - 5:
+        if tentData["temperature"] < tentData["minTemp"] - 3:
             actionMessage = f"{self.name} Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
             if caps["canClimate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)

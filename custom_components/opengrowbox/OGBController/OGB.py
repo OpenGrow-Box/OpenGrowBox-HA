@@ -64,7 +64,7 @@ class OpenGrowBox:
     async def start(self,data):
         try:
             await self.eventManager.emit("OGBStart","START")
-            _LOGGER.warn("OpenGrowBox started successfully.")
+            _LOGGER.debug("OpenGrowBox started successfully.")
             return True
         except Exception as e:
             _LOGGER.error(f"Error during Start: {e}")
@@ -238,7 +238,7 @@ class OpenGrowBox:
         if action:
             await action(data)  # Rufe die zugehörige Aktion mit `data` auf
         else:
-            _LOGGER.warn(f"OGB-Manager {self.room}: Keine Aktion für {entity_key} gefunden.")
+            _LOGGER.debug(f"OGB-Manager {self.room}: Keine Aktion für {entity_key} gefunden.")
  
  
     ## VPD Sensor Update
@@ -275,7 +275,7 @@ class OpenGrowBox:
                 self.dataStore.setDeep("vpd.current", currentVPD)
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 await self.update_sensor_via_service(vpdPub)
-                _LOGGER.warn(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                _LOGGER.debug(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 tentMode = self.dataStore.get("tentMode")
                 runMode = OGBModeRunPublication(currentMode=tentMode)               
                 await self.eventManager.emit("selectActionMode",runMode)
@@ -436,10 +436,16 @@ class OpenGrowBox:
         plantStage = self.dataStore.get("plantStage")
         # Daten aus dem `plantStages`-Dictionary abrufen
         stageValues = self.dataStore.getDeep(f"plantStages.{plantStage}")
+        ownControllValues = self.dataStore.getDeep("controlOptions.minMaxControl")
+        
         if not stageValues:
             _LOGGER.error(f"{self.room}: Keine Daten für PlantStage '{plantStage}' gefunden.")
             return
 
+        if ownControllValues:
+            _LOGGER.error(f"{self.room}: Keine Anpassung Möglich für PlantStage Own MinMax Active")
+            return
+        
         try:
             # Werte aus dem Dictionary extrahieren
             vpd_range = stageValues["vpdRange"]
@@ -490,6 +496,7 @@ class OpenGrowBox:
                 _LOGGER.debug("Lichtzeiten fehlen. Bitte sicherstellen, dass 'lightOnTime' und 'lightOffTime' gesetzt sind.")
                 return None
 
+
             # Konvertiere Zeitstrings in `time`-Objekte
             light_on_time = datetime.strptime(lightOnTime, "%H:%M:%S").time()
             light_off_time = datetime.strptime(lightOffTime, "%H:%M:%S").time()
@@ -532,7 +539,7 @@ class OpenGrowBox:
         current_stage = self.dataStore.get("mainControl")
         if current_stage != value:
             self.dataStore.set("mainControl",value)
-            _LOGGER.warn(f"{self.room}: Steuerung geändert von {current_stage} auf {value}")
+            _LOGGER.debug(f"{self.room}: Steuerung geändert von {current_stage} auf {value}")
             await self.eventManager.emit("mainControlChange",value)
 
     async def _update_notify_option(self,data):
@@ -542,7 +549,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_state = self.dataStore.get("notifyControl")
         self.dataStore.set("notifyControl",value)
-        _LOGGER.warn(f"{self.room}: Notification geändert von {current_state} auf {value}")
+        _LOGGER.debug(f"{self.room}: Notification geändert von {current_state} auf {value}")
         if value == "Disabled":
             self.eventManager.change_notify_set(False)
         elif value == "Enabled":
@@ -558,7 +565,7 @@ class OpenGrowBox:
         if current_stage != value:
             self.dataStore.set("plantStage",value)
             await self._plantStageToVPD()
-            _LOGGER.warn(f"{self.room}: Pflanzenphase geändert von {current_stage} auf {value}")
+            _LOGGER.debug(f"{self.room}: Pflanzenphase geändert von {current_stage} auf {value}")
             await self.eventManager.emit("PlantStageChange",value)
   
     async def _update_tent_mode(self, data):
@@ -576,12 +583,12 @@ class OpenGrowBox:
             if value == "": return
             if current_mode != value:
                 tentModePublication = OGBModePublication(currentMode=value,previousMode=current_mode)
-                _LOGGER.warn(f"{self.room}: Zeltmodus geändert von {current_mode} auf {value}")
+                _LOGGER.debug(f"{self.room}: Zeltmodus geändert von {current_mode} auf {value}")
                 self.dataStore.set("tentMode",value)
                 ## Event to Mode Manager 
                 await self.eventManager.emit("selectActionMode",tentModePublication)
         else:
-            _LOGGER.warning(f"Unbekannter Datentyp: {type(data)} - Daten: {data}")      
+            _LOGGER.debug(f"Unbekannter Datentyp: {type(data)} - Daten: {data}")      
 
     async def _update_leafTemp_offset(self, data):
         """
@@ -595,11 +602,11 @@ class OpenGrowBox:
             self.dataStore.setDeep("tentData.leafTempOffset",value)
         elif isinstance(data, OGBEventPublication):
             if current_stage != value:
-                _LOGGER.warn(f"{self.room}: BlattTemp Offset geändert von {current_stage} auf {value}")
+                _LOGGER.debug(f"{self.room}: BlattTemp Offset geändert von {current_stage} auf {value}")
                 self.dataStore.setDeep("tentData.leafTempOffset",value)
                 await self.eventManager.emit("VPDCreation",value)
         else:
-            _LOGGER.warning(f"Unbekannter Datentyp: {type(data)} - Daten: {data}")     
+            _LOGGER.debug(f"Unbekannter Datentyp: {type(data)} - Daten: {data}")     
 
     async def _update_vpd_Target(self,data):
         """
@@ -608,7 +615,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("vpd.targeted")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Target VPD auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Target VPD auf {value}")
             self.dataStore.setDeep("vpd.targeted", value)
             await asyncio.sleep(0)
 
@@ -620,7 +627,7 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("vpd.tolerance")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: VPD Tolerance Aktualisiert auf {value}")
+            _LOGGER.debug(f"{self.room}: VPD Tolerance Aktualisiert auf {value}")
             self.dataStore.setDeep("vpd.tolerance",value)
 
     # Lights
@@ -632,7 +639,7 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.lightOnTime")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Licht 'AN' Aktualisiert auf  {value}")
+            _LOGGER.debug(f"{self.room}: Licht 'AN' Aktualisiert auf  {value}")
             self.dataStore.setDeep("isPlantDay.lightOnTime",value)
 
     async def _update_lightOff_time(self,data):
@@ -643,7 +650,7 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.lightOffTime")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Licht 'AUS' Aktualisiert auf  {value}")
+            _LOGGER.debug(f"{self.room}: Licht 'AUS' Aktualisiert auf  {value}")
             self.dataStore.setDeep("isPlantDay.lightOffTime",value)
             
     async def _update_sunrise_time(self,data):
@@ -654,7 +661,7 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.sunRiseTime")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Sonnenaufgang endet {value} nach Licht An")
+            _LOGGER.debug(f"{self.room}: Sonnenaufgang endet {value} nach Licht An")
             self.dataStore.setDeep("isPlantDay.sunRiseTime",value)
             await self.eventManager.emit("SunRiseTimeUpdates",value)
 
@@ -666,7 +673,7 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.sunSetTime")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Sonnenuntergang beginnt {value} vor Licht Aus")
+            _LOGGER.debug(f"{self.room}: Sonnenuntergang beginnt {value} vor Licht Aus")
             self.dataStore.setDeep("isPlantDay.sunSetTime",value)
             await self.eventManager.emit("SunSetTimeUpdates",value)
 
@@ -683,7 +690,7 @@ class OpenGrowBox:
             if boolValue == False:
                 await self.update_minMax_settings()
                 #self.defaultState()
-            _LOGGER.warn(f"{self.room}: Update Tent Work Mode to {value}")
+            _LOGGER.debug(f"{self.room}: Update Tent Work Mode to {value}")
             self.dataStore.setDeep("controlOptions.workMode", self._stringToBool(value))
             await asyncio.sleep(0)
 
@@ -700,7 +707,7 @@ class OpenGrowBox:
             if boolValue == False:
                 await self.update_minMax_settings()
                 #self.defaultState()
-            _LOGGER.warn(f"{self.room}: Update Ambient Control to {value}")
+            _LOGGER.debug(f"{self.room}: Update Ambient Control to {value}")
             self.dataStore.setDeep("controlOptions.ambientControl", self._stringToBool(value))
             await asyncio.sleep(0)
 
@@ -718,7 +725,7 @@ class OpenGrowBox:
             if boolValue == False:
                 await self.update_minMax_settings()
                 #self.defaultState()
-            _LOGGER.warn(f"{self.room}: Update MinMax Control auf {value}")
+            _LOGGER.debug(f"{self.room}: Update MinMax Control auf {value}")
             self.dataStore.setDeep("controlOptions.minMaxControl", self._stringToBool(value))
             await asyncio.sleep(0)
 
@@ -731,7 +738,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.minmax.maxTemp")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Aktualisiere MaxTemp auf {value}")
+            _LOGGER.debug(f"{self.room}: Aktualisiere MaxTemp auf {value}")
             self.dataStore.setDeep("controlOptionData.minmax.maxTemp", value)
             self.dataStore.setDeep("tentData.maxTemp", value)
             await asyncio.sleep(0)
@@ -747,7 +754,7 @@ class OpenGrowBox:
         current_value = self.dataStore.getDeep("controlOptionData.minmax.maxHum")
 
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Aktualisiere MaxHum auf {value}")
+            _LOGGER.debug(f"{self.room}: Aktualisiere MaxHum auf {value}")
             self.dataStore.setDeep("controlOptionData.minmax.maxHum", value)
             self.dataStore.setDeep("tentData.maxHumidity", value)
             await asyncio.sleep(0)          
@@ -762,7 +769,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.minmax.minTemp")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Aktualisiere MinTemp auf {value}")
+            _LOGGER.debug(f"{self.room}: Aktualisiere MinTemp auf {value}")
             self.dataStore.setDeep("controlOptionData.minmax.minTemp", value)
             self.dataStore.setDeep("tentData.minTemp", value)
             await asyncio.sleep(0)
@@ -777,7 +784,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.minmax.minHum")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Aktualisiere MinHum auf {value}")
+            _LOGGER.debug(f"{self.room}: Aktualisiere MinHum auf {value}")
             self.dataStore.setDeep("controlOptionData.minmax.minHum", value)
             self.dataStore.setDeep("tentData.minHumidity", value)
             await asyncio.sleep(0)
@@ -791,7 +798,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ownWeights"))
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Weights Control auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Weights Control auf {value}")
             self.dataStore.setDeep("controlOptions.ownWeights", self._stringToBool(value))
             await asyncio.sleep(0.001)
               
@@ -802,7 +809,7 @@ class OpenGrowBox:
         value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
         current_value = self.dataStore.getDeep("controlOptionData.weights.temp")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Temperaturgewicht auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Temperaturgewicht auf {value}")
             self.dataStore.setDeep("controlOptionData.weights.temp", value)
             await asyncio.sleep(0.001)
             
@@ -813,7 +820,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.weights.hum")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Feuchtigkeitsgewicht auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Feuchtigkeitsgewicht auf {value}")
             self.dataStore.setDeep("controlOptionData.weights.hum", value)
             await asyncio.sleep(0.0)
 
@@ -829,12 +836,12 @@ class OpenGrowBox:
         value = data.newState[0]
 
         if value == "OFF":
-            _LOGGER.warn(f"{self.room}: Deaktiviere Hydro Mode")
+            _LOGGER.debug(f"{self.room}: Deaktiviere Hydro Mode")
             self.dataStore.setDeep("Hydro.Active", False)
             self.dataStore.setDeep("Hydro.Mode", value)
             await self.eventManager.emit("HydroModeChange",value)
         else:
-            _LOGGER.warn(f"{self.room}: Update Hydro Mode auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Hydro Mode auf {value}")
             self.dataStore.setDeep("Hydro.Active", True)
             self.dataStore.setDeep("Hydro.Mode", value)
             await self.eventManager.emit("HydroModeChange",value)
@@ -847,7 +854,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("Hydro.Cycle"))
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Hydro Cycle auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Hydro Cycle auf {value}")
             self.dataStore.setDeep("Hydro.Cycle", self._stringToBool(value))
             await self.eventManager.emit("HydroModeChange",value)
             await asyncio.sleep(0.001)
@@ -859,7 +866,7 @@ class OpenGrowBox:
         value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
         current_value = self.dataStore.getDeep("Hydro.Duration")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Hydro Duration auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Hydro Duration auf {value}")
             self.dataStore.setDeep("Hydro.Duration", value)
             await self.eventManager.emit("HydroModeChange",value)
             await asyncio.sleep(0.001)
@@ -871,7 +878,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("Hydro.Intervall")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update Hydro Intervall auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Hydro Intervall auf {value}")
             self.dataStore.setDeep("Hydro.Intervall", value)
             await self.eventManager.emit("HydroModeChange",value)
             await asyncio.sleep(0) 
@@ -885,7 +892,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.lightbyOGBControl"))
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update OGB Light Control auf {value}")
+            _LOGGER.debug(f"{self.room}: Update OGB Light Control auf {value}")
             self.dataStore.setDeep("controlOptions.lightbyOGBControl", self._stringToBool(value))
             
             await self.eventManager.emit("updateControlModes",self._stringToBool(value))
@@ -897,7 +904,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdLightControl"))
 
-        _LOGGER.warn(f"{self.room}: Update VPD LichtSteuerung auf {value}")
+        _LOGGER.debug(f"{self.room}: Update VPD LichtSteuerung auf {value}")
         self.dataStore.setDeep("controlOptions.vpdLightControl", self._stringToBool(value))
         
         await self.eventManager.emit("updateControlModes",self._stringToBool(value))   
@@ -910,7 +917,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.nightVPDHold"))
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update VPD Nacht Mode auf {value}")
+            _LOGGER.debug(f"{self.room}: Update VPD Nacht Mode auf {value}")
             self.dataStore.setDeep("controlOptions.nightVPDHold", self._stringToBool(value))
             
             await self.eventManager.emit("updateControlModes",self._stringToBool(value))    
@@ -924,7 +931,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.co2Control"))
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update CO2 Control auf {value}")
+            _LOGGER.debug(f"{self.room}: Update CO2 Control auf {value}")
             self.dataStore.setDeep("controlOptions.co2Control", self._stringToBool(value))
             await asyncio.sleep(0.001)
   
@@ -935,7 +942,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.co2ppm.target")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update CO2 Target Value auf {value}")
+            _LOGGER.debug(f"{self.room}: Update CO2 Target Value auf {value}")
             self.dataStore.setDeep("controlOptionData.co2ppm.target", value)
   
     async def _update_co2Min_value(self,data):
@@ -945,7 +952,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.co2ppm.minPPM")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update CO2 Min Value auf {value}")
+            _LOGGER.debug(f"{self.room}: Update CO2 Min Value auf {value}")
             self.dataStore.setDeep("controlOptionData.co2ppm.minPPM", value)
 
     async def _update_co2Max_value(self,data):
@@ -955,7 +962,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.co2ppm.maxPPM")
         if current_value != value:
-            _LOGGER.warn(f"{self.room}: Update CO2 Max Value auf {value}")
+            _LOGGER.debug(f"{self.room}: Update CO2 Max Value auf {value}")
             self.dataStore.setDeep("controlOptionData.co2ppm.maxPPM", value)
  
  
@@ -967,7 +974,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.breederbloomdays")
         if current_value != value:
-            _LOGGER.warning(f"{self.room}: Update Breeder Bloom Days auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Breeder Bloom Days auf {value}")
             self.dataStore.setDeep("plantDates.breederbloomdays", value)
             await self.eventManager.emit("PlantTimeChange",value)
             
@@ -978,7 +985,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.growstartdate")
         if current_value != value:
-            _LOGGER.warning(f"{self.room}: Update Grow Start auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Grow Start auf {value}")
             self.dataStore.setDeep("plantDates.growstartdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
     
@@ -989,7 +996,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.bloomswitchdate")
         if current_value != value:
-            _LOGGER.warning(f"{self.room}: Update Bloom Switch auf {value}")
+            _LOGGER.debug(f"{self.room}: Update Bloom Switch auf {value}")
             self.dataStore.setDeep("plantDates.bloomswitchdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
 
@@ -1014,7 +1021,7 @@ class OpenGrowBox:
         try:
             breeder_bloom_days = float(breederDays)
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.room}: Ungültiger Wert für breederbloomdays: {breederDays}")
+            _LOGGER.debug(f"{self.room}: Ungültiger Wert für breederbloomdays: {breederDays}")
             breeder_bloom_days = 0.0
 
         # Initialisieren der Variablen für die Tage
@@ -1030,24 +1037,24 @@ class OpenGrowBox:
             growstart_date = datetime.strptime(growstart, '%Y-%m-%d')
             planttotaldays = (today - growstart_date).days
             self.dataStore.setDeep("plantDates.planttotaldays", planttotaldays)
-            _LOGGER.warning(f"{self.room}: GrowStart Date : {growstart_date} Days: {planttotaldays}")
+            _LOGGER.debug(f"{self.room}: GrowStart Date : {growstart_date} Days: {planttotaldays}")
         except ValueError:
-            _LOGGER.warning(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
+            _LOGGER.debug(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
         # Berechnung von totalbloomdays
         try:
             bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
             
             totalbloomdays = (today - bloomswitch_date).days
-            _LOGGER.warning(f"{self.room}: BloomSwitchDate : {bloomswitch_date} Days:{totalbloomdays}")
+            _LOGGER.debug(f"{self.room}: BloomSwitchDate : {bloomswitch_date} Days:{totalbloomdays}")
             self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
         except ValueError:
-            _LOGGER.warning(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
+            _LOGGER.debug(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
         # Warnung bezüglich der verbleibenden Blütetage
         if breeder_bloom_days > 0 and totalbloomdays > 0:
             remaining_bloom_days = breeder_bloom_days - totalbloomdays
-            _LOGGER.warning(f"{self.room}: RestBloomDays : {remaining_bloom_days} Days:{totalbloomdays}")
+            _LOGGER.debug(f"{self.room}: RestBloomDays : {remaining_bloom_days} Days:{totalbloomdays}")
             if remaining_bloom_days <= 0:
-                _LOGGER.warning(f"{self.room}: Die erwartete Blütezeit von {breeder_bloom_days} Tagen ist erreicht oder überschritten.")
+                _LOGGER.debug(f"{self.room}: Die erwartete Blütezeit von {breeder_bloom_days} Tagen ist erreicht oder überschritten.")
             else:
                 _LOGGER.info(f"{self.room}: Noch {remaining_bloom_days} Tage bis zum Ende der erwarteten Blütezeit.")
                 await self.eventManager.emit("LogForClient",{"Name":self.room,"Message":f"Noch {remaining_bloom_days} Tage bis zum Ende der erwarteten Blütezeit"},haEvent=True)
@@ -1101,7 +1108,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_mode = self.dataStore.getDeep("drying.currentDryMode")
         if current_mode != value:
-            _LOGGER.warn(f"{self.room}: Zelt Dry Modus geändert von {current_mode} auf {value}")
+            _LOGGER.debug(f"{self.room}: Zelt Dry Modus geändert von {current_mode} auf {value}")
             self.dataStore.setDeep("drying.currentDryMode",value)
             await asyncio.sleep(0.001)
        
@@ -1129,4 +1136,4 @@ class OpenGrowBox:
         isPlantDay = tentData = self.dataStore.get("isPlantDay")
         vpdData = self.dataStore.get("vpd")
         caps = self.dataStore.get("capabilities")
-        _LOGGER.warn(f"DEBUG: {self.room} DEVICES:{devices} TentData {tentData} CONTROLOPTIONS:{controlOptions}  VPDDATA {vpdData} CAPS:{caps} ")
+        _LOGGER.debug(f"DEBUG: {self.room} DEVICES:{devices} TentData {tentData} CONTROLOPTIONS:{controlOptions}  VPDDATA {vpdData} CAPS:{caps} ")
