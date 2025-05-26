@@ -92,13 +92,13 @@ class OGBConf:
         "sunSetTime": "",
     })
     plantStages: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
-        "Germination": {"vpdRange": [0.412, 0.70], "minTemp": 20, "maxTemp": 26, "minHumidity": 65, "maxHumidity": 80},
-        "Clones": {"vpdRange": [0.412, 0.65], "minTemp": 20, "maxTemp": 26, "minHumidity": 65, "maxHumidity": 80},
-        "EarlyVeg": {"vpdRange": [0.65, 0.80], "minTemp": 20, "maxTemp": 28, "minHumidity": 55, "maxHumidity": 70},
-        "MidVeg": {"vpdRange": [0.80, 1.0], "minTemp": 20, "maxTemp": 30, "minHumidity": 55, "maxHumidity": 65},
-        "LateVeg": {"vpdRange": [1.05, 1.1], "minTemp": 20, "maxTemp": 30, "minHumidity": 55, "maxHumidity": 65},
-        "EarlyFlower": {"vpdRange": [1.0, 1.25], "minTemp": 22, "maxTemp": 28, "minHumidity": 50, "maxHumidity": 65},
-        "MidFlower": {"vpdRange": [1.1, 1.35], "minTemp": 22, "maxTemp": 26, "minHumidity": 45, "maxHumidity": 60},
+        "Germination": {"vpdRange": [0.412, 0.70], "minTemp": 20, "maxTemp": 24, "minHumidity": 65, "maxHumidity": 80},
+        "Clones": {"vpdRange": [0.412, 0.65], "minTemp": 20, "maxTemp": 24, "minHumidity": 65, "maxHumidity": 80},
+        "EarlyVeg": {"vpdRange": [0.65, 0.80], "minTemp": 20, "maxTemp": 26, "minHumidity": 55, "maxHumidity": 70},
+        "MidVeg": {"vpdRange": [0.80, 1.0], "minTemp": 20, "maxTemp": 27, "minHumidity": 55, "maxHumidity": 65},
+        "LateVeg": {"vpdRange": [1.05, 1.1], "minTemp": 20, "maxTemp": 27, "minHumidity": 55, "maxHumidity": 65},
+        "EarlyFlower": {"vpdRange": [1.0, 1.25], "minTemp": 22, "maxTemp": 26, "minHumidity": 50, "maxHumidity": 65},
+        "MidFlower": {"vpdRange": [1.1, 1.35], "minTemp": 22, "maxTemp": 25, "minHumidity": 45, "maxHumidity": 60},
         "LateFlower": {"vpdRange": [1.2, 1.65], "minTemp": 20, "maxTemp": 24, "minHumidity": 40, "maxHumidity": 55},
     })
     plantDates: Dict[str, Any] = field(default_factory=lambda: {
