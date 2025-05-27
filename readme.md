@@ -1,5 +1,8 @@
 # OpenGrowBox - Home Assistant Integration
 
+# ![Installation Guide](https://github.com/OpenGrow-Box/OpenGrowBox/wiki/Installation#-opengrowbox--installation-guide)
+
+
 ## Overview
 
 Welcome to the **OpenGrowBox Home Assistant Integration** repository! This project is designed to seamlessly integrate the OpenGrowBox system with Home Assistant, allowing you to control and monitor your grow environment directly from your smart home setup.
