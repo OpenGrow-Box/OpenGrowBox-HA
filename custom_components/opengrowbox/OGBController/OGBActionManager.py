@@ -326,7 +326,7 @@ class OGBActionManager:
                     actionMap.append(actionPublication)
                                      
         # **Notfallmaßnahmen**
-        # **Hohe Temperatur > maxTemp + 5**
+        # **Hohe Temperatur > maxTemp + 3**
         if tentData["temperature"] > tentData["maxTemp"] + 3:
             actionMessage = f"{self.name} Kritische Übertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
 
@@ -353,7 +353,7 @@ class OGBActionManager:
                     actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
 
-        # **Niedrige Temperatur < minTemp - 5**
+        # **Niedrige Temperatur < minTemp - 3**
         if tentData["temperature"] < tentData["minTemp"] - 3:
             actionMessage = f"{self.name} Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
             if caps["canClimate"]["state"]:
