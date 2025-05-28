@@ -242,7 +242,7 @@ class OpenGrowBox:
             return
         else:
             # Spezifische Aktion für OGBEventPublication
-            if lastVpd != currentVPD:
+            if currentVPD != lastVpd:
                 self.dataStore.setDeep("vpd.current", currentVPD)
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 await self.update_sensor_via_service(vpdPub)
@@ -252,11 +252,12 @@ class OpenGrowBox:
                 await self.eventManager.emit("selectActionMode",runMode)
                 await self.eventManager.emit("LogForClient",vpdPub,haEvent=True)          
           
-                self._warningSTATE()
+                self._debugState()
                 return vpdPub     
             else:
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 _LOGGER.warning(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                await self.update_sensor_via_service(vpdPub)
 
 
     async def update_sensor_via_service(self,vpdPub):
@@ -1103,7 +1104,7 @@ class OpenGrowBox:
 
 
     ## warning NOTES
-    def _warningSTATE(self):
+    def _debugState(self):
         ##warning
         devices = self.dataStore.get("devices")
         tentData = self.dataStore.get("tentData")
