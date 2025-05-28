@@ -86,15 +86,15 @@ class OGBModeManager:
         if currentVPD < perfectionMinVPD:
             _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({perfectionMinVPD}). Increasing VPD.")
             await self.eventManager.emit("increase_vpd",capabilities)
-            await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Increasing","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
+            #await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Increasing","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
         elif currentVPD > perfectionMaxVPD:
             _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD.")
             await self.eventManager.emit("reduce_vpd",capabilities)
-            await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Reducing","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
+            #await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Reducing","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
         elif currentVPD != perfectionVPD:
             _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is within range but not at perfection ({perfectionVPD}). Fine-tuning.")
             await self.eventManager.emit("FineTune_vpd",capabilities)
-            await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Fine-Tune","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
+            #await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Fine-Tune","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
         else:
             _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is at perfection ({perfectionVPD}). No action required.")
 
@@ -321,7 +321,7 @@ class OGBModeManager:
             Duration=duration,
             Devices=PumpDevices
         )
-        await self.eventManager.emit("LogForClient", actionMap, haEvent=True)
+        #await self.eventManager.emit("LogForClient", actionMap, haEvent=True)
 
     async def hydro_Mode(self, cycle: bool, interval: float, duration: float, pumpDevices,log_prefix: str = "Hydro"):
         valid_types = ["pump"]

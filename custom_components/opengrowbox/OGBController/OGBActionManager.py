@@ -20,15 +20,11 @@ class OGBActionManager:
         self.eventManager.on("FineTune_vpd", self.fine_tune_vpd)
         self.eventManager.on("PumpAction", self.PumpAction) 
     
-    
     async def increase_vpd(self, capabilities):
         """
         Erhöht den VPD-Wert durch Anpassung der entsprechenden Geräte.
         """
-        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
-        lightbyOGBControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
-        islightON = self.dataStore.getDeep("isPlantDay.islightON")
-        
+        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")       
         actionMessage = "VPD-Increase Action"
         
         actionMap = []
@@ -73,10 +69,7 @@ class OGBActionManager:
         """
         Reduziert den VPD-Wert durch Anpassung der entsprechenden Geräte.
         """
-        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
-        lightbyOGBControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
-        islightON = self.dataStore.getDeep("isPlantDay.islightON")
-        
+        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")       
         actionMessage = "VPD-Reduce Action"
         
         actionMap = []
@@ -137,7 +130,7 @@ class OGBActionManager:
             await self.reduce_vpd(capabilities)
 
     async def checkLimitsAndPublicate(self,actionMap):
-        _LOGGER.warn(f"{self.room}: Action Publication Limits-Validation von {actionMap}")    
+        _LOGGER.warning(f"{self.room}: Action Publication Limits-Validation von {actionMap}")    
         
         ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
         vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
@@ -145,7 +138,7 @@ class OGBActionManager:
         islightON = self.dataStore.getDeep("isPlantDay.islightON")
         
         if islightON == False and nightVPDHold == False:
-            _LOGGER.warn(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
+            _LOGGER.warning(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
             await self.NightHoldFallBack(actionMap)
             return None
         
@@ -464,17 +457,16 @@ class OGBActionManager:
                 if caps["canLight"]["state"]:
                     actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
-                
-                
+                           
         await self.publicationActionHandler(actionMap)
         await self.eventManager.emit("LogForClient",actionMap,haEvent=True)        
     
     async def NightHoldFallBack(self, actionMap):
-        _LOGGER.warn(f"{self.room}: VPD Night Hold NOT ACTIVE IGNORING ACTIONS ")
+        _LOGGER.warning(f"{self.room}: VPD Night Hold NOT ACTIVE IGNORING ACTIONS ")
         await self.eventManager.emit("LogForClient",{"Name":self.room,"NightVPDHold":"NotActive Ignoring-VPD"},haEvent=True)     
         
         # Capabilities abrufen
-        excludeCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canLight", "canCO2","canInhaust"}
+        excludeCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canLight", "canCO2"}
         modCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2"}
         fallBackAction = "Reduce"
         
@@ -495,13 +487,13 @@ class OGBActionManager:
         """
         Handhabt die Steuerungsaktionen basierend auf dem actionMap und den Fähigkeiten.
         """
-        _LOGGER.warn(f"{self.room}: Validated-Actions-By-Limits: - {actionMap}")
+        _LOGGER.warning(f"{self.room}: Validated-Actions-By-Limits: - {actionMap}")
 
         for action in actionMap:
             actionCap = action.capability
             actionType = action.action
             actionMesage = action.message
-            _LOGGER.warn(f"{self.room}: {actionCap} - {actionType} - - {action} -- {actionMesage}")
+            _LOGGER.warning(f"{self.room}: {actionCap} - {actionType} - - {action} -- {actionMesage}")
                     
             # Aktionen basierend auf den Fähigkeiten
             if actionCap == "canExhaust":

@@ -266,31 +266,40 @@ class OGBRegistryEvenListener:
             # Gruppiere nach Gerätename
             group = next((g for g in grouped_entities_array if g["name"] == device_name), None)
             if not group:
-                # Erstelle eine neue Gruppe, falls nicht vorhanden
                 group = {"name": device_name, "entities": []}
                 grouped_entities_array.append(group)
 
-            # Füge die Entität zur Gruppe hinzu
             group["entities"].append({
                 "entity_id": result["entity_id"],
                 "value": result["value"],
             })
 
-            # Überprüfe auf relevante Schlüsselwörter in der `entity_id`
             for key, message in relevant_types.items():
                 if key in result["entity_id"]:
                     if "ogb_" in result["entity_id"]:
                         _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
                         continue
-                    
-                    # Füge die Entität zur WorkData hinzu
-                    workdataStore = self.dataStore.getDeep(f"workData.{key}")
-                    workdataStore.append({
-                        "entity_id": result["entity_id"],
-                        "value": result["value"],
-                    })
-                    _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
+
+                    entity_id = result["entity_id"]
+                    value = result["value"]
+
+                    # Hole existierende Daten aus dem DataStore
+                    workdataStore = self.dataStore.getDeep(f"workData.{key}", default=[])
+
+                    # Prüfe, ob die entity_id bereits vorhanden ist
+                    existing = next((item for item in workdataStore if item["entity_id"] == entity_id), None)
+                    if existing:
+                        # Aktualisiere nur den Wert
+                        existing["value"] = value
+                        _LOGGER.error(f"{self.room_name} Updated WorkData {key} value for {entity_id} to {value}")
+                    else:
+                        # Füge neuen Eintrag hinzu
+                        workdataStore.append({"entity_id": entity_id, "value": value})
+                        _LOGGER.error(f"{self.room_name} Added new entity to WorkData {key}: {entity_id}")
+
+                    # Setze aktualisierte Liste zurück
                     self.dataStore.setDeep(f"workData.{key}", workdataStore)
+
 
         # Debug-Ausgabe der gruppierten Ergebnisse
         _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")

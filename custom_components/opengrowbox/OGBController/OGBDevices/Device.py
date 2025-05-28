@@ -746,7 +746,7 @@ class Device:
                 
                 updateData = {"entity_id":entity_id,"newValue":new_state_value,"oldValue":old_state_value}                               
                 
-                _LOGGER.warning(
+                _LOGGER.debug(
                     f"Device State-Change für {self.deviceName} an {entity_id} in {self.inRoom}: "
                     f"Alt: {old_state_value}, Neu: {new_state_value}"
                 )
@@ -757,7 +757,7 @@ class Device:
                 
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
-        _LOGGER.warning(f"Device-State-Change Listener für {self.deviceName} registriert.")
+        _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
         
         
     #### USAGE
