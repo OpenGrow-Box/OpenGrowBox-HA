@@ -59,17 +59,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
             options=room_names
         )
         return self.room_selector
-    
-    #def create_long_live_token(self,coordinator,token):
-    #    """Create a new LongLiveToken"""
-    #    self.token_store = OpenGrowBoxAccesToken(
-    #        name="OGB_AccessToken",
-    #        room_name=self.room_name,
-    #        coordinator=coordinator,
-    #        initial_value=token
-    #    )
-    #    return self.token_store
-    
+       
     async def update_room_selector(self):
         """Update the Room Selector with current Home Assistant rooms."""
         area_registry = async_get_area_registry(self.hass)
@@ -86,57 +76,6 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
                 self.room_selector._attr_current_option = room_names[0] if room_names else None
             self.room_selector.async_write_ha_state()
             _LOGGER.debug(f"Updated Room Selector with rooms: {room_names} (current: {self.room_selector._attr_current_option})")
-
-    async def startOGB2(self):
-        """
-        Startet die OpenGrowBox-Initialisierung und stellt sicher, 
-        dass Events erst nach Abschluss der Initialisierung verarbeitet werden.
-        """
-        _LOGGER.debug("Starting OpenGrowBox initialization.")
-        self.is_ready = False  # Verhindert die Verarbeitung von Events während der Initialisierung
-        
-        # Abrufen und Verarbeiten der Raum-Entitäten
-        room = self.room_name.lower()
-        groupedRoomEntities = await self.OGB.registryListener.get_filtered_entities_with_value(room)
-        
-        
-        _LOGGER.warning(f"All Groups {groupedRoomEntities} in {self.room_name}")    
-       
-        # Filtern der Gruppen, die "ogb" enthalten
-        ogbGroup = [group for group in groupedRoomEntities if "ogb" in group["name"].lower()]
-        realDevices = [group for group in groupedRoomEntities if "ogb" not in group["name"].lower()]
-        tasks = []
-        
-        _LOGGER.warning(f"OGB group {ogbGroup} in {self.room_name}") 
-        _LOGGER.warning(f"Real Devices  {realDevices} in {self.room_name}")      
-        
-        if ogbGroup:
-            tasks.append(self.OGB.managerInit(ogbGroup))
-        else:
-           _LOGGER.warning(f"No OGB groups found in room {self.room_name}. Proceeding with device initialization.")
-        
-        for deviceGroup in realDevices:
-            tasks.append(self.OGB.deviceManager.addDevice(deviceGroup))
-        
-        # Parallelisiere die Tasks
-
-        #for group in reversed(groupedRoomEntities):
-        #    if "ogb" in group["name"]:
-        #        #tasks.append(self.OGB.managerInit(group))  # Task für managerInit hinzufügen
-        #        continue
-        #    tasks.append(self.OGB.deviceManager.addDevice(group))  # Task für addDevice hinzufügen
-
-        # Warte auf den Abschluss aller Tasks
-        await asyncio.gather(*tasks)
-
-        # Abschließende Initialisierungen
-        await self.OGB.firstInit()
-
-        self.is_ready = True  # Initialisierung abgeschlossen
-        _LOGGER.debug(f"OpenGrowBox initialization completed in {self.room_name}.")
-
-        # Starte das Monitoring
-        asyncio.create_task(self.wait_until_ready_and_start_monitoring())
 
     async def startOGB(self):
         """

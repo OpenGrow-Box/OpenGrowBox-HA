@@ -93,7 +93,7 @@ class OpenGrowBox:
                 # Update Temperaturdaten
                 temps = self._update_work_data_array(temps, entity)
                 self.dataStore.setDeep("workData.temperature", temps)
-                VPDPub = OGBVPDPublication(Name="HumUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
+                VPDPub = OGBVPDPublication(Name="TempUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
                 await self.eventManager.emit("VPDCreation",VPDPub)
                 _LOGGER.warning(f"{self.room} OGB-Manager: Temperaturdaten aktualisiert {temps}")
 
@@ -383,26 +383,23 @@ class OpenGrowBox:
    
     def _update_work_data_array(self, data_array, entity):
         """
-        Aktualisiert die WorkData-Array basierend auf der übergebenen Entität.
-        :param data_array: Array mit bestehenden Daten.
-        :param entity: Entität mit Name und neuen Werten.
-        :return: Aktualisiertes Array.
+        Aktualisiert alle passenden Einträge im WorkData-Array basierend auf der übergebenen Entität.
         """
-        # Suche nach bestehendem Eintrag
+        _LOGGER.error(f"{self.room}: Checking Update-ITEM: {entity} in {data_array}")  
         found = False
         for item in data_array:
             if item["entity_id"] == entity.Name:
-                item["value"] = entity.newState[0]  # Setze den neuen Wert
+                item["value"] = entity.newState[0]
                 found = True
-                break
-
-        # Falls kein bestehender Eintrag, neuen hinzufügen
+                _LOGGER.error(f"{self.room}:Update-ITEM Found: {entity} → {item['value']}")
+        
         if not found:
             data_array.append({
                 "entity_id": entity.Name,
                 "value": entity.newState[0]
             })
-
+            _LOGGER.error(f"{self.room}:Update-ITEM NOT Found: {entity} → hinzugefügt")
+        
         return data_array
 
     async def _plantStageToVPD(self):

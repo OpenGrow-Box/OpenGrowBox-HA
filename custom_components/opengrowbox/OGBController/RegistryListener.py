@@ -109,7 +109,7 @@ class OGBRegistryEvenListener:
         
         # Relevante Präfixe und Schlüsselwörter
         relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.","humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty", "co2",)
+        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage","co2",)
         relevant_types = {
             "temperature": "Temperature entity found",
             "humidity": "Humidity entity found",
@@ -273,33 +273,6 @@ class OGBRegistryEvenListener:
                 "entity_id": result["entity_id"],
                 "value": result["value"],
             })
-
-            for key, message in relevant_types.items():
-                if key in result["entity_id"]:
-                    if "ogb_" in result["entity_id"]:
-                        _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
-                        continue
-
-                    entity_id = result["entity_id"]
-                    value = result["value"]
-
-                    # Hole existierende Daten aus dem DataStore
-                    workdataStore = self.dataStore.getDeep(f"workData.{key}", default=[])
-
-                    # Prüfe, ob die entity_id bereits vorhanden ist
-                    existing = next((item for item in workdataStore if item["entity_id"] == entity_id), None)
-                    if existing:
-                        # Aktualisiere nur den Wert
-                        existing["value"] = value
-                        _LOGGER.error(f"{self.room_name} Updated WorkData {key} value for {entity_id} to {value}")
-                    else:
-                        # Füge neuen Eintrag hinzu
-                        workdataStore.append({"entity_id": entity_id, "value": value})
-                        _LOGGER.error(f"{self.room_name} Added new entity to WorkData {key}: {entity_id}")
-
-                    # Setze aktualisierte Liste zurück
-                    self.dataStore.setDeep(f"workData.{key}", workdataStore)
-
 
         # Debug-Ausgabe der gruppierten Ergebnisse
         _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
