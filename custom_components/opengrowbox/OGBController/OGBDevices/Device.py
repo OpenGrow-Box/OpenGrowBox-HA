@@ -20,7 +20,6 @@ class Device:
         self.ogbsettings = []
         self.deviceInit(deviceData)
         self.initialization = False
-        
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
         
     def __iter__(self):
@@ -58,7 +57,7 @@ class Device:
             self.registerListener()
             _LOGGER.warning(f"Device {self.deviceName} Initialization Completed")
         else:
-            raise Exception("Device could not be Initialized ")
+            raise Exception(f"Device could not be Initialized {self.deviceName}")
 
     async def deviceUpdate(self, updateData):
         """
@@ -255,9 +254,7 @@ class Device:
             _LOGGER.warning(f"{self.deviceName}: Keine Sensordaten oder Optionen gefunden.")
             return
 
-
         relevant_keys = ["duty", "voltage"]
-
 
         for sensor in self.sensors:
             _LOGGER.warning(f"Prüfe Sensor: {sensor}")
@@ -272,10 +269,11 @@ class Device:
                     if self.deviceType == "Light":
                             self.voltage = value
                             _LOGGER.warning(f"{self.deviceName}: Voltage aus Sensor aktualisiert auf {self.voltage}%.")
-                    else:    
+                    elif self.deviceType == "Exhaust" or self.deviceType == "Inhaust" or self.deviceType == "Ventilation":
                         self.dutyCycle = int(value)
-                    _LOGGER.warning(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle}%.")
-                    return
+                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle}%.")
+                    else:
+                        return
                 except ValueError as e:
                     _LOGGER.error(f"{self.deviceName}: Fehler beim Parsen des Wertes aus {sensor}: {e}")
                     continue
@@ -306,8 +304,6 @@ class Device:
                     _LOGGER.error(f"{self.deviceName}: Fehler beim Parsen des Wertes aus {option}: {e}")
                     continue
 
-
-        _LOGGER.warning(f"{self.deviceName}: Kein gültiger Duty Cycle oder Voltage-Wert in Sensoren oder Optionen gefunden.")
 
     async def turn_on(self, **kwargs):
         """Schaltet das Gerät ein."""
@@ -759,15 +755,3 @@ class Device:
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
         _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
         
-        
-    #### USAGE
-    #device = Device(deviceName="Licht", deviceData=device_entities, eventManager=event_manager, deviceType="light", hass=hass)0
-    # Schalte ein mit 50% Helligkeit
-    #await device.turn_on(brightness_pct=50)
-    #await device.turn_on(percentage=50)
-    # Schalte aus
-    #await device.turn_off()
-    # Setze Duty Cycle auf 80
-    #await device.set_value(80)
-    # Ändere den Modus
-    #await device.set_mode("cool")
