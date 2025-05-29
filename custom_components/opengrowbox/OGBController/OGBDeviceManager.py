@@ -199,7 +199,7 @@ class OGBDeviceManager:
                     await self.DeviceCleaner()
                 except Exception as e:
                     _LOGGER.exception(f"Error during device refresh: {e}")
-                await asyncio.sleep(300)
+                await asyncio.sleep(150)
 
         # Starte den Task und speichere ihn zur Kontrolle
         self._devicerefresh_task = asyncio.create_task(periodicWorker())
