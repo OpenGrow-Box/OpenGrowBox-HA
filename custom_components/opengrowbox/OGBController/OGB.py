@@ -329,7 +329,7 @@ class OpenGrowBox:
 
         if lightChange == None: return
         self.dataStore.setDeep("isPlantDay.islightON",lightChange)
-        _LOGGER.info(f"{self.name}: Lichtstatus geprüft und aktualisiert für {self.room} Lichstatus ist {lightChange}")
+        _LOGGER.debug(f"{self.name}: Lichtstatus geprüft und aktualisiert für {self.room} Lichstatus ist {lightChange}")
         
         await self.eventManager.emit("toggleLight",lightChange)
             
@@ -364,7 +364,7 @@ class OpenGrowBox:
                     },
                     blocking=True
                 )
-                _LOGGER.warning(f"Updated {entity_id} to {safe_value}")
+                _LOGGER.debug(f"Updated {entity_id} to {safe_value}")
 
             await set_value(minTemp_entity, minTemp_value)
             await set_value(maxTemp_entity, maxTemp_value)
@@ -385,20 +385,20 @@ class OpenGrowBox:
         """
         Aktualisiert alle passenden Einträge im WorkData-Array basierend auf der übergebenen Entität.
         """
-        _LOGGER.error(f"{self.room}: Checking Update-ITEM: {entity} in {data_array}")  
+        _LOGGER.debug(f"{self.room}: Checking Update-ITEM: {entity} in {data_array}")  
         found = False
         for item in data_array:
             if item["entity_id"] == entity.Name:
                 item["value"] = entity.newState[0]
                 found = True
-                _LOGGER.error(f"{self.room}:Update-ITEM Found: {entity} → {item['value']}")
+                _LOGGER.debug(f"{self.room}:Update-ITEM Found: {entity} → {item['value']}")
         
         if not found:
             data_array.append({
                 "entity_id": entity.Name,
                 "value": entity.newState[0]
             })
-            _LOGGER.error(f"{self.room}:Update-ITEM NOT Found: {entity} → hinzugefügt")
+            _LOGGER.debug(f"{self.room}:Update-ITEM NOT Found: {entity} → hinzugefügt")
         
         return data_array
 
@@ -522,7 +522,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_state = self.dataStore.get("notifyControl")
         self.dataStore.set("notifyControl",value)
-        _LOGGER.warning(f"{self.room}: Notification geändert von {current_state} auf {value}")
+        _LOGGER.debug(f"{self.room}: Notification geändert von {current_state} auf {value}")
         if value == "Disabled":
             self.eventManager.change_notify_set(False)
         elif value == "Enabled":
@@ -538,7 +538,7 @@ class OpenGrowBox:
         if current_stage != value:
             self.dataStore.set("plantStage",value)
             await self._plantStageToVPD()
-            _LOGGER.warning(f"{self.room}: Pflanzenphase geändert von {current_stage} auf {value}")
+            _LOGGER.debug(f"{self.room}: Pflanzenphase geändert von {current_stage} auf {value}")
             await self.eventManager.emit("PlantStageChange",value)
   
     async def _update_tent_mode(self, data):
