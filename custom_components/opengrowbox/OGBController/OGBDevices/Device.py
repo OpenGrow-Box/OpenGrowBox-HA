@@ -231,7 +231,7 @@ class Device:
             _LOGGER.warning(f"{self.deviceName}: {self.deviceType} ist nicht in der Liste der dimmbaren Gerätetypen.")
             return
 
-        dimmableKeys = ["duty", "dutycycle", "duty_cycle", "fan.", "light.", "number.", "select.", "voltage"]
+        dimmableKeys = ["duty", "fan.", "light.", "number.", "voltage"]
 
         # Prüfen, ob ein Schlüssel in switches, options oder sensors vorhanden ist
         for source in (self.switches, self.options, self.sensors):
@@ -303,7 +303,6 @@ class Device:
                 except (ValueError, TypeError) as e:
                     _LOGGER.error(f"{self.deviceName}: Fehler beim Parsen des Wertes aus {option}: {e}")
                     continue
-
 
     async def turn_on(self, **kwargs):
         """Schaltet das Gerät ein."""
