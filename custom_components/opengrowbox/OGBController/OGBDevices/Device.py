@@ -267,11 +267,11 @@ class Device:
                         _LOGGER.warning(f"{self.deviceName}: Kein Wert im Sensor: {sensor}")
                         continue
                     if self.deviceType == "Light":
-                            self.voltage = value
-                            _LOGGER.warning(f"{self.deviceName}: Voltage aus Sensor aktualisiert auf {self.voltage}%.")
+                        self.voltage = value
+                        _LOGGER.warning(f"{self.deviceName}: Voltage aus Sensor aktualisiert auf {self.voltage}%.")
                     elif self.deviceType == "Exhaust" or self.deviceType == "Inhaust" or self.deviceType == "Ventilation":
                         self.dutyCycle = int(value)
-                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle}%.")
+                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle or self.voltage}%.")
                     else:
                         return
                 except ValueError as e:
