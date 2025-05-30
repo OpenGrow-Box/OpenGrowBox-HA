@@ -224,14 +224,14 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust","inhaust","light", "fan"]
+        allowedDeviceTypes = ["ventilation", "exhaust","inhaust","light"]
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
             _LOGGER.warning(f"{self.deviceName}: {self.deviceType} ist nicht in der Liste der dimmbaren Gerätetypen.")
             return
 
-        dimmableKeys = ["duty", "fan.", "light.", "number.", "voltage"]
+        dimmableKeys = ["fan.", "light.","number.","duty"]
 
         # Prüfen, ob ein Schlüssel in switches, options oder sensors vorhanden ist
         for source in (self.switches, self.options, self.sensors):
@@ -243,6 +243,7 @@ class Device:
                     return
 
         _LOGGER.warning(f"{self.deviceName}: Keine dimmbaren Eigenschaften gefunden.")
+    
     
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend auf Gerätetyp und Daten."""
