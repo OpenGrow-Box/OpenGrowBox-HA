@@ -232,7 +232,7 @@ class Device:
             _LOGGER.warning(f"{self.deviceName}: {self.deviceType} ist nicht in der Liste der dimmbaren Gerätetypen.")
             return
 
-        dimmableKeys = ["fan.", "light.","number.","duty"]
+        dimmableKeys = ["fan.", "light.","number.","duty","intensity"]
 
         # Prüfen, ob ein Schlüssel in switches, options oder sensors vorhanden ist
         for source in (self.switches, self.options, self.sensors):
