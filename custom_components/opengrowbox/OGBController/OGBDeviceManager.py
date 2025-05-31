@@ -56,7 +56,7 @@ class OGBDeviceManager:
         devices.append(identified_device)
         self.dataStore.set("devices",devices)
                    
-        _LOGGER.warning(f"Added new device: {identified_device}")        
+        _LOGGER.info(f"Added new device: {identified_device}")        
         return identified_device
     
     async def removeDevice(self, entity):
@@ -73,7 +73,7 @@ class OGBDeviceManager:
         deviceToRemove = next((device for device in devices if device.deviceName == deviceName), None)
 
         if not deviceToRemove:
-            _LOGGER.warning(f"Device not found: {deviceName}")
+            _LOGGER.info(f"Device not found: {deviceName}")
             return False
 
         devices.remove(deviceToRemove)
@@ -168,17 +168,17 @@ class OGBDeviceManager:
         removedDevices = [device for device in currentDevices if device.deviceName not in realDeviceNames]
 
         if removedDevices:
-            _LOGGER.warning(f"Removing devices no longer found: {removedDevices}")
+            _LOGGER.info(f"Removing devices no longer found: {removedDevices}")
             for device in removedDevices:
                 await self.removeDevice(device)
 
         if newDevices:
-            _LOGGER.warning(f"Found {len(newDevices)} new devices, initializing...")
+            _LOGGER.info(f"Found {len(newDevices)} new devices, initializing...")
             for device in newDevices:
-                _LOGGER.warning(f"Registering new device: {device}")
+                _LOGGER.info(f"Registering new device: {device}")
                 await self.addDevice(device)
         else:
-            _LOGGER.warning("Device-Check: No new devices found.")
+            _LOGGER.info("Device-Check: No new devices found.")
 
     async def device_Worker(self):
         if self._devicerefresh_task and not self._devicerefresh_task.done():

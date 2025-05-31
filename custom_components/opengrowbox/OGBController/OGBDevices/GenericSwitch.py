@@ -15,10 +15,10 @@ class GenericSwitch(Device):
     #Actions Helpers
     
     async def increaseAction(self,data):
-        _LOGGER.warn(f"IncreaseAction: {self.deviceName}.")
+        _LOGGER.error(f"You got an Gerneric Switch on -> {self.deviceName}.")
         pass
      
     async def reduceAction(self,data):
-        _LOGGER.warn(f"ReduceAction: {self.deviceName}.")
+        _LOGGER.error(f"You got an Gerneric Switch on -> {self.deviceName}.")
         pass
     

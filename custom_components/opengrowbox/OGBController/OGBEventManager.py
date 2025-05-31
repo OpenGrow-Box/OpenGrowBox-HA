@@ -73,7 +73,7 @@ class OGBEventManager:
                 self.hass.bus.fire(event_name, event_data)
                 _LOGGER.info(f"Event-Bus Event '{event_name}' erfolgreich gesendet.")
             else:
-                _LOGGER.warning(f"Kein gültiger Event-Kanal für '{event_name}' verfügbar!")
+                _LOGGER.error(f"Kein gültiger Event-Kanal für '{event_name}' verfügbar!")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Senden des Events '{event_name}': {e}")
             
@@ -98,4 +98,4 @@ class OGBEventManager:
     
     def change_notify_set(self,state):
         self.notifications_enabled = state
-        _LOGGER.warning(f"Notify State jetzt: {self.notifications_enabled}")
+        _LOGGER.info(f"Notify State jetzt: {self.notifications_enabled}")

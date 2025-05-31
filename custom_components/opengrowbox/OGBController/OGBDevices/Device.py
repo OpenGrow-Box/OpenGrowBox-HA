@@ -20,8 +20,12 @@ class Device:
         self.ogbsettings = []
         self.deviceInit(deviceData)
         self.initialization = False
-        self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
+        self.inWorkMode = False
         
+        # EVENTS
+        self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
+        self.eventManager.on("WorkModeChange", self.WorkMode) 
+   
     def __iter__(self):
         return iter(self.__dict__.items())
 
@@ -683,7 +687,7 @@ class Device:
         # Suche erste passende Option mit 'duty' oder 'voltage' in der entity_id
         for option in self.options:
             entity_id = option.get("entity_id", "")
-            if "duty" in entity_id or "voltage" in entity_id:
+            if "duty" in entity_id or "intensity" in entity_id:
                 try:
                     await self.hass.services.async_call(
                         domain="number",
@@ -713,6 +717,36 @@ class Device:
         except Exception as e:
             _LOGGER.error(f"Fehler beim Setzen des Modus für {self.deviceName}: {e}")
 
+    # Modes for all Devices
+    async def WorkMode(self,workmode):
+        self.inWorkMode = workmode
+        if self.inWorkMode:
+            if self.isDimmable:
+                if self.deviceType == "Light":
+                    await self.turn_on(brightness_pct=self.minVoltage)
+                else:
+                    await self.turn_on(brightness_pct=self.minDuty)
+            else:
+                if self.deviceType == "Light":
+                    return
+                if self.deviceType == "Pump":
+                    return    
+                else:
+                    await self.turn_off()
+        else:
+            if self.isDimmable:
+                if self.deviceType == "Light":
+                    await self.turn_on(brightness_pct=self.maxVoltage)
+                else:
+                    await self.turn_on(brightness_pct=self.maxDuty)
+            else:
+                if self.deviceType == "Light":
+                    return 
+                if self.deviceType == "Pump":
+                    return
+                else:
+                    await self.turn_on()           
+               
     # Update Listener
     def registerListener(self):
         deviceEntitiys = self.getEntitys()
