@@ -30,7 +30,7 @@ class Light(Device):
         self.isScheduled = False
 
         # Sunrise/Sunset
-        self.sunPhaseActive = None
+        self.sunPhaseActive = False
         self.sunrise_task = None  # Task reference for sunrise
         self.sunset_task = None   # Task reference for sunset
 
@@ -76,7 +76,6 @@ class Light(Device):
         
     def init(self):
         if not self.isInitialized:
-            Init=True
             self.setLightTimes()
             
             if self.isDimmable:
@@ -85,7 +84,8 @@ class Light(Device):
                                 
                 if self.voltage == None or self.voltage == 0:
                     self.initialize_voltage()
-                    
+                else:
+                    _LOGGER.warning(f"{self.deviceName}: Voltage init done with Sensor Data -> {self.voltage}%.")     
             self.isInitialized = True
          
     def checkPlantStageLightValue(self):
@@ -105,7 +105,7 @@ class Light(Device):
     def initialize_voltage(self):
         """Initialisiert den Voltage auf MinVoltage."""
         self.voltage = self.initVoltage  
-        _LOGGER.warning(f"{self.deviceName}: Voltage initialisiert auf {self.voltage}%.")
+        _LOGGER.warning(f"{self.deviceName}: Voltage init to {self.voltage}%.")
 
     def setLightTimes(self):
         _LOGGER.warning(f"{self.deviceName}: DataStoreTest  {self.dataStore}")

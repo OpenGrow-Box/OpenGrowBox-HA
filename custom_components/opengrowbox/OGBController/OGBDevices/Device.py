@@ -56,6 +56,7 @@ class Device:
         if(self.initialization == True):
             self.registerListener()
             _LOGGER.warning(f"Device {self.deviceName} Initialization Completed")
+            self.initialization = False
         else:
             raise Exception(f"Device could not be Initialized {self.deviceName}")
 
@@ -110,13 +111,13 @@ class Device:
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
         """Prüft, ob ein Sensor interessant ist (z. B. temperature, humidity, dewpoint, co2)."""
-        interested_mapping = ("temperature", "humidity", "dewpoint", "co2","duty","voltage")
+        interested_mapping = ("temperature", "humidity", "dewpoint", "co2","duty","voltage","moisture")
         return any(keyword in sensor_id for keyword in interested_mapping)
 
     # Mapp Entity Types to Class vars
     def identifySwitchesAndSensors(self, entitys):
         """Identifiziere Switches und Sensoren aus der Liste der Entitäten und prüfe ungültige Werte."""
-        _LOGGER.warning(f"Identify Switches and Sensors {entitys}")
+        _LOGGER.info(f"Identify all given {entitys}")
 
         try:
             for entity in entitys:
@@ -137,7 +138,7 @@ class Device:
                 # Sortiere die Entität in die richtige Liste
                 if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.")):
                     self.switches.append(entity)
-                elif entityID.startswith(("select.", "number.","date", "text.", "time.")):
+                elif entityID.startswith(("select.", "number.","date.", "text.", "time.")):
                     self.options.append(entity)
                 elif entityID.startswith("sensor."):
                     # Prüfe, ob der Sensor interessant ist
@@ -218,9 +219,9 @@ class Device:
             elif switch_value  == "off":
                 self.isRunning = False
             elif switch_value in ( None, "unknown", "Unbekannt", "unavailable"):
-                raise ValueError(f"Invalid switch state '{switch_value}' for switch {switch['entity_id']}")
+                raise ValueError(f"Invalid Entity state '{switch_value}' for {self.repr(object)}")
             else:
-                raise ValueError(f"Invalid switch state '{switch_value}' for switch {switch['entity_id']}")
+                raise ValueError(f"Invalid  Entity state '{switch_value}' for {self.repr(object)}")
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
@@ -244,7 +245,6 @@ class Device:
 
         _LOGGER.warning(f"{self.deviceName}: Keine dimmbaren Eigenschaften gefunden.")
     
-    
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend auf Gerätetyp und Daten."""
         if not self.isDimmable:
@@ -255,7 +255,7 @@ class Device:
             _LOGGER.warning(f"{self.deviceName}: Keine Sensordaten oder Optionen gefunden.")
             return
 
-        relevant_keys = ["duty", "voltage"]
+        relevant_keys = ["duty","intensity"]
 
         for sensor in self.sensors:
             _LOGGER.warning(f"Prüfe Sensor: {sensor}")
@@ -272,7 +272,7 @@ class Device:
                         _LOGGER.warning(f"{self.deviceName}: Voltage aus Sensor aktualisiert auf {self.voltage}%.")
                     elif self.deviceType == "Exhaust" or self.deviceType == "Inhaust" or self.deviceType == "Ventilation":
                         self.dutyCycle = int(value)
-                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle oder Voltage aus Sensor aktualisiert auf {self.dutyCycle or self.voltage}%.")
+                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle aus Sensor aktualisiert auf {self.dutyCycle}%.")
                     else:
                         return
                 except ValueError as e:
@@ -291,10 +291,10 @@ class Device:
                         value = int(raw_value * 10)
                     else:
                         value = int(raw_value)
-                    
+    
                     if self.deviceType == "Light":
-                        self.voltage = value
                         self.voltageFromNumber = True # Identifier for number control on as voltage Value
+                        self.voltage = value
                         _LOGGER.warning(f"{self.deviceName}: Voltage aus Option aktualisiert auf {self.voltage}%.")
                     else:
                         self.dutyCycle = value
@@ -368,7 +368,7 @@ class Device:
                                 )
                                 self.isRunning = True
                                 _LOGGER.warning(f"{self.deviceName}: Licht umgestellt auf {float(brightness_pct/10)}.")
-                                await self.set_value(float(brightness_pct/10))
+                                await self.set_value(float(brightness_pct/10)) # Send in Percent % 
                                 return             
                         else:
                             await self.hass.services.async_call(
