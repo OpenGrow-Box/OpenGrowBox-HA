@@ -437,7 +437,10 @@ class Light(Device):
         if lightState:
             if not self.isRunning:
                 if self.voltage == 0 or self.voltage == None:
-                    await self.turn_on(brightness_pct=self.initVoltage if self.isDimmable else None)
+                    if self.voltage > 20:
+                        await self.turn_on(brightness_pct=self.voltage if self.isDimmable else None)                     
+                    else:
+                        await self.turn_on(brightness_pct=self.initVoltage if self.isDimmable else None)
                     self.log_action("Turn ON via toggle with InitValue")  
                 else:
                     await self.turn_on(brightness_pct=self.voltage if self.isDimmable else None)

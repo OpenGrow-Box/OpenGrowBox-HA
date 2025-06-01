@@ -223,9 +223,9 @@ class Device:
             elif switch_value  == "off":
                 self.isRunning = False
             elif switch_value in ( None, "unknown", "Unbekannt", "unavailable"):
-                raise ValueError(f"Invalid Entity state '{switch_value}' for {self.repr(object)}")
+                raise ValueError(f"Invalid Entity state '{switch_value}' for {self.deviceName}")
             else:
-                raise ValueError(f"Invalid  Entity state '{switch_value}' for {self.repr(object)}")
+                raise ValueError(f"Invalid  Entity state '{switch_value}' for {self.deviceName}")
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
@@ -723,8 +723,10 @@ class Device:
         if self.inWorkMode:
             if self.isDimmable:
                 if self.deviceType == "Light":
-                    await self.turn_on(brightness_pct=self.minVoltage)
+                    self.voltage = self.initVoltage
+                    await self.turn_on(brightness_pct=self.initVoltage)
                 else:
+                    self.dutyCycle = self.minDuty
                     await self.turn_on(brightness_pct=self.minDuty)
             else:
                 if self.deviceType == "Light":
@@ -736,8 +738,10 @@ class Device:
         else:
             if self.isDimmable:
                 if self.deviceType == "Light":
+                    self.voltage = self.maxVoltage
                     await self.turn_on(brightness_pct=self.maxVoltage)
                 else:
+                    self.dutyCycle = self.maxDuty
                     await self.turn_on(brightness_pct=self.maxDuty)
             else:
                 if self.deviceType == "Light":

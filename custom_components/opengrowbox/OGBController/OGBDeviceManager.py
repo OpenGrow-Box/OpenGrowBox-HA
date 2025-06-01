@@ -180,19 +180,11 @@ class OGBDeviceManager:
         else:
             _LOGGER.info("Device-Check: No new devices found.")
 
-    async def device_Worker(self):
+    def device_Worker(self):
         if self._devicerefresh_task and not self._devicerefresh_task.done():
             _LOGGER.debug("Device refresh task is already running. Skipping start.")
             return
         
-        if self._devicerefresh_task is not None:
-            self._devicerefresh_task.cancel()
-            try:
-                await self._devicerefresh_task
-            except asyncio.CancelledError:
-                pass
-            self._devicerefresh_task = None   
-
         async def periodicWorker():
             while True:
                 try:
