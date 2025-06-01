@@ -727,7 +727,7 @@ class Device:
                     await self.turn_on(brightness_pct=self.initVoltage)
                 else:
                     self.dutyCycle = self.minDuty
-                    await self.turn_on(brightness_pct=self.minDuty)
+                    await self.turn_on(percentage=self.minDuty)
             else:
                 if self.deviceType == "Light":
                     return
@@ -742,7 +742,7 @@ class Device:
                     await self.turn_on(brightness_pct=self.maxVoltage)
                 else:
                     self.dutyCycle = self.maxDuty
-                    await self.turn_on(brightness_pct=self.maxDuty)
+                    await self.turn_on(percentage=self.maxDuty)
             else:
                 if self.deviceType == "Light":
                     return 

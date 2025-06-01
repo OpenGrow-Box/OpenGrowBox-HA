@@ -124,8 +124,8 @@ class OGBDeviceManager:
             "Cooler": ["cooler", "kuehler"],
             "Climate": ["climate", "klima"],
             "Light": ["light", "lamp", "led"],
-            "Co2": ["co2", "carbon"],
-            "Pump":["pump","airpump","mistpump","waterpump","co2pump"],
+            "Co2": ["co2", "carbon","co2pump"],
+            "Pump":["airpump","mistpump","waterpump","pump"],
             "Switch": ["generic", "switch"],
         }
 
