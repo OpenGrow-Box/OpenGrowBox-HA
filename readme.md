@@ -76,3 +76,7 @@ Contributions are welcome! Please fork the repository, create a new branch, and 
 
 ## Support
 For issues and feature requests, please open an issue on [GitHub](https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues).
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=OpenGrow-Box/OpenGrowBox-HA&type=Date)](https://www.star-history.com/#OpenGrow-Box/OpenGrowBox-HA&Date)
