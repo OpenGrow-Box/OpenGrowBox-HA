@@ -41,9 +41,9 @@ class OGBModeManager:
             return
         elif isinstance(Publication, OGBModeRunPublication):
             tentMode = Publication.currentMode
-            #_LOGGER.warn(f"{self.name}: Run Mode {tentMode} for {self.room}")
+            #_LOGGER.warning(f"{self.name}: Run Mode {tentMode} for {self.room}")
         else:
-            _LOGGER.warning(f"Unbekannter Datentyp: {type(Publication)} - Daten: {Publication}")      
+            _LOGGER.warninging(f"Unbekannter Datentyp: {type(Publication)} - Daten: {Publication}")      
        
         if tentMode == "VPD Perfection":
             await self.handle_vpd_perfection()
@@ -60,7 +60,7 @@ class OGBModeManager:
         elif tentMode == "Disabled":
             await self.handle_disabled_mode()
         else:
-            _LOGGER.warn(f"{self.name}: Unbekannter Modus {tentMode}")
+            _LOGGER.warning(f"{self.name}: Unbekannter Modus {tentMode}")
 
     async def handle_disabled_mode(self):
         """
@@ -79,45 +79,47 @@ class OGBModeManager:
         perfectionVPD = self.dataStore.getDeep("vpd.perfection")
         perfectionMinVPD = self.dataStore.getDeep("vpd.perfectMin")
         perfectionMaxVPD = self.dataStore.getDeep("vpd.perfectMax")
-        
+
         # Verfügbare Capabilities abrufen
         capabilities = self.dataStore.getDeep("capabilities")
 
         if currentVPD < perfectionMinVPD:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({perfectionMinVPD}). Increasing VPD.")
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({perfectionMinVPD}). Increasing VPD.")
             await self.eventManager.emit("increase_vpd",capabilities)
             #await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Increasing","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
         elif currentVPD > perfectionMaxVPD:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD.")
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD.")
             await self.eventManager.emit("reduce_vpd",capabilities)
             #await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Reducing","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
         elif currentVPD != perfectionVPD:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is within range but not at perfection ({perfectionVPD}). Fine-tuning.")
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is within range but not at perfection ({perfectionVPD}). Fine-tuning.")
             await self.eventManager.emit("FineTune_vpd",capabilities)
             #await self.eventManager.emit("LogForClient",{"Name":self.room,"Action":"VPD Check Fine-Tune","currentVPD:":currentVPD,"perfectionVPD":perfectionVPD},haEvent=True)
         else:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is at perfection ({perfectionVPD}). No action required.")
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is at perfection ({perfectionVPD}). No action required.")
 
     async def handle_in_range_vpd(self):
         """
         Handhabt den Modus 'VPD Perfection'.
         """
-        _LOGGER.warn(f"ModeManger: {self.room} Running 'In VPD Range'")
+        _LOGGER.warning(f"ModeManger: {self.room} Running 'In VPD Range'")
         
         currentVPD = self.dataStore.getDeep("vpd.current")
         rangeVPD = self.dataStore.getDeep("vpd.range")
+        tolerance = float(self.dataStore.getDeep("vpd.tolerance"))
+        
         minVPD = rangeVPD[0]
         maxVPD = rangeVPD[1]
         # Verfügbare Capabilities abrufen
         capabilities = self.dataStore.getDeep("capabilities")
         if currentVPD < minVPD:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({minVPD}). Increasing VPD.")
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({minVPD}). Increasing VPD.")
             await self.eventManager.emit("increase_vpd",capabilities)
         elif currentVPD > maxVPD:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({maxVPD}). Reducing VPD.")
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({maxVPD}). Reducing VPD.")
             await self.eventManager.emit("reduce_vpd",capabilities)
         else:
-            _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is in Range. Between {minVPD} and {maxVPD}  No action required.")        
+            _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is in Range. Between {minVPD} and {maxVPD}  No action required.")        
          
         pass
 
@@ -146,15 +148,15 @@ class OGBModeManager:
 
             # VPD steuern basierend auf der Toleranz
             if currentVPD < min_vpd:
-                _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({min_vpd}). Increasing VPD.")
+                _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is below minimum ({min_vpd}). Increasing VPD.")
                 await self.eventManager.emit("increase_vpd", capabilities)
             elif currentVPD > max_vpd:
-                _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD.")
+                _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD.")
                 await self.eventManager.emit("reduce_vpd", capabilities)
             elif currentVPD != targetedVPD:
-                _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is within range but not at Targeted ({targetedVPD}). Fine-tuning.")
+                _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is within range but not at Targeted ({targetedVPD}). Fine-tuning.")
             else:
-                _LOGGER.warn(f"{self.room}: Current VPD ({currentVPD}) is within tolerance range ({min_vpd} - {max_vpd}). No action required.")
+                _LOGGER.warning(f"{self.room}: Current VPD ({currentVPD}) is within tolerance range ({min_vpd} - {max_vpd}). No action required.")
         
         except ValueError as e:
             _LOGGER.error(f"ModeManager: Fehler beim Konvertieren der VPD-Werte oder Toleranz in Zahlen. {e}")
@@ -177,7 +179,11 @@ class OGBModeManager:
         Handhabt den Modus 'M.P.C Control'.
         """
         _LOGGER.info(f"ModeManger: {self.room} Modus 'M.P.C Control' aktiviert.")
-        await asyncio.sleep(0.001)
+        currentVPD = self.dataStore.getDeep("vpd.current")
+        perfectionVPD = self.dataStore.getDeep("vpd.perfection")
+        vpdStatus = self.determine_vpd_state(currentVPD, perfectionVPD)
+        actions = self.get_relevant_devices(vpdStatus)
+        await self.eventManager.emit("LogForClient",f"VPD-Needed-Devices: {actions} State: {vpdStatus} CurrentVPD:{currentVPD} TargetVPD:{perfectionVPD}",haEvent=True)
         # Füge hier spezifische Logik für diesen Modus ein
         pass
       
@@ -199,11 +205,11 @@ class OGBModeManager:
             phaseConfig = self.dataStore.getDeep(f"drying.modes.{currentDryMode}") 
             await self.handle_DewBased(phaseConfig)
         else:
-            _LOGGER.warn(f"{self.name} Unknown DryMode Recieved")           
+            _LOGGER.warning(f"{self.name} Unknown DryMode Recieved")           
             return None
 
     async def handle_ElClassico(self,phaseConfig):
-        _LOGGER.warn(f"{self.name} Run Drying 'El Classico'")          
+        _LOGGER.warning(f"{self.name} Run Drying 'El Classico'")          
         tentData = self.dataStore.get("tentData")     
 
         # Verfügbare Capabilities abrufen
@@ -235,7 +241,7 @@ class OGBModeManager:
         _LOGGER.info(f"{self.name}: El Classico Phase ")
 
     async def handle_SharkMouse(self,phaseConfig):
-        _LOGGER.warn(f"{self.name} Run Drying 'Shark Mouse'")  
+        _LOGGER.warning(f"{self.name} Run Drying 'Shark Mouse'")  
         tentData = self.dataStore.get("tentData")
         vpdTolerance = self.dataStore.get("vpd.tolerance")
         sharkMouseVPD = calc_shark_mouse_vpd(tentData["temperatures"],tentData["humidity"])
@@ -246,16 +252,16 @@ class OGBModeManager:
         #Anpassungen bassierend auf VPD
         if abs(sharkMouseVPD - phaseConfig['targetVPD']) > vpdTolerance:
             if sharkMouseVPD < phaseConfig['targetVPD']: 
-                _LOGGER.warn(f"{self.room}: SharkMouse VPD ({sharkMouseVPD}) nened to 'Increase' for Reaching {phaseConfig['targetVPD']}")
+                _LOGGER.warning(f"{self.room}: SharkMouse VPD ({sharkMouseVPD}) nened to 'Increase' for Reaching {phaseConfig['targetVPD']}")
                 await self.eventManager.emit("increase_vpd",capabilities)
             elif sharkMouseVPD > phaseConfig['targetVPD']:
-                _LOGGER.warn(f"{self.room}: SharkMouse VPD ({sharkMouseVPD}) nened to 'Reduce' for Reaching {phaseConfig['targetVPD']}")
+                _LOGGER.warning(f"{self.room}: SharkMouse VPD ({sharkMouseVPD}) nened to 'Reduce' for Reaching {phaseConfig['targetVPD']}")
                 await self.eventManager.emit("reduce_vpd",capabilities)
             else:
-                _LOGGER.warn(f"{self.room}: SharkMouse VPD ({sharkMouseVPD}) Is on Spot. No action required.")
+                _LOGGER.warning(f"{self.room}: SharkMouse VPD ({sharkMouseVPD}) Is on Spot. No action required.")
                 
     async def handle_DewBased(self,phaseConfig):
-        _LOGGER.warn(f"{self.name}: Run Drying 'Dew Based'")
+        _LOGGER.warning(f"{self.name}: Run Drying 'Dew Based'")
 
         tentData = self.dataStore.get("tentData")
         dewPointTolerance = 0.5  # Toleranz für Taupunkt
@@ -266,22 +272,66 @@ class OGBModeManager:
     
             # Sicherstellen, dass der Taupunkt eine gültige Zahl ist
         if not isinstance(currentDewPoint, (int, float)) or currentDewPoint is None or currentDewPoint != currentDewPoint:  # NaN-Check
-            _LOGGER.warn(f"{self.name}: Current Dew Point is unavailable or invalid.")
+            _LOGGER.warning(f"{self.name}: Current Dew Point is unavailable or invalid.")
             return None
         if (abs(currentDewPoint - phaseConfig["targetDewPoint"]) > dewPointTolerance or vaporPressureActual < 0.9 * vaporPressureSaturation or vaporPressureActual > 1.1 * vaporPressureSaturation):       
             if currentDewPoint < phaseConfig["targetDewPoint"] or vaporPressureActual < 0.9 * vaporPressureSaturation:
                 await self.eventManager.emit("Increase Humidifier", None)
                 await self.eventManager.emit("Increase Exhaust", None)
                 await self.eventManager.emit("Increase Ventilation", None)
-                _LOGGER.warn(f"{self.room}: Dew Point ({currentDewPoint}) below target ({phaseConfig['targetDewPoint']}). Actions: Increase humidity.")
+                _LOGGER.warning(f"{self.room}: Dew Point ({currentDewPoint}) below target ({phaseConfig['targetDewPoint']}). Actions: Increase humidity.")
             elif currentDewPoint > phaseConfig["targetDewPoint"] or vaporPressureActual > 1.1 * vaporPressureSaturation:
                 await self.eventManager.emit("Increase Dehumidifier", None)
                 await self.eventManager.emit("Increase Exhaust", None)
                 await self.eventManager.emit("Increase Ventilation", None)
-                _LOGGER.warn(f"{self.room}: Dew Point ({currentDewPoint}) above target ({phaseConfig['targetDewPoint']}). Actions: Reduce humidity.")
+                _LOGGER.warning(f"{self.room}: Dew Point ({currentDewPoint}) above target ({phaseConfig['targetDewPoint']}). Actions: Reduce humidity.")
         else:
-            _LOGGER.warn(f"{self.room}: Dew Point ({currentDewPoint}) is within tolerance range. No actions required.")
+            _LOGGER.warning(f"{self.room}: Dew Point ({currentDewPoint}) is within tolerance range. No actions required.")
 
+    # Dynamic Device Action Recognition
+    def get_relevant_devices(self, vpdStatus: str):
+        available_capabilities = self.dataStore.get("capabilities")
+        device_profiles = self.dataStore.get("DeviceProfiles")
+        result = []
+
+        for dev_name, profile in device_profiles.items():
+            cap_key = profile.get("cap")
+            if not cap_key:
+                continue
+
+            cap_info = available_capabilities.get(cap_key)
+            if not cap_info or cap_info["count"] == 0:
+                continue
+
+            if vpdStatus == "too_high":
+                if (
+                    (profile["type"] == "humidity" and profile["direction"] == "increase") or
+                    (profile["type"] == "temperature" and profile["direction"] == "reduce") or
+                    (profile["type"] == "both" and profile["direction"] == "reduce")
+                ):
+                    result.extend(cap_info["devEntities"])
+
+            elif vpdStatus == "too_low":
+                if (
+                    (profile["type"] == "humidity" and profile["direction"] == "reduce") or
+                    (profile["type"] == "temperature" and profile["direction"] == "increase") or
+                    (profile["type"] == "both" and profile["direction"] == "increase")
+                ):
+                    result.extend(cap_info["devEntities"])
+
+        return result
+
+    def determine_vpd_state(self,current_vpd: float, target_vpd: float, tolerance: float = 0.1) -> str:   
+        tolerance = float(self.dataStore.getDeep("vpd.tolerance"))
+        tolerance_value = target_vpd * (tolerance / 100)
+        min_vpd = target_vpd - tolerance_value
+        max_vpd = target_vpd + tolerance_value
+        
+        if current_vpd > min_vpd:
+            return "too_high"
+        elif current_vpd < max_vpd:
+            return "too_low"
+        return "ok"
 
     ## Hydro Modes
     async def HydroModeChange(self, pumpAction):
@@ -431,4 +481,4 @@ class OGBModeManager:
     def log(self, log_message):
         """Logs the performed action."""
         logHeader = f"{self.name}"
-        _LOGGER.warn(f" {logHeader} : {log_message} ")
+        _LOGGER.warning(f" {logHeader} : {log_message} ")

@@ -169,7 +169,7 @@ class Light(Device):
                     return
                 await self.turn_on(brightness_pct=self.minVoltage)
             
-            _LOGGER.error(f"{self.deviceName}: Setze Spannung für Phase '{plantStage}' auf {self.initVoltage}V–{self.maxVoltage}V-CURRENT:{self.voltage}V.")
+            _LOGGER.info(f"{self.deviceName}: Setze Spannung für Phase '{plantStage}' auf {self.initVoltage}V–{self.maxVoltage}V-CURRENT:{self.voltage}V.")
         else:
             _LOGGER.error(f"{self.deviceName}: Unbekannte Pflanzenphase '{plantStage}'. Standardwerte werden verwendet.")
 

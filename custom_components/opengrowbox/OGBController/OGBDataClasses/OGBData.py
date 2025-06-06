@@ -196,4 +196,22 @@ class OGBConf:
         "temperature": [],
         "humidity": [],
         "dewpoint": [],
+        "Devices": [],
+    })
+    DeviceMinMax: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
+        "Exhaust": {"active":False,"minDuty":0,"maxDuty":0},
+        "Ixhaust": {"active":False,"minDuty":0,"maxDuty":0},
+        "Ventilation": {"active":False,"minDuty":0,"maxDuty":0},
+        "Lights": {"active":False,"minVoltage":0,"maxVoltage":0},
+    })
+    DeviceProfiles: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
+        "Exhaust": {"type":"both", "cap":"canExhaust", "direction": "reduce", "effect":1.0, "sideEffect":{}},
+        "Inhaust": {"type":"both", "cap":"canInhaust", "direction": "reduce", "effect":1.0, "sideEffect":{}},
+        "Light": {"type":"temperature","cap":"canLight", "direction": "increase", "effect":1.0, "sideEffect":{"type": "temperature", "direction": "increase" }},
+        "Ventilation": {"type":"both","cap":"canVentilate", "direction": "increase", "effect":0.5, "sideEffect":{}},
+        "Heater": {"type":"temperature","cap":"canHeat", "direction": "increase", "effect":2.0, "sideEffect":{"type": "humidity", "direction": "reduce" }},
+        "Cooler": {"type":"temperature","cap":"canCool", "direction": "reduce", "effect":2.0, "sideEffect":{"type": "humidity", "direction": "reduce" }},
+        "Humidifier": {"type":"humidity","cap":"canHumidify", "direction": "increase", "effect":1.5, "sideEffect":{}},
+        "Dehumidifer": {"type":"humidity","cap":"canDehumidify", "direction": "increase", "effect":2.0, "sideEffect":{"type": "temperature", "direction": "increase" }},
+        "Climate": {"type":"both","cap":"canClimate", "direction": "increase","effect":2.0, "sideEffect":{}},
     })

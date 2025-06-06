@@ -24,7 +24,8 @@ class Device:
         
         # EVENTS
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
-        self.eventManager.on("WorkModeChange", self.WorkMode) 
+        self.eventManager.on("WorkModeChange", self.WorkMode)
+        self.eventManager.on("SetMinMax", self.setMinMax)
    
     def __iter__(self):
         return iter(self.__dict__.items())
@@ -53,6 +54,9 @@ class Device:
         
     # Initialisiere das Gerät und identifiziere Eigenschaften
     def deviceInit(self, entitys):
+        
+        self.checkMinMaxSet(False)
+                
         self.identifySwitchesAndSensors(entitys)
         self.identifyIfRunningState()
         self.identifDimmable()
@@ -111,7 +115,21 @@ class Device:
         if any(prefix in entity_id for prefix in ["ogb_"]):
             _LOGGER.warning(f"{self.deviceName} Start Update OGBS for {updateData}.")
             await update_entity_value(self.sensors, entity_id, new_value)
-           
+    
+    async def checkMinMaxSet(self,data):
+        minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
+
+        if not minMaxSets or not minMaxSets.get("active", False):
+            return  # Nichts aktiv → nichts tun
+
+        if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
+            self.minVoltage = minMaxSets.get("minVoltage")
+            self.maxVoltage = minMaxSets.get("maxVoltage")
+
+        elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+            self.minDuty = minMaxSets.get("minDuty")
+            self.maxDuty = minMaxSets.get("maxDuty")
+          
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
         """Prüft, ob ein Sensor interessant ist (z. B. temperature, humidity, dewpoint, co2)."""
@@ -793,3 +811,18 @@ class Device:
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
         _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
         
+
+    def setMinMax(self,data):
+        minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
+
+        if not minMaxSets or not minMaxSets.get("active", False):
+            return  # Nichts aktiv → nichts tun
+
+        if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
+            self.minVoltage = float(minMaxSets.get("minVoltage")) 
+            self.maxVoltage = float(minMaxSets.get("maxVoltage"))
+            self.clamp_voltage(self.voltage)
+        elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+            self.minDuty = float(minMaxSets.get("minDuty"))
+            self.maxDuty = float(minMaxSets.get("maxDuty"))
+            self.clamp_duty_cycle(self.dutyCycle)

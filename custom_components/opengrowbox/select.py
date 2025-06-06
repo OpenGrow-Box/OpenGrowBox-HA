@@ -190,14 +190,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_Hydro_Cycle_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["YES","NO"], initial_value="NO"),
      
-     
         # Ambient
         CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_AmbientBorrow_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_OwnDeviceSets_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES", "NO"], initial_value="NO"),
         
         ##Notifications
         CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -208,17 +205,27 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     options=["YES","NO"], initial_value="NO"),
         
         ##DEVICES
-        CustomSelect(f"OGB_Light1_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Light2_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Light3_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_OwnDeviceSets_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["YES", "NO"], initial_value="NO"),
+        CustomSelect(f"OGB_Light_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_Light_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        
         CustomSelect(f"OGB_Exhaust_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        
+        CustomSelect(f"OGB_Inhaust_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_Inhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+         
         CustomSelect(f"OGB_Vents_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_Ventilation_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+                
         CustomSelect(f"OGB_Humidifier_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_Dehumidifier_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_Heater_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_Cooler_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_Climate_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_CO2_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_WaterPump_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
     ]
 
     # Register the Selects globally in hass.data

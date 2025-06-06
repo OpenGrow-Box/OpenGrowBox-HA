@@ -19,7 +19,41 @@ class OGBActionManager:
         self.eventManager.on("reduce_vpd", self.reduce_vpd)
         self.eventManager.on("FineTune_vpd", self.fine_tune_vpd)
         self.eventManager.on("PumpAction", self.PumpAction) 
-    
+
+
+    # Dynamic Device Action Recognition
+    def getRoomCaps(self, vpdStatus: str):
+        available_capabilities = self.dataStore.get("capabilities")
+        device_profiles = self.dataStore.get("DeviceProfiles")
+        result = []
+
+        for dev_name, profile in device_profiles.items():
+            cap_key = profile.get("cap")
+            if not cap_key:
+                continue
+
+            cap_info = available_capabilities.get(cap_key)
+            if not cap_info or cap_info["count"] == 0:
+                continue
+
+            if vpdStatus == "too_high":
+                if (
+                    (profile["type"] == "humidity" and profile["direction"] == "increase") or
+                    (profile["type"] == "temperature" and profile["direction"] == "reduce") or
+                    (profile["type"] == "both" and profile["direction"] == "reduce")
+                ):
+                    result.extend(cap_info["devEntities"])
+
+            elif vpdStatus == "too_low":
+                if (
+                    (profile["type"] == "humidity" and profile["direction"] == "reduce") or
+                    (profile["type"] == "temperature" and profile["direction"] == "increase") or
+                    (profile["type"] == "both" and profile["direction"] == "increase")
+                ):
+                    result.extend(cap_info["devEntities"])
+
+        return result
+ 
     async def increase_vpd(self, capabilities):
         """
         Erhöht den VPD-Wert durch Anpassung der entsprechenden Geräte.

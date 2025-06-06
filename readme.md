@@ -1,7 +1,7 @@
 # OpenGrowBox - Home Assistant Integration
 
 ⚙️ [Installation Guide](https://github.com/OpenGrow-Box/OpenGrowBox/wiki/Installation#-opengrowbox--installation-guide)
-
+📖 [WIKI](https://github.com/OpenGrow-Box/OpenGrowBox/wiki/)
 
 ## Overview
 

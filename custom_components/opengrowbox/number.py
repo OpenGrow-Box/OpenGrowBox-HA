@@ -165,7 +165,31 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     min_value=0.0, max_value=300, step=1, unit="Sec", initial_value=0),
         CustomNumber(f"OGB_HydroPumpIntervall_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=1440, step=1, unit="Min", initial_value=0),
-   
+
+
+        # Exhaust MinMax
+        CustomNumber(f"OGB_Exhaust_Duty_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_Exhaust_Duty_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+
+        # Inhaustt MinMax
+        CustomNumber(f"OGB_Inhaust_Duty_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_Inhaust_Duty_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+     
+        # Ventilation MinMax
+        CustomNumber(f"OGB_Ventilation_Duty_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_Ventilation_Duty_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+ 
+        # Light MinMax
+        CustomNumber(f"OGB_Light_Volt_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_Light_Volt_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),   
     ]
 
     if "numbers" not in hass.data[DOMAIN]:

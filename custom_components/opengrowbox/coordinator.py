@@ -96,8 +96,10 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
             ogbGroup = [group for group in groupedRoomEntities if "ogb" in group["name"].lower()]
             realDevices = [group for group in groupedRoomEntities if "ogb" not in group["name"].lower()]
 
+
+
             #_LOGGER.warning(f"OGB group {ogbGroup} in {self.room_name}")
-            #_LOGGER.warning(f"Real Devices {realDevices} in {self.room_name}")
+            _LOGGER.debug(f"Real-Devices {realDevices} in {self.room_name}")
 
             # Verarbeite zuerst die OGB-Gruppen
             if ogbGroup:
@@ -105,12 +107,17 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
                 ogbTasks = [self.OGB.managerInit(group) for group in ogbGroup]
                 await asyncio.gather(*ogbTasks)  # Warte, bis alle OGB-Tasks abgeschlossen sind
             else:
-                _LOGGER.warning(f"No OGB groups found in room {self.room_name}. Proceeding with device initialization.")
+                _LOGGER.error(f"No OGB groups found in room {self.room_name}. Proceeding with device initialization.")
 
             # Danach die anderen Geräte verarbeiten
             if realDevices:
+                # Add real devices to datastore
+                
+                self.OGB.dataStore.setDeep("workData.Devices",realDevices)
+                await self.OGB.eventManager.emit("UpdateDeviceList",realDevices)
+                
                 _LOGGER.debug(f"Starting device initialization for {len(realDevices)} groups.")
-                deviceTasks = [self.OGB.deviceManager.addDevice(deviceGroup) for deviceGroup in realDevices]
+                deviceTasks = [self.OGB.deviceManager.setupDevice(deviceGroup) for deviceGroup in realDevices]
                 await asyncio.gather(*deviceTasks)  # Warte, bis alle Geräte-Tasks abgeschlossen sind
             else:
                 _LOGGER.warning(f"No devices found in room {self.room_name}.")
@@ -142,17 +149,8 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
     # OGB Monitorings
     async def startAllMonitorings(self):
        await self.subEventMonitoring()
-       #await self.subDeviceMonitoring()
 
     async def subEventMonitoring(self):
         """Starte das Event Monitoring."""
         await self.OGB.registryListener.monitor_filtered_entities(self.room_name)
-        
-        # Device monitoring für adding and removing Devices and Sensors.
-        #await self.OGB.registryListener.monitor_device_and_entity_changes(self.room_name)          
-        
-    async def subDeviceMonitoring(self):
-        await asyncio.sleep(0.1)
-        """Starte das Event Monitoring."""
-        #await self.OGB.registryListener.monitor_filtered_entities(self.room_name)
 

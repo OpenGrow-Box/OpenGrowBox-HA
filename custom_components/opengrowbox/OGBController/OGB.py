@@ -200,9 +200,45 @@ class OpenGrowBox:
             # Ambient/Outdoor Features
             f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
             
+            # Devices
+            f"ogb_owndevicesets_{self.room.lower()}": self._udpate_own_deviceSelect,            
+            
+            # Lights Sets
+            f"ogb_light_device_select_{self.room.lower()}": self._add_selectedDevice,  
+            f"ogb_light_minmax_{self.room.lower()}": self._device_Self_MinMax,
+            f"ogb_light_volt_min_{self.room.lower()}": self._device_MinMax_setter,
+            f"ogb_light_volt_max_{self.room.lower()}": self._device_MinMax_setter,            
+            
+            # Exhaust Sets
+            f"ogb_exhaust_device_select_{self.room.lower()}": self._add_selectedDevice,
+            f"ogb_exhaust_minmax_{self.room.lower()}": self._device_Self_MinMax,
+            f"ogb_exhaust_duty_min_{self.room.lower()}": self._device_MinMax_setter,
+            f"ogb_exhaust_duty_max_{self.room.lower()}": self._device_MinMax_setter,
+
+            # Inhaust Sets                                  
+            f"ogb_inhaust_device_select_{self.room.lower()}": self._add_selectedDevice,              
+            f"ogb_inhaust_minmax_{self.room.lower()}": self._device_Self_MinMax,
+            f"ogb_inhaust_duty_min_{self.room.lower()}": self._device_MinMax_setter,
+            f"ogb_inhaust_duty_max_{self.room.lower()}": self._device_MinMax_setter,
+            
+            # Vents Sets
+            f"ogb_vents_device_select_{self.room.lower()}": self._add_selectedDevice, 
+            f"ogb_ventilation_minmax_{self.room.lower()}": self._device_Self_MinMax,
+            f"ogb_ventilation_duty_min_{self.room.lower()}": self._device_MinMax_setter,
+            f"ogb_ventilation_duty_max_{self.room.lower()}": self._device_MinMax_setter,
+                                    
+            
+            f"ogb_heater_device_select_{self.room.lower()}": self._add_selectedDevice, 
+            f"ogb_cooler_device_select_{self.room.lower()}": self._add_selectedDevice,            
+            f"ogb_climate_device_select_{self.room.lower()}": self._add_selectedDevice,                
+            f"ogb_humidifier_device_select_{self.room.lower()}": self._add_selectedDevice,      
+            f"ogb_dehumidifier_device_select_{self.room.lower()}": self._add_selectedDevice,      
+            f"ogb_co2_device_select_{self.room.lower()}": self._add_selectedDevice,
+            f"ogb_waterpump_device_select_{self.room.lower()}": self._add_selectedDevice,
+                
             #WorkMode
             f"ogb_workmode_{self.room.lower()}": self._update_WrokMode_control,
-           
+
         }
 
         # Überprüfe, ob der Schlüssel in der Mapping-Tabelle vorhanden ist
@@ -258,7 +294,6 @@ class OpenGrowBox:
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 _LOGGER.info(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await self.update_sensor_via_service(vpdPub)
-
 
     async def update_sensor_via_service(self,vpdPub):
         """
@@ -650,7 +685,6 @@ class OpenGrowBox:
             await self.eventManager.emit("SunSetTimeUpdates",value)
 
     ## Workmode 
-    
     async def _update_WrokMode_control(self,data):
         """
         Update OGB Workmode Control
@@ -683,12 +717,10 @@ class OpenGrowBox:
             self.dataStore.setDeep("controlOptions.ambientControl", self._stringToBool(value))
             await asyncio.sleep(0)
 
-
-
     ##MINMAX Values
     async def _update_MinMax_control(self,data):
         """
-        Update OGB Light Control
+        Update MinMax Stage Values
         """
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
@@ -703,7 +735,7 @@ class OpenGrowBox:
 
     async def _update_maxTemp(self,data):
         """
-        Aktualisiere OGB Light Control
+        Aktualisiere OGB Max Temp
         """
         minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
         if minMaxControl == False: return
@@ -717,7 +749,7 @@ class OpenGrowBox:
 
     async def _update_maxHumidity(self,data):
         """
-        Aktualisiere OGB Light Control
+        Aktualisiere OGB Max Humditity
         """
         minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
         if minMaxControl == False: return
@@ -733,7 +765,7 @@ class OpenGrowBox:
             
     async def _update_minTemp(self,data):
         """
-        Aktualisiere OGB Light Control
+        Aktualisiere OGB Min Temp
         """
         minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
         if minMaxControl == False: return
@@ -748,7 +780,7 @@ class OpenGrowBox:
             
     async def _update_minHumidity(self,data):
         """
-        Aktualisiere OGB Light Control
+        Aktualisiere OGB Min Humidity
         """
         minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
         if minMaxControl == False: return
@@ -765,7 +797,7 @@ class OpenGrowBox:
     ## Weights   
     async def _update_ownWeights_control(self,data):
         """
-        Update OGB Light Control
+        Update OGB Own Weights Control
         """
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ownWeights"))
@@ -776,7 +808,7 @@ class OpenGrowBox:
               
     async def _update_temperature_weight(self, data):
         """
-        Update das Temperaturgewicht.
+        Update Temp Weight
         """
         value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
         current_value = self.dataStore.getDeep("controlOptionData.weights.temp")
@@ -787,7 +819,7 @@ class OpenGrowBox:
             
     async def _update_humidity_weight(self, data):
         """
-        Update das Feuchtigkeitsgewicht.
+        Update Humidity Weight
         """
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.weights.hum")
@@ -871,7 +903,7 @@ class OpenGrowBox:
                   
     async def _update_vpdLight_control(self,data):
         """
-        Update Licht Steuerung durch VPD 
+        OGB VPD Light Controll to dimm Light for better vpd Control
         """
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdLightControl"))
@@ -898,7 +930,7 @@ class OpenGrowBox:
     #### CO2                 
     async def _update_co2_control(self,data):
         """
-        Update OGB Light Control
+        Update OGB CO2 Control 
         """
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.co2Control"))
@@ -909,7 +941,7 @@ class OpenGrowBox:
   
     async def _update_co2Target_value(self,data):
         """
-        Update CO2 Min Value.
+        Update CO2 Target Value.
         """
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.co2ppm.target")
@@ -929,7 +961,7 @@ class OpenGrowBox:
 
     async def _update_co2Max_value(self,data):
         """
-        Update CO2 Min Value.
+        Update CO2 Max Value.
         """
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.co2ppm.maxPPM")
@@ -974,7 +1006,7 @@ class OpenGrowBox:
 
     async def _update_plantDates(self, data):
         """
-        Aktualisiert die Pflanzdaten und die entsprechenden Sensoren in Home Assistant.
+        Update Plant Grow Times
         """
         # Definieren der Sensor-Entitäten
         planttotaldays_entity = f"sensor.ogb_planttotaldays_{self.room.lower()}"
@@ -1065,7 +1097,6 @@ class OpenGrowBox:
             _LOGGER.error(f"Fehler beim Updaten der Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}': {e}")
 
     async def _autoUpdatePlantStages(self,data):
-        """ Ruft _update_plantDates auf und plant die nächste Ausführung. """
         timenow = datetime.now() 
         await self._update_plantDates(timenow)
         await asyncio.sleep(8 * 60 * 60)  # 8 Stunden warten
@@ -1075,7 +1106,7 @@ class OpenGrowBox:
     ## Drying
     async def _udpate_drying_mode(self, data):
         """
-        Update Zeltmodus.
+        Update Current Working Tent Mode
         """
         value = data.newState[0]
         current_mode = self.dataStore.getDeep("drying.currentDryMode")
@@ -1098,7 +1129,81 @@ class OpenGrowBox:
         await asyncio.sleep(0.001)
         pass
 
+    ### Own Device Selects
+    async def _udpate_own_deviceSelect(self,data):
+        """
+        Update Own Device Lists Select
+        """
+        value = self._stringToBool(data.newState[0])
+        _LOGGER.warning(f"{self.room}: Activate Own Device Setup to {value}")
+        self.dataStore.setDeep("controlOptions.ownDeviceSetup", value)
+        currentDevices = self.dataStore.getDeep("workData.Devices")
+        await self.eventManager.emit("capClean",currentDevices)    
+      
+    async def _add_selectedDevice(self,data):
+        """
+        Update New Selected Devices 
+        """
+        ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
+        if ownDeviceSetup:
+            await self.eventManager.emit("MapNewDevice",data)
+        return
 
+    # Devices 
+    async def _device_Self_MinMax(self,data):
+        """
+        Update Own Device Min Max Activation
+        """
+        value = self._stringToBool(data.newState[0])      
+        if "exhaust" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Exhaust.active",value)
+        if "inhaust" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Ixhaust.active",value)
+        if "vents" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Vents.active",value)    
+        if "lights" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Lights.active",value)
+        
+        await self.eventManager.emit("SetMinMax",data)
+   
+    async def _device_MinMax_setter(self, data):
+        """
+        Update OGB Min Max Sets For Devices
+        """
+
+        value = data.newState[0]
+        name = data.Name.lower()
+
+        # Exhaust
+        if "exhaust" in name:
+            if "min" in name:
+                self.dataStore.setDeep("DeviceMinMax.Exhaust.minDuty", value)
+            if "max" in name:
+                self.dataStore.setDeep("DeviceMinMax.Exhaust.maxDuty", value)
+
+        # Inhaust (Achtung: Du hast "Ixhaust" geschrieben – bewusst?)
+        if "inhaust" in name:
+            if "min" in name:
+                self.dataStore.setDeep("DeviceMinMax.Ixhaust.minDuty", value)
+            if "max" in name:
+                self.dataStore.setDeep("DeviceMinMax.Ixhaust.maxDuty", value)
+        
+        # Vents
+        if "ventilation" in name:
+            if "min" in name:
+                self.dataStore.setDeep("DeviceMinMax.Vents.minDuty", value)
+            if "max" in name:
+                self.dataStore.setDeep("DeviceMinMax.Vents.maxDuty", value)
+
+        # Lights
+        if "lights" in name:
+            if "min" in name:
+                self.dataStore.setDeep("DeviceMinMax.Lights.minVoltage", value)
+            if "max" in name:
+                self.dataStore.setDeep("DeviceMinMax.Lights.maxVoltage", value)
+        
+        await self.eventManager.emit("SetMinMax",data)
+        
     ## Debug NOTES
     def _debugState(self):
         ##warning
