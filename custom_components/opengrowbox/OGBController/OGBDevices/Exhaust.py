@@ -51,13 +51,13 @@ class Exhaust(Device):
     def initialize_duty_cycle(self):
         """Initialisiert den Duty Cycle auf 50%."""
         self.dutyCycle = 50  
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle initialisiert auf {self.dutyCycle}%.")
+        _LOGGER.info(f"{self.deviceName}: Duty Cycle Init to {self.dutyCycle}%.")
 
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
         clamped_value = max(self.minDuty, min(self.maxDuty, duty_cycle))
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle to {clamped_value}% ragend.")
         return clamped_value
 
     def change_duty_cycle(self, increase=True):
@@ -78,7 +78,7 @@ class Exhaust(Device):
         # Setze den begrenzten Wert als neuen Duty Cycle
         self.dutyCycle = clamped_duty_cycle
 
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle auf {self.dutyCycle}% geändert.")
+        _LOGGER.info(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
         return self.dutyCycle
 
     # Actions

@@ -79,8 +79,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
 
     async def startOGB(self):
         """
-        Startet die OpenGrowBox-Initialisierung und stellt sicher, 
-        dass Events erst nach Abschluss der Initialisierung verarbeitet werden.
+        Start the OpenGrowBox-Init.
         """
         _LOGGER.debug("Starting OpenGrowBox initialization.")
         self.is_ready = False  # Verhindert die Verarbeitung von Events während der Initialisierung
@@ -135,7 +134,6 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
         asyncio.create_task(self.wait_until_ready_and_start_monitoring())
 
     async def wait_until_ready_and_start_monitoring(self):
-        """Wartet, bis die Initialisierung abgeschlossen ist, und startet dann das Monitoring."""
         _LOGGER.debug("Waiting for OpenGrowBox to be ready...")
         attempt = 0
         while not self.is_ready:
@@ -151,6 +149,5 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
        await self.subEventMonitoring()
 
     async def subEventMonitoring(self):
-        """Starte das Event Monitoring."""
         await self.OGB.registryListener.monitor_filtered_entities(self.room_name)
 

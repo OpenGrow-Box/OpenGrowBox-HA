@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import List, Union, Optional
 import logging
 from datetime import datetime
@@ -45,10 +45,10 @@ class OGBVPDPublication:
     AvgTemp: Optional[float] = None
     AvgHum: Optional[float] = None
     AvgDew: Optional[float] = None
+    Timestamp: str = field(default_factory=lambda: datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
 
     def to_dict(self):
         return asdict(self)
-    
     
     
 @dataclass(frozen=True)
