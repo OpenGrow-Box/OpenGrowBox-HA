@@ -422,7 +422,7 @@ class Device:
                             service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
-                                "percentage": brightness_pct,
+                                "brightness_pct": brightness_pct,
                             },
                         )
                         self.isRunning = True
@@ -459,7 +459,7 @@ class Device:
                             service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
-                                "percentage": brightness_pct,
+                                "brightness_pct": brightness_pct,
                             },
                         )
                         self.isRunning = True
