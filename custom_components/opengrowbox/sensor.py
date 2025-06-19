@@ -130,7 +130,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # Add entities to Home Assistant
     async_add_entities(sensors)
 
-    # Register a global service for updating sensor states if not already registered
+
     if not hass.services.has_service(DOMAIN, "update_sensor"):
         async def handle_update_sensor(call):
             """Handle the update sensor service."""
@@ -146,7 +146,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     _LOGGER.warn(f"Updated sensor '{sensor.name}' to value: {value}")
                     return
 
-        # Register the service in Home Assistant
+
         hass.services.async_register(
             DOMAIN,
             "update_sensor",

@@ -115,7 +115,7 @@ class Device:
         if any(prefix in entity_id for prefix in ["ogb_"]):
             _LOGGER.warning(f"{self.deviceName} Start Update OGBS for {updateData}.")
             await update_entity_value(self.sensors, entity_id, new_value)
-    
+
     async def checkMinMaxSet(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
@@ -741,31 +741,45 @@ class Device:
         if self.inWorkMode:
             if self.isDimmable:
                 if self.deviceType == "Light":
+                    if self.sunPhaseActive:
+                        await self.eventManager.emit("pauseSunPhase",False)
+                        return
                     self.voltage = self.initVoltage
                     await self.turn_on(brightness_pct=self.initVoltage)
                 else:
                     self.dutyCycle = self.minDuty
+                    if self.isTasmota:
+                        await self.turn_on(brightness_pct=self.minDuty)
                     await self.turn_on(percentage=self.minDuty)
             else:
                 if self.deviceType == "Light":
                     return
                 if self.deviceType == "Pump":
+                    return
+                if self.deviceType == "Sensor":
                     return    
                 else:
                     await self.turn_off()
         else:
             if self.isDimmable:
                 if self.deviceType == "Light":
+                    if self.sunPhaseActive:
+                        await self.eventManager.emit("resumeSunPhase",False)
+                        return
                     self.voltage = self.maxVoltage
                     await self.turn_on(brightness_pct=self.maxVoltage)
                 else:
                     self.dutyCycle = self.maxDuty
+                    if self.isTasmota:
+                        await self.turn_on(brightness_pct=self.maxDuty)
                     await self.turn_on(percentage=self.maxDuty)
             else:
                 if self.deviceType == "Light":
                     return 
                 if self.deviceType == "Pump":
                     return
+                if self.deviceType == "Sensor":
+                    return  
                 else:
                     await self.turn_on()           
                
@@ -809,20 +823,51 @@ class Device:
                 
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
-        _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
-        
+        _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")  
 
     def setMinMax(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
+        if not self.isDimmable: 
+            return
+
         if not minMaxSets or not minMaxSets.get("active", False):
-            return  # Nichts aktiv → nichts tun
+            return
 
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = float(minMaxSets.get("minVoltage")) 
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-            self.clamp_voltage(self.voltage)
+            self.changeMinMaxValues(self.clamp_voltage(self.voltage))
+            
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = float(minMaxSets.get("minDuty"))
             self.maxDuty = float(minMaxSets.get("maxDuty"))
-            self.clamp_duty_cycle(self.dutyCycle)
+            self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
+
+    async def setDefaultSets(self,data):
+        defaultSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}.Default")
+        if self.deviceType == "Ligh":
+            self.minVoltage = float(defaultSets.get("min")) 
+            self.maxVoltage = float(defaultSets.get("max"))
+            self.changeMinMaxValues(self.clamp_voltage(self.voltage))
+        else:
+            self.minDuty = float(defaultSets.get("min"))
+            self.maxDuty = float(defaultSets.get("max"))
+            self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
+    
+    async def changeMinMaxValues(self,newValue):
+        if self.isDimmable:
+            
+            _LOGGER.error(f"{self.deviceName}:as Type:{self.deviceType} NewValue: {newValue}")
+    
+            if self.deviceType == "Light":
+                self.voltage = newValue
+                await self.turn_on(brightness_pct=newValue) 
+            else:
+                self.dutyCycle = newValue
+                if self.isTasmota:
+                    await self.turn_on(brightness_pct=float(newValue))
+                else:
+                    await self.turn_on(percentage=newValue)
+
+      

@@ -98,3 +98,23 @@ class OGBHydroAction:
     Cycle: str
     Action: str
 
+@dataclass(frozen=True)
+class OGBWaterAction:
+    Name: str
+    Device:str
+    Cycle: str
+    Action: str
+    Message: str
+
+@dataclass(frozen=True)
+class OGBLightAction:
+    Name: str
+    Device:str
+    Voltage:int
+    Dimmable:bool
+    Type: str
+    Action: str
+    Message: str
+    SunRise: bool
+    SunSet : bool
+

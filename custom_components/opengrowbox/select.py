@@ -228,15 +228,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_WaterPump_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
     ]
 
-    # Register the Selects globally in hass.data
+
     if "selects" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["selects"] = []
 
     hass.data[DOMAIN]["selects"].extend(selects)
     
-    # Add entities to Home Assistant
+
     async_add_entities(selects)
-    # Register a service to add options to selects
+
     
     
     if not hass.services.has_service(DOMAIN, "add_select_options"):
@@ -247,7 +247,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
             _LOGGER.info(f"Adding options to '{entity_id}': {options}")
 
-            # Find and update the corresponding sensor
+
             for select in hass.data[DOMAIN]["selects"]:
                 if select.entity_id == entity_id:
                     found = True
@@ -257,13 +257,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             if not found:
                 _LOGGER.error(f"Select entity with id '{entity_id}' not found.")
 
-        # Register the service in Home Assistant
+
         hass.services.async_register(
             DOMAIN,
             "add_select_options",
             handle_add_options,
             schema=vol.Schema({
                 vol.Required("entity_id"): str,
-                vol.Required("options"): vol.All(list, [str]),  # Akzeptiert eine Liste von Strings
+                vol.Required("options"): vol.All(list, [str]), 
             }),
         )

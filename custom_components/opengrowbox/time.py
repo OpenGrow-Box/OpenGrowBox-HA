@@ -96,7 +96,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up time entities and register update service."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-    # Erstelle Zeit-Entitäten
+
     times = [
         CustomTime(f"OGB_LightOnTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_time="08:00:00"),
         CustomTime(f"OGB_LightOffTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_time="20:00:00"),
@@ -110,14 +110,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     hass.data[DOMAIN]["times"].extend(times)
     async_add_entities(times)
 
-    # Registriere den globalen Service zum Aktualisieren der Zeitwerte
+
     if not hass.services.has_service(DOMAIN, "update_time"):
         async def handle_update_time(call):
             """Handle the update_time service call."""
             entity_id = call.data.get("entity_id")
             new_time = call.data.get("time")
             _LOGGER.info(f"Received update_time request for {entity_id} to {new_time}")
-            # Suche die passende Zeit-Entität und aktualisiere den Wert
+
             for time_entity in hass.data[DOMAIN]["times"]:
                 if time_entity.entity_id == entity_id:
                     await time_entity.async_set_value(new_time)

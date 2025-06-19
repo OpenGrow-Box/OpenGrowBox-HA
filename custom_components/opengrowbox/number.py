@@ -59,7 +59,7 @@ class CustomNumber(NumberEntity,RestoreEntity):
             "name": f"Device for {self._name}",
             "model": "Number Device",
             "manufacturer": "OpenGrowBox",
-            "suggested_area": self.room_name,  # Optional: Gibt einen Hinweis für den Bereich
+            "suggested_area": self.room_name, 
         }
         
     async def async_added_to_hass(self):
@@ -68,7 +68,7 @@ class CustomNumber(NumberEntity,RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state is not None:
             try:
-                # Stelle den Wert nur wieder her, wenn er innerhalb des zulässigen Bereichs liegt
+                
                 restored_value = float(last_state.state)
                 if self._min_value <= restored_value <= self._max_value:
                     self._value = restored_value

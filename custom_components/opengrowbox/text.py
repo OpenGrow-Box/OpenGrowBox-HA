@@ -125,7 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     if "texts" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["texts"] = []
 
-    # Nur EIN AccessToken global registrieren, falls nicht schon vorhanden
+
     if "access_token_entity" not in hass.data[DOMAIN]:
         access_token_entity = OpenGrowBoxAccessToken(
             name="OGB_AccessToken",
@@ -148,7 +148,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     hass.data[DOMAIN]["texts"].extend(texts)
     async_add_entities(texts)
 
-    # Service registration
+
     if not hass.services.has_service(DOMAIN, "update_text"):
         async def handle_update_text(call):
             entity_id = call.data.get("entity_id")

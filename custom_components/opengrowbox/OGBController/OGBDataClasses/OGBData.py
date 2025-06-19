@@ -199,10 +199,10 @@ class OGBConf:
         "Devices": [],
     })
     DeviceMinMax: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
-        "Exhaust": {"active":False,"minDuty":0,"maxDuty":0},
-        "Ixhaust": {"active":False,"minDuty":0,"maxDuty":0},
-        "Ventilation": {"active":False,"minDuty":0,"maxDuty":0},
-        "Lights": {"active":False,"minVoltage":0,"maxVoltage":0},
+        "Exhaust": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":10,"max":95}},
+        "Inhaust": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":10,"max":95}},
+        "Ventilation": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":85,"max":100}},
+        "Light": {"active":False,"minVoltage":0,"maxVoltage":0,"Default":{"min":20,"max":50}},
     })
     DeviceProfiles: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "Exhaust": {"type":"both", "cap":"canExhaust", "direction": "reduce", "effect":1.0, "sideEffect":{}},

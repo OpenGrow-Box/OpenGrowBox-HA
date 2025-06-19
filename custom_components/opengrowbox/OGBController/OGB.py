@@ -365,7 +365,7 @@ class OpenGrowBox:
         if lightChange == None: return
         self.dataStore.setDeep("isPlantDay.islightON",lightChange)
         _LOGGER.info(f"{self.name}: Lichtstatus geprüft und aktualisiert für {self.room} Lichstatus ist {lightChange}")
-        
+
         await self.eventManager.emit("toggleLight",lightChange)
             
     async def update_minMax_settings(self):
@@ -646,8 +646,9 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.lightOnTime")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Licht 'AN' Aktualisiert auf  {value}")
+
             self.dataStore.setDeep("isPlantDay.lightOnTime",value)
+            await self.eventManager.emit("LightTimeChanges",True)
 
     async def _update_lightOff_time(self,data):
         """
@@ -657,8 +658,8 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.lightOffTime")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Licht 'AUS' Aktualisiert auf  {value}")
             self.dataStore.setDeep("isPlantDay.lightOffTime",value)
+            await self.eventManager.emit("LightTimeChanges",True)
             
     async def _update_sunrise_time(self,data):
         """
@@ -695,8 +696,6 @@ class OpenGrowBox:
             boolValue = self._stringToBool(value)
             if boolValue == False:
                 await self.update_minMax_settings()
-                #self.defaultState()
-            _LOGGER.info(f"{self.room}: Update Tent Work Mode to {value}")
             self.dataStore.setDeep("controlOptions.workMode", self._stringToBool(value))
             await self.eventManager.emit("WorkModeChange",self._stringToBool(value))
 
@@ -1159,10 +1158,10 @@ class OpenGrowBox:
                 self.dataStore.setDeep("DeviceMinMax.Exhaust.active",value)
         if "inhaust" in data.Name:
                 self.dataStore.setDeep("DeviceMinMax.Ixhaust.active",value)
-        if "vents" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Vents.active",value)    
-        if "lights" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Lights.active",value)
+        if "ventilation" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Ventilation.active",value)    
+        if "light" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Light.active",value)
         
         await self.eventManager.emit("SetMinMax",data)
    
@@ -1191,16 +1190,16 @@ class OpenGrowBox:
         # Vents
         if "ventilation" in name:
             if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Vents.minDuty", value)
+                self.dataStore.setDeep("DeviceMinMax.Ventilation.minDuty", value)
             if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Vents.maxDuty", value)
+                self.dataStore.setDeep("DeviceMinMax.Ventilation.maxDuty", value)
 
         # Lights
-        if "lights" in name:
+        if "light" in name:
             if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Lights.minVoltage", value)
+                self.dataStore.setDeep("DeviceMinMax.Light.minVoltage", value)
             if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Lights.maxVoltage", value)
+                self.dataStore.setDeep("DeviceMinMax.Light.maxVoltage", value)
         
         await self.eventManager.emit("SetMinMax",data)
         

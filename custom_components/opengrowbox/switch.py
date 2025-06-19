@@ -96,7 +96,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
             _LOGGER.info(f"Received request to toggle switch '{entity_id}'")
 
-            # Find and toggle the corresponding switch
+
             for switch in hass.data[DOMAIN]["switches"]:
                 if switch.entity_id == entity_id:
                     await switch.async_toggle()
@@ -105,7 +105,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
             _LOGGER.warning(f"Switch with entity_id '{entity_id}' not found.")
 
-        # Register the service in Home Assistant
+
         hass.services.async_register(
             DOMAIN,
             "toggle_switch",

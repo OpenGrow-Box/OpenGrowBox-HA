@@ -3,7 +3,7 @@ import asyncio
 
 _LOGGER = logging.getLogger(__name__)
 
-from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication,OGBHydroAction
+from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication,OGBHydroAction,OGBWaterAction
 
 class OGBActionManager:
     def __init__(self, hass, dataStore, eventManager,room):
@@ -565,23 +565,29 @@ class OGBActionManager:
         if isinstance(pumpAction, dict):
             dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
             action = pumpAction.get("Action") or pumpAction.get("action")
+            cycle = pumpAction.get("Cycle") or pumpAction.get("cycle")
         else:
             # your dataclass
             dev = pumpAction.Device
             action = pumpAction.Action
+            cycle = pumpAction.Cycle
             
         if action == "on":
+            message = "Start Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
             await self.eventManager.emit(
                 "LogForClient",
-                f"Name: {self.room} Start Pump: {dev}",
+                waterAction,
                 haEvent=True
             )
             await self.eventManager.emit("Increase Pump", pumpAction)
 
         elif action == "off":
+            message = "Stop Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
             await self.eventManager.emit(
                 "LogForClient",
-                f"Name: {self.room} Stop Pump: {dev}",
+                waterAction,
                 haEvent=True
             )
             await self.eventManager.emit("Reduce Pump", pumpAction)
