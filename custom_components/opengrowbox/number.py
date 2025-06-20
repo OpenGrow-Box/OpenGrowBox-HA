@@ -2,6 +2,7 @@ from homeassistant.components.number import NumberEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 import logging
 from .const import DOMAIN
+import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,3 +198,23 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     hass.data[DOMAIN]["numbers"].extend(numbers)
     async_add_entities(numbers)
+
+    if not hass.services.has_service(DOMAIN, "update_number"):
+        async def handle_update_number(call):
+            entity_id = call.data.get("entity_id")
+            new_value = call.data.get("text")
+            for text_entity in hass.data[DOMAIN]["texts"]:
+                if text_entity.entity_id == entity_id:
+                    await text_entity.async_set_value(new_value)
+                    return
+            _LOGGER.warning(f"Text entity {entity_id} not found")
+
+        hass.services.async_register(
+            DOMAIN,
+            "update_number",
+            handle_update_number,
+            schema=vol.Schema({
+                vol.Required("entity_id"): str,
+                vol.Required("number"): float,
+            }),
+        )

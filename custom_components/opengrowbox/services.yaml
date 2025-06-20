@@ -37,6 +37,19 @@ update_date:
       description: Das neue Datum im Format YYYY-MM-DD.
       example: "2023-12-31"
 
+update_number:
+  name: Update Number
+  description: Aktualisiert den Datumswert einer Entität.
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Die ID der Datum-Entität, die aktualisiert werden soll.
+      example: sensor.ogb_date_entity
+    date:
+      name: Date
+      description: Das neue Datum im Format YYYY-MM-DD.
+      example: "2023-12-31"
+
 update_time:
   name: Update Time
   description: Aktualisiert den Zeitwert einer Entität.
