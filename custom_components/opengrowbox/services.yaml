@@ -37,19 +37,6 @@ update_date:
       description: Das neue Datum im Format YYYY-MM-DD.
       example: "2023-12-31"
 
-update_number:
-  name: Update Number
-  description: Aktualisiert den Datumswert einer Entität.
-  fields:
-    entity_id:
-      name: Entity ID
-      description: Die ID der Datum-Entität, die aktualisiert werden soll.
-      example: sensor.ogb_date_entity
-    date:
-      name: Date
-      description: Das neue Datum im Format YYYY-MM-DD.
-      example: "2023-12-31"
-
 update_time:
   name: Update Time
   description: Aktualisiert den Zeitwert einer Entität.
@@ -76,7 +63,6 @@ update_text:
       description: Max 100 Chars .
       example: "Good Job !!"
 
-
 toggle_switch:
   name: Toggle Switch
   description: Schaltet den Zustand des angegebenen Schalters um.
@@ -85,3 +71,18 @@ toggle_switch:
       name: Entity ID
       description: Die ID des Schalters, der umgeschaltet werden soll.
       example: switch.ogb_switch_entity
+      
+remove_select_options:
+  name: Remove Select Options
+  description: Entfernt eine oder mehrere Optionen aus einer Select-Entität.
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Die ID der Select-Entität, von der Optionen entfernt werden sollen.
+      example: select.ogb_light_device_select_myroom
+    options:
+      name: Options
+      description: Eine Liste von Optionen, die entfernt werden sollen.
+      example:
+        - Lampe A
+        - Lampe B

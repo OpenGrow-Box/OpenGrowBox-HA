@@ -1,5 +1,5 @@
 import logging
-
+import dataclasses
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +63,6 @@ class DataStore(SimpleEventEmitter):
                 return None  # Schlüssel oder Attribut existiert nicht
         return data
 
-
     def setDeep(self, path, value):
         """Setzt einen Wert in verschachtelten Daten und löst Events aus."""
         keys = path.split(".")
@@ -88,3 +87,98 @@ class DataStore(SimpleEventEmitter):
                 self.emit(path, value)
         else:
             raise AttributeError(f"Cannot set '{last_key}' on '{type(data).__name__}'")
+
+    def _make_serializable(self, obj, visited=None):
+        """Konvertiert Objekte in JSON-serialisierbare Formate mit Schutz vor zirkulären Referenzen."""
+        if visited is None:
+            visited = set()
+            
+        # Schutz vor zirkulären Referenzen
+        obj_id = id(obj)
+        if obj_id in visited:
+            return f"<circular reference to {type(obj).__name__}>"
+            
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, list):
+            visited.add(obj_id)
+            try:
+                result = [self._make_serializable(item, visited) for item in obj]
+                visited.remove(obj_id)
+                return result
+            except:
+                visited.discard(obj_id)
+                return [str(item) for item in obj]
+        elif isinstance(obj, dict):
+            visited.add(obj_id)
+            try:
+                result = {key: self._make_serializable(value, visited) for key, value in obj.items() if key != 'hass'}
+                visited.remove(obj_id)
+                return result
+            except:
+                visited.discard(obj_id)
+                return {key: str(value) for key, value in obj.items() if key != 'hass'}
+        elif dataclasses.is_dataclass(obj):
+            visited.add(obj_id)
+            try:
+                # Konvertiere Dataclass zu Dictionary, aber schließe hass aus
+                result = {}
+                for field in dataclasses.fields(obj):
+                    if field.name != 'hass':  # Schließe hass aus
+                        value = getattr(obj, field.name)
+                        result[field.name] = self._make_serializable(value, visited)
+                visited.remove(obj_id)
+                return result
+            except:
+                visited.discard(obj_id)
+                return str(obj)
+        elif hasattr(obj, 'to_dict'):
+            visited.add(obj_id)
+            try:
+                # Falls das Objekt eine to_dict Methode hat
+                dict_result = obj.to_dict()
+                result = self._make_serializable(dict_result, visited)
+                visited.remove(obj_id)
+                return result
+            except:
+                visited.discard(obj_id)
+                return str(obj)
+        elif hasattr(obj, '__dict__'):
+            visited.add(obj_id)
+            try:
+                # Für andere Objekte mit __dict__, konvertiere zu Dictionary
+                result = {}
+                for key, value in obj.__dict__.items():
+                    if key != 'hass' and not key.startswith('_'):  # Schließe hass und private Attribute aus
+                        result[key] = self._make_serializable(value, visited)
+                visited.remove(obj_id)
+                return result
+            except:
+                visited.discard(obj_id)
+                return str(obj)
+        else:
+            # Als letzter Ausweg, konvertiere zu String
+            return str(obj)
+
+    def getFullState(self):
+        """Gibt den vollständigen State als JSON-serialisierbares dict zurück."""
+        try:
+            if dataclasses.is_dataclass(self.state):
+                # Erstelle eine Kopie des State-Objekts ohne das hass-Attribut
+                state_dict = {}
+                for field in dataclasses.fields(self.state):
+                    if field.name != 'hass':  # Schließe hass vom Serialisierungsprozess aus
+                        try:
+                            value = getattr(self.state, field.name)
+                            state_dict[field.name] = self._make_serializable(value)
+                        except Exception as e:
+                            _LOGGER.warning(f"⚠️ Failed to serialize field '{field.name}': {e}")
+                            state_dict[field.name] = str(getattr(self.state, field.name, 'N/A'))
+                return state_dict
+            else:
+                return self._make_serializable(self.state)
+        except Exception as e:
+            _LOGGER.error(f"❌ Failed to get full state: {e}")
+            return {"error": "Failed to serialize state", "message": str(e)}

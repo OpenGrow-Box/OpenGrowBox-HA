@@ -3,7 +3,8 @@ import asyncio
 import logging
 import inspect
 import json
-
+from datetime import datetime
+    
 _LOGGER = logging.getLogger(__name__)
 
 class OGBEventManager:
@@ -76,13 +77,28 @@ class OGBEventManager:
                 _LOGGER.error(f"Kein gültiger Event-Kanal für '{event_name}' verfügbar!")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Senden des Events '{event_name}': {e}")
-            
+    
+    def make_json_serializable(self, obj):
+        """
+        Recursively traverse the object and convert non-serializable types like datetime.
+        """
+        if isinstance(obj, dict):
+            return {k: self.make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.make_json_serializable(i) for i in obj]
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        else:
+            return obj
+
     async def send_notification(self, title: str, data):
         """
         Sende eine Push-Notification via notify.notify an alle konfigurierten Notifier.
         """
         try:
-            message = json.dumps(data, indent=2) if isinstance(data, dict) else str(data)
+            serializable_data = self.make_json_serializable(data)
+            message = json.dumps(serializable_data, indent=2) if isinstance(serializable_data, dict) else str(serializable_data)
+
             await self.hass.services.async_call(
                 domain="notify",
                 service="notify", 
@@ -95,7 +111,7 @@ class OGBEventManager:
             _LOGGER.info(f"Push-Notification für '{title}' gesendet.")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Senden der Push-Notification: {e}")
-    
+   
     def change_notify_set(self,state):
         self.notifications_enabled = state
         _LOGGER.info(f"Notify State jetzt: {self.notifications_enabled}")

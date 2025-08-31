@@ -16,8 +16,7 @@ class CO2(Device):
 
         self.eventManager.on("Increase CO2", self.increaseAction)
         self.eventManager.on("Reduce CO2", self.reduceAction)
- 
-        
+   
 
     #Actions Helpers
     async def handleNewCO2Value(self,co2Publication):
@@ -27,11 +26,12 @@ class CO2(Device):
     async def increaseAction(self, data):
         """Erhöht den CO2 Wert"""
         self.log_action("IncreaseAction/TurnOn" )
-
+        await self.turn_on()
+        
     async def reduceAction(self, data):
         """Reduziertden CO2 Wert"""
         self.log_action("ReduceAction/TurnOff" )
-
+        await self.turn_off()
 
 
 

@@ -166,7 +166,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_PlantStage_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["Germination", "Clones", "EarlyVeg", "MidVeg", "LateVeg", "EarlyFlower", "MidFlower", "LateFlower"], initial_value="Germination"),
         CustomSelect(f"OGB_TentMode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["VPD Perfection","In VPD Range", "Targeted VPD","Drying","Disabled"], initial_value="Disabled"),
+                     options=["VPD Perfection","VPD Target","Drying","Disabled"], initial_value="Disabled"),
         CustomSelect(f"OGB_HoldVpdNight_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="YES"),
         CustomSelect(f"OGB_OwnWeights_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -180,21 +180,26 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_VPDLightControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_DryingModes_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["ElClassico", "SharkMouse","DewBased"],initial_value=""),
+                     options=["ElClassico", "DewBased","5DayDry"],initial_value=""),
         CustomSelect(f"OGB_MainControl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["HomeAssistant", "Node-RED","N8N","Self-Hosted"], initial_value="HomeAssistant"),
+                    options=["HomeAssistant", "Node-RED","Self-Hosted","Premium"], initial_value="HomeAssistant"),
         
         ## HYDRO
         CustomSelect(f"OGB_Hydro_Mode_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["Hydro","Plant-Watering","OFF"], initial_value="OFF"),
         CustomSelect(f"OGB_Hydro_Cycle_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["YES","NO"], initial_value="NO"),
-     
+        CustomSelect(f"OGB_Hydro_Retrive_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["YES","NO"], initial_value="NO"),
+        
+        ## FEED
+        CustomSelect(f"OGB_Feed_Plan_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["Own-Plan","Automatic","Disabled"], initial_value="Disabled"),
+
         # Ambient
         CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_AmbientBorrow_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
+
         
         ##Notifications
         CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -265,5 +270,54 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             schema=vol.Schema({
                 vol.Required("entity_id"): str,
                 vol.Required("options"): vol.All(list, [str]), 
+            }),
+        )
+
+    if not hass.services.has_service(DOMAIN, "remove_select_options"):
+        async def handle_remove_options(call):
+            """Handle the remove options service."""
+            entity_id = call.data.get("entity_id")
+            options_to_remove = call.data.get("options")
+            invalid_modes = ["AI Control", "MCP Control", "PID Control", "OGB Control"]
+            fallback_option = "VPD-Perfection"
+            found = False
+
+            _LOGGER.warning(f"Removing options from '{entity_id}': {options_to_remove}")
+
+            for select in hass.data[DOMAIN]["selects"]:
+                if select.entity_id == entity_id:
+                    found = True
+
+                    # Entferne die angegebenen Optionen
+                    select._attr_options = [opt for opt in select._attr_options if opt not in options_to_remove]
+
+                    # Prüfe, ob aktuelle Option entfernt wurde oder ein ungültiger Modus ist
+                    if (select._attr_current_option in options_to_remove or
+                        select._attr_current_option in invalid_modes):
+
+                        # Fallback nur setzen, wenn es verfügbar ist
+                        if fallback_option in select._attr_options:
+                            select._attr_current_option = fallback_option
+                            _LOGGER.warning(f"Set '{select.name}' fallback to '{fallback_option}'")
+                        else:
+                            select._attr_current_option = None
+                            _LOGGER.warning(
+                                f"Fallback option '{fallback_option}' not available for '{select.name}', setting to None"
+                            )
+
+                    select.async_write_ha_state()
+                    _LOGGER.warning(f"Updated options for '{select.name}': {select._attr_options}")
+                    break
+
+            if not found:
+                _LOGGER.error(f"Select entity with id '{entity_id}' not found.")
+
+        hass.services.async_register(
+            DOMAIN,
+            "remove_select_options",
+            handle_remove_options,
+            schema=vol.Schema({
+                vol.Required("entity_id"): str,
+                vol.Required("options"): vol.All(list, [str]),
             }),
         )

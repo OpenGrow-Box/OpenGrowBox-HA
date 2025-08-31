@@ -43,11 +43,14 @@ class OGBDeviceManager:
         _LOGGER.info("OGBDeviceManager initialized with event listeners.")
 
     async def setupDevice(self,device):            
-        controlOption = self.dataStore.get("mainControl")
+
         ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
            
-        if controlOption != "HomeAssistant": return
-     
+        controlOption = self.dataStore.get("mainControl")        
+        
+        if controlOption not in ["HomeAssistant", "Premium"]:
+            return False
+        
         if ownDeviceSetup:
            return
         else:
@@ -88,20 +91,20 @@ class OGBDeviceManager:
         controlOption = self.dataStore.get("mainControl")
         devices = self.dataStore.get("devices")
         
-        if controlOption != "HomeAssistant":
+        if controlOption not in ["HomeAssistant", "Premium"]:
             return False
         
         # Gerät anhand des Namens finden
         deviceToRemove = next((device for device in devices if device.deviceName == deviceName), None)
 
         if not deviceToRemove:
-            _LOGGER.warning(f"Device not found for remove: {deviceName}")
+            _LOGGER.debug(f"Device not found for remove: {deviceName}")
             return False
 
         devices.remove(deviceToRemove)
         self.dataStore.set("devices", devices)
 
-        _LOGGER.warning(f"Removed device: {deviceName}")
+        _LOGGER.debug(f"Removed device: {deviceName}")
 
         # ➕ Capability-Cleanup
         capMapping = {
@@ -135,7 +138,8 @@ class OGBDeviceManager:
     async def identify_device(self, device_name, device_data):
         """Gerät anhand des Namens und Typs identifizieren."""
         device_type_mapping = {
-            "Sensor": ["ogb","sun","sensor","water","root","wurzel","blatt","leaf","mode", "plant", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
+            "Sensor": ["ogb","sun","sensor","water","wasser","root","wurzel","blatt","leaf","mode", "plant", "temperature", 
+                       "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
             "Exhaust": ["exhaust", "abluft"],
             "Inhaust": ["inhaust", "zuluft"],
             "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet", "outlet"],
@@ -146,7 +150,7 @@ class OGBDeviceManager:
             "Climate": ["climate", "klima"],
             "Light": ["light", "lamp", "led"],
             "Co2": ["co2", "carbon","co2pump"],
-            "Pump":["airpump","mistpump","waterpump","pump"],
+            "Pump":["airpump","mistpump","waterpump","airpump","clonerpump","retrievepump","aeropump","dwcpump","rdwcpump"],
             "Switch": ["generic", "switch"],
         }
 
@@ -191,8 +195,8 @@ class OGBDeviceManager:
         # Update Event auslösen
         await self.eventManager.emit("UpdateDeviceList", allDevices)       
         
-        if controlOption != "HomeAssistant":
-            return
+        if controlOption not in ["HomeAssistant", "Premium"]:
+            return False
         
         if ownDeviceSetup:
             # Hole aktuelle Geräteinstanzen aus dem Speicher (Objekte, keine Dicts!)
@@ -226,7 +230,7 @@ class OGBDeviceManager:
                 _LOGGER.info(f"Registering new device: {device}")
                 await self.setupDevice(device)
         else:
-            _LOGGER.warning("Device-Check: No new devices found.")
+            _LOGGER.debug("Device-Check: No new devices found.")
 
     async def _update_ownDeviceLists(self, device_info_list):
         """
@@ -236,8 +240,10 @@ class OGBDeviceManager:
         if device_info_list == None: return
         
         controlOption = self.dataStore.get("mainControl")        
-        if controlOption != "HomeAssistant": return
-               
+        
+        if controlOption not in ["HomeAssistant", "Premium"]:
+            return False
+        
         #groupedRoomEntities = await self.regListener.get_filtered_entities_with_value(self.room.lower())
         #realDevices = [group for group in groupedRoomEntities if "ogb" not in group["name"].lower()]
 
@@ -249,7 +255,7 @@ class OGBDeviceManager:
                 if entity_id and entity_id not in deviceList:
                     deviceList.append(entity_id)
 
-        _LOGGER.warn(f"[{self.room}] deviceList: {deviceList} from {device_info_list}")
+        _LOGGER.debug(f"[{self.room}] deviceList: {deviceList} from {device_info_list}")
 
         # Deine festen Ziel-Entities mit Room-Namen
         ownLightDevice_entity        = f"select.ogb_light_device_select_{self.room.lower()}"
@@ -301,10 +307,12 @@ class OGBDeviceManager:
         if device.newState[0] == "unknown":
             return
 
-        controlOption = self.dataStore.get("mainControl")
         currentDevices = self.dataStore.getDeep("workData.Devices")    
-        if controlOption != "HomeAssistant":
-            return
+           
+        controlOption = self.dataStore.get("mainControl")        
+
+        if controlOption not in ["HomeAssistant", "Premium"]:
+            return False
 
         pub_name = device.Name  # z. B. select.ogb_humidifier_device_select_dryingtent
         try:

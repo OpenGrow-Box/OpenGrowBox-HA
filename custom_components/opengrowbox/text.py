@@ -143,6 +143,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     # Räume-spezifische Texte hinzufügen
     texts = [
         CustomText(f"OGB_Notes_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=""),
+        CustomText(f"OGB_StrainName_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=""),
     ]
 
     hass.data[DOMAIN]["texts"].extend(texts)

@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues",
   "requirements": [],
-  "version": "1.0.0"
+  "version": "2.0.0"
 }

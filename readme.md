@@ -77,6 +77,11 @@ Contributions are welcome! Please fork the repository, create a new branch, and 
 ## Support
 For issues and feature requests, please open an issue on [GitHub](https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues).
 
-## Star History
 
+## 📝 License
+This project is licensed under the [OGBCL license](LICENSE).
+Additional premium features are only provided to paying customers and are not part of this project. They are subject to a separate proprietary license.
+
+
+## Star History
 [![Star History Chart](https://api.star-history.com/svg?repos=OpenGrow-Box/OpenGrowBox-HA&type=Date)](https://www.star-history.com/#OpenGrow-Box/OpenGrowBox-HA&Date)

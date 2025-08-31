@@ -88,6 +88,7 @@ class CustomNumber(NumberEntity,RestoreEntity):
         else:
             _LOGGER.warning(f"Value {value} out of range for '{self._name}'")
 
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up number entities."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
@@ -136,36 +137,39 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                      min_value=0, max_value=60000, step=1, unit="minutes", initial_value=60),           
 
         
-        
-        # PID VPD
-        CustomNumber(f"OGB_ProportionalVPDFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=5.0, step=0.1, unit="X", initial_value=1.0),
-        CustomNumber(f"OGB_IntegralVPDFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=0.2, step=0.01, unit="X", initial_value=0.01),
-        CustomNumber(f"OGB_DerivativVPDFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=2.0, step=0.1, unit="X", initial_value=0.1),
-
-        # PID TEMP
-        CustomNumber(f"OGB_ProportionalTempFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=10.0, step=0.5, unit="X", initial_value=5.0),
-        CustomNumber(f"OGB_IntegralTempFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=1.0, step=0.05, unit="X", initial_value=0.05),
-        CustomNumber(f"OGB_DerivativTempFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=2.0, step=0.1, unit="X", initial_value=0.5),
-
-        # PID Hum
-        CustomNumber(f"OGB_ProportionalHumFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=10.0, step=0.5, unit="X", initial_value=5.0),
-        CustomNumber(f"OGB_IntegralHumFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=0.5, step=0.02, unit="X", initial_value=0.02),
-        CustomNumber(f"OGB_DerivativHumFaktor_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    min_value=0.0, max_value=1.0, step=0.1, unit="X", initial_value=0.1),
-   
         # Hydro Watering 
         CustomNumber(f"OGB_HydroPumpDuration_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0.0, max_value=300, step=1, unit="Sec", initial_value=0),
         CustomNumber(f"OGB_HydroPumpIntervall_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=1440, step=1, unit="Min", initial_value=0),
+        CustomNumber(f"OGB_HydroRetriveDuration_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=300, step=1, unit="Sec", initial_value=0),
+        CustomNumber(f"OGB_HydroRetriveIntervall_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=1440, step=1, unit="Min", initial_value=0),
+
+        # Hydro Watering         
+        CustomNumber(f"OGB_Feed_PH_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=8, step=0.1, unit="ph", initial_value=0),        
+        CustomNumber(f"OGB_Feed_EC_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_Feed_Nutrient_A_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0), 
+        CustomNumber(f"OGB_Feed_Nutrient_B_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0), 
+        CustomNumber(f"OGB_Feed_Nutrient_C_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0),
+        CustomNumber(f"OGB_Feed_Nutrient_W_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0),
+        CustomNumber(f"OGB_Feed_Nutrient_X_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0),
+        CustomNumber(f"OGB_Feed_Nutrient_Y_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0), 
+        CustomNumber(f"OGB_Feed_Nutrient_Ph_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=1000, step=0.1, unit="ml", initial_value=0), 
+        CustomNumber(f"OGB_Feed_Tolerance_Ph_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=50, step=1, unit="%", initial_value=0), 
+        CustomNumber(f"OGB_Feed_Tolerance_EC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=50, step=1, unit="%", initial_value=0), 
 
 
         # Exhaust MinMax
@@ -191,6 +195,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     min_value=0, max_value=100, step=1, unit="%", initial_value=0),
         CustomNumber(f"OGB_Light_Volt_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=100, step=1, unit="%", initial_value=0),   
+        
+        # Area
+        CustomNumber(f"OGB_Grow_Area_M2_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=5, step=0.01, unit="m²", initial_value=0),   
     ]
 
     if "numbers" not in hass.data[DOMAIN]:
@@ -198,23 +206,3 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     hass.data[DOMAIN]["numbers"].extend(numbers)
     async_add_entities(numbers)
-
-    if not hass.services.has_service(DOMAIN, "update_number"):
-        async def handle_update_number(call):
-            entity_id = call.data.get("entity_id")
-            new_value = call.data.get("text")
-            for text_entity in hass.data[DOMAIN]["texts"]:
-                if text_entity.entity_id == entity_id:
-                    await text_entity.async_set_value(new_value)
-                    return
-            _LOGGER.warning(f"Text entity {entity_id} not found")
-
-        hass.services.async_register(
-            DOMAIN,
-            "update_number",
-            handle_update_number,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-                vol.Required("number"): float,
-            }),
-        )

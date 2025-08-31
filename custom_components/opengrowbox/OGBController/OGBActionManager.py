@@ -1,16 +1,18 @@
 import logging
 import asyncio
+import copy
+import dataclasses
 
 _LOGGER = logging.getLogger(__name__)
 
-from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication,OGBHydroAction,OGBWaterAction
+from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication,OGBHydroAction,OGBWaterAction,OGBRetrieveAction
 
 class OGBActionManager:
     def __init__(self, hass, dataStore, eventManager,room):
         self.name = "OGB Device Manager"
         self.hass = hass
         self.room = room
-        self.dataStore = dataStore  # Bereits bestehendes DataStore-Objekt
+        self.dataStore = dataStore
         self.eventManager = eventManager
         self.isInitialized = False
         
@@ -19,41 +21,11 @@ class OGBActionManager:
         self.eventManager.on("reduce_vpd", self.reduce_vpd)
         self.eventManager.on("FineTune_vpd", self.fine_tune_vpd)
         self.eventManager.on("PumpAction", self.PumpAction) 
+        self.eventManager.on("RetrieveAction",self.RetrieveAction)
+        self.eventManager.on("PIDActions",self.PIDActions)    
 
+    # Control Actions
 
-    # Dynamic Device Action Recognition
-    def getRoomCaps(self, vpdStatus: str):
-        available_capabilities = self.dataStore.get("capabilities")
-        device_profiles = self.dataStore.get("DeviceProfiles")
-        result = []
-
-        for dev_name, profile in device_profiles.items():
-            cap_key = profile.get("cap")
-            if not cap_key:
-                continue
-
-            cap_info = available_capabilities.get(cap_key)
-            if not cap_info or cap_info["count"] == 0:
-                continue
-
-            if vpdStatus == "too_high":
-                if (
-                    (profile["type"] == "humidity" and profile["direction"] == "increase") or
-                    (profile["type"] == "temperature" and profile["direction"] == "reduce") or
-                    (profile["type"] == "both" and profile["direction"] == "reduce")
-                ):
-                    result.extend(cap_info["devEntities"])
-
-            elif vpdStatus == "too_low":
-                if (
-                    (profile["type"] == "humidity" and profile["direction"] == "reduce") or
-                    (profile["type"] == "temperature" and profile["direction"] == "increase") or
-                    (profile["type"] == "both" and profile["direction"] == "increase")
-                ):
-                    result.extend(cap_info["devEntities"])
-
-        return result
- 
     async def increase_vpd(self, capabilities):
         """
         Erhöht den VPD-Wert durch Anpassung der entsprechenden Geräte.
@@ -63,38 +35,39 @@ class OGBActionManager:
         
         actionMap = []
         if capabilities["canExhaust"]["state"]:
-            actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canInhaust"]["state"]:
-            actionPublication = OGBActionPublication(capability="canInhaust",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canInhaust",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canVentilate"]["state"]:
-            actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canHumidify"]["state"]:
-            actionPublication = OGBActionPublication(capability="canHumidify",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canHumidify",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canDehumidify"]["state"]:
-            actionPublication = OGBActionPublication(capability="canDehumidify",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canDehumidify",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)            
         if capabilities["canHeat"]["state"]:
-            actionPublication = OGBActionPublication(capability="canHeat",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canHeat",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)                        
         if capabilities["canCool"]["state"]:
-            actionPublication = OGBActionPublication(capability="canCool",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canCool",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canClimate"]["state"]:
-                actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
-                actionMap.append(actionPublication)                  
+            actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage,priority="")
+            actionMap.append(actionPublication)                  
         if capabilities["canCO2"]["state"]:
-                actionPublication = OGBActionPublication(capability="canCO2",action="Increase",Name=self.room,message=actionMessage)
-                actionMap.append(actionPublication)               
+            actionPublication = OGBActionPublication(capability="canCO2",action="Increase",Name=self.room,message=actionMessage,priority="")
+            actionMap.append(actionPublication)               
         if vpdLightControl == True:
             if capabilities["canLight"]["state"]:
-                actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
+                actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage,priority="")
                 actionMap.append(actionPublication)               
             else:
                 return
+            
             
         await self.checkLimitsAndPublicate(actionMap)
         #await self.eventManager.emit("LogForClient",actionMap,haEvent=True)
@@ -108,35 +81,35 @@ class OGBActionManager:
         
         actionMap = []
         if capabilities["canExhaust"]["state"]:
-            actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canInhaust"]["state"]:
-            actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canVentilate"]["state"]:
-            actionPublication = OGBActionPublication(capability="canVentilate",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canVentilate",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canHumidify"]["state"]:
-            actionPublication = OGBActionPublication(capability="canHumidify",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canHumidify",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canDehumidify"]["state"]:
-            actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canHeat"]["state"]:
-            actionPublication = OGBActionPublication(capability="canHeat",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canHeat",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canCool"]["state"]:
-            actionPublication = OGBActionPublication(capability="canCool",action="Increase",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canCool",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canClimate"]["state"]:
-                actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
-                actionMap.append(actionPublication)      
+            actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage,priority="")
+            actionMap.append(actionPublication)      
         if capabilities["canCO2"]["state"]:
-            actionPublication = OGBActionPublication(capability="canCO2",action="Reduce",Name=self.room,message=actionMessage)
+            actionPublication = OGBActionPublication(capability="canCO2",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if vpdLightControl == True:
             if capabilities["canLight"]["state"]:
-                actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage)
+                actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage,priority="")
                 actionMap.append(actionPublication)
             else:
                 return
@@ -157,14 +130,238 @@ class OGBActionManager:
         delta = round(perfectionVPD - currentVPD, 2)
     
         if delta > 0:
-            _LOGGER.info(f"Fine-tuning: {self.room}Increasing VPD by {delta}.")
+            _LOGGER.debug(f"Fine-tuning: {self.room}Increasing VPD by {delta}.")
             await self.increase_vpd(capabilities)
         elif delta < 0:
-            _LOGGER.info(f"Fine-tuning: {self.room} Reducing VPD by {-delta}.")
+            _LOGGER.debug(f"Fine-tuning: {self.room} Reducing VPD by {-delta}.")
             await self.reduce_vpd(capabilities)
 
-    async def checkLimitsAndPublicate(self,actionMap):
-        _LOGGER.info(f"{self.room}: Action Publication Limits-Validation von {actionMap}")    
+    # Premium Actions
+    async def PIDActions(self, premActions):
+        _LOGGER.warning(f"{self.room}: Start PID Actions Handling")
+        
+        controlData = premActions.get("actionData")
+        actionData = controlData.get("controlCommands")
+        pidStates = controlData.get("pidStates")
+        
+        pidStatesCopy = copy.deepcopy(pidStates)
+        currentActions = self.dataStore.get("previousActions") 
+        currentActions.append(pidStatesCopy)
+        controlData["room"] = self.room
+        
+        if len(currentActions) > 1:
+            currentActions = currentActions[-1:]
+        
+        self.dataStore.set("previousActions", currentActions)
+
+        device_actions = {}
+        for action in actionData:
+            device = action.get("device").lower()
+            if device not in device_actions:
+                device_actions[device] = []
+            device_actions[device].append(action)
+
+        for device, actions in device_actions.items():
+            if len(actions) > 1:
+                priority_order = {'high': 1, 'medium': 2, 'low': 3}
+                best_action = min(actions, key=lambda x: priority_order.get(x.get('priority', 'medium'), 2))
+                actions = [best_action]
+            await self.eventManager.emit("LogForClient",controlData,haEvent=True)     
+            for action in actions:
+                deviceAction = action.get("action")
+                requestedDevice = action.get("device").lower()
+               
+                if requestedDevice == "error":
+                    _LOGGER.error(f"{self.deviceName}: Requested CONTROL ERROR {controlData} ")
+                    return
+                
+                #nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
+                #islightON = self.dataStore.getDeep("isPlantDay.islightON")
+                
+                #if islightON == False and nightVPDHold == False:
+                #    _LOGGER.debug(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
+                #    # Need tu adjust fallback vpd for night times
+                #    #await self.NightHoldFallBack(actionMap)
+                #    return None    
+
+                # Aktionen basierend auf den Fähigkeiten
+                if requestedDevice == "exhaust":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Exhaust", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Exhaust.")
+                if requestedDevice == "intake":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Intake", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Intake.")
+                if requestedDevice == "ventilate":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Ventilation", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Ventilation.")
+                if requestedDevice == "humidify":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Humidifier", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Humidifier.")
+                if requestedDevice == "dehumidify":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Dehumidifier", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Dehumidifier.")
+                if requestedDevice == "heat":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Heater", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Heater.")
+                if requestedDevice == "cool":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Cooler", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Cooler.")
+                if requestedDevice == "climate":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Climate", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} CO2.")
+                if requestedDevice == "co2":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} CO2", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} CO2.")
+                if requestedDevice == "light":
+                    await self.eventManager.emit(f"{deviceAction.capitalize()} Light", deviceAction)
+                    _LOGGER.warning(f"{self.room}: {deviceAction.capitalize()} Light.")
+        
+        await self.eventManager.emit("SaveState",True)   
+
+    async def MCPActions(self, premActions):
+        actionData = premActions.get("actionData")
+        
+        # Gruppiere nach Gerät um Konflikte zu erkennen
+        device_actions = {}
+        for action in actionData:
+            device = action.get("device").lower()
+            if device not in device_actions:
+                device_actions[device] = []
+            device_actions[device].append(action)
+        
+        # Verarbeite jedes Gerät einzeln
+        for device, actions in device_actions.items():
+            if len(actions) > 1:
+                # Bei mehreren Aktionen: höchste Priority gewinnt
+                priority_order = {'high': 1, 'medium': 2, 'low': 3}
+                best_action = min(actions, key=lambda x: priority_order.get(x.get('priority', 'medium'), 2))
+                actions = [best_action]
+            
+            for action in actions:
+                deviceAction = action.get("action")
+                requestedDevice = action.get("device").lower()
+               
+                if requestedDevice == "error":
+                    _LOGGER.error(f"{self.deviceName}: Requested CONTROL ERROR {premActions} ")
+                    return
+                
+                nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
+                islightON = self.dataStore.getDeep("isPlantDay.islightON")
+                
+                if islightON == False and nightVPDHold == False:
+                    _LOGGER.debug(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
+                    # Need tu adjust fallback vpd for night times
+                    #await self.NightHoldFallBack(actionMap)
+                    return None    
+
+                # Aktionen basierend auf den Fähigkeiten
+                if requestedDevice == "exhaust":
+                    await self.eventManager.emit(f"{deviceAction} Exhaust", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Exhaust.")
+                if requestedDevice == "intake":
+                    await self.eventManager.emit(f"{deviceAction} Iintake", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Intake.")
+                if requestedDevice == "ventilate":
+                    await self.eventManager.emit(f"{deviceAction} Ventilation", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Ventilation.")
+                if requestedDevice == "humidify":
+                    await self.eventManager.emit(f"{deviceAction} Humidifier", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Humidifier.")
+                if requestedDevice == "dehumidify":
+                    await self.eventManager.emit(f"{deviceAction} Dehumidifier", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Dehumidifier.")
+                if requestedDevice == "heat":
+                    await self.eventManager.emit(f"{deviceAction} Heater", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Heater.")
+                if requestedDevice == "cool":
+                    await self.eventManager.emit(f"{deviceAction} Cooler", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Cooler.")
+                if requestedDevice == "climate":
+                    await self.eventManager.emit(f"{deviceAction} Climate", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} CO2.")
+                if requestedDevice == "co2":
+                    await self.eventManager.emit(f"{deviceAction} CO2", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} CO2.")
+                if requestedDevice == "light":
+                    await self.eventManager.emit(f"{deviceAction} Light", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Light.")
+
+    async def AIActions(self, premActions):
+        actionData = premActions.get("actionData")
+        await self.eventManager.emit("SaveState",True)
+        
+    async def OGBActions(self, premActions):
+        actionData = premActions.get("actionData")
+        
+        # Gruppiere nach Gerät um Konflikte zu erkennen
+        device_actions = {}
+        for action in actionData:
+            device = action.get("device").lower()
+            if device not in device_actions:
+                device_actions[device] = []
+            device_actions[device].append(action)
+        
+        # Verarbeite jedes Gerät einzeln
+        for device, actions in device_actions.items():
+            if len(actions) > 1:
+                # Bei mehreren Aktionen: höchste Priority gewinnt
+                priority_order = {'high': 1, 'medium': 2, 'low': 3}
+                best_action = min(actions, key=lambda x: priority_order.get(x.get('priority', 'medium'), 2))
+                actions = [best_action]
+            
+            for action in actions:
+                deviceAction = action.get("action")
+                requestedDevice = action.get("device").lower()
+               
+                if requestedDevice == "error":
+                    _LOGGER.error(f"{self.deviceName}: Requested CONTROL ERROR {premActions} ")
+                    return
+                
+                nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
+                islightON = self.dataStore.getDeep("isPlantDay.islightON")
+                
+                if islightON == False and nightVPDHold == False:
+                    _LOGGER.debug(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
+                    # Need tu adjust fallback vpd for night times
+                    #await self.NightHoldFallBack(actionMap)
+                    return None    
+
+                # Aktionen basierend auf den Fähigkeiten
+                if requestedDevice == "exhaust":
+                    await self.eventManager.emit(f"{deviceAction} Exhaust", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Exhaust.")
+                if requestedDevice == "intake":
+                    await self.eventManager.emit(f"{deviceAction} Iintake", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Intake.")
+                if requestedDevice == "ventilate":
+                    await self.eventManager.emit(f"{deviceAction} Ventilation", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Ventilation.")
+                if requestedDevice == "humidify":
+                    await self.eventManager.emit(f"{deviceAction} Humidifier", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Humidifier.")
+                if requestedDevice == "dehumidify":
+                    await self.eventManager.emit(f"{deviceAction} Dehumidifier", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Dehumidifier.")
+                if requestedDevice == "heat":
+                    await self.eventManager.emit(f"{deviceAction} Heater", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Heater.")
+                if requestedDevice == "cool":
+                    await self.eventManager.emit(f"{deviceAction} Cooler", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Cooler.")
+                if requestedDevice == "climate":
+                    await self.eventManager.emit(f"{deviceAction} Climate", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} CO2.")
+                if requestedDevice == "co2":
+                    await self.eventManager.emit(f"{deviceAction} CO2", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} CO2.")
+                if requestedDevice == "light":
+                    await self.eventManager.emit(f"{deviceAction} Light", deviceAction)
+                    _LOGGER.debug(f"{self.room}: {deviceAction} Light.")
+
+    # Action Handling
+
+    async def checkLimitsAndPublicate2(self,actionMap):
+        _LOGGER.debug(f"{self.room}: Action Publication Limits-Validation von {actionMap}")    
         
         ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
         vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
@@ -172,7 +369,7 @@ class OGBActionManager:
         islightON = self.dataStore.getDeep("isPlantDay.islightON")
         
         if islightON == False and nightVPDHold == False:
-            _LOGGER.info(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
+            _LOGGER.debug(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
             await self.NightHoldFallBack(actionMap)
             return None
         
@@ -406,12 +603,21 @@ class OGBActionManager:
                     actionPublication = OGBActionPublication(capability="canLight",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
                     
-                    
         # **CO₂-Management**
         co2Control = self.dataStore.getDeep("controlOptions.co2Control")
         co2Level = int(self.dataStore.getDeep("controlOptionData.co2ppm.current"))
+        
+        try:
+            co2LevelMin = int(float(self.dataStore.getDeep("controlOptionData.co2ppm.minPPM")))        
+            co2LevelMax = int(float(self.dataStore.getDeep("controlOptionData.co2ppm.maxPPM")))
+        except (ValueError, TypeError) as e:
+            _LOGGER.error(f"{self.room}: Fehler beim Konvertieren der CO2-Werte: {e}")
+            # Fallback-Werte setzen
+            co2LevelMin = 400
+            co2LevelMax = 1200
+            
         if co2Control == True:
-            if co2Level < 500 and islightON:
+            if co2Level < co2LevelMin and islightON:
                 actionMessage = f"{self.name} CO₂-Level zu niedrig in {self.room}, CO₂-Zufuhr erhöht."
                 if caps["canClimate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
@@ -438,13 +644,14 @@ class OGBActionManager:
                     if caps["canLight"]["state"]:
                         actionPublication = OGBActionPublication(capability="canLight",action="Reduce",Name=self.room,message=actionMessage)
                         actionMap.append(actionPublication)
-            elif co2Level > 1200 and islightON:
+           
+            elif co2Level > co2LevelMax and islightON:
                 actionMessage = f"{self.name} CO₂-Level zu hoch in {self.room}, Abluft erhöht."
                 if caps["canClimate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canClimate",action="Eval",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
                 if caps["canCO2"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canCO2",action="Increase",Name=self.room,message=actionMessage)
+                    actionPublication = OGBActionPublication(capability="canCO2",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)  
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
@@ -495,72 +702,10 @@ class OGBActionManager:
         await self.publicationActionHandler(actionMap)
         await self.eventManager.emit("LogForClient",actionMap,haEvent=True)        
     
-    async def NightHoldFallBack(self, actionMap):
-        _LOGGER.info(f"{self.room}: VPD Night Hold NOT ACTIVE IGNORING ACTIONS ")
-        await self.eventManager.emit("LogForClient",{"Name":self.room,"NightVPDHold":"NotActive Ignoring-VPD"},haEvent=True)     
-        
-        # Capabilities abrufen
-        excludeCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canLight", "canCO2"}
-        modCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2"}
-        fallBackAction = "Reduce"
-        
-        # Gefilterte ActionMap erstellen (nur erlaubte Actions)
-        filteredActions = [action for action in actionMap if action.capability not in excludeCaps]
+      # Dynamic Device Action Recognition
 
-        # Neue Action-Liste mit Reduced-Actions für alle anderen Geräte erstellen
-        reducedActions = [
-            OGBActionPublication(capability=action.capability, action=fallBackAction,Name=self.room,message="VPD-NightHold Device Shutdown")
-            for action in actionMap if action.capability in modCaps
-        ]
 
-        # Wenn es gefilterte oder reduzierte Aktionen gibt, verarbeiten
-        if filteredActions or reducedActions:
-            await self.publicationActionHandler(filteredActions + reducedActions)
-        
-    async def publicationActionHandler(self, actionMap):
-        """
-        Handhabt die Steuerungsaktionen basierend auf dem actionMap und den Fähigkeiten.
-        """
-        _LOGGER.info(f"{self.room}: Validated-Actions-By-Limits: - {actionMap}")
-
-        for action in actionMap:
-            actionCap = action.capability
-            actionType = action.action
-            actionMesage = action.message
-            _LOGGER.info(f"{self.room}: {actionCap} - {actionType} - - {action} -- {actionMesage}")
-                    
-            # Aktionen basierend auf den Fähigkeiten
-            if actionCap == "canExhaust":
-                await self.eventManager.emit(f"{actionType} Exhaust", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Exhaust ausgeführt.")
-            if actionCap == "canInhaust":
-                await self.eventManager.emit(f"{actionType} Inhaust", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Inhaust ausgeführt.")
-            if actionCap == "canVentilate":
-                await self.eventManager.emit(f"{actionType} Ventilation", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Ventilation ausgeführt.")
-            if actionCap == "canHumidify":
-                await self.eventManager.emit(f"{actionType} Humidifier", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Humidifier ausgeführt.")
-            if actionCap == "canDehumidify":
-                await self.eventManager.emit(f"{actionType} Dehumidifier", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Dehumidifier ausgeführt.")
-            if actionCap == "canHeat":
-                await self.eventManager.emit(f"{actionType} Heater", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Heater ausgeführt.")
-            if actionCap == "canCool":
-                await self.eventManager.emit(f"{actionType} Cooler", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Cooler ausgeführt.")
-            if actionCap == "canClimate":
-                await self.eventManager.emit(f"{actionType} Climate", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} CO2 ausgeführt.")
-            if actionCap == "canCO2":
-                await self.eventManager.emit(f"{actionType} CO2", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} CO2 ausgeführt.")
-            if actionCap == "canLight":
-                await self.eventManager.emit(f"{actionType} Light", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Light ausgeführt.")
- 
+    # Water Actions
     async def PumpAction(self, pumpAction: OGBHydroAction):
         if isinstance(pumpAction, dict):
             dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
@@ -595,3 +740,503 @@ class OGBActionManager:
         else:
             # unknown action
             return None
+        
+    async def RetrieveAction(self, pumpAction: OGBRetrieveAction):
+        if isinstance(pumpAction, dict):
+            dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
+            action = pumpAction.get("Action") or pumpAction.get("action")
+            cycle = pumpAction.get("Cycle") or pumpAction.get("cycle")
+        else:
+            # your dataclass
+            dev = pumpAction.Device
+            action = pumpAction.Action
+            cycle = pumpAction.Cycle
+            
+        if action == "on":
+            message = "Start Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
+            await self.eventManager.emit(
+                "LogForClient",
+                waterAction,
+                haEvent=True
+            )
+            await self.eventManager.emit("Increase Pump", pumpAction)
+
+        elif action == "off":
+            message = "Stop Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
+            await self.eventManager.emit(
+                "LogForClient",
+                waterAction,
+                haEvent=True
+            )
+            await self.eventManager.emit("Reduce Pump", pumpAction)
+
+        else:
+            # unknown action
+            return None
+
+    # Action Helpers
+    async def publicationActionHandler(self, actionMap):
+        """
+        Handhabt die Steuerungsaktionen basierend auf dem actionMap und den Fähigkeiten.
+        """
+        _LOGGER.debug(f"{self.room}: Validated-Actions-By-Limits: - {actionMap}")
+
+        for action in actionMap:
+            actionCap = action.capability
+            actionType = action.action
+            actionMesage = action.message
+            _LOGGER.debug(f"{self.room}: {actionCap} - {actionType} - - {action} -- {actionMesage}")
+     
+            # Aktionen basierend auf den Fähigkeiten
+            if actionCap == "canExhaust":
+                await self.eventManager.emit(f"{actionType} Exhaust", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Exhaust ausgeführt.")
+            if actionCap == "canInhaust":
+                await self.eventManager.emit(f"{actionType} Inhaust", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Inhaust ausgeführt.")
+            if actionCap == "canVentilate":
+                await self.eventManager.emit(f"{actionType} Ventilation", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Ventilation ausgeführt.")
+            if actionCap == "canHumidify":
+                await self.eventManager.emit(f"{actionType} Humidifier", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Humidifier ausgeführt.")
+            if actionCap == "canDehumidify":
+                await self.eventManager.emit(f"{actionType} Dehumidifier", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Dehumidifier ausgeführt.")
+            if actionCap == "canHeat":
+                await self.eventManager.emit(f"{actionType} Heater", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Heater ausgeführt.")
+            if actionCap == "canCool":
+                await self.eventManager.emit(f"{actionType} Cooler", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Cooler ausgeführt.")
+            if actionCap == "canClimate":
+                await self.eventManager.emit(f"{actionType} Climate", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} CO2 ausgeführt.")
+            if actionCap == "canCO2":
+                await self.eventManager.emit(f"{actionType} CO2", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} CO2 ausgeführt.")
+            if actionCap == "canLight":
+                await self.eventManager.emit(f"{actionType} Light", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Light ausgeführt.")
+
+        await self.eventManager.emit("SaveState",True)   
+
+    # Action Utils
+    
+    async def NightHoldFallBack(self, actionMap):
+        _LOGGER.debug(f"{self.room}: VPD Night Hold NOT ACTIVE IGNORING ACTIONS ")
+        await self.eventManager.emit("LogForClient",{"Name":self.room,"NightVPDHold":"NotActive Ignoring-VPD"},haEvent=True)     
+        
+        # Capabilities abrufen
+        excludeCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canLight", "canCO2"}
+        modCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2"}
+        fallBackAction = "Reduce"
+        
+        # Gefilterte ActionMap erstellen (nur erlaubte Actions)
+        filteredActions = [action for action in actionMap if action.capability not in excludeCaps]
+
+        # Neue Action-Liste mit Reduced-Actions für alle anderen Geräte erstellen
+        reducedActions = [
+            OGBActionPublication(capability=action.capability, action=fallBackAction,Name=self.room,message="VPD-NightHold Device Shutdown")
+            for action in actionMap if action.capability in modCaps
+        ]
+
+        # Wenn es gefilterte oder reduzierte Aktionen gibt, verarbeiten
+        if filteredActions or reducedActions:
+            await self.publicationActionHandler(filteredActions + reducedActions)
+
+    async def checkLimitsAndPublicate(self, actionMap):
+        _LOGGER.debug(f"{self.room}: Action Publication Limits-Validation von {actionMap}")    
+        
+        ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
+        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
+        nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
+        islightON = self.dataStore.getDeep("isPlantDay.islightON")
+        
+        if islightON == False and nightVPDHold == False:
+            _LOGGER.debug(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
+            await self.NightHoldFallBack(actionMap)
+            return None
+        
+        # Gewichtungen basierend auf eigenen Werten oder Pflanzenphase festlegen
+        if ownWeights:
+            tempWeight = self.dataStore.getDeep("controlOptionData.weights.temp")
+            humWeight = self.dataStore.getDeep("controlOptionData.weights.hum")
+        else:
+            plantStage = self.dataStore.get("plantStage")
+            plantMap = ["LateFlower", "MidFlower"]
+
+            if plantStage in plantMap:
+                tempWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue") * 1
+                humWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue") * 1.25
+            else:
+                tempWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue")
+                humWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue")
+
+        # Werte aus tentData abrufen
+        tentData = self.dataStore.get("tentData")
+        tempDeviation = 0
+        humDeviation = 0
+        weightMessage = ""
+        
+        # Temperaturabweichung prüfen
+        if tentData["temperature"] > tentData["maxTemp"]:
+            tempDeviation = round((tentData["temperature"] - tentData["maxTemp"]) * tempWeight, 2)
+            weightMessage = f"Temp To High: Deviation {tempDeviation}"
+        elif tentData["temperature"] < tentData["minTemp"]:
+            tempDeviation = round((tentData["temperature"] - tentData["minTemp"]) * tempWeight, 2)
+            weightMessage = f"Temp To Low: Deviation {tempDeviation}"
+            
+        # Feuchtigkeitsabweichung prüfen
+        if tentData["humidity"] > tentData["maxHumidity"]:
+            humDeviation = round((tentData["humidity"] - tentData["maxHumidity"]) * humWeight, 2)
+            weightMessage = f"Humidity To High: Deviation {humDeviation}"
+        elif tentData["humidity"] < tentData["minHumidity"]:
+            humDeviation = round((tentData["humidity"] - tentData["minHumidity"]) * humWeight, 2)
+            weightMessage = f"Humidity To Low: Deviation {humDeviation}"
+
+        WeightPublication = OGBWeightPublication(Name=self.room,message=weightMessage,tempDeviation=tempDeviation,humDeviation=humDeviation,tempWeight=tempWeight,humWeight=humWeight)
+        await self.eventManager.emit("LogForClient",WeightPublication,haEvent=True)   
+        
+        # **Capabilities abrufen**
+        caps = self.dataStore.get("capabilities")
+
+        # Bestimme den VPD-Status für optimale Geräteauswahl
+        vpdStatus = self._determineVPDStatus(tempDeviation, humDeviation, tentData)
+        optimalDevices = self.getRoomCaps(vpdStatus)
+
+        # Erweitere actionMap basierend auf Abweichungen - aber intelligent
+        enhancedActionMap = self._enhanceActionMap(actionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices)
+        
+        # Löse Konflikte auf - aber behalte mehrere Actions pro Capability bei
+        finalActionMap = self._resolveActionConflicts(enhancedActionMap)
+        
+        await self.publicationActionHandler(finalActionMap)
+        await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True)
+
+    def _determineVPDStatus(self, tempDeviation, humDeviation, tentData):
+        """Bestimmt den primären VPD-Status basierend auf Abweichungen und kritischen Werten"""
+        
+        # Notfälle haben Priorität
+        if tentData["temperature"] > tentData["maxTemp"] + 3:
+            return "critical_hot"
+        elif tentData["temperature"] < tentData["minTemp"] - 3:
+            return "critical_cold"
+        elif tentData["dewpoint"] >= tentData["temperature"] - 1:
+            return "dewpoint_risk"
+        
+        # Kombinierte Bewertung
+        if tempDeviation > 0 and humDeviation > 0:
+            return "hot_humid"
+        elif tempDeviation > 0 and humDeviation < 0:
+            return "hot_dry"
+        elif tempDeviation < 0 and humDeviation > 0:
+            return "cold_humid"
+        elif tempDeviation < 0 and humDeviation < 0:
+            return "cold_dry"
+        elif abs(tempDeviation) > abs(humDeviation):
+            return "too_hot" if tempDeviation > 0 else "too_cold"
+        elif abs(humDeviation) > 0:
+            return "too_humid" if humDeviation > 0 else "too_dry"
+        else:
+            # VPD-Fallback
+            currentVPD = self.dataStore.getDeep("vpd.current")
+            perfectionVPD = self.dataStore.getDeep("vpd.perfection")
+            return "vpd_low" if currentVPD < perfectionVPD else "vpd_high"
+
+    def _enhanceActionMap(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
+        """Erweitert die ActionMap intelligent basierend auf Bedingungen"""
+        
+        enhancedMap = list(baseActionMap)  # Kopiere ursprüngliche Actions
+        
+        # Aktionen basierend auf Abweichungen hinzufügen
+        if tempDeviation > 0 or humDeviation > 0:
+            enhancedMap.extend(self._getDeviationActions(tempDeviation, humDeviation, caps, vpdLightControl))
+        
+        # Notfallmaßnahmen hinzufügen
+        enhancedMap.extend(self._getEmergencyActions(tentData, caps, vpdLightControl))
+        
+        # CO2-Management hinzufügen
+        enhancedMap.extend(self._getCO2Actions(caps, islightON))
+        
+        # Priorisiere Actions für optimale Geräte
+        return self._prioritizeOptimalDevices(enhancedMap, optimalDevices, caps)
+
+    def _getDeviationActions(self, tempDeviation, humDeviation, caps, vpdLightControl):
+        """Erstellt Actions basierend auf Temperatur- und Feuchtigkeitsabweichungen"""
+        
+        actions = []
+        
+        if tempDeviation > 0 and humDeviation > 0:
+            # Hohe Temperatur + Hohe Feuchtigkeit
+            actionMessage = f"Hohe Temperatur + Hohe Feuchtigkeit in {self.room}"
+            if caps.get("canDehumidify", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canVentilate", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canCool", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
+                
+        elif tempDeviation > 0 and humDeviation < 0:
+            # Hohe Temperatur + Niedrige Feuchtigkeit
+            actionMessage = f"Hohe Temperatur + Niedrige Feuchtigkeit in {self.room}"
+            if caps.get("canHumidify", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canCool", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Reduce", Name=self.room, message=actionMessage, priority=""))
+                
+        elif tempDeviation < 0 and humDeviation > 0:
+            # Niedrige Temperatur + Hohe Feuchtigkeit
+            actionMessage = f"Niedrige Temperatur + Hohe Feuchtigkeit in {self.room}"
+            if caps.get("canDehumidify", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canHeat", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
+                
+        elif tempDeviation < 0 and humDeviation < 0:
+            # Niedrige Temperatur + Niedrige Feuchtigkeit
+            actionMessage = f"Niedrige Temperatur + Niedrige Feuchtigkeit in {self.room}"
+            if caps.get("canHumidify", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canHeat", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Increase", Name=self.room, message=actionMessage, priority=""))
+        
+        return actions
+
+    def _getEmergencyActions(self, tentData, caps, vpdLightControl):
+        """Erstellt Notfall-Actions für kritische Situationen"""
+        
+        actions = []
+        
+        # Kritische Übertemperatur
+        if tentData["temperature"] > tentData["maxTemp"] + 3:
+            actionMessage = f"Kritische Übertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canVentilate", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canCool", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Reduce", Name=self.room, message=actionMessage, priority=""))
+
+        # Kritische Untertemperatur
+        elif tentData["temperature"] < tentData["minTemp"] - 3:
+            actionMessage = f"Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
+            if caps.get("canHeat", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Reduce", Name=self.room, message=actionMessage, priority=""))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Increase", Name=self.room, message=actionMessage, priority=""))
+
+        # Taupunkt-Risiko
+        if tentData["dewpoint"] >= tentData["temperature"] - 1:
+            actionMessage = f"Taupunkt erreicht in {self.room}, Feuchtigkeit reduziert."
+            if caps.get("canDehumidify", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            if caps.get("canVentilate", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", Name=self.room, message=actionMessage, priority=""))
+        
+        return actions
+
+    def _getCO2Actions(self, caps, islightON):
+        """Erstellt CO2-Management Actions"""
+        
+        actions = []
+        co2Control = self.dataStore.getDeep("controlOptions.co2Control")
+        
+        if co2Control and islightON:
+            co2Level = int(self.dataStore.getDeep("controlOptionData.co2ppm.current"))
+            try:
+                co2LevelMin = int(float(self.dataStore.getDeep("controlOptionData.co2ppm.minPPM")))        
+                co2LevelMax = int(float(self.dataStore.getDeep("controlOptionData.co2ppm.maxPPM")))
+            except (ValueError, TypeError):
+                co2LevelMin = 400
+                co2LevelMax = 1500
+                
+            if co2Level < co2LevelMin:
+                actionMessage = f"CO₂-Level zu niedrig in {self.room}, CO₂-Zufuhr erhöht."
+                if caps.get("canCO2", {}).get("state", False):
+                    actions.append(OGBActionPublication(capability="canCO2", action="Increase", Name=self.room, message=actionMessage, priority=""))
+                if caps.get("canExhaust", {}).get("state", False):
+                    actions.append(OGBActionPublication(capability="canExhaust", action="Reduce", Name=self.room, message=actionMessage, priority=""))
+                    
+            elif co2Level > co2LevelMax:
+                actionMessage = f"CO₂-Level zu hoch in {self.room}, Abluft erhöht."
+                if caps.get("canCO2", {}).get("state", False):
+                    actions.append(OGBActionPublication(capability="canCO2", action="Reduce", Name=self.room, message=actionMessage, priority=""))
+                if caps.get("canExhaust", {}).get("state", False):
+                    actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
+        
+        return actions
+
+    def _prioritizeOptimalDevices(self, actionMap, optimalDevices, caps):
+        """Priorisiert Actions für optimale Geräte, behält aber alle bei"""
+        
+        if not optimalDevices:
+            return actionMap  # Keine Optimierung möglich
+        
+        # Create new action list with updated priorities
+        prioritizedActions = []
+        
+        for action in actionMap:
+            capability = action.capability
+            capDevices = caps.get(capability, {}).get("devEntities", [])
+            
+            # Prüfe ob diese capability optimale Geräte hat
+            hasOptimalDevice = any(device in optimalDevices for device in capDevices)
+            
+            # Use dataclasses.replace to create a new instance with updated priority
+            prioritizedAction = dataclasses.replace(
+                action,
+                priority="high" if hasOptimalDevice else "normal"
+            )
+            prioritizedActions.append(prioritizedAction)
+        
+        return prioritizedActions
+
+    def _resolveActionConflicts(self, actionMap):
+        """Löst nur direkte Konflikte auf, behält aber multiple Actions pro Capability"""
+        
+        # Gruppiere nach capability UND action
+        actionGroups = {}
+        for action in actionMap:
+            key = f"{action.capability}_{action.action}"
+            if key not in actionGroups:
+                actionGroups[key] = []
+            actionGroups[key].append(action)
+        
+        finalActions = []
+        
+        # Für jede Gruppe, wähle die beste Action (falls mehrere identische)
+        for key, actions in actionGroups.items():
+            if len(actions) == 1:
+                finalActions.append(actions[0])
+            else:
+                # Bei identischen Actions, wähle die mit der wichtigsten Message
+                priorityKeywords = ["Kritische", "Notfall", "Taupunkt", "CO₂"]
+                
+                bestAction = actions[0]
+                for action in actions:
+                    if any(keyword in action.message for keyword in priorityKeywords):
+                        bestAction = action
+                        break
+                    elif hasattr(action, 'priority') and action.priority == "high":
+                        bestAction = action
+                
+                finalActions.append(bestAction)
+        
+        # Prüfe auf direkte Konflikte (Increase vs Reduce für gleiche Capability)
+        return self._resolveIncreaseReduceConflicts(finalActions)
+
+    def _resolveIncreaseReduceConflicts(self, actions):
+        """Löst Increase/Reduce Konflikte für gleiche Capability auf"""
+        
+        capabilityActions = {}
+        for action in actions:
+            cap = action.capability
+            if cap not in capabilityActions:
+                capabilityActions[cap] = []
+            capabilityActions[cap].append(action)
+        
+        resolvedActions = []
+        
+        for capability, capActions in capabilityActions.items():
+            if len(capActions) <= 1:
+                resolvedActions.extend(capActions)
+                continue
+                
+            # Prüfe auf Increase/Reduce Konflikte
+            increases = [a for a in capActions if a.action == "Increase"]
+            reduces = [a for a in capActions if a.action == "Reduce"]
+            evals = [a for a in capActions if a.action == "Eval"]
+            
+            if increases and reduces:
+                # Konflikt! Entscheide basierend auf Priorität
+                emergencyActions = [a for a in capActions if any(kw in a.message for kw in ["Kritische", "Notfall", "Taupunkt"])]
+                
+                if emergencyActions:
+                    # Notfall hat Vorrang
+                    resolvedActions.append(emergencyActions[0])
+                else:
+                    # Wähle basierend auf Priorität
+                    highPriorityActions = [a for a in capActions if hasattr(a, 'priority') and a.priority == "high"]
+                    if highPriorityActions:
+                        resolvedActions.append(highPriorityActions[0])
+                    else:
+                        # Standard-Priorität: Increase > Reduce > Eval
+                        if increases:
+                            resolvedActions.append(increases[0])
+                        else:
+                            resolvedActions.append(reduces[0])
+            else:
+                # Kein Konflikt, alle Actions behalten
+                resolvedActions.extend(capActions)
+        
+        return resolvedActions
+
+    def getRoomCaps(self, vpdStatus: str):
+        """Erweiterte Version die auch spezielle VPD-Stati behandelt"""
+        
+        available_capabilities = self.dataStore.get("capabilities")
+        device_profiles = self.dataStore.get("DeviceProfiles")
+        result = []
+
+        # Mapping für erweiterte VPD-Stati
+        statusMapping = {
+            "too_hot": "too_high",
+            "too_cold": "too_low", 
+            "too_humid": "too_high",
+            "too_dry": "too_low",
+            "critical_hot": "too_high",
+            "critical_cold": "too_low",
+            "dewpoint_risk": "too_high",
+            "hot_humid": "too_high",
+            "hot_dry": "too_high",
+            "cold_humid": "too_low",
+            "cold_dry": "too_low",
+            "vpd_high": "too_high",
+            "vpd_low": "too_low"
+        }
+        
+        mappedStatus = statusMapping.get(vpdStatus, "too_high")
+
+        for dev_name, profile in device_profiles.items():
+            cap_key = profile.get("cap")
+            if not cap_key:
+                continue
+
+            cap_info = available_capabilities.get(cap_key)
+            if not cap_info or cap_info["count"] == 0:
+                continue
+
+            if mappedStatus == "too_high":
+                if (
+                    (profile["type"] == "humidity" and profile["direction"] == "reduce") or
+                    (profile["type"] == "temperature" and profile["direction"] == "reduce") or
+                    (profile["type"] == "both" and profile["direction"] == "reduce")
+                ):
+                    result.extend(cap_info["devEntities"])
+
+            elif mappedStatus == "too_low":
+                if (
+                    (profile["type"] == "humidity" and profile["direction"] == "increase") or
+                    (profile["type"] == "temperature" and profile["direction"] == "increase") or
+                    (profile["type"] == "both" and profile["direction"] == "increase")
+                ):
+                    result.extend(cap_info["devEntities"])
+
+        return list(set(result))  # Entferne Duplikate

@@ -1,13 +1,18 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-
 @dataclass
 class LightStage:
     min: int
     max: int
     phase: str
-
+    
+    def to_dict(self):
+        return {
+            "min": self.min,
+            "max": self.max,
+            "phase": self.phase
+        }
 
 @dataclass
 class OGBConf:
@@ -15,19 +20,39 @@ class OGBConf:
     room: str = ""
     tentMode: str = ""
     plantStage: str = ""
+    strainName: str = ""
     mainControl: str = ""
+    growAreaM2: int = 0.0
     notifyControl: str = "Disabled"
-    Running: Dict[str, bool] = field(default_factory=lambda: {
-        "ON": True,
-        "OFF": False,
-        "Paused": False
-    })
     Hydro: Dict[str, Any] = field(default_factory=lambda: {
         "Active": False,
         "Cycle": False,
         "Mode": None,
-        "Intervall": None,
-        "Duration": None,
+        "Intervall":None, 
+        "Duration":None,
+        "Retrieve": None,
+        "R_Active": False,
+        "R_Intervall":None, 
+        "R_Duration": None,
+        "ph_current":0,
+        "ec_current":0,
+        "tds_current":0,
+        "oxi_current":0,
+        "sal_current:":0,
+        "WaterTEMP":0,       
+    })
+    Feed: Dict[str, Any] = field(default_factory=lambda: {
+        "Mode":"",
+        "Active": False,
+        "PH_Target": False,
+        "EC_Target": None,
+        "Nut_A_ml": None,
+        "Nut_B_ml": None,
+        "Nut_C_ml":None,
+        "Nut_W_ml":False,
+        "Nut_X_ml":None,
+        "Nut_Y_ml":None,
+        "Nut_PH_ml":None,
     })
     devices: List[Any] = field(default_factory=list)
     ownDeviceList: List[Any] = field(default_factory=list)
@@ -45,7 +70,6 @@ class OGBConf:
         "canCO2": {"state": False, "count": 0, "devEntities": []},
     })
     previousActions: List[Any] = field(default_factory=list)
-    previousPIDActions: List[Any] = field(default_factory=list)
     tentData: Dict[str, Optional[Any]] = field(default_factory=lambda: {
         "leafTempOffset": None,
         "temperature": None,
@@ -56,6 +80,8 @@ class OGBConf:
         "maxHumidity": None,
         "minHumidity": None,
         "co2Level": None,
+        "DLI":None,
+        "PPFD":None,
     })
     vpd: Dict[str, Optional[Any]] = field(default_factory=lambda: {
         "current": None,
@@ -73,14 +99,13 @@ class OGBConf:
         "vpdLightControl": False,
         "co2Control": False,
         "workMode":False,
-        "pidControl": False,
         "minMaxControl":False,
         "ownWeights": False,
         "ambientControl": False,
-        "ambientBorrow": False,
+
     })
     controlOptionData: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
-        "co2ppm": {"target": 0, "current":400, "minPPM": 400, "maxPPM": 1400},
+        "co2ppm": {"target": 0, "current":400, "minPPM": 400, "maxPPM": 1800},
         "weights": {"temp": None, "hum": None, "defaultValue": 1},
         "minmax":{"minTemp":None,"maxTemp":None,"minHum":None,"maxHum":None}
     })
@@ -108,7 +133,7 @@ class OGBConf:
         "breederbloomdays": 0,
         "planttotaldays": 0,
         "totalbloomdays": 0,
-        "nextFoodTime":0,
+        "daysToChopChop": 0,
     })
     lightPlantStages: Dict[str, LightStage] = field(default_factory=lambda: {
         "Germination": LightStage(min=20, max=30, phase=""),
@@ -129,7 +154,7 @@ class OGBConf:
         "dewpointVPD": None,
         "vaporPressureActual": None,
         "vaporPressureSaturation": None,
-        "sharkMouseVPD": None,
+        "Dry5DaysVPD": None,
         "modes": {
             "ElClassico": {
                 "isActive": False,
@@ -139,7 +164,7 @@ class OGBConf:
                     "endTime": {"targetTemp": 20, "targetHumidity": 58, "durationHours": 72},
                 },
             },
-            "SharkMouse": {
+            "Dry5Days": {
                 "isActive": False,
                 "phase": {
                     "start": {"targetTemp": 22.2, "targetHumidity": 55, "targetVPD": 1.2, "durationHours": 48},
@@ -197,6 +222,7 @@ class OGBConf:
         "humidity": [],
         "dewpoint": [],
         "Devices": [],
+        "moisture": [],
     })
     DeviceMinMax: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "Exhaust": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":10,"max":95}},
@@ -215,3 +241,8 @@ class OGBConf:
         "Dehumidifer": {"type":"humidity","cap":"canDehumidify", "direction": "increase", "effect":2.0, "sideEffect":{"type": "temperature", "direction": "increase" }},
         "Climate": {"type":"both","cap":"canClimate", "direction": "increase","effect":2.0, "sideEffect":{}},
     })
+    
+    def __post_init__(self):
+        """Wird nach der Initialisierung aufgerufen, um hass zu setzen"""
+        # hass muss später manuell gesetzt werden
+        pass

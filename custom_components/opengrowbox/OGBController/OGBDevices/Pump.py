@@ -14,10 +14,14 @@ class Pump(Device):
         self.Duration = None  # Pumpdauer in Sekunden
         self.isAutoRun = False  # Automatikmodus
         self.lastPumpTime = None  # Zeitpunkt des letzten Pumpvorgangs
-        self.soilMoisture = None  # Bodenfeuchtigkeit
+        
         self.currentEC = None
         self.minEC = None  # Elektrische Leitfähigkeit
         self.maxEC = None  # Maximaler EC-Wert
+
+
+        self.soilMoisture = None  # Bodenfeuchtigkeit
+
 
         #PLANT FEEDING CLASSIC
         self.minSoilMoisture = 25  # Mindestbodenfeuchte
@@ -27,17 +31,34 @@ class Pump(Device):
         ## Events Register
         self.eventManager.on("Increase Pump", self.onAction)
         self.eventManager.on("Reduce Pump", self.offAction)
-       
+          
     #Actions Helpers           
-    async def onAction(self,data):
+    async def onAction(self, data):
         """Start Pump"""
+        if isinstance(data, dict):
+            target_name = data.get("Device") or data.get("id")
+        else:
+            target_name = getattr(data, "Device", None)
+
+        if target_name != self.deviceName:
+            return  # Nicht für diese Pumpe bestimmt
+
         self.log_action("TurnON ")
         await self.turn_on()
-        
-    async def offAction(self,data):
+            
+    async def offAction(self, data):
         """Stop Pump"""
+        if isinstance(data, dict):
+            target_name = data.get("Device") or data.get("id")
+        else:
+            target_name = getattr(data, "Device", None)
+
+        if target_name != self.deviceName:
+            return  # Nicht für diese Pumpe bestimmt
+
         self.log_action("TurnOFF ")
         await self.turn_off()
+
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""

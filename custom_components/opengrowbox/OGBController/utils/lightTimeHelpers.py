@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime,timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,9 +41,17 @@ async def update_light_state(lightOnTime,lightOffTime,isLightNowON,room):
         _LOGGER.error(f"{room} Fehler beim Aktualisieren des Lichtstatus: {e}")       
 
 
-async def udpate_sunRise(lightOnTime,SunRiseTime):
-    pass
+def hours_between(start_str, stop_str):
+    """
+    Berechnet die Stunden zwischen zwei Zeiten (HH:MM:SS),
+    auch wenn der Zeitraum über Mitternacht geht.
+    """
+    fmt = "%H:%M:%S"
+    start = datetime.strptime(start_str, fmt)
+    stop = datetime.strptime(stop_str, fmt)
 
+    if stop <= start:
+        stop += timedelta(days=1)
 
-async def udpate_sunSet(lightOnTime,SunRiseTime):
-    pass
+    diff = stop - start
+    return diff.total_seconds() / 3600  # Stunden als float

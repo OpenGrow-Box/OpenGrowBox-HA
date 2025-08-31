@@ -98,8 +98,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSensor(f"OGB_AVGDewpoint_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=None, device_class="temperature"),
         CustomSensor(f"OGB_AVGHumidity_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=None, device_class="humidity"),
 
+        CustomSensor(f"OGB_Current_VPD_Target_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=None, device_class="vpd"),
+        CustomSensor(f"OGB_Current_VPD_Target_Min_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=None, device_class="vpd"),
+        CustomSensor(f"OGB_Current_VPD_Target_Max_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=None, device_class="vpd"),
+
         # Ambient Sensors
-        CustomSensor(f"OGB_AmbientVPD_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="vpd"),
         CustomSensor(f"OGB_AmbientTemperature_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="temperature"),
         CustomSensor(f"OGB_AmbientDewpoint_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="temperature"),
         CustomSensor(f"OGB_AmbientHumidity_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="humidity"),
@@ -137,13 +140,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entity_id = call.data.get("entity_id")
             value = call.data.get("value")
 
-            _LOGGER.warn(f"Received request to update sensor '{entity_id}' with value: {value}")
+            _LOGGER.debug(f"Received request to update sensor '{entity_id}' with value: {value}")
 
             # Find and update the corresponding sensor
             for sensor in hass.data[DOMAIN]["sensors"]:
                 if sensor.entity_id == entity_id:
                     sensor.update_state(value)
-                    _LOGGER.warn(f"Updated sensor '{sensor.name}' to value: {value}")
+                    _LOGGER.debug(f"Updated sensor '{sensor.name}' to value: {value}")
                     return
 
 

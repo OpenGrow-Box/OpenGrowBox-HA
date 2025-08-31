@@ -25,18 +25,18 @@ class OGBRegistryEvenListener:
 
         # Debug: Zeige alle Entitäten, bevor die Schleife beginnt
         all_entities = self.hass.states.async_all()
-        _LOGGER.warn(f"Alle Entitäten: {all_entities}")
+        _LOGGER.debug(f"Alle Entitäten: {all_entities}")
 
         # Hole alle aktuellen Zustände aus Home Assistant
         for entity in all_entities:
             # Prüfe, ob die Entität einem Raum (area_id) zugeordnet ist
             area = entity.attributes.get("area_id")
-            _LOGGER.warn(f"Entity: {entity.entity_id}, Area: {area}")
+            _LOGGER.debug(f"Entity: {entity.entity_id}, Area: {area}")
 
             if area and area == room_name:
                 entities_by_room[entity.entity_id] = entity
 
-        _LOGGER.warn(f"Entities in Room '{room_name}': {entities_by_room}")
+        _LOGGER.debug(f"Entities in Room '{room_name}': {entities_by_room}")
         return entities_by_room
 
     async def get_entities_and_devices_by_room(self, room_name):
@@ -55,7 +55,7 @@ class OGBRegistryEvenListener:
             for device_id, device in device_registry.devices.items()
             if device.area_id == room_name
         }
-        _LOGGER.warn(f"Devices in Room '{devices}")
+        _LOGGER.debug(f"Devices in Room '{devices}")
         return {
             "entities": entities,
             "devices": devices,
@@ -312,7 +312,7 @@ class OGBRegistryEvenListener:
                     newState=[new_state_value] if new_state_value is not None else []
                 )
 
-                _LOGGER.warn(
+                _LOGGER.debug(
                     f"State-Change für {entity_id} in {room_name}: "
                     f"Alt: {old_state_value}, Neu: {new_state_value}"
                 )

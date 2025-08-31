@@ -49,8 +49,26 @@ class OGBVPDPublication:
 
     def to_dict(self):
         return asdict(self)
+     
+@dataclass(frozen=True)
+class OGBWaterPublication:
+    Name: str
+    ecCurrent: Optional[float] = None
+    tdsCurrent: Optional[float] = None
+    phCurrent: Optional[float] = None
+    oxiCurrent: Optional[float] = None
+    salCurrent: Optional[float] = None
+    waterTemp: Optional[float] = None
+    def to_dict(self):
+        return asdict(self)
     
-    
+@dataclass
+class OGBMoisturePublication:
+    Name: str
+    MoistureValues: list
+    AvgMoisture: float | None = None
+
+     
 @dataclass(frozen=True)
 class OGBCO2Publication:
     Name: str
@@ -62,13 +80,13 @@ class OGBCO2Publication:
     def to_dict(self):
         return asdict(self)
     
-    
 @dataclass(frozen=True)
 class OGBActionPublication:
     Name: str
     message: str
     capability: str
     action: str
+    priority:str
 
 @dataclass(frozen=True)
 class OGBWeightPublication:
@@ -79,17 +97,34 @@ class OGBWeightPublication:
     tempWeight:float
     humWeight:float
     
-
 @dataclass(frozen=True)
 class OGBHydroPublication:
     Name: str
     Mode:str
-    Cycle: str
-    Active: str
-    Intervall: int
-    Duration: int
+    Cycle: bool
+    Active: bool
+    Intervall: float
+    Duration: float
     Message: str
     Devices: List[str]
+
+@dataclass(frozen=True)
+class OGBRetrivePublication:
+    Name: str
+    Active: bool
+    Cycle: bool
+    Mode:bool
+    Intervall: float
+    Duration: float
+    Message: str
+    Devices: List[str]
+
+@dataclass(frozen=True)
+class OGBRetrieveAction:
+    Name: str
+    Device:str
+    Cycle: str
+    Action: str
 
 @dataclass(frozen=True)
 class OGBHydroAction:
@@ -118,3 +153,11 @@ class OGBLightAction:
     SunRise: bool
     SunSet : bool
 
+@dataclass(frozen=True)
+class OGBPremPublication:
+    Name: str
+    UserID: str
+    Plan:str
+    ValidUntil:bool
+    Active:bool
+    Message:str

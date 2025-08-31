@@ -145,8 +145,8 @@ def calc_dew_vpd(air_temp, dew_point):
         "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
     }
 
-# Berechne SharkMouse VPD (Based on TEMP/HUM/VPD)
-def calc_shark_mouse_vpd(temp, humidity, leaf_offset=0):
+# Berechne Dry5Days VPD (Based on TEMP/HUM/VPD)
+def calc_Dry5Days_vpd(temp, humidity, leaf_offset=0):
     try:
         temp = float(temp)
         humidity = float(humidity)
@@ -160,3 +160,78 @@ def calc_shark_mouse_vpd(temp, humidity, leaf_offset=0):
     vpd = sdp_blatt - adp
 
     return round(vpd, 2)
+
+def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="fullspektrum_grow"):
+    """
+    Convert Lux or Lumen to PPFD (µmol/m²/s) and DLI (mol/m²/d) for Grow LEDs.
+    
+    Optimized for cannabis and vegetable growing with realistic conversion factors.
+
+    :param value: Light measurement (Lux or Lumen)
+    :param unit: "lux" or "lumen"
+    :param hours: Photoperiod in hours (default 8h)
+    :param area_m2: Area in m² if unit is lumen (default 1.0)
+    :param led_type: LED type - affects conversion factor
+    :return: (ppfd, dli) - PPFD in µmol/m²/s, DLI in mol/m²/d
+    
+    Available led_types:
+    - "fullspektrum_grow": Vollspektrum Grow LEDs (factor 15) - RECOMMENDED
+    - "quantum_board": Samsung LM301B/H Quantum Boards (factor 16)
+    - "red_blue_grow": Red/Blue Grow LEDs (factor 12)
+    - "high_end_grow": High-End Grow LEDs (factor 18)
+    - "cob_grow": COB Grow LEDs (factor 20)
+    - "hps_equivalent": LED as HPS replacement (factor 15)
+    - "burple": Old "Burple" LEDs (factor 12)
+    - "white_led": Standard white LEDs (factor 54) - NOT for growing
+    """
+
+    # Wenn None oder leer, Standardwert nutzen
+    if value is None or value == "":
+        value = default_value
+
+    # Immer versuchen, value in float umzuwandeln
+    try:
+        value = float(value)
+    except (ValueError, TypeError):
+        value = float(default_value)
+
+    # Umrechnungsfaktoren für verschiedene LED-Typen
+    conversion_factors = {
+        "fullspektrum_grow": 15,
+        "quantum_board": 16,
+        "red_blue_grow": 12,
+        "high_end_grow": 18,
+        "cob_grow": 20,
+        "hps_equivalent": 15,
+        "burple": 12,
+        "white_led": 54
+    }
+
+    # Input validation
+    if led_type not in conversion_factors:
+        available_types = ", ".join(conversion_factors.keys())
+        raise ValueError(f"led_type must be one of: {available_types}")
+
+    if unit.lower() == "lumen":
+        if area_m2 <= 0:
+            raise ValueError("area_m2 must be positive when using lumen")
+        lux = value / area_m2
+    elif unit.lower() == "lux":
+        lux = value
+    else:
+        raise ValueError("unit must be 'lux' or 'lumen'")
+
+    if hours <= 0:
+        raise ValueError("hours must be positive")
+
+    if value < 0:
+        value = 0  # negative Werte automatisch auf 0 setzen
+
+    # Umrechnung basierend auf LED-Typ
+    factor = conversion_factors[led_type]
+    ppfd = lux / factor
+
+    # DLI berechnung
+    dli = ppfd * 3600 * hours / 1_000_000
+
+    return round(ppfd), round(dli, 1)

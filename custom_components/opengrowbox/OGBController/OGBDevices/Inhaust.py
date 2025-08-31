@@ -16,8 +16,8 @@ class Inhaust(Device):
         self.init()
         
         ## Events Register
-        self.eventManager.on("Increase Inhaust", self.increaseAction)
-        self.eventManager.on("Reduce Inhaust", self.reduceAction)
+        self.eventManager.on("Increase Intake", self.increaseAction)
+        self.eventManager.on("Reduce Intake", self.reduceAction)
 
     #Actions Helpers
     
