@@ -1414,7 +1414,7 @@ class OGBWebSocketConManager:
         # Reset connection states only
         self.ws_connected = False
         
-        self.ogbevents.emit("ogb_client_disconnect",self.ogb_sessions)
+        await self.ogbevents.emit("ogb_client_disconnect",self.ogb_sessions)
         await self.room_removed()
         
         await self._send_auth_response(self.create_event_id(), "success", "Disconnect Success", {

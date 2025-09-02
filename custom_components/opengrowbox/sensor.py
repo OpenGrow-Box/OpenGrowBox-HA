@@ -83,8 +83,6 @@ class CustomSensor(Entity):
         """Update the state and notify Home Assistant."""
         self._state = new_state
         self.async_write_ha_state()
-        _LOGGER.info(f"Sensor '{self._name}' updated to state: {new_state}")
-
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up sensor entities."""
@@ -108,7 +106,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSensor(f"OGB_AmbientHumidity_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="humidity"),
 
         # Outside Sensors
-        CustomSensor(f"OGB_OutsiteTemperature{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="temperature"),
+        CustomSensor(f"OGB_OutsiteTemperature_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="temperature"),
         CustomSensor(f"OGB_OutsiteDewpoint_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="temperature"),
         CustomSensor(f"OGB_OutsiteHumidity_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0.0, device_class="humidity"),
 
@@ -140,13 +138,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entity_id = call.data.get("entity_id")
             value = call.data.get("value")
 
-            _LOGGER.debug(f"Received request to update sensor '{entity_id}' with value: {value}")
+            #_LOGGER.debug(f"Received request to update sensor '{entity_id}' with value: {value}")
 
             # Find and update the corresponding sensor
             for sensor in hass.data[DOMAIN]["sensors"]:
                 if sensor.entity_id == entity_id:
                     sensor.update_state(value)
-                    _LOGGER.debug(f"Updated sensor '{sensor.name}' to value: {value}")
+                    #_LOGGER.debug(f"Updated sensor '{sensor.name}' to value: {value}")
                     return
 
 

@@ -63,7 +63,10 @@ class OpenGrowBox:
         # Plant Times
         self.eventManager.on("PlantTimeChange",self._autoUpdatePlantStages)
        
-        
+        # Ambient & Outsite   
+        self.hass.bus.async_listen("AmbientData",self._handle_ambient_data)   
+        self.hass.bus.async_listen("OutsiteData",self._handle_outsite_data)
+               
     def __str__(self):
         return (f"{self.name}' Running")
     
@@ -78,13 +81,12 @@ class OpenGrowBox:
         ##
         ## TRY RESTORE DATASTORE FUNCTION NEEDED FROM LAST REBOOT!!
         ##
-        
-        
+
         await self.eventManager.emit("HydroModeChange",Init)
         await self.eventManager.emit("HydroModeRetrieveChange",Init)
         await self.eventManager.emit("PlantTimeChange",Init)
         await self._get_vpd_onStart(Init)
-        
+
         _LOGGER.info(f"OpenGrowBox for {self.room} started successfully State:{self.dataStore}")
         
         return True
@@ -147,14 +149,23 @@ class OpenGrowBox:
             if currentVPD != lastVpd:
                 self.dataStore.setDeep("vpd.current", currentVPD)
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
+
+
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
                 _LOGGER.debug(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+
                 tentMode = self.dataStore.get("tentMode")
                 runMode = OGBModeRunPublication(currentMode=tentMode)               
                 
+                if self.room.lower() == "ambient":
+                    _LOGGER.warning(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                    await self.eventManager.emit("AmbientData",vpdPub,haEvent=True)
+                    await self.get_weather_data()
+                    return
+
                 await self.eventManager.emit("selectActionMode",runMode)
                 await self.eventManager.emit("LogForClient",vpdPub,haEvent=True)
-                await self.eventManager.emit("DataRelease",vpdPub,haEvent=True)           
+                await self.eventManager.emit("DataRelease",vpdPub)           
 
                 self._debugState()
                 return vpdPub
@@ -163,86 +174,7 @@ class OpenGrowBox:
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
-                await self.eventManager.emit("DataRelease",vpdPub,haEvent=True)
-
-    async def _get_vpd_onStart2(self, data):
-        if data != True:
-            return
-
-        workdataDevices = self.dataStore.getDeep("workData.Devices")
-        _LOGGER.debug(f"INT DATA NEED {self.room} --- :{workdataDevices}")
-
-        temperatures = []
-        humidities = []
-
-        # Alle Messwerte parsen
-        for device in workdataDevices:
-            for entity in device.get("entities", []):
-                entity_id = entity.get("entity_id", "")
-                value = entity.get("value")
-
-                # Ungültige Werte überspringen
-                if value in (None, "unknown", "unbekannt", ""):
-                    continue
-
-                try:
-                    value_float = float(value)
-                except (TypeError, ValueError):
-                    continue
-
-                if "temperature" in entity_id:
-                    temperatures.append(value_float)
-                elif "humidity" in entity_id:
-                    humidities.append(value_float)
-
-        # Durchschnittswerte berechnen
-        avgTemp = calculate_avg_value(temperatures) if temperatures else "unavailable"
-        avgHum = calculate_avg_value(humidities) if humidities else "unavailable"
-        self.dataStore.setDeep("workData.temperature", temperatures)
-        self.dataStore.setDeep("workData.humidity", humidities)
-        self.dataStore.setDeep("tentData.temperature", avgTemp)
-        self.dataStore.setDeep("tentData.humidity", avgHum)
-
-        leafTempOffset = self.dataStore.getDeep("tentData.leafTempOffset")
-        avgDew = calculate_dew_point(avgTemp, avgHum) if avgTemp != "unavailable" and avgHum != "unavailable" else "unavailable"
-        self.dataStore.setDeep("tentData.dewpoint", avgDew)
-
-        # VPD berechnen
-        lastVpd = self.dataStore.getDeep("vpd.current")
-        currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
-
-        if not currentVPD or currentVPD <= 0:
-            _LOGGER.error(f"VPD invalid (0 or negative) in {self.room}")
-            return
-
-        # Prüfen auf OGBInitData
-        if isinstance(data, OGBInitData):
-            _LOGGER.debug(f"OGBInitData erkannt: {data}")
-            return
-
-        # Spezifische Aktion für OGBEventPublication
-        if currentVPD != lastVpd:
-            self.dataStore.setDeep("vpd.current", currentVPD)
-            vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-            await update_sensor_via_service(self.room, vpdPub, self.hass)
-            _LOGGER.debug(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-
-            tentMode = self.dataStore.get("tentMode")
-            runMode = OGBModeRunPublication(currentMode=tentMode)
-            await self.eventManager.emit("selectActionMode", runMode)
-            await self.eventManager.emit("LogForClient", vpdPub, haEvent=True)
-            await self.eventManager.emit("DataRelease", vpdPub, haEvent=True)
-
-            self._debugState()
-            return vpdPub
-
-        else:
-            # VPD hat sich nicht geändert
-            vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-            _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-            await update_sensor_via_service(self.room, vpdPub, self.hass)
-            await self.eventManager.emit("DataRelease", vpdPub, haEvent=True)
-            return vpdPub
+                await self.eventManager.emit("DataRelease",vpdPub)
 
     async def handleRoomUpdate(self, entity):
         """
@@ -552,9 +484,15 @@ class OpenGrowBox:
                 self.dataStore.setDeep("vpd.current", currentVPD)
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
-                _LOGGER.info(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                _LOGGER.debug(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 tentMode = self.dataStore.get("tentMode")
                 runMode = OGBModeRunPublication(currentMode=tentMode)               
+                
+                if self.room.lower() == "ambient":
+                    _LOGGER.debug(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                    await self.eventManager.emit("AmbientData",vpdPub,haEvent=True)
+                    await self.get_weather_data()
+                    return
                 
                 await self.eventManager.emit("selectActionMode",runMode)
                 await self.eventManager.emit("DataRelease",vpdPub,haEvent=True)           
@@ -565,10 +503,78 @@ class OpenGrowBox:
                
             else:
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-                _LOGGER.info(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
                 await self.eventManager.emit("DataRelease",vpdPub,haEvent=True)
+
+    async def get_weather_data(self):
+        """Hole aktuelle Temperatur und Luftfeuchtigkeit über Open-Meteo API (kostenlos)."""
+        try:
+            import aiohttp
+            import asyncio
             
+            lat = self.hass.config.latitude
+            lon = self.hass.config.longitude
+            
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m&timezone=auto"
+            
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        current = data.get('current', {})
+                        temperature = round(current.get('temperature_2m', 20.0), 1)
+                        humidity = current.get('relative_humidity_2m', 60)
+                        
+                        _LOGGER.debug(f"{self.room} Open-Meteo: {temperature}°C, {humidity}%")
+                        await self.eventManager.emit("OutsiteData",{"temperature":temperature,"humidity":humidity},haEvent=True)
+                    else:
+                        _LOGGER.error(f"Open-Meteo API Error: {response.status}")
+                        return None, None
+                        
+        except asyncio.TimeoutError:
+            _LOGGER.error("Timeout Open-Meteo")
+            return 20.0, 60.0
+        except Exception as e:
+            _LOGGER.error(f"Fetch Error Open-Meteo: {e}")
+            return 20.0, 60.0
+    
+    async def _handle_ambient_data(self, event):
+        if self.room.lower() == "ambient":
+            return
+
+        logging.debug(f"Received Ambient Data {self.room}")
+
+        payload = event.data
+
+        temp = payload.get("AvgTemp")
+        hum = payload.get("AvgHum")
+
+        self.dataStore.setDeep("tentData.AmbientTemp", temp)
+        self.dataStore.setDeep("tentData.AmbientHum", hum)
+
+        await _update_specific_sensor("ogb_ambienttemperature_", self.room, temp, self.hass)
+        await _update_specific_sensor("ogb_ambienthumidity_", self.room, hum, self.hass)
+
+    async def _handle_outsite_data(self, event):
+        if self.room.lower() == "ambient":
+            return
+
+        logging.debug(f"Received Outsite Data {self.room} - {event}")
+
+        payload = event.data
+
+        temp = payload.get("temperature")
+        hum = payload.get("humidity")
+
+        self.dataStore.setDeep("tentData.OutsiteTemp", temp)
+        self.dataStore.setDeep("tentData.OutsiteHum", hum)
+
+        await _update_specific_sensor("ogb_outsitetemperature_", self.room, temp, self.hass)
+        await _update_specific_sensor("ogb_outsitehumidity_", self.room, hum, self.hass)
+
     async def lightSheduleUpdate(self,data):
         lightbyOGBControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
         if lightbyOGBControl == False: return
@@ -737,7 +743,7 @@ class OpenGrowBox:
             await self.update_minMax_settings()
             await self.eventManager.emit("PlantStageChange",plantStage)
             
-            _LOGGER.info(f"{self.room}: PlantStage '{plantStage}' erfolgreich in VPD-Daten übertragen.")
+            _LOGGER.debug(f"{self.room}: PlantStage '{plantStage}' erfolgreich in VPD-Daten übertragen.")
         except KeyError as e:
             _LOGGER.error(f"{self.room}: Fehlender Schlüssel in PlantStage-Daten '{e}'")
         except Exception as e:
@@ -798,7 +804,6 @@ class OpenGrowBox:
         current_main_control = self.dataStore.get("mainControl")
         if current_main_control != value:
             self.dataStore.set("mainControl",value)
-            _LOGGER.info(f"{self.room}: Steuerung changed from {current_main_control} to {value}")
             await self.eventManager.emit("mainControlChange",value)
             await self.eventManager.emit("PremiumChange",{"currentValue":value,"lastValue":current_main_control}) 
               
@@ -809,7 +814,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_state = self.dataStore.get("notifyControl")
         self.dataStore.set("notifyControl",value)
-        _LOGGER.info(f"{self.room}: Notification changed from {current_state} to {value}")
         if value == "Disabled":
             self.eventManager.change_notify_set(False)
         elif value == "Enabled":
@@ -830,11 +834,8 @@ class OpenGrowBox:
             if not ownWeightsActive and (
                 value in ["MidFlower", "LateFlower"] or current_stage in ["MidFlower", "LateFlower"]
             ):
-                await _update_specific_sensor("ogb_humidityweight_", self.room, 1.25, self.hass)
-
- 
+                await _update_specific_sensor("ogb_humidityweight_", self.room, 1.25, self.hass) 
             await self._plantStageToVPD()
-            _LOGGER.info(f"{self.room}: Pflanzenphase changed from {current_stage} to {value}")
             await self.eventManager.emit("PlantStageChange",value)
   
     async def _update_tent_mode(self, data):
@@ -846,42 +847,38 @@ class OpenGrowBox:
         current_mode = self.dataStore.get("tentMode")
         
         if isinstance(data, OGBInitData):
-            _LOGGER.info(f"OGBInitData erkannt: {data}")
             self.dataStore.set("tentMode",value)
         elif isinstance(data, OGBEventPublication):
             if value == "": return
             if current_mode != value:
                 tentModePublication = OGBModePublication(currentMode=value,previousMode=current_mode)
-                _LOGGER.info(f"{self.room}: Tentmodus changed from {current_mode} to {value}")
                 self.dataStore.set("tentMode",value)
                 ## Event to Mode Manager 
                 await self.eventManager.emit("selectActionMode",tentModePublication)
         else:
-            _LOGGER.error(f"Unbekannter Datentyp: {type(data)} - Daten: {data}")      
+            _LOGGER.error(f"Unkown Tent-Mode check your Select Options: {type(data)} - Data: {data}")      
 
     async def _update_leafTemp_offset(self, data):
         """
-        Update Blatt Temp Offset.
+        Update Leaf Temp 
         """
         value = data.newState[0]
         current_stage = self.dataStore.getDeep("tentData.leafTempOffset")
         
         if isinstance(data, OGBInitData):
-            _LOGGER.info(f"OGBInitData erkannt: {data}")
             self.dataStore.setDeep("tentData.leafTempOffset",value)
         elif isinstance(data, OGBEventPublication):
             if current_stage != value:
-                _LOGGER.info(f"{self.room}: BlattTemp Offset changed from {current_stage} to {value}")
                 self.dataStore.setDeep("tentData.leafTempOffset",value)
                 await self.eventManager.emit("VPDCreation",value)
         else:
-            _LOGGER.error(f"Unbekannter Datentyp: {type(data)} - Daten: {data}")     
+            _LOGGER.error(f"Unkown Datatype: {type(data)} - Data: {data}")     
 
     async def _update_vpd_Target(self, data):
         """
         Update Target VPD Value if running on Targeted VPD 
         """
-        value = float(data.newState[0])  # hier direkt in float konvertieren
+        value = float(data.newState[0])
         current_value = self.dataStore.getDeep("vpd.targeted")
 
         if current_value != value:
@@ -906,13 +903,12 @@ class OpenGrowBox:
         if value == None: return
         current_value = self.dataStore.getDeep("vpd.tolerance")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: VPD Tolerance Aktualisiert to {value}")
             self.dataStore.setDeep("vpd.tolerance",value)
 
     # Lights
     async def _update_lightOn_time(self,data):
         """
-        Update Licht Zeit AN
+        Update Light ON Time
         """
         value = data.newState[0]
         if value == None: return
@@ -924,7 +920,7 @@ class OpenGrowBox:
 
     async def _update_lightOff_time(self,data):
         """
-        Update Licht Zeit AUS
+        Update Light OFF Time
         """
         value = data.newState[0]
         if value == None: return
@@ -935,25 +931,23 @@ class OpenGrowBox:
             
     async def _update_sunrise_time(self,data):
         """
-        Update Sonnen togang Zeitpunkt
+        Update Sunrise Time
         """
         value = data.newState[0]
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.sunRiseTime")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Sonnentogang endet {value} nach Licht An")
             self.dataStore.setDeep("isPlantDay.sunRiseTime",value)
             await self.eventManager.emit("SunRiseTimeUpdates",value)
 
     async def _update_sunset_time(self,data):
         """
-        Update Sonnen Untergang Zeitpunkt
+        Update SunSet Time
         """
         value = data.newState[0]
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.sunSetTime")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Sonnenuntergang beginnt {value} vor Licht Aus")
             self.dataStore.setDeep("isPlantDay.sunSetTime",value)
             await self.eventManager.emit("SunSetTimeUpdates",value)
 
@@ -982,10 +976,8 @@ class OpenGrowBox:
             boolValue = self._stringToBool(value)
             if boolValue == False:
                 await self.update_minMax_settings()
-                #self.defaultState()
-            _LOGGER.info(f"{self.room}: Update Ambient Control to {value}")
+
             self.dataStore.setDeep("controlOptions.ambientControl", self._stringToBool(value))
-            await asyncio.sleep(0)
 
     ##MINMAX Values
     async def _update_MinMax_control(self,data):
@@ -998,10 +990,8 @@ class OpenGrowBox:
             boolValue = self._stringToBool(value)
             if boolValue == False:
                 await self.update_minMax_settings()
-                #self.defaultState()
-            _LOGGER.info(f"{self.room}: Update MinMax Control to {value}")
+
             self.dataStore.setDeep("controlOptions.minMaxControl", self._stringToBool(value))
-            await asyncio.sleep(0)
 
     async def _update_maxTemp(self,data):
         """
@@ -1015,7 +1005,6 @@ class OpenGrowBox:
             _LOGGER.info(f"{self.room}: Aktualisiere MaxTemp to {value}")
             self.dataStore.setDeep("controlOptionData.minmax.maxTemp", value)
             self.dataStore.setDeep("tentData.maxTemp", value)
-            await asyncio.sleep(0)
 
     async def _update_maxHumidity(self,data):
         """
@@ -1043,10 +1032,9 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.minmax.minTemp")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Aktualisiere MinTemp to {value}")
             self.dataStore.setDeep("controlOptionData.minmax.minTemp", value)
             self.dataStore.setDeep("tentData.minTemp", value)
-            await asyncio.sleep(0)
+
             
     async def _update_minHumidity(self,data):
         """
@@ -1058,10 +1046,8 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.minmax.minHum")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Aktualisiere MinHum to {value}")
             self.dataStore.setDeep("controlOptionData.minmax.minHum", value)
             self.dataStore.setDeep("tentData.minHumidity", value)
-            await asyncio.sleep(0)
 
 
     ## Weights   
@@ -1072,27 +1058,24 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ownWeights"))
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Weights Control to {value}")
             self.dataStore.setDeep("controlOptions.ownWeights", self._stringToBool(value))
               
     async def _update_temperature_weight(self, data):
         """
         Update Temp Weight
         """
-        value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
+        value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.weights.temp")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Temperaturgewicht to {value}")
             self.dataStore.setDeep("controlOptionData.weights.temp", value)
            
     async def _update_humidity_weight(self, data):
         """
         Update Humidity Weight
         """
-        value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
+        value = data.newState[0]
         current_value = self.dataStore.getDeep("controlOptionData.weights.hum")
         if current_value != value:
-                _LOGGER.info(f"{self.room}: Update Temperaturgewicht to {value}")
                 self.dataStore.setDeep("controlOptionData.weights.hum", value)
 
     ## HYDRO
@@ -1124,7 +1107,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("Hydro.Cycle"))
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Hydro Cycle to {value}")
             self.dataStore.setDeep("Hydro.Cycle", self._stringToBool(value))
             await self.eventManager.emit("HydroModeChange",value)
            
@@ -1140,13 +1122,11 @@ class OpenGrowBox:
         try:
             validated_value = float(value) if value is not None else 30.0
             if validated_value <= 0:
-                validated_value = 30.0  # Ensure positive duration
+                validated_value = 30.0
         except (ValueError, TypeError):
             validated_value = 30.0  # Default fallback
-            _LOGGER.warning(f"{self.room}: Invalid duration value '{value}', using default 30s")
-        
+            _LOGGER.error(f"{self.room}: Invalid duration value '{value}', using default 30s")
         if current_value != validated_value:
-            _LOGGER.info(f"{self.room}: Update Hydro Duration to {validated_value}")
             self.dataStore.setDeep("Hydro.Duration", validated_value)
             await self.eventManager.emit("HydroModeChange", validated_value)
 
@@ -1158,17 +1138,14 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("Hydro.Intervall")
         
-        # Validate the incoming value
         try:
             validated_value = float(value) if value is not None else 60.0
             if validated_value <= 0:
-                validated_value = 60.0  # Ensure positive interval
+                validated_value = 60.0 
         except (ValueError, TypeError):
-            validated_value = 60.0  # Default fallback
-            _LOGGER.warning(f"{self.room}: Invalid interval value '{value}', using default 60s")
-        
+            validated_value = 60.0 
+            _LOGGER.error(f"{self.room}: Invalid interval value '{value}', using default 60s")
         if current_value != validated_value:
-            _LOGGER.info(f"{self.room}: Update Hydro Intervall to {validated_value}")
             self.dataStore.setDeep("Hydro.Intervall", validated_value)
             await self.eventManager.emit("HydroModeChange", validated_value)
 
@@ -1330,14 +1307,11 @@ class OpenGrowBox:
             return
         
         value = self._stringToBool(data.newState[0])
-
         if value == True:
-            _LOGGER.info(f"{self.room}: Deactivate Hydro Retrieve Mode")
             self.dataStore.setDeep("Hydro.Retrieve", True)
             self.dataStore.setDeep("Hydro.R_Active", True)
             await self.eventManager.emit("HydroModeRetrieveChange",value)
         else:
-            _LOGGER.info(f"{self.room}: Activate Hydro Retrieve Mode")
             self.dataStore.setDeep("Hydro.Retrieve", False)
             self.dataStore.setDeep("Hydro.R_Active", False)
             await self.eventManager.emit("HydroModeRetrieveChange",value)
@@ -1349,7 +1323,6 @@ class OpenGrowBox:
         value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
         current_value = self.dataStore.getDeep("Hydro.R_Duration")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Hydro Retrive Duration to {value}")
             self.dataStore.setDeep("Hydro.R_Duration", value)
             await self.eventManager.emit("HydroModeRetriveChange",value)
   
@@ -1360,7 +1333,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("Hydro.R_Intervall")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Hydro Retrive Intervall to {value}")
             self.dataStore.setDeep("Hydro.R_Intervall", value)
             await self.eventManager.emit("HydroModeRetriveChange",value)
 
@@ -1373,9 +1345,7 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.lightbyOGBControl"))
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update OGB Light Control to {value}")
             self.dataStore.setDeep("controlOptions.lightbyOGBControl", self._stringToBool(value))
-            
             await self.eventManager.emit("updateControlModes",self._stringToBool(value))
                   
     async def _update_vpdLight_control(self,data):
@@ -1385,7 +1355,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdLightControl"))
 
-        _LOGGER.info(f"{self.room}: Update VPD LichtSteuerung to {value}")
         self.dataStore.setDeep("controlOptions.vpdLightControl", self._stringToBool(value))
         
         await self.eventManager.emit("updateControlModes",self._stringToBool(value))   
@@ -1393,14 +1362,12 @@ class OpenGrowBox:
             
     async def _update_vpdNightHold_control(self,data):
         """
-        Update VPD Nachtsteuerung 
+        Update VPD Night Control 
         """
         value = data.newState[0]
         current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.nightVPDHold"))
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update VPD Nacht Mode to {value}")
             self.dataStore.setDeep("controlOptions.nightVPDHold", self._stringToBool(value))
-            
             await self.eventManager.emit("updateControlModes",self._stringToBool(value))    
     
     
@@ -1477,7 +1444,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.getDeep("plantDates.bloomswitchdate")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Bloom Switch  {value}")
             self.dataStore.setDeep("plantDates.bloomswitchdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
 
@@ -1485,57 +1451,44 @@ class OpenGrowBox:
         """
         Update Plant Grow Times
         """
-        # Definieren der Sensor-Entitäten
         planttotaldays_entity = f"sensor.ogb_planttotaldays_{self.room.lower()}"
         totalbloomdays_entity = f"sensor.ogb_totalbloomdays_{self.room.lower()}"
         remainingTime_entity = f"sensor.ogb_chopchoptime_{self.room.lower()}"
         
-        # Abrufen der gespeicherten Pflanzdaten
         bloomSwitch = self.dataStore.getDeep("plantDates.bloomswitchdate")
         growstart = self.dataStore.getDeep("plantDates.growstartdate")
         breederDays = self.dataStore.getDeep("plantDates.breederbloomdays")
 
-
-
-
-        # Überprüfen, ob breederDays ein gültiger Wert ist
         try:
             breeder_bloom_days = float(breederDays)
         except (ValueError, TypeError):
-            _LOGGER.debug(f"{self.room}: Ungültiger Wert für breederbloomdays: {breederDays}")
+            _LOGGER.error(f"{self.room}: Ungültiger Wert für breederbloomdays: {breederDays}")
             breeder_bloom_days = 0.0
 
-        # Initialisieren der Variablen für die Tage
         planttotaldays = 0
         totalbloomdays = 0
         remaining_bloom_days = 0
         
-        # Aktuelles Datum
         today = datetime.today()
 
-        # Berechnung from planttotaldays
         try:
             growstart_date = datetime.strptime(growstart, '%Y-%m-%d')
             planttotaldays = (today - growstart_date).days
             self.dataStore.setDeep("plantDates.planttotaldays", planttotaldays)
-            _LOGGER.info(f"{self.room}: GrowStart Date : {growstart_date} Days: {planttotaldays}")
         except ValueError:
-            _LOGGER.info(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
-        # Berechnung from totalbloomdays
+            _LOGGER.error(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
+
         try:
             bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
-            
             totalbloomdays = (today - bloomswitch_date).days
-            _LOGGER.info(f"{self.room}: BloomSwitchDate : {bloomswitch_date} Days:{totalbloomdays}")
             self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
         except ValueError:
-            _LOGGER.info(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
-        # Warnung bezüglich der verbleibenden Blütetage
+            _LOGGER.error(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
         if breeder_bloom_days > 0 and totalbloomdays > 0:
             remaining_bloom_days = breeder_bloom_days - totalbloomdays
-            _LOGGER.info(f"{self.room}: RestBloomDays : {remaining_bloom_days} Days:{totalbloomdays}")
             if remaining_bloom_days <= 0:
                 _LOGGER.info(f"{self.room}: Die erwartete Blütezeit from {breeder_bloom_days} Tagen ist erreicht oder überschritten.")
+                ## Notify User when Notify manager is DONE
             else:
                 _LOGGER.info(f"{self.room}: Noch {remaining_bloom_days} Tage bis zum Ende der erwarteten Blütezeit.")
 
@@ -1570,7 +1523,6 @@ class OpenGrowBox:
                 },
                 blocking=True
             )
-            _LOGGER.info(f"Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}' wurden mit Werten aktualisiert: {planttotaldays}, {totalbloomdays}")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Updaten der Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}': {e}")
 
@@ -1589,7 +1541,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_value = self.dataStore.get("growAreaM2")
         if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Grow Arewa M2 Value {value}")
             self.dataStore.set("growAreaM2", value)      
        
     ## Drying
@@ -1600,7 +1551,6 @@ class OpenGrowBox:
         value = data.newState[0]
         current_mode = self.dataStore.getDeep("drying.currentDryMode")
         if current_mode != value:
-            _LOGGER.info(f"{self.room}: Tent Dry Modus changed from {current_mode} to {value}")
             self.dataStore.setDeep("drying.currentDryMode",value)
               
             
@@ -1610,7 +1560,6 @@ class OpenGrowBox:
         Update Own Device Lists Select
         """
         value = self._stringToBool(data.newState[0])
-        _LOGGER.debug(f"{self.room}: Activate Own Device Setup to {value}")
         self.dataStore.setDeep("controlOptions.ownDeviceSetup", value)
         currentDevices = self.dataStore.getDeep("workData.Devices")
         await self.eventManager.emit("capClean",currentDevices)    

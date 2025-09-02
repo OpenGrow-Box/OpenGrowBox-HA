@@ -73,20 +73,18 @@ class CustomNumber(NumberEntity,RestoreEntity):
                 restored_value = float(last_state.state)
                 if self._min_value <= restored_value <= self._max_value:
                     self._value = restored_value
-                    _LOGGER.info(f"Restored value for '{self._name}': {restored_value}")
                 else:
-                    _LOGGER.warning(f"Restored value for '{self._name}' out of range: {restored_value}")
+                    _LOGGER.error(f"Restored value for '{self._name}' out of range: {restored_value}")
             except ValueError:
-                _LOGGER.warning(f"Invalid restored value for '{self._name}': {last_state.state}")
+                _LOGGER.error(f"Invalid restored value for '{self._name}': {last_state.state}")
 
     async def async_set_native_value(self, value: float):
         """Set a new value."""
         if self._min_value <= value <= self._max_value:
             self._value = value
             self.async_write_ha_state()
-            _LOGGER.info(f"Number '{self._name}' set to {value}")
         else:
-            _LOGGER.warning(f"Value {value} out of range for '{self._name}'")
+            _LOGGER.error(f"Value {value} out of range for '{self._name}'")
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):

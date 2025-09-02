@@ -37,8 +37,8 @@ class OGBActionManager:
         if capabilities["canExhaust"]["state"]:
             actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
-        if capabilities["canInhaust"]["state"]:
-            actionPublication = OGBActionPublication(capability="canInhaust",action="Reduce",Name=self.room,message=actionMessage,priority="")
+        if capabilities["canIntake"]["state"]:
+            actionPublication = OGBActionPublication(capability="canIntake",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canVentilate"]["state"]:
             actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage,priority="")
@@ -83,8 +83,8 @@ class OGBActionManager:
         if capabilities["canExhaust"]["state"]:
             actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
-        if capabilities["canInhaust"]["state"]:
-            actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage,priority="")
+        if capabilities["canIntake"]["state"]:
+            actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage,priority="")
             actionMap.append(actionPublication)
         if capabilities["canVentilate"]["state"]:
             actionPublication = OGBActionPublication(capability="canVentilate",action="Reduce",Name=self.room,message=actionMessage,priority="")
@@ -441,8 +441,8 @@ class OGBActionManager:
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
-                if caps["canInhaust"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+                if caps["canIntake"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication) 
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
@@ -474,8 +474,8 @@ class OGBActionManager:
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
-                if caps["canInhaust"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+                if caps["canIntake"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)  
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
@@ -506,8 +506,8 @@ class OGBActionManager:
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
-                if caps["canInhaust"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+                if caps["canIntake"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)  
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
@@ -538,8 +538,8 @@ class OGBActionManager:
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
-                if caps["canInhaust"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canInhaust",action="Reduce",Name=self.room,message=actionMessage)
+                if caps["canIntake"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canIntake",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)   
                 if caps["canVentilate"]["state"]:
                     actionPublication = OGBActionPublication(capability="canVentilate",action="Reduce",Name=self.room,message=actionMessage)
@@ -566,8 +566,8 @@ class OGBActionManager:
             if caps["canExhaust"]["state"]:
                 actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)
-            if caps["canInhaust"]["state"]:
-                actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+            if caps["canIntake"]["state"]:
+                actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)   
             if caps["canVentilate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
@@ -592,8 +592,8 @@ class OGBActionManager:
             if caps["canExhaust"]["state"]:
                 actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)
-            if caps["canInhaust"]["state"]:
-                actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+            if caps["canIntake"]["state"]:
+                actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)    
             if caps["canVentilate"]["state"]:
                 actionPublication = OGBActionPublication(capability="canVentilate",action="Increase",Name=self.room,message=actionMessage)
@@ -628,8 +628,8 @@ class OGBActionManager:
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication) 
-                if caps["canInhaust"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canInhaust",action="Reduce",Name=self.room,message=actionMessage)
+                if caps["canIntake"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canIntake",action="Reduce",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
                 if caps["canDehumidify"]["state"]:
                     actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage)
@@ -656,8 +656,8 @@ class OGBActionManager:
                 if caps["canExhaust"]["state"]:
                     actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
-                if caps["canInhaust"]["state"]:
-                    actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+                if caps["canIntake"]["state"]:
+                    actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                     actionMap.append(actionPublication)
                 if caps["canDehumidify"]["state"]:
                     actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage)
@@ -682,8 +682,8 @@ class OGBActionManager:
             if caps["canExhaust"]["state"]:
                 actionPublication = OGBActionPublication(capability="canExhaust",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)
-            if caps["canInhaust"]["state"]:
-                actionPublication = OGBActionPublication(capability="canInhaust",action="Increase",Name=self.room,message=actionMessage)
+            if caps["canIntake"]["state"]:
+                actionPublication = OGBActionPublication(capability="canIntake",action="Increase",Name=self.room,message=actionMessage)
                 actionMap.append(actionPublication)
             if caps["canDehumidify"]["state"]:
                 actionPublication = OGBActionPublication(capability="canDehumidify",action="Reduce",Name=self.room,message=actionMessage)
@@ -793,7 +793,7 @@ class OGBActionManager:
             if actionCap == "canExhaust":
                 await self.eventManager.emit(f"{actionType} Exhaust", actionType)
                 _LOGGER.debug(f"{self.room}: {actionType} Exhaust ausgeführt.")
-            if actionCap == "canInhaust":
+            if actionCap == "canIntake":
                 await self.eventManager.emit(f"{actionType} Inhaust", actionType)
                 _LOGGER.debug(f"{self.room}: {actionType} Inhaust ausgeführt.")
             if actionCap == "canVentilate":

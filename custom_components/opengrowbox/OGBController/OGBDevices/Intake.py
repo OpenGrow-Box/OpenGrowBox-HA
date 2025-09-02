@@ -3,7 +3,7 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-class Inhaust(Device):
+class Intake(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
         self.dutyCycle = None  # Initialer Duty Cycle

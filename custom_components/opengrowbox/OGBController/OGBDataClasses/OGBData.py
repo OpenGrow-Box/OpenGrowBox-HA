@@ -64,7 +64,7 @@ class OGBConf:
         "canDehumidify": {"state": False, "count": 0, "devEntities": []},
         "canVentilate": {"state": False, "count": 0, "devEntities": []},
         "canExhaust": {"state": False, "count": 0, "devEntities": []},
-        "canInhaust": {"state": False, "count": 0, "devEntities": []},
+        "canIntake": {"state": False, "count": 0, "devEntities": []},
         "canLight": {"state": False, "count": 0, "devEntities": []},
         "canPump": {"state": False, "count": 0, "devEntities": []},
         "canCO2": {"state": False, "count": 0, "devEntities": []},
@@ -82,6 +82,10 @@ class OGBConf:
         "co2Level": None,
         "DLI":None,
         "PPFD":None,
+        "AmbientTemp":None,
+        "AmbientHum":None,
+        "OutsiteTemp":None,
+        "OutsiteHum":None
     })
     vpd: Dict[str, Optional[Any]] = field(default_factory=lambda: {
         "current": None,
@@ -226,13 +230,13 @@ class OGBConf:
     })
     DeviceMinMax: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "Exhaust": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":10,"max":95}},
-        "Inhaust": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":10,"max":95}},
+        "Intake": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":10,"max":95}},
         "Ventilation": {"active":False,"minDuty":0,"maxDuty":0,"Default":{"min":85,"max":100}},
         "Light": {"active":False,"minVoltage":0,"maxVoltage":0,"Default":{"min":20,"max":50}},
     })
     DeviceProfiles: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "Exhaust": {"type":"both", "cap":"canExhaust", "direction": "reduce", "effect":1.0, "sideEffect":{}},
-        "Inhaust": {"type":"both", "cap":"canInhaust", "direction": "reduce", "effect":1.0, "sideEffect":{}},
+        "Intake": {"type":"both", "cap":"canIntake", "direction": "reduce", "effect":1.0, "sideEffect":{}},
         "Light": {"type":"temperature","cap":"canLight", "direction": "increase", "effect":1.0, "sideEffect":{"type": "temperature", "direction": "increase" }},
         "Ventilation": {"type":"both","cap":"canVentilate", "direction": "increase", "effect":0.5, "sideEffect":{}},
         "Heater": {"type":"temperature","cap":"canHeat", "direction": "increase", "effect":2.0, "sideEffect":{"type": "humidity", "direction": "reduce" }},

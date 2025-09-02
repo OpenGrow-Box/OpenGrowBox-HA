@@ -218,8 +218,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_Exhaust_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
         
-        CustomSelect(f"OGB_Inhaust_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Inhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        CustomSelect(f"OGB_Intake_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        CustomSelect(f"OGB_Intake_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
          
         CustomSelect(f"OGB_Vents_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
         CustomSelect(f"OGB_Ventilation_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
