@@ -77,7 +77,7 @@ class OGBPremManager:
         state_data = await _load_state_securely(self.hass)
         
         if not state_data:
-            _LOGGER.warning(f"No saved state found for {self.room}")
+            _LOGGER.debug(f"No saved state found for {self.room}")
             return False
         
         restoring_room = state_data.get("room_name")
@@ -85,7 +85,7 @@ class OGBPremManager:
         if self.room != restoring_room:
             return False
         
-        _LOGGER.warning(f"✅ {self.room} Loading saved state {state_data}")
+        _LOGGER.debug(f"✅ {self.room} Loading saved state {state_data}")
 
         # Restore Manager State
         self.is_main_auth_room = True
