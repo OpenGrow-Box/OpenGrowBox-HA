@@ -180,7 +180,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_VPDLightControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_DryingModes_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["ElClassico", "DewBased","5DayDry"],initial_value=""),
+                     options=["ElClassico", "DewBased","5DayDry","NO-Dry"],initial_value="NO-Dry"),
         CustomSelect(f"OGB_MainControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["HomeAssistant", "Node-RED","Self-Hosted","Premium"], initial_value="HomeAssistant"),
         
@@ -199,7 +199,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         # Ambient
         CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
-
         
         ##Notifications
         CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,

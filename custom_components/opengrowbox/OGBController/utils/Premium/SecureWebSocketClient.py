@@ -301,15 +301,13 @@ class OGBWebSocketConManager:
                 logging.error(f"❌ {self.ws_room} Missing critical headers: {missing_headers}")
                 return False
 
-            logging.warning(f"🔗 {self.ws_room} Connecting to WebSocket: {self.base_url}")
+            logging.debug(f"🔗 {self.ws_room} Connecting to WebSocket: {self.base_url}")
 
             # FIXED: Transport-Reihenfolge anpassen je nach Server-Typ
             # Für Development-Server: websocket first
             # Für Production-Server: polling first
             transports = ["websocket", "polling"]  # Production-kompatibel
                            
-            logging.warning(f"🔗 {self.ws_room} Using transports: {transports}")
-
             # Connect with timeout
             await asyncio.wait_for(
                 self.sio.connect(

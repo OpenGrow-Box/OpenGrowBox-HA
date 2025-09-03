@@ -87,7 +87,6 @@ async def _load_state_securely(hass):
     try:
         file_path = _get_secure_path(hass, "ogb_premium_state.enc")
         if not os.path.exists(file_path):
-            _LOGGER.debug("No saved Premium Data found")
             return None
 
         key = await _load_or_create_key(hass)
@@ -106,10 +105,8 @@ async def _load_state_securely(hass):
                     try:
                         state_data[key] = datetime.fromtimestamp(float(value))
                     except (ValueError, TypeError):
-                        _LOGGER.warning(f"Could not parse datetime field {key}: {value}")
+                        _LOGGER.error(f"Could not parse datetime field {key}: {value}")
                         state_data[key] = None
-
-        _LOGGER.warning("Premium Data successfully loaded and decrypted")
         return state_data
 
     except InvalidToken:

@@ -150,15 +150,13 @@ class OGBConf:
         "LateFlower": LightStage(min=70, max=100, phase=""),
     })
     drying: Dict[str, Any] = field(default_factory=lambda: {
-        "dryStartTime": None,
+        "mode_start_time": None,
         "currentDryMode": "",
-        "isEnabled": False,
         "isRunning": False,
-        "waterActivity": None,
         "dewpointVPD": None,
         "vaporPressureActual": None,
         "vaporPressureSaturation": None,
-        "Dry5DaysVPD": None,
+        "5DayDryVPD": None,
         "modes": {
             "ElClassico": {
                 "isActive": False,
@@ -168,7 +166,7 @@ class OGBConf:
                     "endTime": {"targetTemp": 20, "targetHumidity": 58, "durationHours": 72},
                 },
             },
-            "Dry5Days": {
+            "5DayDry": {
                 "isActive": False,
                 "phase": {
                     "start": {"targetTemp": 22.2, "targetHumidity": 55, "targetVPD": 1.2, "durationHours": 48},
@@ -184,41 +182,6 @@ class OGBConf:
                     "endTime": {"targetTemp": 20, "targetDewPoint": 11.1, "durationHours": 48},
                 },
             },
-        },
-    })
-    actions: Dict[str, Any] = field(default_factory=lambda: {
-        "needChange": False,
-        "Increased": {
-            "exhaust": "increased",
-            "humidifier": "reduced",
-            "dehumidifier": "increased",
-            "heater": "increased",
-            "cooler": "reduced",
-            "ventilation": "increased",
-            "light": "unchanged",
-            "co2": "increased",
-            "climate": {"cool": "reduced", "dry": "increased", "heat": "unchanged"},
-        },
-        "Reduced": {
-            "exhaust": "reduced",
-            "humidifier": "increased",
-            "dehumidifier": "reduced",
-            "heater": "reduced",
-            "cooler": "increased",
-            "ventilation": "reduced",
-            "light": "unchanged",
-            "co2": "reduced",
-            "climate": {"cool": "increased", "dry": "reduced", "heat": "reduced"},
-        },
-        "Unchanged": {
-            "exhaust": "unchanged",
-            "humidifier": "unchanged",
-            "dehumidifier": "unchanged",
-            "heater": "unchanged",
-            "cooler": "unchanged",
-            "ventilation": "unchanged",
-            "light": "unchanged",
-            "climate": {"cool": "unchanged", "dry": "unchanged", "heat": "unchanged"},
         },
     })
     workData: Dict[str, List[Any]] = field(default_factory=lambda: {

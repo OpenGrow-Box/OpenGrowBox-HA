@@ -158,7 +158,6 @@ class OpenGrowBox:
                 runMode = OGBModeRunPublication(currentMode=tentMode)               
                 
                 if self.room.lower() == "ambient":
-                    _LOGGER.warning(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                     await self.eventManager.emit("AmbientData",vpdPub,haEvent=True)
                     await self.get_weather_data()
                     return
@@ -187,7 +186,7 @@ class OpenGrowBox:
             return
 
 
-        _LOGGER.error(f"{self.room} OGB-Manager: Incomming Event {entity}")
+        _LOGGER.debug(f"{self.room} OGB-Manager: Incomming Event {entity}")
         temps = self.dataStore.getDeep("workData.temperature")
         hums = self.dataStore.getDeep("workData.humidity")
 
@@ -365,6 +364,9 @@ class OpenGrowBox:
             f"ogb_bloomswitchdate_{self.room.lower()}": self._update_bloomswitchdate_value,
 
             # Drying
+            f"ogb_dryingmodes_{self.room.lower()}": self._udpate_drying_mode,             
+            
+            # MINMAX
             f"ogb_minmax_control_{self.room.lower()}": self._update_MinMax_control, 
             f"ogb_mintemp_{self.room.lower()}": self._update_minTemp,
             f"ogb_minhum_{self.room.lower()}": self._update_minHumidity,
@@ -1382,7 +1384,6 @@ class OpenGrowBox:
             _LOGGER.info(f"{self.room}: Update CO2 Control to {value}")
             self.dataStore.setDeep("controlOptions.co2Control", self._stringToBool(value))
            
-  
     async def _update_co2Target_value(self,data):
         """
         Update CO2 Target Value.

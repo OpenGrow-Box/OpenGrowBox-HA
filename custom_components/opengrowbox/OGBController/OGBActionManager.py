@@ -360,7 +360,7 @@ class OGBActionManager:
 
     # Action Handling
 
-    async def checkLimitsAndPublicate2(self,actionMap):
+    async def checkLimitsAndPublicateOld(self,actionMap):
         _LOGGER.debug(f"{self.room}: Action Publication Limits-Validation von {actionMap}")    
         
         ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
@@ -703,7 +703,6 @@ class OGBActionManager:
         await self.eventManager.emit("LogForClient",actionMap,haEvent=True)        
     
       # Dynamic Device Action Recognition
-
 
     # Water Actions
     async def PumpAction(self, pumpAction: OGBHydroAction):

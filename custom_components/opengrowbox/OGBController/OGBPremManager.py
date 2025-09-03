@@ -83,7 +83,6 @@ class OGBPremManager:
         restoring_room = state_data.get("room_name")
         
         if self.room != restoring_room:
-            _LOGGER.warning(f"State data is for different room: {restoring_room}")
             return False
         
         _LOGGER.warning(f"✅ {self.room} Loading saved state {state_data}")
@@ -436,6 +435,7 @@ class OGBPremManager:
             "Feed": self.dataStore.get("Feed"),
             "plantStages": self.dataStore.get("plantStages"),
             "tentMode": self.dataStore.get("tentMode"),
+            "drying":self.dataStore.get("drying"),
             "previousActions":self.dataStore.get("previousActions"),
             "DeviceProfiles":self.dataStore.get("DeviceProfiles"),
             "DeviceMinMax":self.dataStore.get("DeviceMinMax"),
@@ -762,7 +762,7 @@ class OGBPremManager:
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
         ctrl_options = ["OGB Control", "PID Control", "MCP Control", "AI Control"]
-        dry_options = ["Dry5Days", "OGB DRY"]
+        dry_options = ["OGB DRY"]
 
         current_tent_mode = self.dataStore.get("tentMode")
         invalid_modes = ["AI Control", "MCP Control", "PID Control", "OGB Control"]
@@ -884,15 +884,15 @@ class OGBPremManager:
 
                 if self.ogb_ws.ws_connected is True:
                     logging.debug(f"{self.room} is already connected over WS")
-                    return
-                
+                    await self._managePremiumControls() 
+
+                    return   
                
                 if not self.ogb_ws.is_connected():
                     _LOGGER.warning(f"Triggering WebSocket connection for {self.room}")
-                    # WebSocket client will handle the reconnection logic
 
-                    if not self._check_if_can_connect():  # <-- FIX: Python-Syntax
-                        logging.warning(f"TOO MANY ROOMS - REMOVE ONE FROM PREMIUM AND ADD THE NEW ON ROOMS: {self.ogb_ws.ogb_sessions} MAX: {self.ogb_ws.ogb_max_sessions}")
+                    if not self._check_if_can_connect():
+                        logging.warning(f"{self.ws_room} TOO MANY ROOMS - REMOVE ONE FROM PREMIUM AND ADD THE NEW ON ROOMS: {self.ogb_ws.ogb_sessions} MAX: {self.ogb_ws.ogb_max_sessions}")
 
                         await self._send_auth_response(
                             "error",
@@ -904,10 +904,10 @@ class OGBPremManager:
                         )
                         return
 
-                    await self.ogb_ws._connect_websocket()
+                    success = await self.ogb_ws._connect_websocket()
+                    if success:
+                        await self._managePremiumControls() 
 
-                if self._check_if_premium_control_active():
-                    await self._managePremiumControls()
 
         except Exception as e:
             _LOGGER.error(f"Premium selection error: {e}")

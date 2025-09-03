@@ -1,15 +1,12 @@
 from datetime import timedelta
 import logging
-import json
 import asyncio
 
 from homeassistant.helpers.area_registry import async_get as async_get_area_registry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .select import OpenGrowBoxRoomSelector
-from .text import OpenGrowBoxAccessToken
 from .const import DOMAIN
-from .OGBController.RegistryListener import OGBRegistryEvenListener
 from .OGBController.OGB import OpenGrowBox
 
 _LOGGER = logging.getLogger(__name__)

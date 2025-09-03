@@ -1,6 +1,6 @@
 import logging
 import asyncio
-
+import math
 from .OGBDataClasses.OGBPublications import OGBModePublication
 from .OGBDataClasses.OGBPublications import OGBModeRunPublication,OGBHydroPublication,OGBHydroAction,OGBRetrieveAction,OGBRetrivePublication
 
@@ -26,7 +26,7 @@ class OGBModeManager:
         self.eventManager.on("selectActionMode", self.selectActionMode)
 
         # Prem
-        self.eventManager.on("PremiumCheck", self.handle_premium_mode)       
+        self.eventManager.on("PremiumCheck", self.handle_premium_modes)       
 
         # Water 
         self.eventManager.on("HydroModeChange", self.HydroModeChange)
@@ -39,7 +39,6 @@ class OGBModeManager:
         """
         Handhabt Änderungen des Modus basierend auf `tentMode`.
         """
-        
         controlOption = self.dataStore.get("mainControl")        
         
         if controlOption not in ["HomeAssistant", "Premium"]:
@@ -61,13 +60,13 @@ class OGBModeManager:
         elif tentMode == "Drying":
             await self.handle_drying()
         elif tentMode == "MCP-Control":
-            await self.handle_premium_mode(False)
+            await self.handle_premium_modes(False)
         elif tentMode == "PID-Control":
-            await self.handle_premium_mode(False)
+            await self.handle_premium_modes(False)
         elif tentMode == "AI-Control":
-            await self.handle_premium_mode(False)
+            await self.handle_premium_modes(False)
         elif tentMode == "OGB-Control":
-            await self.handle_premium_mode(False)
+            await self.handle_premium_modes(False)
         elif tentMode == "Disabled":
             await self.handle_disabled_mode()
     
@@ -126,15 +125,6 @@ class OGBModeManager:
             tolerance_value = targetedVPD * (tolerance_percent / 100)
             min_vpd = targetedVPD - tolerance_value
             max_vpd = targetedVPD + tolerance_value
-            
-            #from .utils.sensorUpdater import _update_specific_sensor
-            #await _update_specific_sensor("sensor.ogb_current_vpd_target_",self.room,targetedVPD,self.hass)
-            #await _update_specific_sensor("sensor.ogb_current_vpd_target_min_",self.room,min_vpd,self.hass)
-            #await _update_specific_sensor("sensor.ogb_current_vpd_target_max_",self.room,max_vpd,self.hass)
-            
-            
-            _LOGGER.debug(f"{self.room}: Targeted VPD: {targetedVPD}, Tolerance: {tolerance_percent}% "
-                        f"-> Min: {min_vpd}, Max: {max_vpd}, Current: {currentVPD}")
 
             # Verfügbare Capabilities abrufen
             capabilities = self.dataStore.getDeep("capabilities")
@@ -148,16 +138,18 @@ class OGBModeManager:
                 await self.eventManager.emit("reduce_vpd", capabilities)
             elif currentVPD != targetedVPD:
                 _LOGGER.debug(f"{self.room}: Current VPD ({currentVPD}) is within range but not at Targeted ({targetedVPD}). Fine-tuning.")
+                await self.eventManager.emit("FineTune_vpd", capabilities)
             else:
                 _LOGGER.debug(f"{self.room}: Current VPD ({currentVPD}) is within tolerance range ({min_vpd} - {max_vpd}). No action required.")
-        
+                return
+            
         except ValueError as e:
             _LOGGER.error(f"ModeManager: Fehler beim Konvertieren der VPD-Werte oder Toleranz in Zahlen. {e}")
         except Exception as e:
             _LOGGER.error(f"ModeManager: Unerwarteter Fehler in 'handle_targeted_vpd': {e}")
 
     ## Premium Handle
-    async def handle_premium_mode(self,data):
+    async def handle_premium_modes(self,data):
         
         if data == False:
             return
@@ -173,11 +165,206 @@ class OGBModeManager:
         return
 
     ## Drying Modes
+    async def handle_ElClassico(self, phaseConfig):
+        _LOGGER.warning(f"{self.name} Run Drying 'El Classico'")          
+        tentData = self.dataStore.get("tentData")     
+
+        tempTolerance = 1
+        humTolerance = 2
+        finalActionMap = {}
+
+        current_phase = self.get_current_phase(phaseConfig)
+        
+        if current_phase is None:
+            _LOGGER.error(f"{self.name}: Could not determine current phase")
+            return
+
+        temp_ok = abs(tentData['temperature'] - current_phase['targetTemp']) <= tempTolerance
+
+        if not temp_ok:
+            if tentData['temperature'] < current_phase['targetTemp']:
+                finalActionMap["Increase Heater"] = True
+                finalActionMap["Reduce Exhaust"] = True
+                finalActionMap["Reduce Cooler"] = True
+                finalActionMap["Increase Ventilation"] = True
+            else:
+                finalActionMap["Increase Cooler"] = True
+                finalActionMap["Increase Exhaust"] = True
+                finalActionMap["Reduce Heater"] = True
+                finalActionMap["Reduce Ventilation"] = True
+        else:
+            if abs(tentData["humidity"] - current_phase["targetHumidity"]) > humTolerance:
+                if tentData["humidity"] < current_phase["targetHumidity"]:
+                    finalActionMap["Increase Humidifier"] = True
+                    finalActionMap["Increase Ventilation"] = True
+                    finalActionMap["Reduce Exhaust"] = True
+                else:
+                    finalActionMap["Increase Dehumidifier"] = True
+                    finalActionMap["Increase Ventilation"] = True
+                    finalActionMap["Increase Exhaust"] = True
+
+        # Emit all actions in the map
+        for action in finalActionMap.keys():
+            await self.eventManager.emit(action, None)
+
+        # Send summary to client
+        await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True)
+
+    async def handle_5DayDry(self, phaseConfig):
+        _LOGGER.debug(f"{self.name} Run Drying '5 Day Dry'")  
+
+        tentData = self.dataStore.get("tentData")
+        vpdTolerance = self.dataStore.get("vpd.tolerance") or 3 # %
+        capabilities = self.dataStore.getDeep("capabilities")
+
+        current_phase = self.get_current_phase(phaseConfig)
+        
+        if current_phase is None:
+            _LOGGER.error(f"{self.name}: Could not determine current phase")
+            return
+
+        current_temp = tentData["temperature"] if "temperature" in tentData else None
+        current_humidity = tentData["humidity"] if "humidity" in tentData else None
+
+        if current_temp is None or current_humidity is None:
+            _LOGGER.warning(f"{self.room}: Missing tentData values for VPD calculation")
+            return
+
+        if isinstance(tentData["temperature"], (list, tuple)):
+            temp_value = sum(tentData["temperature"]) / len(tentData["temperature"])
+        else:
+            temp_value = tentData["temperature"]
+
+        Dry5DaysVPD = calc_Dry5Days_vpd(temp_value, current_humidity)
+        self.dataStore.setDeep("drying.5DayDryVPD", Dry5DaysVPD)
+        
+        target_vpd = current_phase.get("targetVPD")
+        if target_vpd is None:
+            _LOGGER.error(f"{self.room}: Current phase has no targetVPD key")
+            return
+        
+        delta = Dry5DaysVPD - target_vpd
+
+        if abs(delta) > vpdTolerance:
+            if delta < 0:
+                _LOGGER.debug(f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} < Target {target_vpd:.2f} → Increase VPD")
+                await self.eventManager.emit("increase_vpd", capabilities)
+            else:
+                _LOGGER.debug(f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} > Target {target_vpd:.2f} → Reduce VPD")
+                await self.eventManager.emit("reduce_vpd", capabilities)
+        else:
+            _LOGGER.debug(f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} within tolerance (±{vpdTolerance}) → No action")
+
+    async def handle_DewBased(self, phaseConfig):
+        _LOGGER.debug(f"{self.name}: Run Drying 'Dew Based'")
+
+        tentData = self.dataStore.get("tentData")
+        currentDewPoint = tentData.get("dewpoint")
+        currenTemperature = tentData.get("dewpoint")
+        
+        dewPointTolerance = 0.5
+        dew_vps = calc_dew_vpd(currenTemperature,currentDewPoint)
+        
+        vaporPressureActual = dew_vps.get("vapor_pressure_actual")
+        vaporPressureSaturation = dew_vps.get("vapor_pressure_saturation")
+        
+        self.dataStore.setDeep("drying.vaporPressureActual",vaporPressureActual)
+        self.dataStore.setDeep("drying.vaporPressureSaturation",vaporPressureSaturation)
+
+        current_phase = self.get_current_phase(phaseConfig)
+        
+        if current_phase is None:
+            _LOGGER.error(f"{self.name}: Could not determine current phase")
+            return
+
+        if currentDewPoint is None or not isinstance(currentDewPoint, (int, float)) or math.isnan(currentDewPoint):
+            _LOGGER.warning(f"{self.name}: Current Dew Point is unavailable or invalid.")
+            return
+
+        targetDewPoint = current_phase.get("targetDewPoint")
+        if targetDewPoint is None:
+            _LOGGER.error(f"{self.name}: Current phase has no targetDewPoint key")
+            return
+
+        dew_diff = currentDewPoint - targetDewPoint
+        vp_low = vaporPressureActual < 0.9 * vaporPressureSaturation if vaporPressureActual and vaporPressureSaturation else False
+        vp_high = vaporPressureActual > 1.1 * vaporPressureSaturation if vaporPressureActual and vaporPressureSaturation else False
+
+        if abs(dew_diff) > dewPointTolerance or vp_low or vp_high:
+            if dew_diff < -dewPointTolerance or vp_low:
+                await self.eventManager.emit("Increase Humidifier", None)
+                await self.eventManager.emit("Reduce Dehumidifier", None)
+                await self.eventManager.emit("Reduce Exhaust", None)
+                await self.eventManager.emit("Increase Ventilation", None)
+                _LOGGER.debug(f"{self.room}: Too dry. Humidify ↑, Dehumidifier ↓, Exhaust ↓, Ventilation ↑")
+            elif dew_diff > dewPointTolerance or vp_high:
+                await self.eventManager.emit("Increase Dehumidifier", None)
+                await self.eventManager.emit("Reduce Humidifier", None)
+                await self.eventManager.emit("Increase Exhaust", None)
+                await self.eventManager.emit("Increase Ventilation", None)
+                _LOGGER.debug(f"{self.room}: Too humid. Dehumidify ↑, Humidifier ↓, Exhaust ↑, Ventilation ↑")
+        else:
+            await self.eventManager.emit("Reduce Humidifier", None)
+            await self.eventManager.emit("Reduce Dehumidifier", None)
+            await self.eventManager.emit("Reduce Exhaust", None)
+            await self.eventManager.emit("Reduce Ventilation", None)
+            _LOGGER.debug(f"{self.room}: Dew Point {currentDewPoint:.2f} within ±{dewPointTolerance} → All systems idle")
+
+    def get_current_phase(self, phaseConfig):
+        """
+        Bestimmt die aktuelle Phase basierend auf der verstrichenen Zeit
+        """
+        # Holen Sie sich den Startzeitpunkt des Modus (müssen Sie implementieren)
+        mode_start_time = self.dataStore.getDeep("drying.mode_start_time")
+        
+        if mode_start_time is None:
+            _LOGGER.warning(f"{self.name}: No mode start time found, defaulting to 'start' phase")
+            return phaseConfig['phase']['start']
+        
+        # Berechne verstrichene Zeit in Stunden
+        from datetime import datetime
+        current_time = datetime.now()
+        elapsed_hours = (current_time - mode_start_time).total_seconds() / 3600
+        
+        # Bestimme Phase basierend auf verstrichener Zeit
+        phases = phaseConfig['phase']
+        start_duration = phases['start']['durationHours']
+        halfTime_duration = phases['halfTime']['durationHours']
+        endTime_duration = phases['endTime']['durationHours']
+        
+        if elapsed_hours <= start_duration:
+            _LOGGER.debug(f"{self.name}: Currently in 'start' phase ({elapsed_hours:.1f}h of {start_duration}h)")
+            return phases['start']
+        elif elapsed_hours <= start_duration + halfTime_duration:
+            _LOGGER.debug(f"{self.name}: Currently in 'halfTime' phase ({elapsed_hours:.1f}h total)")
+            return phases['halfTime']
+        elif elapsed_hours <= start_duration + halfTime_duration + endTime_duration:
+            _LOGGER.debug(f"{self.name}: Currently in 'endTime' phase ({elapsed_hours:.1f}h total)")
+            return phases['endTime']
+        else:
+            _LOGGER.warning(f"{self.name}: All phases completed ({elapsed_hours:.1f}h total), using 'endTime' phase")
+            return phases['endTime']
+
+    def start_drying_mode(self, mode_name):
+        """
+        Startet einen Trocknungsmodus und speichert den Startzeitpunkt
+        """
+        from datetime import datetime
+        self.dataStore.setDeep("drying.mode_start_time", datetime.now())
+        self.dataStore.setDeep("drying.currentDryMode", mode_name)
+        self.dataStore.setDeep("drying.isRunning", True)
+        _LOGGER.warning(f"{self.name}: Started drying mode '{mode_name}' at {datetime.now()}")
+
     async def handle_drying(self):
         """
         Handhabt den Modus 'Drying'.
         """
         currentDryMode = self.dataStore.getDeep("drying.currentDryMode")
+        
+        # Prüfen ob ein Startzeitpunkt existiert, falls nicht setzen
+        mode_start_time = self.dataStore.getDeep("drying.mode_start_time")
+        if mode_start_time is None and currentDryMode != "NO-Dry":
+            self.start_drying_mode(currentDryMode)
         
         if currentDryMode == "ElClassico":
             phaseConfig = self.dataStore.getDeep(f"drying.modes.{currentDryMode}")  
@@ -185,138 +372,15 @@ class OGBModeManager:
         elif currentDryMode == "DewBased":
             phaseConfig = self.dataStore.getDeep(f"drying.modes.{currentDryMode}") 
             await self.handle_DewBased(phaseConfig)
-        elif currentDryMode == "Dry5Days":
+        elif currentDryMode == "5DayDry":
             phaseConfig = self.dataStore.getDeep(f"drying.modes.{currentDryMode}") 
-            await self.handle_premium_mode()
+            await self.handle_5DayDry(phaseConfig)
+        elif currentDryMode == "NO-Dry":
+            return None
         else:
             _LOGGER.debug(f"{self.name} Unknown DryMode Recieved")           
             return None
-
-    async def handle_ElClassico(self,phaseConfig):
-        _LOGGER.debug(f"{self.name} Run Drying 'El Classico'")          
-        tentData = self.dataStore.get("tentData")     
-
-        # Verfügbare Capabilities abrufen
-        capabilities = self.dataStore.getDeep("capabilities")
-        
-        tempTolerance = 0.5
-        humTolerance = 2
-        
-        
-        # Anpassungen basierend auf Temperatur        
-        if abs(tentData['temperature'] - phaseConfig['targetTemp']) > tempTolerance:
-            if tentData['temperature'] < phaseConfig['targetTemp']:
-                await self.eventManager.emit("Increase Heater",None)
-                await self.eventManager.emit("Increase Exhaust",None)
-            else:
-                await self.eventManager.emit("Increase Cooler",None)
-                await self.eventManager.emit("Increase Exhaust",None)
-                         
-        # Anpassungen basierend auf Feuchtigkeit
-        if abs(tentData["humidity"] - phaseConfig["targetHumidity"]) > humTolerance:
-            if tentData["humidity"] < phaseConfig["targetHumidity"]:
-                await self.eventManager.emit("Increase Humidifier",None)
-                await self.eventManager.emit("Increase Ventilation",None)
-            else:
-                await self.eventManager.emit("Increase Dehumidifier",None)
-                await self.eventManager.emit("Increase Ventilation",None)
-
-        # Log die Aktion
-        _LOGGER.info(f"{self.name}: El Classico Phase ")
-
-    async def handle_Dry5Days(self,phaseConfig):
-        _LOGGER.debug(f"{self.name} Run Drying 'Shark Mouse'")  
-        tentData = self.dataStore.get("tentData")
-        vpdTolerance = self.dataStore.get("vpd.tolerance")
-        Dry5DaysVPD = calc_Dry5Days_vpd(tentData["temperatures"],tentData["humidity"])
-       
-        # Verfügbare Capabilities abrufen
-        capabilities = self.dataStore.getDeep("capabilities")
-       
-        #Anpassungen bassierend auf VPD
-        if abs(Dry5DaysVPD - phaseConfig['targetVPD']) > vpdTolerance:
-            if Dry5DaysVPD < phaseConfig['targetVPD']: 
-                _LOGGER.debug(f"{self.room}: Dry5Days VPD ({Dry5DaysVPD}) nened to 'Increase' for Reaching {phaseConfig['targetVPD']}")
-                await self.eventManager.emit("increase_vpd",capabilities)
-            elif Dry5DaysVPD > phaseConfig['targetVPD']:
-                _LOGGER.debug(f"{self.room}: Dry5Days VPD ({Dry5DaysVPD}) nened to 'Reduce' for Reaching {phaseConfig['targetVPD']}")
-                await self.eventManager.emit("reduce_vpd",capabilities)
-            else:
-                _LOGGER.debug(f"{self.room}: Dry5Days VPD ({Dry5DaysVPD}) Is on Spot. No action required.")
-                
-    async def handle_DewBased(self,phaseConfig):
-        _LOGGER.debug(f"{self.name}: Run Drying 'Dew Based'")
-
-        tentData = self.dataStore.get("tentData")
-        dewPointTolerance = 0.5  # Toleranz für Taupunkt
-        vaporPressureActual = self.dataStore.getDeep("drying.vaporPressureActual")
-        vaporPressureSaturation = self.dataStore.getDeep("drying.vaporPressureSaturation")
-
-        currentDewPoint = tentData["dewpoint"]
     
-            # Sicherstellen, dass der Taupunkt eine gültige Zahl ist
-        if not isinstance(currentDewPoint, (int, float)) or currentDewPoint is None or currentDewPoint != currentDewPoint:  # NaN-Check
-            _LOGGER.debug(f"{self.name}: Current Dew Point is unavailable or invalid.")
-            return None
-        if (abs(currentDewPoint - phaseConfig["targetDewPoint"]) > dewPointTolerance or vaporPressureActual < 0.9 * vaporPressureSaturation or vaporPressureActual > 1.1 * vaporPressureSaturation):       
-            if currentDewPoint < phaseConfig["targetDewPoint"] or vaporPressureActual < 0.9 * vaporPressureSaturation:
-                await self.eventManager.emit("Increase Humidifier", None)
-                await self.eventManager.emit("Increase Exhaust", None)
-                await self.eventManager.emit("Increase Ventilation", None)
-                _LOGGER.debug(f"{self.room}: Dew Point ({currentDewPoint}) below target ({phaseConfig['targetDewPoint']}). Actions: Increase humidity.")
-            elif currentDewPoint > phaseConfig["targetDewPoint"] or vaporPressureActual > 1.1 * vaporPressureSaturation:
-                await self.eventManager.emit("Increase Dehumidifier", None)
-                await self.eventManager.emit("Increase Exhaust", None)
-                await self.eventManager.emit("Increase Ventilation", None)
-                _LOGGER.debug(f"{self.room}: Dew Point ({currentDewPoint}) above target ({phaseConfig['targetDewPoint']}). Actions: Reduce humidity.")
-        else:
-            _LOGGER.debug(f"{self.room}: Dew Point ({currentDewPoint}) is within tolerance range. No actions required.")
-
-    # Dynamic Device Action Recognition
-    def get_relevant_devices(self, vpdStatus: str):
-        available_capabilities = self.dataStore.get("capabilities")
-        device_profiles = self.dataStore.get("DeviceProfiles")
-        result = []
-
-        for dev_name, profile in device_profiles.items():
-            cap_key = profile.get("cap")
-            if not cap_key:
-                continue
-
-            cap_info = available_capabilities.get(cap_key)
-            if not cap_info or cap_info["count"] == 0:
-                continue
-
-            if vpdStatus == "too_high":
-                if (
-                    (profile["type"] == "humidity" and profile["direction"] == "increase") or
-                    (profile["type"] == "temperature" and profile["direction"] == "reduce") or
-                    (profile["type"] == "both" and profile["direction"] == "reduce")
-                ):
-                    result.extend(cap_info["devEntities"])
-
-            elif vpdStatus == "too_low":
-                if (
-                    (profile["type"] == "humidity" and profile["direction"] == "reduce") or
-                    (profile["type"] == "temperature" and profile["direction"] == "increase") or
-                    (profile["type"] == "both" and profile["direction"] == "increase")
-                ):
-                    result.extend(cap_info["devEntities"])
-
-        return result
-
-    def determine_vpd_state(self,current_vpd: float, target_vpd: float, tolerance: float = 0.1) -> str:   
-        tolerance = float(self.dataStore.getDeep("vpd.tolerance"))
-        tolerance_value = target_vpd * (tolerance / 100)
-        min_vpd = target_vpd - tolerance_value
-        max_vpd = target_vpd + tolerance_value
-        
-        if current_vpd > min_vpd:
-            return "too_high"
-        elif current_vpd < max_vpd:
-            return "too_low"
-        return "ok"
-
     ## Hydro Modes
     async def HydroModeChange(self, pumpAction):
         isActive = self.dataStore.getDeep("Hydro.Active")
