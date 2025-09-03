@@ -637,6 +637,7 @@ class Device:
                 # Abluft ausschalten
                 elif self.deviceType == "Exhaust":    
                     if self.isDimmable == True:
+                        ## Turn OFF for Dimmable Devices is Deactivated
                         #await self.hass.services.async_call(
                         #    domain="fan",
                         #    service="turn_off",
@@ -852,32 +853,33 @@ class Device:
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = float(minMaxSets.get("minVoltage")) 
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-            self.changeMinMaxValues(self.clamp_voltage(self.voltage))
+            await self.changeMinMaxValues(self.clamp_voltage(self.voltage))
             
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = float(minMaxSets.get("minDuty"))
             self.maxDuty = float(minMaxSets.get("maxDuty"))
-            self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
+            await self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
 
     async def setDefaultSets(self,data):
         defaultSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}.Default")
         if self.deviceType == "Ligh":
             self.minVoltage = float(defaultSets.get("min")) 
             self.maxVoltage = float(defaultSets.get("max"))
-            self.changeMinMaxValues(self.clamp_voltage(self.voltage))
+            await self.changeMinMaxValues(self.clamp_voltage(self.voltage))
         else:
             self.minDuty = float(defaultSets.get("min"))
             self.maxDuty = float(defaultSets.get("max"))
-            self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
+            await self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
     
     async def changeMinMaxValues(self,newValue):
         if self.isDimmable:
             
-            _LOGGER.error(f"{self.deviceName}:as Type:{self.deviceType} NewValue: {newValue}")
+            _LOGGER.debug(f"{self.deviceName}:as Type:{self.deviceType} NewValue: {newValue}")
     
             if self.deviceType == "Light":
-                self.voltage = newValue
-                await self.turn_on(brightness_pct=newValue) 
+                if self.isDimmable:
+                    self.voltage = newValue
+                    await self.turn_on(brightness_pct=newValue)
             else:
                 self.dutyCycle = newValue
                 if self.isTasmota:
