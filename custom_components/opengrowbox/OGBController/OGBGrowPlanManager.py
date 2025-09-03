@@ -11,8 +11,7 @@ import base64
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
-from .utils.Premium.ogb_p_ws import OGBWSManager
-from .utils.Premium.SecureWebSocketClient import OGBWebSocketConManager as OGB_WS
+
 from .utils.Premium.ogb_state import _save_state_securely, _remove_state_file, _load_state_securely
 
 _LOGGER = logging.getLogger(__name__)
