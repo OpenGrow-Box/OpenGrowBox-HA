@@ -793,8 +793,8 @@ class OGBActionManager:
                 await self.eventManager.emit(f"{actionType} Exhaust", actionType)
                 _LOGGER.debug(f"{self.room}: {actionType} Exhaust ausgeführt.")
             if actionCap == "canIntake":
-                await self.eventManager.emit(f"{actionType} Inhaust", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Inhaust ausgeführt.")
+                await self.eventManager.emit(f"{actionType} Intake", actionType)
+                _LOGGER.debug(f"{self.room}: {actionType} Intake ausgeführt.")
             if actionCap == "canVentilate":
                 await self.eventManager.emit(f"{actionType} Ventilation", actionType)
                 _LOGGER.debug(f"{self.room}: {actionType} Ventilation ausgeführt.")

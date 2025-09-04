@@ -21,7 +21,6 @@ from .OGBActionManager import OGBActionManager
 from .OGBPremManager import OGBPremManager
 from .OGBFeedManager import OGBFeedManager
 from .OGBDSManager import OGBDSManager
-
 from .OGBClientManager import OGBClientManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -413,11 +412,11 @@ class OpenGrowBox:
             f"ogb_exhaust_duty_min_{self.room.lower()}": self._device_MinMax_setter,
             f"ogb_exhaust_duty_max_{self.room.lower()}": self._device_MinMax_setter,
 
-            # Inhaust Sets                                  
-            f"ogb_inhaust_device_select_{self.room.lower()}": self._add_selectedDevice,              
-            f"ogb_inhaust_minmax_{self.room.lower()}": self._device_Self_MinMax,
-            f"ogb_inhaust_duty_min_{self.room.lower()}": self._device_MinMax_setter,
-            f"ogb_inhaust_duty_max_{self.room.lower()}": self._device_MinMax_setter,
+            # Intake Sets                                  
+            f"ogb_intake_device_select_{self.room.lower()}": self._add_selectedDevice,              
+            f"ogb_intake_minmax_{self.room.lower()}": self._device_Self_MinMax,
+            f"ogb_intake_duty_min_{self.room.lower()}": self._device_MinMax_setter,
+            f"ogb_intake_duty_max_{self.room.lower()}": self._device_MinMax_setter,
             
             # Vents Sets
             f"ogb_vents_device_select_{self.room.lower()}": self._add_selectedDevice, 
@@ -463,6 +462,8 @@ class OpenGrowBox:
         temps = self.dataStore.getDeep("workData.temperature")
         hums = self.dataStore.getDeep("workData.humidity")
         leafTempOffset = self.dataStore.getDeep("tentData.leafTempOffset")
+        
+        logging.error(f"Current WorkData-Array TEMP:{temps} : HUMS: {hums}")
         
         # Durchschnittswerte asynchron berechnen
         avgTemp = calculate_avg_value(temps)
@@ -1582,8 +1583,8 @@ class OpenGrowBox:
         value = self._stringToBool(data.newState[0])      
         if "exhaust" in data.Name:
                 self.dataStore.setDeep("DeviceMinMax.Exhaust.active",value)
-        if "inhaust" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Ixhaust.active",value)
+        if "Intake" in data.Name:
+                self.dataStore.setDeep("DeviceMinMax.Intake.active",value)
         if "ventilation" in data.Name:
                 self.dataStore.setDeep("DeviceMinMax.Ventilation.active",value)    
         if "light" in data.Name:
@@ -1606,12 +1607,12 @@ class OpenGrowBox:
             if "max" in name:
                 self.dataStore.setDeep("DeviceMinMax.Exhaust.maxDuty", value)
 
-        # Inhaust (Achtung: Du hast "Ixhaust" geschrieben – bewusst?)
-        if "inhaust" in name:
+        # Intake (Achtung: Du hast "Intake" geschrieben – bewusst?)
+        if "intake" in name:
             if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Ixhaust.minDuty", value)
+                self.dataStore.setDeep("DeviceMinMax.Intake.minDuty", value)
             if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Ixhaust.maxDuty", value)
+                self.dataStore.setDeep("DeviceMinMax.Intake.maxDuty", value)
         
         # Vents
         if "ventilation" in name:

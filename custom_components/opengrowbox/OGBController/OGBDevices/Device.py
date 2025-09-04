@@ -196,7 +196,7 @@ class Device:
             "canDehumidify": ["dehumidifier"],
             "canVentilate": ["ventilation"],
             "canExhaust": ["exhaust"],
-            "canInhaust": ["inhaust"],
+            "canIntake": ["intake"],
             "canLight": ["light"],
             "canCO2": ["co2"],
             "canPump":["pump"],
@@ -223,7 +223,7 @@ class Device:
                     currentCap["devEntities"].append(self.deviceName)
                 if self.deviceType == "Exhaust":
                     currentCap["devEntities"].append(self.deviceName)
-                if self.deviceType == "Inhaust":
+                if self.deviceType == "Intake":
                     currentCap["devEntities"].append(self.deviceName)
                 if self.deviceType == "Ventilation":
                     currentCap["devEntities"].append(self.deviceName)                    
@@ -262,7 +262,7 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust","inhaust","light"]
+        allowedDeviceTypes = ["ventilation", "exhaust","intake","light"]
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
@@ -307,7 +307,7 @@ class Device:
                     if self.deviceType == "Light":
                         self.voltage = value
                         _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to  {self.voltage}%.")
-                    elif self.deviceType == "Exhaust" or self.deviceType == "Inhaust" or self.deviceType == "Ventilation":
+                    elif self.deviceType == "Exhaust" or self.deviceType == "Intake" or self.deviceType == "Ventilation":
                         self.dutyCycle = int(value)
                         _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
                     else:
@@ -467,7 +467,7 @@ class Device:
                         return
                     
                 # Zuluft einschalten
-                elif self.deviceType == "Inhaust":
+                elif self.deviceType == "Intake":
                     if self.isTasmota == True:
                         await self.hass.services.async_call(
                             domain="light",
@@ -657,7 +657,7 @@ class Device:
                         return
                 
                 # Zuluft ausschalten
-                elif self.deviceType == "Inhaust":    
+                elif self.deviceType == "Intake":    
                     if self.isDimmable == True:
                         return
                     else:
