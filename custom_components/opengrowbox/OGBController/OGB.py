@@ -463,7 +463,7 @@ class OpenGrowBox:
         hums = self.dataStore.getDeep("workData.humidity")
         leafTempOffset = self.dataStore.getDeep("tentData.leafTempOffset")
         
-        logging.error(f"Current WorkData-Array TEMP:{temps} : HUMS: {hums}")
+        logging.warning(f"Current WorkData-Array TEMP:{temps} : HUMS: {hums}")
         
         # Durchschnittswerte asynchron berechnen
         avgTemp = calculate_avg_value(temps)
@@ -1607,7 +1607,6 @@ class OpenGrowBox:
             if "max" in name:
                 self.dataStore.setDeep("DeviceMinMax.Exhaust.maxDuty", value)
 
-        # Intake (Achtung: Du hast "Intake" geschrieben – bewusst?)
         if "intake" in name:
             if "min" in name:
                 self.dataStore.setDeep("DeviceMinMax.Intake.minDuty", value)
