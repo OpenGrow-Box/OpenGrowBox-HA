@@ -138,8 +138,7 @@ class OGBDeviceManager:
     async def identify_device(self, device_name, device_data):
         """Gerät anhand des Namens und Typs identifizieren."""
         device_type_mapping = {
-            "Sensor": ["ogb","sun","sensor","water","wasser","root","wurzel","blatt","leaf","mode", "plant", "temperature", 
-                       "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
+            "Sensor": ["ogb","sensor","leaf" "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
             "Exhaust": ["exhaust", "abluft"],
             "Intake": ["intake", "zuluft"],
             "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet", "outlet"],
@@ -150,7 +149,7 @@ class OGBDeviceManager:
             "Climate": ["climate", "klima"],
             "Light": ["light", "lamp", "led"],
             "Co2": ["co2", "carbon","co2pump"],
-            "Pump":["airpump","mistpump","waterpump","airpump","clonerpump","retrievepump","aeropump","dwcpump","rdwcpump"],
+            "Pump":["pump"],
             "Switch": ["generic", "switch"],
         }
 
