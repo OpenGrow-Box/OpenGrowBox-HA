@@ -308,7 +308,7 @@ class Device:
                         self.voltage = value
                         _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to  {self.voltage}%.")
                     elif self.deviceType == "Exhaust" or self.deviceType == "Intake" or self.deviceType == "Ventilation":
-                        self.dutyCycle = int(value)
+                        self.dutyCycle = int(float(value))
                         _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
                     else:
                         return

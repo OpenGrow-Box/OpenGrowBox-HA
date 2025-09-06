@@ -500,7 +500,7 @@ class OGBModeManager:
         await self.eventManager.emit("LogForClient", msg, haEvent=True)
         
     async def hydro_PlantWatering(self,interval: float, duration: float, pumpDevices, cycle: bool = True,log_prefix: str = "Hydro"):
-        valid_types = ["mistpump","waterpump","aeropump","dwcpump","rdwcpump"]
+        valid_types = ["mistpump", "waterpump", "aeropump", "dwcpump", "rdwcpump","clonerpump"]
         devices = pumpDevices["devEntities"]
         active_pumps = [dev for dev in devices if any(t in dev for t in valid_types)]
 

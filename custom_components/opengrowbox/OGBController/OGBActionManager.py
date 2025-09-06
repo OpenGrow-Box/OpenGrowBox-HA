@@ -838,7 +838,7 @@ class OGBActionManager:
 
         # Neue Action-Liste mit Reduced-Actions für alle anderen Geräte erstellen
         reducedActions = [
-            OGBActionPublication(capability=action.capability, action=fallBackAction,Name=self.room,message="VPD-NightHold Device Shutdown")
+            OGBActionPublication(capability=action.capability, action=fallBackAction,Name=self.room,message="VPD-NightHold Device Shutdown",priority="low")
             for action in actionMap if action.capability in modCaps
         ]
 
