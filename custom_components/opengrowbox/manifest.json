@@ -4,7 +4,7 @@
   "codeowners": ["@OpenGrowBox"],
   "config_flow": true,
   "dependencies": ["http"],
-  "documentation": "https://wiki.opengrowbox.net",
+  "documentation": "https://github.com/OpenGrow-Box/OpenGrowBox/wiki",
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues",

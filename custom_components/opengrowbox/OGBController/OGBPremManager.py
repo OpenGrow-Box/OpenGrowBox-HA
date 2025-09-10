@@ -761,11 +761,11 @@ class OGBPremManager:
         tent_control = f"select.ogb_tentmode_{self.room.lower()}"
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
-        ctrl_options = ["OGB Control", "PID Control", "MCP Control", "AI Control"]
-        dry_options = ["OGB DRY"]
+        ctrl_options = [ "PID Control", "MCP Control", "AI Control"]
+        dry_options = []
 
         current_tent_mode = self.dataStore.get("tentMode")
-        invalid_modes = ["AI Control", "MCP Control", "PID Control", "OGB Control"]
+        invalid_modes = ["PID Control", "MCP Control", "AI Control", ]
 
         if not self.is_premium and not self.is_logged_in:
             for entity_id, options in [
@@ -856,7 +856,7 @@ class OGBPremManager:
 
     def _check_if_premium_control_active(self):
         """Check if Premium mode is currently enabled."""
-        if self.ogb_ws.subscription_data.get("plan_name") in ["free", "basic"]:
+        if self.ogb_ws.subscription_data.get("plan_name") in ["free"]:
             return False
         return True
 
@@ -904,9 +904,8 @@ class OGBPremManager:
                         )
                         return
 
-                    success = await self.ogb_ws._connect_websocket()
-                    if success:
-                        await self._managePremiumControls() 
+                    await self.ogb_ws._connect_websocket()
+                    await self._managePremiumControls() 
 
 
         except Exception as e:
@@ -918,12 +917,10 @@ class OGBPremManager:
             _LOGGER.warning(f"Premium mode deactivated for {self.room}")
             self.is_premium_selected = False
             
-            # Just disconnect - no complex monitoring cleanup needed
-            if self._check_if_premium_control_active():
-                await self._managePremiumControls()
-                
+      
             await self.ogb_ws.disconnect()
-
+            await self._managePremiumControls()
+                    
         except Exception as e:
             _LOGGER.error(f"Premium deselection error: {e}")
             

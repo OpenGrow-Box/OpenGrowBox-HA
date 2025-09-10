@@ -96,6 +96,7 @@ class OGBRegistryEvenListener:
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
         Gruppiere Entitäten basierend auf ihrem Präfix (device_name).
+        Inkludiert Platform-Information.
         """
         entity_registry = async_get_entity_registry(self.hass)
         device_registry = async_get_device_registry(self.hass)
@@ -146,11 +147,22 @@ class OGBRegistryEvenListener:
                 _LOGGER.debug(f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping...")
                 return None
 
+            # Platform-Information auslesen
+            platform = entity.platform if hasattr(entity, 'platform') else "unknown"
+            
+            # Optional: Device-Info für zusätzliche Informationen
+            device_info = devices_in_room.get(entity.device_id, {})
+            device_manufacturer = getattr(device_info, 'manufacturer', 'Unknown') if device_info else 'Unknown'
+            device_model = getattr(device_info, 'model', 'Unknown') if device_info else 'Unknown'
+
             # Erstelle die Gruppierung
             return {
                 "device_name": device_name,
                 "entity_id": entity.entity_id,
                 "value": state_value,
+                "platform": platform,
+                "device_manufacturer": device_manufacturer,
+                "device_model": device_model,
             }
 
         # Verarbeite alle Entitäten parallel
@@ -165,13 +177,22 @@ class OGBRegistryEvenListener:
             group = next((g for g in grouped_entities_array if g["name"] == device_name), None)
             if not group:
                 # Erstelle eine neue Gruppe, falls nicht vorhanden
-                group = {"name": device_name, "entities": []}
+                group = {
+                    "name": device_name, 
+                    "entities": [],
+                    "platform": result["platform"],  # Platform der ersten Entität als Gruppen-Info
+                    "device_info": {
+                        "manufacturer": result["device_manufacturer"],
+                        "model": result["device_model"]
+                    }
+                }
                 grouped_entities_array.append(group)
 
             # Füge die Entität zur Gruppe hinzu
             group["entities"].append({
                 "entity_id": result["entity_id"],
                 "value": result["value"],
+                "platform": result["platform"],
             })
 
             # Überprüfe auf relevante Schlüsselwörter in der `entity_id`
@@ -181,11 +202,12 @@ class OGBRegistryEvenListener:
                         _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
                         continue
                     
-                    # Füge die Entität zur WorkData hinzu
+                    # Füge die Entität zur WorkData hinzu (mit Platform-Info)
                     workdataStore = self.dataStore.getDeep(f"workData.{key}")
                     workdataStore.append({
                         "entity_id": result["entity_id"],
                         "value": result["value"],
+                        "platform": result["platform"],
                     })
                     _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
                     self.dataStore.setDeep(f"workData.{key}", workdataStore)
@@ -193,7 +215,8 @@ class OGBRegistryEvenListener:
         # Debug-Ausgabe der gruppierten Ergebnisse
         _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
         return grouped_entities_array
-     
+
+ 
     async def get_filtered_entities_with_valueForDevice(self, room_name, max_retries=5, retry_interval=1):
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.

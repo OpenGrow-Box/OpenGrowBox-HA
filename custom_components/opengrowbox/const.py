@@ -1,5 +1,5 @@
 DOMAIN = "opengrowbox"
-VERSION = "2.0.0"
+VERSION = "1.3.0"
 URL_BASE = "/ogb"
 #PREM_WS_API = "ws://10.1.1.140:3001"
 PREM_WS_API = "wss://prem.opengrowbox.net"

@@ -161,7 +161,7 @@ def calc_Dry5Days_vpd(temp, humidity, leaf_offset=0):
 
     return round(vpd, 2)
 
-def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="fullspektrum_grow"):
+def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="fullspektrum_grow",default_value=10000):
     """
     Convert Lux or Lumen to PPFD (µmol/m²/s) and DLI (mol/m²/d) for Grow LEDs.
     

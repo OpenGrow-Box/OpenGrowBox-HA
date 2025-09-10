@@ -169,6 +169,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                      options=["VPD Perfection","VPD Target","Drying","Disabled"], initial_value="Disabled"),
         CustomSelect(f"OGB_HoldVpdNight_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="YES"),
+        CustomSelect(f"OGB_VPD_DeviceDampening_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["YES", "NO"], initial_value="YES"),
+        
         CustomSelect(f"OGB_OwnWeights_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_CO2_Control_{coordinator.room_name}", coordinator.room_name, coordinator,

@@ -334,6 +334,7 @@ class OpenGrowBox:
             f"ogb_tentmode_{self.room.lower()}": self._update_tent_mode, 
             f"ogb_leaftemp_offset_{self.room.lower()}": self._update_leafTemp_offset,
             f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_Target,                          
+            f"ogb_vpd_devicedampening_{self.room.lower()}": self._update_vpd_DeviceDampening,                          
 
             # LightTimes
             f"ogb_lightontime_{self.room.lower()}": self._update_lightOn_time,
@@ -463,7 +464,7 @@ class OpenGrowBox:
         hums = self.dataStore.getDeep("workData.humidity")
         leafTempOffset = self.dataStore.getDeep("tentData.leafTempOffset")
         
-        logging.warning(f"Current WorkData-Array TEMP:{temps} : HUMS: {hums}")
+        logging.warning(f" {self.room} Current WorkData-Array TEMP:{temps} : HUMS: {hums}")
         
         # Durchschnittswerte asynchron berechnen
         avgTemp = calculate_avg_value(temps)
@@ -822,6 +823,15 @@ class OpenGrowBox:
         elif value == "Enabled":
             self.eventManager.change_notify_set(True)
 
+    async def _update_vpd_DeviceDampening(self,data):
+        """
+        Update OGB Hydro Cycle
+        """
+        value = data.newState[0]
+        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdDeviceDampening"))
+        if current_value != value:
+            self.dataStore.setDeep("controlOptions.vpdDeviceDampening", self._stringToBool(value))
+
     ## MAIN Updaters
     async def _update_plant_stage(self, data):
         """
@@ -1112,8 +1122,8 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("Hydro.Cycle", self._stringToBool(value))
             await self.eventManager.emit("HydroModeChange",value)
-           
-    
+      
+             
     async def _update_hydro_duration(self, data):
         """
         Update Hydro Duration with validation
