@@ -57,6 +57,9 @@ class Light(Device):
         self.sunset_phase_active = False
         self.last_day_reset = datetime.now().date()
 
+        if self.isAcInfinDev:
+            self.steps = 10
+
         self.init()
         
         # SunPhaseListener

@@ -10,7 +10,7 @@ class Humidifier(Device):
         self.targetHumidity = 0
         self.minHumidity = 30
         self.maxHumidity = 70
-        self.stepSize = 5
+        self.steps = 5
         self.realHumidifier = False
         self.hasModes = False
         self.isSimpleSwitch = True
@@ -18,7 +18,9 @@ class Humidifier(Device):
         ## Events Register
         self.eventManager.on("Increase Humidifier", self.increaseAction)
         self.eventManager.on("Reduce Humidifier", self.reduceAction)
-        
+
+        if self.isAcInfinDev:
+            self.steps = 10    
         
     async def increaseAction(self, data):
         """Schaltet Befeuchter an"""

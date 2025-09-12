@@ -21,9 +21,9 @@ class OGBActionManager:
         self.actionHistory = {}  # {capability: {"last_action": datetime, "action_type": str, "cooldown_until": datetime}}
         self.defaultCooldownMinutes = {
             "canHumidify": 3,      # Befeuchter braucht Zeit
-            "canDehumidify": 5,    # Entfeuchter braucht noch mehr Zeit
-            "canHeat": 2,          # Heizung reagiert relativ schnell
-            "canCool": 3,          # Kühlung braucht etwas Zeit
+            "canDehumidify": 4,    # Entfeuchter braucht noch mehr Zeit
+            "canHeat": 1,          # Heizung reagiert relativ schnell
+            "canCool": 2,          # Kühlung braucht etwas Zeit
             "canExhaust": 1,       # Abluft reagiert schnell
             "canIntake": 1,        # Zuluft reagiert schnell
             "canVentilate": 1,     # Ventilation reagiert schnell
@@ -134,13 +134,13 @@ class OGBActionManager:
         """Prüft ob Notfall-Überschreibung des Dampening notwendig ist"""
         emergencyConditions = []
         
-        if tentData["temperature"] > tentData["maxTemp"] + 5:
+        if tentData["temperature"] > tentData["maxTemp"] + 1:
             emergencyConditions.append("critical_overheat")
-        if tentData["temperature"] < tentData["minTemp"] - 5:
+        if tentData["temperature"] < tentData["minTemp"] - 1:
             emergencyConditions.append("critical_cold")
         if tentData["dewpoint"] >= tentData["temperature"] - 0.5:
             emergencyConditions.append("immediate_condensation_risk")
-        if tentData.get("humidity", 0) > 90:
+        if tentData.get("humidity", 0) > 85:
             emergencyConditions.append("critical_humidity")
             
         return emergencyConditions
@@ -157,84 +157,6 @@ class OGBActionManager:
             self.actionHistory[capability]["cooldown_until"] = datetime.now()
     
 
-    async def checkLimitsAndPublicateWithDampening(self, actionMap):
-        """Hauptfunktion mit integriertem Dampening-System"""
-        _LOGGER.debug(f"{self.room}: Action Publication mit Dampening von {len(actionMap)} Aktionen")    
-        
-        ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
-        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
-        nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
-        islightON = self.dataStore.getDeep("isPlantDay.islightON")
-        
-        if islightON == False and nightVPDHold == False:
-            _LOGGER.debug(f"{self.room}: VPD Night Hold Not Active Ignoring VPD ") 
-            await self.NightHoldFallBack(actionMap)
-            return None
-        
-        # Gewichtungen ermitteln
-        if ownWeights:
-            tempWeight = self.dataStore.getDeep("controlOptionData.weights.temp")
-            humWeight = self.dataStore.getDeep("controlOptionData.weights.hum")
-        else:
-            plantStage = self.dataStore.get("plantStage")
-            plantMap = ["LateFlower", "MidFlower"]
-
-            if plantStage in plantMap:
-                tempWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue") * 1
-                humWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue") * 1.25
-            else:
-                tempWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue")
-                humWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue")
-
-        # Abweichungen berechnen
-        tentData = self.dataStore.get("tentData")
-        tempDeviation = 0
-        humDeviation = 0
-        weightMessage = ""
-        
-        if tentData["temperature"] > tentData["maxTemp"]:
-            tempDeviation = round((tentData["temperature"] - tentData["maxTemp"]) * tempWeight, 2)
-            weightMessage = f"Temp To High: Deviation {tempDeviation}"
-        elif tentData["temperature"] < tentData["minTemp"]:
-            tempDeviation = round((tentData["temperature"] - tentData["minTemp"]) * tempWeight, 2)
-            weightMessage = f"Temp To Low: Deviation {tempDeviation}"
-            
-        if tentData["humidity"] > tentData["maxHumidity"]:
-            humDeviation = round((tentData["humidity"] - tentData["maxHumidity"]) * humWeight, 2)
-            weightMessage = f"Humidity To High: Deviation {humDeviation}"
-        elif tentData["humidity"] < tentData["minHumidity"]:
-            humDeviation = round((tentData["humidity"] - tentData["minHumidity"]) * humWeight, 2)
-            weightMessage = f"Humidity To Low: Deviation {humDeviation}"
-
-        WeightPublication = OGBWeightPublication(Name=self.room, message=weightMessage, tempDeviation=tempDeviation, humDeviation=humDeviation, tempWeight=tempWeight, humWeight=humWeight)
-        await self.eventManager.emit("LogForClient", WeightPublication, haEvent=True)   
-        
-        # Notfall-Prüfung
-        emergencyConditions = self._getEmergencyOverride(tentData)
-        if emergencyConditions:
-            self._clearCooldownForEmergency(emergencyConditions)
-        
-        # Capabilities abrufen
-        caps = self.dataStore.get("capabilities")
-
-        # VPD-Status bestimmen
-        vpdStatus = self._determineVPDStatus(tempDeviation, humDeviation, tentData)
-        optimalDevices = self.getRoomCaps(vpdStatus)
-
-        # ActionMap erweitern
-        enhancedActionMap = self._enhanceActionMap(actionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices)
-        
-        # Dampening anwenden
-        dampenedActionMap = self._filterActionsByDampening(enhancedActionMap, tempDeviation, humDeviation)
-        
-        # Konflikte lösen
-        finalActionMap = self._resolveActionConflicts(dampenedActionMap)
-        
-        _LOGGER.info(f"{self.room}: Von {len(enhancedActionMap)} Aktionen werden {len(finalActionMap)} ausgeführt")
-        
-        await self.publicationActionHandler(finalActionMap)
-        await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True) 
-    
     # Hilfsfunktion für Dampening-Status
     def getDampeningStatus(self):
         """Gibt den aktuellen Dampening-Status zurück"""
@@ -756,6 +678,84 @@ class OGBActionManager:
         await self.publicationActionHandler(finalActionMap)
         await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True)
 
+    async def checkLimitsAndPublicateWithDampening(self, actionMap):
+        """Hauptfunktion mit integriertem Dampening-System"""
+        _LOGGER.debug(f"{self.room}: Action Publication mit Dampening von {len(actionMap)} Aktionen")    
+        
+        ownWeights = self.dataStore.getDeep("controlOptions.ownWeights")
+        vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")
+        nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
+        islightON = self.dataStore.getDeep("isPlantDay.islightON")
+        
+        if islightON == False and nightVPDHold == False:
+            _LOGGER.debug(f"{self.room}: VPD Night Hold Not Active Ignoring VPD ") 
+            await self.NightHoldFallBack(actionMap)
+            return None
+        
+        # Gewichtungen ermitteln
+        if ownWeights:
+            tempWeight = self.dataStore.getDeep("controlOptionData.weights.temp")
+            humWeight = self.dataStore.getDeep("controlOptionData.weights.hum")
+        else:
+            plantStage = self.dataStore.get("plantStage")
+            plantMap = ["LateFlower", "MidFlower"]
+
+            if plantStage in plantMap:
+                tempWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue") * 1
+                humWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue") * 1.25
+            else:
+                tempWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue")
+                humWeight = self.dataStore.getDeep("controlOptionData.weights.defaultValue")
+
+        # Abweichungen berechnen
+        tentData = self.dataStore.get("tentData")
+        tempDeviation = 0
+        humDeviation = 0
+        weightMessage = ""
+        
+        if tentData["temperature"] > tentData["maxTemp"]:
+            tempDeviation = round((tentData["temperature"] - tentData["maxTemp"]) * tempWeight, 2)
+            weightMessage = f"Temp To High: Deviation {tempDeviation}"
+        elif tentData["temperature"] < tentData["minTemp"]:
+            tempDeviation = round((tentData["temperature"] - tentData["minTemp"]) * tempWeight, 2)
+            weightMessage = f"Temp To Low: Deviation {tempDeviation}"
+            
+        if tentData["humidity"] > tentData["maxHumidity"]:
+            humDeviation = round((tentData["humidity"] - tentData["maxHumidity"]) * humWeight, 2)
+            weightMessage = f"Humidity To High: Deviation {humDeviation}"
+        elif tentData["humidity"] < tentData["minHumidity"]:
+            humDeviation = round((tentData["humidity"] - tentData["minHumidity"]) * humWeight, 2)
+            weightMessage = f"Humidity To Low: Deviation {humDeviation}"
+
+        WeightPublication = OGBWeightPublication(Name=self.room, message=weightMessage, tempDeviation=tempDeviation, humDeviation=humDeviation, tempWeight=tempWeight, humWeight=humWeight)
+        await self.eventManager.emit("LogForClient", WeightPublication, haEvent=True)   
+        
+        # Notfall-Prüfung
+        emergencyConditions = self._getEmergencyOverride(tentData)
+        if emergencyConditions:
+            self._clearCooldownForEmergency(emergencyConditions)
+        
+        # Capabilities abrufen
+        caps = self.dataStore.get("capabilities")
+
+        # VPD-Status bestimmen
+        vpdStatus = self._determineVPDStatus(tempDeviation, humDeviation, tentData)
+        optimalDevices = self.getRoomCaps(vpdStatus)
+
+        # ActionMap erweitern
+        enhancedActionMap = self._enhanceActionMap(actionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices)
+        
+        # Dampening anwenden
+        dampenedActionMap = self._filterActionsByDampening(enhancedActionMap, tempDeviation, humDeviation)
+        
+        # Konflikte lösen
+        finalActionMap = self._resolveActionConflicts(dampenedActionMap)
+        
+        _LOGGER.info(f"{self.room}: Von {len(enhancedActionMap)} Aktionen werden {len(finalActionMap)} ausgeführt")
+        
+        await self.publicationActionHandler(finalActionMap)
+        await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True) 
+    
     # Water Actions
     async def PumpAction(self, pumpAction: OGBHydroAction):
         if isinstance(pumpAction, dict):
@@ -901,12 +901,14 @@ class OGBActionManager:
         """Bestimmt den primären VPD-Status basierend auf Abweichungen und kritischen Werten"""
         
         # Notfälle haben Priorität
-        if tentData["temperature"] > tentData["maxTemp"] + 3:
+        if tentData["temperature"] > tentData["maxTemp"]:
             return "critical_hot"
-        elif tentData["temperature"] < tentData["minTemp"] - 3:
+        elif tentData["temperature"] < tentData["minTemp"]:
             return "critical_cold"
-        elif tentData["dewpoint"] >= tentData["temperature"] - 1:
+        elif tentData["dewpoint"] >= tentData["temperature"]:
             return "dewpoint_risk"
+        elif tentData["humidity"] > tentData["maxHumidity"]:
+            return "humidity_risk"
         
         # Kombinierte Bewertung
         if tempDeviation > 0 and humDeviation > 0:
@@ -1000,7 +1002,7 @@ class OGBActionManager:
         actions = []
         
         # Kritische Übertemperatur
-        if tentData["temperature"] > tentData["maxTemp"] + 3:
+        if tentData["temperature"] > tentData["maxTemp"]:
             actionMessage = f"Kritische Übertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
             if caps.get("canExhaust", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
@@ -1012,7 +1014,7 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canLight", action="Reduce", Name=self.room, message=actionMessage, priority=""))
 
         # Kritische Untertemperatur
-        elif tentData["temperature"] < tentData["minTemp"] - 3:
+        elif tentData["temperature"] < tentData["minTemp"]:
             actionMessage = f"Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
             if caps.get("canHeat", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
@@ -1022,7 +1024,7 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canLight", action="Increase", Name=self.room, message=actionMessage, priority=""))
 
         # Taupunkt-Risiko
-        if tentData["dewpoint"] >= tentData["temperature"] - 1:
+        if tentData["dewpoint"] >= tentData["temperature"]:
             actionMessage = f"Taupunkt erreicht in {self.room}, Feuchtigkeit reduziert."
             if caps.get("canDehumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
@@ -1185,6 +1187,7 @@ class OGBActionManager:
             "critical_hot": "too_high",
             "critical_cold": "too_low",
             "dewpoint_risk": "too_high",
+            "humidity_risk": "too_high",
             "hot_humid": "too_high",
             "hot_dry": "too_high",
             "cold_humid": "too_low",
@@ -1220,4 +1223,4 @@ class OGBActionManager:
                 ):
                     result.extend(cap_info["devEntities"])
 
-        return list(set(result))  # Entferne Duplikate
+        return list(set(result))

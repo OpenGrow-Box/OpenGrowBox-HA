@@ -12,6 +12,10 @@ class Dehumidifier(Device):
         self.isSimpleSwitch = False  # Standardmäßig ein einfacher Schalter
         self.hasModes = False  # Erkennung von Modi
         self.currentMode = None  # Aktueller Modus des Luftentfeuchters
+
+        if self.isAcInfinDev:
+            self.steps = 10    
+
         ## Events Register
         self.eventManager.on("Increase Dehumidifier", self.increaseAction)
         self.eventManager.on("Reduce Dehumidifier", self.reduceAction)

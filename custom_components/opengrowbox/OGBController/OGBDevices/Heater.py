@@ -11,6 +11,9 @@ class Heater(Device):
         self.eventManager.on("Increase Heater", self.increaseAction)
         self.eventManager.on("Reduce Heater", self.reduceAction)
 
+        if self.isAcInfinDev:
+            self.steps = 10    
+
     #Actions Helpers
     
             

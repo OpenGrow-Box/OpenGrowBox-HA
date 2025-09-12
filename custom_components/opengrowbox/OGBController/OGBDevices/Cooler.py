@@ -10,6 +10,9 @@ class Cooler(Device):
         self.eventManager.on("Increase Cooler", self.increaseAction)
         self.eventManager.on("Reduce Cooler", self.reduceAction)
 
+        if self.isAcInfinDev:
+            self.steps = 10    
+
     #Actions Helpers
     async def increaseAction(self, data):
         """Reduziert die klima oder Kühlgerät"""

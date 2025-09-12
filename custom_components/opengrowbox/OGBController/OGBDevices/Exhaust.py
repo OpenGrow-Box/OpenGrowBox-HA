@@ -12,6 +12,10 @@ class Exhaust(Device):
         self.steps = 5        # DutyCycle Steps
         self.isInitialized = False
         self.isTasmota = False
+        
+        if self.isAcInfinDev:
+            self.steps = 10    
+        
         self.init()
         
         ## Events Register

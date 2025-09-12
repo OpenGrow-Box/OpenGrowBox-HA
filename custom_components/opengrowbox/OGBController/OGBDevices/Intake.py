@@ -7,12 +7,15 @@ class Intake(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
         self.dutyCycle = None  # Initialer Duty Cycle
-        self.minDuty = 10    # Minimaler Duty Cycle
+        self.minDuty = 0    # Minimaler Duty Cycle
         self.maxDuty = 95    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
         self.isTasmota = False
         self.isInitialized = False
-        
+
+        if self.isAcInfinDev:
+            self.steps = 10    
+            
         self.init()
         
         ## Events Register

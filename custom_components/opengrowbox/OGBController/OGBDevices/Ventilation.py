@@ -14,6 +14,9 @@ class Ventilation(Device):
         self.isTasmota = False
         self.isInitialized = False
 
+        if self.isAcInfinDev:
+            self.steps = 10    
+
         self.init()  # Initialisierung der Klasse
 
         # Events registrieren
