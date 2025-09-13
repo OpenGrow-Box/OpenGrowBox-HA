@@ -156,7 +156,7 @@ class Device:
 
                 # Prüfe for special Platform
                 if entityPlatform == "ac_infinity":
-                    _LOGGER.warning(f"FOUND AC-INFINITY DEVICE {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
+                    _LOGGER.warning(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.isAcInfinDev = True
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
@@ -236,30 +236,38 @@ class Device:
         # Log die finalen Capabilities
         _LOGGER.debug(f"{self.deviceName}: Capabilities identified: {self.dataStore.get('capabilities')}")
 
-    # Bestimme, ob das Gerät gerade läuft
     def identifyIfRunningState(self):
         if self.isAcInfinDev:
             for select in self.options:
+                # Nur select-Entitäten prüfen, number-Entitäten überspringen
+                entity_id = select.get("entity_id", "")
+                if entity_id.startswith("number."):
+                    continue  # number-Entitäten überspringen
+                    
                 option_value = select.get("value")
                 if option_value == "On":
                     self.isRunning = True
-                elif option_value  == "off":
+                    return  # Früh beenden, da Zustand gefunden
+                elif option_value == "off":
                     self.isRunning = False
-                elif option_value in ( None, "unknown", "Unbekannt", "unavailable"):
+                    return
+                elif option_value in (None, "unknown", "Unbekannt", "unavailable"):
                     raise ValueError(f"Invalid Entity state '{option_value}' for {self.deviceName}")
                 else:
-                    raise ValueError(f"Invalid  Entity state '{option_value}' for {self.deviceName}")   
+                    raise ValueError(f"Invalid Entity state '{option_value}' for {self.deviceName}")   
         else:
             for switch in self.switches:
                 switch_value = switch.get("value")
                 if switch_value == "on":
                     self.isRunning = True
-                elif switch_value  == "off":
+                    return
+                elif switch_value == "off":
                     self.isRunning = False
-                elif switch_value in ( None, "unknown", "Unbekannt", "unavailable"):
+                    return
+                elif switch_value in (None, "unknown", "Unbekannt", "unavailable"):
                     raise ValueError(f"Invalid Entity state '{switch_value}' for {self.deviceName}")
                 else:
-                    raise ValueError(f"Invalid  Entity state '{switch_value}' for {self.deviceName}")
+                    raise ValueError(f"Invalid Entity state '{switch_value}' for {self.deviceName}")
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
@@ -281,7 +289,7 @@ class Device:
                 entity_id = entity.get("entity_id", "").lower()
                 if any(key in entity_id for key in dimmableKeys):
                     self.isDimmable = True
-                    _LOGGER.warning(f"{self.deviceName}: Device Recognized as Dimmable -  entity_id: {entity_id}")
+                    _LOGGER.warning(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
                     return
 
         _LOGGER.debug(f"{self.deviceName}: No Dimmable Options Found")
@@ -344,7 +352,7 @@ class Device:
                         raw_value = float(raw_value)
                         
                     if isinstance(raw_value, float):
-                        value = int(raw_value * 10)
+                        value = int(raw_value)
                     else:
                         value = int(raw_value)
     
@@ -353,10 +361,10 @@ class Device:
                         self.voltage = value
                         _LOGGER.debug(f"{self.deviceName}: Voltage set from  Options to {self.voltage}%.")
                     else:
-                        if self.isAcInfinDev:
-                            self.dutyCycle = int(float(value) * 10)  
+                        if self.isAcInfinDev == False:
+                            self.dutyCycle = int(float(value))  
                         else:
-                            self.dutyCycle = int(float(value))
+                            self.dutyCycle = int(float(value) * 10)
                         
                         _LOGGER.warning(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
                     return 
@@ -379,14 +387,16 @@ class Device:
                     entity_ids = [self.deviceName]
 
                 for entity_id in entity_ids:
-                    await self.hass.services.async_call(
-                        domain="select",
-                        service="select_option",
-                        service_data={
-                            "entity_id": entity_id,
-                            "option": "On"
-                        },
-                    )
+                    
+                    if self.isRunning == False:
+                        await self.hass.services.async_call(
+                            domain="select",
+                            service="select_option",
+                            service_data={
+                                "entity_id": entity_id,
+                                "options": "On"
+                            },
+                        )
                     # Zusatzaktionen je nach Gerätetyp
                     if self.deviceType in ["Light", "Humidifier", "Deumidifier", "Exhaust", "Intake", "Ventilation"]:
                         # Bei AcInfinity wird oft ein Prozentwert extra gesetzt

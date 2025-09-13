@@ -892,7 +892,7 @@ class OGBPremManager:
                     _LOGGER.warning(f"Triggering WebSocket connection for {self.room}")
 
                     if not self._check_if_can_connect():
-                        logging.warning(f"{self.ws_room} TOO MANY ROOMS - REMOVE ONE FROM PREMIUM AND ADD THE NEW ON ROOMS: {self.ogb_ws.ogb_sessions} MAX: {self.ogb_ws.ogb_max_sessions}")
+                        logging.warning(f"{self.room} TOO MANY ROOMS - REMOVE ONE FROM PREMIUM AND ADD THE NEW ON ROOMS: {self.ogb_ws.ogb_sessions} MAX: {self.ogb_ws.ogb_max_sessions}")
 
                         await self._send_auth_response(
                             "error",

@@ -138,7 +138,7 @@ class OGBDeviceManager:
     async def identify_device(self, device_name, device_data):
         """Gerät anhand des Namens und Typs identifizieren."""
         device_type_mapping = {
-            "Sensor": ["ogb","sensor","leaf" "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
+            "Sensor": ["ogb","sensor", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
             "Exhaust": ["exhaust", "abluft"],
             "Intake": ["intake", "zuluft"],
             "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet", "outlet"],

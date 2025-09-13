@@ -14,7 +14,9 @@ class Dehumidifier(Device):
         self.currentMode = None  # Aktueller Modus des Luftentfeuchters
 
         if self.isAcInfinDev:
-            self.steps = 10    
+            self.steps = 10 
+            self.maxDuty = 100
+            self.minDuty = 0    
 
         ## Events Register
         self.eventManager.on("Increase Dehumidifier", self.increaseAction)
