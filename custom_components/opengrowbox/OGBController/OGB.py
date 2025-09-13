@@ -336,6 +336,7 @@ class OpenGrowBox:
             f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_Target,                          
             f"ogb_vpd_devicedampening_{self.room.lower()}": self._update_vpd_DeviceDampening,                          
 
+            
             # LightTimes
             f"ogb_lightontime_{self.room.lower()}": self._update_lightOn_time,
             f"ogb_lightofftime_{self.room.lower()}": self._update_lightOff_time,
@@ -1437,6 +1438,7 @@ class OpenGrowBox:
             _LOGGER.info(f"{self.room}: Update Breeder Bloom Days to {value}")
             self.dataStore.setDeep("plantDates.breederbloomdays", value)
             await self.eventManager.emit("PlantTimeChange",value)
+            await self._update_plantDates(value)
             
     async def _update_growstartdates_value(self,data):
         """
@@ -1448,7 +1450,8 @@ class OpenGrowBox:
             _LOGGER.info(f"{self.room}: Update Grow Start to {value}")
             self.dataStore.setDeep("plantDates.growstartdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
-    
+            await self._update_plantDates(value)
+             
     async def _update_bloomswitchdate_value(self,data):
         """
         Update Bloom Start Date Value.
@@ -1458,6 +1461,7 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("plantDates.bloomswitchdate", value)
             await self.eventManager.emit("PlantTimeChange",value)
+            await self._update_plantDates(value)
 
     async def _update_plantDates(self, data):
         """
@@ -1490,23 +1494,39 @@ class OpenGrowBox:
         except ValueError:
             _LOGGER.error(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
 
-        try:
-            bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
-            totalbloomdays = (today - bloomswitch_date).days
-            self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
-        except ValueError:
-            _LOGGER.error(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
-        if breeder_bloom_days > 0 and totalbloomdays > 0:
-            remaining_bloom_days = breeder_bloom_days - totalbloomdays
-            if remaining_bloom_days <= 0:
-                _LOGGER.info(f"{self.room}: Die erwartete Blütezeit from {breeder_bloom_days} Tagen ist erreicht oder überschritten.")
-                ## Notify User when Notify manager is DONE
-            else:
-                _LOGGER.info(f"{self.room}: Noch {remaining_bloom_days} Tage bis zum Ende der erwarteten Blütezeit.")
 
-        self.dataStore.setDeep("plantDates.daysToChopChop",remaining_bloom_days)
+        if breeder_bloom_days > 0 and bloomSwitch:
+            try:
+                bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
+                
+                if today >= bloomswitch_date:
+                    totalbloomdays = (today - bloomswitch_date).days
+                    remaining_bloom_days = breeder_bloom_days - totalbloomdays
+                    self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
+                    
+                    if remaining_bloom_days <= 0:
+                        ## Notify User when Notify manager is DONE
+                        return
+                else:
+
+                    days_until_bloom = (bloomswitch_date - today).days
+                    remaining_bloom_days = days_until_bloom + breeder_bloom_days
+                    totalbloomdays = 0 
+                    self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
+                    
+     
+            except ValueError:
+                _LOGGER.error(f"{self.room}: Invalid Date in bloomSwitch: {bloomSwitch}")
+        else:
+
+            if not bloomSwitch:
+                _LOGGER.warning(f"{self.room}: Kein Blütebeginn-Datum gesetzt")
+            if breeder_bloom_days <= 0:
+                _LOGGER.warning(f"{self.room}: Keine gültigen Breeder-Blütetage gesetzt")
+
+        self.dataStore.setDeep("plantDates.daysToChopChop", remaining_bloom_days)
         
-        # Updaten der Sensoren in Home Assistant
+
         try:
             await self.hass.services.async_call(
                 domain="opengrowbox",
@@ -1541,8 +1561,8 @@ class OpenGrowBox:
     async def _autoUpdatePlantStages(self,data):
         timenow = datetime.now() 
         await self._update_plantDates(timenow)
-        await asyncio.sleep(8 * 60 * 60)  # 8 Stunden warten
-        asyncio.create_task(self._autoUpdatePlantStages(timenow))  # Nächste Ausführung starten
+        await asyncio.sleep(4 * 60 * 60) 
+        asyncio.create_task(self._autoUpdatePlantStages(timenow)) 
  
     ## Area
     

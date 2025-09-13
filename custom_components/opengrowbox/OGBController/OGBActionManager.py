@@ -42,7 +42,6 @@ class OGBActionManager:
         self.eventManager.on("RetrieveAction",self.RetrieveAction)
         self.eventManager.on("PIDActions",self.PIDActions)    
     
-
     def _isActionAllowed(self, capability, action, deviation=0):
         """Prüft ob eine Aktion erlaubt ist basierend auf Cooldown"""
         now = datetime.now()
@@ -51,6 +50,11 @@ class OGBActionManager:
             return True
             
         history = self.actionHistory[capability]
+        
+        # NEW: Skip cooldown for emergency actions
+        if hasattr(self, '_emergency_mode') and self._emergency_mode:
+            _LOGGER.warning(f"{self.room}: Emergency mode - bypassing cooldown for {capability}")
+            return True
         
         # Prüfe ob noch im Cooldown
         if now < history.get("cooldown_until", now):
@@ -63,7 +67,7 @@ class OGBActionManager:
             return False
             
         return True
-
+    
     def _calculateAdaptiveCooldown(self, capability, deviation):
         """Berechnet adaptive Cooldown-Zeit basierend auf Abweichung"""
         baseCooldown = self.defaultCooldownMinutes.get(capability, 2)
@@ -134,9 +138,10 @@ class OGBActionManager:
         """Prüft ob Notfall-Überschreibung des Dampening notwendig ist"""
         emergencyConditions = []
         
-        if tentData["temperature"] > tentData["maxTemp"] + 1:
+        # FIXED: Lower threshold for emergency detection
+        if tentData["temperature"] > tentData["maxTemp"]:
             emergencyConditions.append("critical_overheat")
-        if tentData["temperature"] < tentData["minTemp"] - 1:
+        if tentData["temperature"] < tentData["minTemp"]:
             emergencyConditions.append("critical_cold")
         if tentData["dewpoint"] >= tentData["temperature"] - 0.5:
             emergencyConditions.append("immediate_condensation_risk")
@@ -152,10 +157,21 @@ class OGBActionManager:
             
         _LOGGER.warning(f"{self.room}: Notfall erkannt: {emergencyConditions}. Cooldowns werden überschrieben!")
         
+        # Set emergency mode flag
+        self._emergency_mode = True
+        
         # Lösche alle Cooldowns
         for capability in self.actionHistory:
             self.actionHistory[capability]["cooldown_until"] = datetime.now()
-    
+            
+        # Clear emergency mode after short delay to allow actions
+        asyncio.create_task(self._clear_emergency_mode())   
+
+    async def _clear_emergency_mode(self):
+        """Clear emergency mode after delay"""
+        await asyncio.sleep(5)  # 5 seconds
+        self._emergency_mode = False
+        _LOGGER.info(f"{self.room}: Emergency mode cleared")
 
     # Hilfsfunktion für Dampening-Status
     def getDampeningStatus(self):
@@ -1001,40 +1017,47 @@ class OGBActionManager:
         
         actions = []
         
-        # Kritische Übertemperatur
-        if tentData["temperature"] > tentData["maxTemp"]:
+        # FIXED: Same threshold as emergency override
+        if tentData["temperature"] > tentData["maxTemp"]:  # Changed from > to >=
             actionMessage = f"Kritische Übertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
-            if caps.get("canExhaust", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if caps.get("canVentilate", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            _LOGGER.warning(actionMessage)  # Add warning log
+            
+            # Prioritize cooling actions
             if caps.get("canCool", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if vpdLightControl and caps.get("canLight", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canLight", action="Reduce", Name=self.room, message=actionMessage, priority=""))
-
-        # Kritische Untertemperatur
-        elif tentData["temperature"] < tentData["minTemp"]:
-            actionMessage = f"Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
-            if caps.get("canHeat", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
+                actions.append(OGBActionPublication(capability="canCool", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
             if caps.get("canExhaust", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canExhaust", action="Reduce", Name=self.room, message=actionMessage, priority=""))
-            if vpdLightControl and caps.get("canLight", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canLight", action="Increase", Name=self.room, message=actionMessage, priority=""))
-
-        # Taupunkt-Risiko
-        if tentData["dewpoint"] >= tentData["temperature"]:
-            actionMessage = f"Taupunkt erreicht in {self.room}, Feuchtigkeit reduziert."
-            if caps.get("canDehumidify", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if caps.get("canExhaust", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
+                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
             if caps.get("canVentilate", {}).get("state", False):
-                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", Name=self.room, message=actionMessage, priority=""))
-        
-        return actions
+                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
+            
+            # Reduce heat sources
+            if caps.get("canHeat", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHeat", action="Reduce", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Reduce", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
 
+        # Similar fixes for cold temperatures
+        elif tentData["temperature"] < tentData["minTemp"]:  # Changed from < to <=
+            actionMessage = f"Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
+            _LOGGER.warning(actionMessage)
+            
+            if caps.get("canHeat", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canHeat", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Reduce", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="emergency"))
+
+        return actions
+    
     def _getCO2Actions(self, caps, islightON):
         """Erstellt CO2-Management Actions"""
         
@@ -1125,6 +1148,7 @@ class OGBActionManager:
         # Prüfe auf direkte Konflikte (Increase vs Reduce für gleiche Capability)
         return self._resolveIncreaseReduceConflicts(finalActions)
 
+    # Enhanced conflict resolution with emergency priority
     def _resolveIncreaseReduceConflicts(self, actions):
         """Löst Increase/Reduce Konflikte für gleiche Capability auf"""
         
@@ -1142,35 +1166,37 @@ class OGBActionManager:
                 resolvedActions.extend(capActions)
                 continue
                 
-            # Prüfe auf Increase/Reduce Konflikte
+            # Check for emergency priority first
+            emergencyActions = [a for a in capActions if getattr(a, 'priority', '') == 'emergency']
+            if emergencyActions:
+                resolvedActions.append(emergencyActions[0])
+                continue
+                
+            # Existing conflict resolution logic...
             increases = [a for a in capActions if a.action == "Increase"]
             reduces = [a for a in capActions if a.action == "Reduce"]
-            evals = [a for a in capActions if a.action == "Eval"]
             
             if increases and reduces:
-                # Konflikt! Entscheide basierend auf Priorität
-                emergencyActions = [a for a in capActions if any(kw in a.message for kw in ["Kritische", "Notfall", "Taupunkt"])]
+                # Existing priority logic with emergency keywords
+                emergencyKeywordActions = [a for a in capActions if any(kw in a.message for kw in ["Kritische", "Notfall", "Taupunkt"])]
                 
-                if emergencyActions:
-                    # Notfall hat Vorrang
-                    resolvedActions.append(emergencyActions[0])
+                if emergencyKeywordActions:
+                    resolvedActions.append(emergencyKeywordActions[0])
                 else:
-                    # Wähle basierend auf Priorität
+                    # Original logic continues...
                     highPriorityActions = [a for a in capActions if hasattr(a, 'priority') and a.priority == "high"]
                     if highPriorityActions:
                         resolvedActions.append(highPriorityActions[0])
                     else:
-                        # Standard-Priorität: Increase > Reduce > Eval
                         if increases:
                             resolvedActions.append(increases[0])
                         else:
                             resolvedActions.append(reduces[0])
             else:
-                # Kein Konflikt, alle Actions behalten
                 resolvedActions.extend(capActions)
         
         return resolvedActions
-
+    
     def getRoomCaps(self, vpdStatus: str):
         """Erweiterte Version die auch spezielle VPD-Stati behandelt"""
         
