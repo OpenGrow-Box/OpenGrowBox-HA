@@ -19,9 +19,19 @@ class Cooler(Device):
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
-        clamped_value = max(self.minDuty, min(self.maxDuty, duty_cycle))
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle to {clamped_value}% ragend.")
+
+        min_duty = float(self.minDuty)
+        max_duty = float(self.maxDuty)
+        duty_cycle = float(duty_cycle)
+
+
+        clamped_value = max(min_duty, min(max_duty, duty_cycle))
+
+        clamped_value = int(clamped_value)
+
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
+
 
     def change_duty_cycle(self, increase=True):
         """
@@ -51,9 +61,6 @@ class Cooler(Device):
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(percentage=newDuty)    
-        elif self.realHumidifierClass:
-            ## implement the internal humidifier classes with all modes
-            return False
         else:
             if self.isRunning == True:
                 self.log_action("Allready in Desired State ")
@@ -68,9 +75,7 @@ class Cooler(Device):
                 newDuty = self.change_duty_cycle(increase=False)
                 self.log_action("ReduceAction")
                 await self.turn_on(percentage=newDuty)    
-        elif self.realHumidifierClass:
-            ## implement the internal humidifier classes with all modes
-            return False
+
         else:
             if self.isRunning == True:
                 self.log_action("TurnOFF ")

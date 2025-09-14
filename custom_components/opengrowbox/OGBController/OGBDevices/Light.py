@@ -146,8 +146,10 @@ class Light(Device):
             
             if self.isDimmable:
                 self.checkForControlValue()
+                self.checkMinMax(False)
+                
                 self.checkPlantStageLightValue() 
-                                
+                
                 if self.voltage == None or self.voltage == 0:
                     self.initialize_voltage()
                 else:

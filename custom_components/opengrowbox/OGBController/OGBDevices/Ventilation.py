@@ -7,15 +7,12 @@ class Ventilation(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
         _LOGGER.info(f"{self.deviceName}: Initialisiertes Gerät vom Typ: {self.deviceType}")
-        self.dutyCycle = None  # Initialer Startwert
+        self.dutyCycle = 0  # Initialer Startwert
         self.maxDuty = 100   # Maximaler Duty Cycle
         self.minDuty = 85     # Minimaler Duty Cycle
         self.steps = 5       # DutyCycle Steps
         self.isTasmota = False
         self.isInitialized = False
-
-        if self.isAcInfinDev:
-            self.steps = 10    
 
         self.init()  # Initialisierung der Klasse
 
@@ -27,21 +24,17 @@ class Ventilation(Device):
         return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
                 f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
                 f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' isTasmota:'{self.isTasmota}'")
-        
 
     def init(self):
         """Initialisiert die Ventilation."""
-        # Überprüfe, ob das Gerät dimmbar ist (Wird von der Device-Klasse gesetzt)
-        if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Gerät ist nicht dimmbar. Initialisierung übersprungen.")
-            return
-
         if not self.isInitialized:
             self.identify_if_tasmota()
             if self.isTasmota == True:
                 self.initialize_duty_cycle()
+                self.checkMinMax(False)
             else:
                 self.checkForControlValue()
+                self.checkMinMax(False)
                 if self.dutyCycle == 0 or self.dutyCycle == None:
                     self.initialize_duty_cycle()
             self.isInitialized = True
@@ -60,7 +53,16 @@ class Ventilation(Device):
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
-        clamped_value = max(self.minDuty, min(self.maxDuty, duty_cycle))
+
+        min_duty = float(self.minDuty)
+        max_duty = float(self.maxDuty)
+        duty_cycle = float(duty_cycle)
+
+
+        clamped_value = max(min_duty, min(max_duty, duty_cycle))
+
+        clamped_value = int(clamped_value)
+
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
 
@@ -121,5 +123,5 @@ class Ventilation(Device):
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
-        _LOGGER.warn(f"{action_name}: {log_message}")
+        _LOGGER.warning(f"{action_name}: {log_message}")
 

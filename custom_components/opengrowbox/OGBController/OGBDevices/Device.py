@@ -19,10 +19,11 @@ class Device:
         self.options = []
         self.sensors = []
         self.ogbsettings = []
-        self.deviceInit(deviceData)
         self.initialization = False
         self.inWorkMode = False
         
+        
+        asyncio.create_task(self.deviceInit(deviceData))
         # EVENTS
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
         self.eventManager.on("WorkModeChange", self.WorkMode)
@@ -54,7 +55,7 @@ class Device:
         return entityList
         
     # Initialisiere das Gerät und identifiziere Eigenschaften
-    def deviceInit(self, entitys):
+    async def deviceInit(self, entitys):
     
         self.identifySwitchesAndSensors(entitys)
         self.identifyIfRunningState()
@@ -119,6 +120,8 @@ class Device:
     def checkMinMax(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
+        if not self.isDimmable: 
+            return
 
         if not minMaxSets or not minMaxSets.get("active", False):
             return  # Nichts aktiv → nichts tun
@@ -126,12 +129,12 @@ class Device:
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = minMaxSets.get("minVoltage")
             self.maxVoltage = minMaxSets.get("maxVoltage")
-            logging.warning(f"{self.deviceName} Device MinMax sets: {minMaxSets}")
+            logging.warning(f"{self.deviceName} Device MinMax sets: Max-Voltage:{self.maxVoltage} Min-Voltage:{self.minVoltage}")
         
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = minMaxSets.get("minDuty")
             self.maxDuty = minMaxSets.get("maxDuty")
-            logging.warning(f"{self.deviceName} Device MinMax sets: {minMaxSets}")
+            logging.warning(f"{self.deviceName} Device MinMax sets: Max-Duty:{self.maxDuty} Min-Duty:{self.minDuty}")
           
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
@@ -275,12 +278,9 @@ class Device:
     def identifDimmable(self):
         allowedDeviceTypes = ["ventilation", "exhaust","intake","light","humdifier","dehumidifier","heater","cooler"]
 
-        #if self.isAcInfinDev == True:
-        #    self.isDimmable == True
-            
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
-            _LOGGER.debug(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
+            _LOGGER.error(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
             return
 
         dimmableKeys = ["fan.", "light.","number.","_duty","_intensity"]
@@ -294,7 +294,7 @@ class Device:
                     _LOGGER.warning(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
                     return
 
-        _LOGGER.debug(f"{self.deviceName}: No Dimmable Options Found")
+        _LOGGER.warning(f"{self.deviceName}: No Dimmable Options Found")
     
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend to Gerätetyp und Daten."""
@@ -456,7 +456,7 @@ class Device:
 
                 # Humidifier einschalten
                 elif self.deviceType == "Humidifier":
-                    if self.realHumidifier:
+                    if self.realHumidifierClass:
                         await self.hass.services.async_call(
                             domain="humidifier",
                             service="turn_on",
@@ -982,8 +982,6 @@ class Device:
 
         if not self.isDimmable: 
             return
-
-        logging.warning(f"Device MinMax SEts {minMaxSets}")
 
         if not minMaxSets or not minMaxSets.get("active", False):
             return

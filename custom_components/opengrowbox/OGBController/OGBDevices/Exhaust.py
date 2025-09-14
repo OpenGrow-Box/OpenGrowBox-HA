@@ -6,7 +6,7 @@ _LOGGER = logging.getLogger(__name__)
 class Exhaust(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
-        self.dutyCycle = None  # Initialer Duty Cycle
+        self.dutyCycle = 0  # Initialer Duty Cycle
         self.minDuty = 10    # Minimaler Duty Cycle
         self.maxDuty = 95    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
@@ -27,16 +27,14 @@ class Exhaust(Device):
     #Actions Helpers
     
     def init(self):
-        if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Device ist nicht dimmbar. Initialisierung übersprungen.")
-            return
-        
+       
         if not self.isInitialized:
             self.identify_if_tasmota()
             if self.isTasmota == True:
                 self.initialize_duty_cycle()
             else:
                 self.checkForControlValue()
+                self.checkMinMax(False)
                 if self.dutyCycle == 0 or self.dutyCycle == None:
                     self.initialize_duty_cycle()
             self.isInitialized = True
@@ -53,17 +51,24 @@ class Exhaust(Device):
         )
         _LOGGER.info(f"{self.deviceName}: Tasmota-Device Found: {self.isTasmota}")
 
-
     def initialize_duty_cycle(self):
         """Initialisiert den Duty Cycle auf 50%."""
         self.dutyCycle = 50  
         _LOGGER.info(f"{self.deviceName}: Duty Cycle Init to {self.dutyCycle}%.")
 
-
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
-        clamped_value = max(self.minDuty, min(self.maxDuty, duty_cycle))
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle to {clamped_value}% ragend.")
+
+        min_duty = float(self.minDuty)
+        max_duty = float(self.maxDuty)
+        duty_cycle = float(duty_cycle)
+
+
+        clamped_value = max(min_duty, min(max_duty, duty_cycle))
+
+        clamped_value = int(clamped_value)
+
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
 
     def change_duty_cycle(self, increase=True):
@@ -117,7 +122,6 @@ class Exhaust(Device):
         else:
             self.log_action("TurnOff")
             await self.turn_off()
-
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""

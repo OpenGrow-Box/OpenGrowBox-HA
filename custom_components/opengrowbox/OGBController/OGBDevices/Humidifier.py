@@ -6,9 +6,11 @@ _LOGGER = logging.getLogger(__name__)
 class Humidifier(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
+        self.steps = 5
         self.realHumidifierClass = False
         self.hasModes = False
-
+        self.isSimpleSwitch = True
+        self.modes = {"interval": True, "small": False, "large": False}
         ## Events Register
         self.eventManager.on("Increase Humidifier", self.increaseAction)
         self.eventManager.on("Reduce Humidifier", self.reduceAction)
@@ -22,9 +24,19 @@ class Humidifier(Device):
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
-        clamped_value = max(self.minDuty, min(self.maxDuty, duty_cycle))
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle to {clamped_value}% ragend.")
+
+        min_duty = float(self.minDuty)
+        max_duty = float(self.maxDuty)
+        duty_cycle = float(duty_cycle)
+
+
+        clamped_value = max(min_duty, min(max_duty, duty_cycle))
+
+        clamped_value = int(clamped_value)
+
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
+
 
     def change_duty_cycle(self, increase=True):
         """

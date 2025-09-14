@@ -6,7 +6,7 @@ _LOGGER = logging.getLogger(__name__)
 class Intake(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
-        self.dutyCycle = None  # Initialer Duty Cycle
+        self.dutyCycle = 0  # Initialer Duty Cycle
         self.minDuty = 0    # Minimaler Duty Cycle
         self.maxDuty = 95    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
@@ -27,16 +27,14 @@ class Intake(Device):
     #Actions Helpers
     
     def init(self):
-        if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Device ist nicht dimmbar. Initialisierung übersprungen.")
-            return
-        
+
         if not self.isInitialized:
             self.identify_if_tasmota()
             if self.isTasmota == True:
                 self.initialize_duty_cycle()
             else:
                 self.checkForControlValue()
+                self.checkMinMax(False)
                 if self.dutyCycle == 0 or self.dutyCycle == None:
                     self.initialize_duty_cycle()
             self.isInitialized = True
@@ -62,9 +60,19 @@ class Intake(Device):
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
-        clamped_value = max(self.minDuty, min(self.maxDuty, duty_cycle))
+
+        min_duty = float(self.minDuty)
+        max_duty = float(self.maxDuty)
+        duty_cycle = float(duty_cycle)
+
+
+        clamped_value = max(min_duty, min(max_duty, duty_cycle))
+
+        clamped_value = int(clamped_value)
+
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
+
 
     def change_duty_cycle(self, increase=True):
         """
