@@ -59,7 +59,9 @@ class Light(Device):
 
         if self.isAcInfinDev:
             self.steps = 10
-
+            self.minVoltage = 0
+            self.maxVoltage = 100
+            
         self.init()
         
         # SunPhaseListener
@@ -83,7 +85,7 @@ class Light(Device):
 
     def __repr__(self):
         return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
-                f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
+                f"Dimmable:'{self.isDimmable}' Voltage:'{self.voltage}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
                 f"Options:'{self.options}' OGBS:'{self.ogbsettings}' islightON: '{self.islightON}'"
                 f"StartTime:'{self.lightOnTime}' StopTime:{self.lightOffTime} sunSetDuration:'{self.sunSetDuration}' sunRiseDuration:'{self.sunRiseDuration}'"
                 f"SunPhasePaused:'{self.sun_phase_paused}'"
@@ -253,9 +255,13 @@ class Light(Device):
         if not self.isDimmable or self.minVoltage is None:
             _LOGGER.debug(f"{self.deviceName}: Cannot change voltage")
             return None
+   
         target = self.voltage + (self.steps if increase else -self.steps)
+        
         self.voltage = self.clamp_voltage(target)
+        
         actual = self.calculate_actual_voltage(self.voltage)
+        
         _LOGGER.info(f"{self.deviceName}: Voltage changed to {self.voltage}% ({actual:.2f}V)")
         return self.voltage
 
@@ -541,7 +547,8 @@ class Light(Device):
         
         if not self.ogbLightControl:
             _LOGGER.info(f"{self.deviceName}: OGB control disabled")
-            return
+            return False
+        
         if lightState:
             if not self.isRunning:
                 if self.voltage == 0 or self.voltage == None:

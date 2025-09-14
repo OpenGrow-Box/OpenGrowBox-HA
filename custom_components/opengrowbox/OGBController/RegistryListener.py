@@ -110,7 +110,7 @@ class OGBRegistryEvenListener:
         
         # Relevante Präfixe und Schlüsselwörter
         relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.","humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage","co2",)
+        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage","_co2","_intensity")
         relevant_types = {
             "temperature": "Temperature entity found",
             "humidity": "Humidity entity found",
@@ -343,7 +343,7 @@ class OGBRegistryEvenListener:
                 # Gib das Event-Publication-Objekt weiter
                 await self.eventManager.emit("RoomUpdate", eventData)
                 # Light Shedule Check
-                await self.eventManager.emit("LightSheduleUpdate",None)
+                #await self.eventManager.emit("LightSheduleUpdate",None)
                 
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", registryEventListener)

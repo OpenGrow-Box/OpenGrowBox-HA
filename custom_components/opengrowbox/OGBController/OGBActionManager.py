@@ -708,6 +708,7 @@ class OGBActionManager:
             await self.NightHoldFallBack(actionMap)
             return None
         
+        # ... (existing weight calculation code) ...
         # Gewichtungen ermitteln
         if ownWeights:
             tempWeight = self.dataStore.getDeep("controlOptionData.weights.temp")
@@ -764,14 +765,70 @@ class OGBActionManager:
         # Dampening anwenden
         dampenedActionMap = self._filterActionsByDampening(enhancedActionMap, tempDeviation, humDeviation)
         
+        # *** NEUE PRÜFUNG: Behandle leere Action-Liste ***
+        if not dampenedActionMap:
+            _LOGGER.warning(f"{self.room}: Alle {len(enhancedActionMap)} Aktionen durch Dampening blockiert!")
+            
+            # Option 1: Log und Exit früh
+            await self.eventManager.emit("LogForClient", {
+                "Name": self.room,
+                "message": "Alle Aktionen durch Dampening blockiert",
+                "blocked_actions": len(enhancedActionMap),
+                "emergency_conditions": emergencyConditions
+            }, haEvent=True)
+            
+            # Option 2: Bei Notfall trotzdem eine minimale Aktion durchlassen
+            if emergencyConditions:
+                _LOGGER.error(f"{self.room}: NOTFALL erkannt aber alle Aktionen blockiert! Erzwinge kritische Aktion.")
+                # Wähle die wichtigste Aktion aus der ursprünglichen Liste
+                criticalAction = self._selectCriticalEmergencyAction(enhancedActionMap, emergencyConditions)
+                if criticalAction:
+                    dampenedActionMap = [criticalAction]
+                    # Registriere die Aktion trotz Dampening
+                    self._registerAction(criticalAction.capability, criticalAction.action, max(abs(tempDeviation), abs(humDeviation)))
+            
+            # Wenn immer noch leer, beende früh
+            if not dampenedActionMap:
+                return
+        
         # Konflikte lösen
         finalActionMap = self._resolveActionConflicts(dampenedActionMap)
         
         _LOGGER.info(f"{self.room}: Von {len(enhancedActionMap)} Aktionen werden {len(finalActionMap)} ausgeführt")
         
-        await self.publicationActionHandler(finalActionMap)
-        await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True) 
-    
+        # Nur ausführen wenn Aktionen vorhanden sind
+        if finalActionMap:
+            await self.publicationActionHandler(finalActionMap)
+            await self.eventManager.emit("LogForClient", finalActionMap, haEvent=True)
+        else:
+            _LOGGER.debug(f"{self.room}: Keine Aktionen nach Konfliktlösung übrig")
+
+    def _selectCriticalEmergencyAction(self, actionMap, emergencyConditions):
+        """Wählt die kritischste Aktion bei Notfällen aus"""
+        
+        if not actionMap or not emergencyConditions:
+            return None
+        
+        # Priorisierung basierend auf Notfall-Typ
+        emergencyPriority = {
+            "critical_overheat": ["canCool", "canExhaust", "canVentilate"],
+            "critical_cold": ["canHeat"],
+            "immediate_condensation_risk": ["canDehumidify", "canExhaust", "canVentilate"],
+            "critical_humidity": ["canDehumidify", "canExhaust"]
+        }
+        
+        # Suche nach höchster Priorität
+        for condition in emergencyConditions:
+            priorityCaps = emergencyPriority.get(condition, [])
+            for cap in priorityCaps:
+                for action in actionMap:
+                    if action.capability == cap and action.action in ["Increase", "Reduce"]:
+                        _LOGGER.critical(f"{self.room}: Notfall-Override für {cap} - {action.action}")
+                        return action
+        
+        # Fallback: Erste verfügbare Aktion
+        return actionMap[0] if actionMap else None
+
     # Water Actions
     async def PumpAction(self, pumpAction: OGBHydroAction):
         if isinstance(pumpAction, dict):

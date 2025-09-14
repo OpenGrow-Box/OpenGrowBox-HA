@@ -57,7 +57,7 @@ class OpenGrowBox:
         self.eventManager.on("VPDCreation", self.handleNewVPD)
         
         #LightSheduleUpdate
-        self.eventManager.on("LightSheduleUpdate", self.lightSheduleUpdate)
+        #self.eventManager.on("LightSheduleUpdate", self.lightSheduleUpdate)
         
         # Plant Times
         self.eventManager.on("PlantTimeChange",self._autoUpdatePlantStages)
@@ -179,6 +179,7 @@ class OpenGrowBox:
         Update WorkData für Temperatur oder Feuchtigkeit basierend to einer Entität.
         Ignoriere Entitäten, die 'ogb_' im Namen enthalten.
         """
+        await self.lightSheduleUpdate(entity)
         # Entitäten mit 'ogb_' im Namen überspringen
         if "ogb_" in entity.Name:
             await self.manager(entity)
@@ -666,38 +667,6 @@ class OpenGrowBox:
         
         return data_array
 
-    def _update_work_data_array2(self, data_array, entity):
-        """
-        Aktualisiert alle passenden Einträge im WorkData-Array basierend to der übergebenen Entität.
-        """
-        _LOGGER.info(f"{self.room}: Checking Update-ITEM: {entity.Name} newState: {entity.newState}")  
-        
-        # Wert sicher extrahieren
-        try:
-            if isinstance(entity.newState, list):
-                value = entity.newState[0]  # Array: ersten Wert nehmen
-            else:
-                value = entity.newState     # Einzelwert direkt verwenden
-        except (IndexError, TypeError):
-            _LOGGER.error(f"{self.room}: Fehler beim Extrahieren des Wertes aus {entity.newState}")
-            return data_array
-        
-        found = False
-        for item in data_array:
-            if item["entity_id"] == entity.Name:
-                item["value"] = value
-                found = True
-                _LOGGER.info(f"{self.room}: Update-ITEM Found: {entity.Name} → {value}")
-        
-        if not found:
-            data_array.append({
-                "entity_id": entity.Name,
-                "value": value
-            })
-            _LOGGER.info(f"{self.room}: Update-ITEM NOT Found: {entity.Name} → hinzugefügt")
-        
-        return data_array
-
     async def _plantStageToVPD(self):
         """
         Aktualisiert die VPD-Werte basierend to dem Pflanzenstadium.
@@ -789,16 +758,6 @@ class OpenGrowBox:
 
         except Exception as e:
             _LOGGER.error(f"{self.room} Fehler beim Updaten des Lichtstatus: {e}")       
-
-    async def defaultState(self):
-        minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-        if minMaxControl == False:
-            controlValues = self._stringToBool(self.dataStore.getDeep("controlOptionData.minmax"))
-            controlValues.minTemp = None
-            controlValues.minHum = None
-            controlValues.maxTemp = None
-            controlValues.maxHum = None
-            self.dataStore.setDeep("controlOptionData.minmax",controlValues)
 
     ## Controll Update Functions 
     async def _update_control_option(self,data):
@@ -1048,7 +1007,6 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("controlOptionData.minmax.minTemp", value)
             self.dataStore.setDeep("tentData.minTemp", value)
-
             
     async def _update_minHumidity(self,data):
         """
@@ -1062,7 +1020,6 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("controlOptionData.minmax.minHum", value)
             self.dataStore.setDeep("tentData.minHumidity", value)
-
 
     ## Weights   
     async def _update_ownWeights_control(self,data):
@@ -1124,7 +1081,6 @@ class OpenGrowBox:
             self.dataStore.setDeep("Hydro.Cycle", self._stringToBool(value))
             await self.eventManager.emit("HydroModeChange",value)
       
-             
     async def _update_hydro_duration(self, data):
         """
         Update Hydro Duration with validation
@@ -1143,8 +1099,7 @@ class OpenGrowBox:
         if current_value != validated_value:
             self.dataStore.setDeep("Hydro.Duration", validated_value)
             await self.eventManager.emit("HydroModeChange", validated_value)
-
-            
+     
     async def _update_hydro_intervall(self, data):
         """
         Update Hydro Intervall with validation
@@ -1162,7 +1117,6 @@ class OpenGrowBox:
         if current_value != validated_value:
             self.dataStore.setDeep("Hydro.Intervall", validated_value)
             await self.eventManager.emit("HydroModeChange", validated_value)
-
 
     ## FEED
     async def _update_feed_mode(self,data):
@@ -1463,7 +1417,6 @@ class OpenGrowBox:
             await self.eventManager.emit("PlantTimeChange",value)
             await self._update_plantDates(value)
 
-
     async def _update_plantDates(self, data):
         """
         Update Plant Grow Times
@@ -1543,87 +1496,6 @@ class OpenGrowBox:
         except Exception as e:
             _LOGGER.error(f"Fehler beim Updaten der Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}': {e}")
 
-
-
-    async def _update_plantDates2(self, data):
-        """
-        Update Plant Grow Times
-        """
-        planttotaldays_entity = f"sensor.ogb_planttotaldays_{self.room.lower()}"
-        totalbloomdays_entity = f"sensor.ogb_totalbloomdays_{self.room.lower()}"
-        remainingTime_entity = f"sensor.ogb_chopchoptime_{self.room.lower()}"
-        
-        bloomSwitch = self.dataStore.getDeep("plantDates.bloomswitchdate")
-        growstart = self.dataStore.getDeep("plantDates.growstartdate")
-        breederDays = self.dataStore.getDeep("plantDates.breederbloomdays")
-
-        try:
-            breeder_bloom_days = float(breederDays)
-        except (ValueError, TypeError):
-            _LOGGER.error(f"{self.room}: Ungültiger Wert für breederbloomdays: {breederDays}")
-            breeder_bloom_days = 0.0
-
-        planttotaldays = 0
-        totalbloomdays = 0
-        remaining_bloom_days = 0
-        
-        today = datetime.today()
-
-        try:
-            growstart_date = datetime.strptime(growstart, '%Y-%m-%d')
-            planttotaldays = (today - growstart_date).days
-            self.dataStore.setDeep("plantDates.planttotaldays", planttotaldays)
-        except ValueError:
-            _LOGGER.error(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
-
-        try:
-            bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
-            totalbloomdays = (today - bloomswitch_date).days
-            self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
-        except ValueError:
-            _LOGGER.error(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
-        if breeder_bloom_days > 0 and totalbloomdays > 0:
-            remaining_bloom_days = breeder_bloom_days - totalbloomdays
-            if remaining_bloom_days <= 0:
-                _LOGGER.info(f"{self.room}: Die erwartete Blütezeit from {breeder_bloom_days} Tagen ist erreicht oder überschritten.")
-                ## Notify User when Notify manager is DONE
-            else:
-                _LOGGER.info(f"{self.room}: Noch {remaining_bloom_days} Tage bis zum Ende der erwarteten Blütezeit.")
-
-        self.dataStore.setDeep("plantDates.daysToChopChop",remaining_bloom_days)
-        
-        # Updaten der Sensoren in Home Assistant
-        try:
-            await self.hass.services.async_call(
-                domain="opengrowbox",
-                service="update_sensor",
-                service_data={
-                    "entity_id": planttotaldays_entity,
-                    "value": planttotaldays
-                },
-                blocking=True
-            )
-            await self.hass.services.async_call(
-                domain="opengrowbox",
-                service="update_sensor",
-                service_data={
-                    "entity_id": totalbloomdays_entity,
-                    "value": totalbloomdays
-                },
-                blocking=True
-            )
-            await self.hass.services.async_call(
-                domain="opengrowbox",
-                service="update_sensor",
-                service_data={
-                    "entity_id": remainingTime_entity,
-                    "value": remaining_bloom_days
-                },
-                blocking=True
-            )
-        except Exception as e:
-            _LOGGER.error(f"Fehler beim Updaten der Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}': {e}")
-
     async def _autoUpdatePlantStages(self,data):
         timenow = datetime.now() 
         await self._update_plantDates(timenow)
@@ -1631,7 +1503,6 @@ class OpenGrowBox:
         asyncio.create_task(self._autoUpdatePlantStages(timenow))  # Nächste Ausführung starten
  
     ## Area
-    
     async def _update_Grow_Area(self,data):
         """
         Update Grow Area Space.
@@ -1650,8 +1521,7 @@ class OpenGrowBox:
         current_mode = self.dataStore.getDeep("drying.currentDryMode")
         if current_mode != value:
             self.dataStore.setDeep("drying.currentDryMode",value)
-              
-            
+                 
     ### Own Device Selects
     async def _udpate_own_deviceSelect(self,data):
         """
@@ -1685,7 +1555,7 @@ class OpenGrowBox:
                 self.dataStore.setDeep("DeviceMinMax.Ventilation.active",value)    
         if "light" in data.Name:
                 self.dataStore.setDeep("DeviceMinMax.Light.active",value)
-        
+        logging.warning(f"{self.room} MIN-MAX - {data} ")
         await self.eventManager.emit("SetMinMax",data)
    
     async def _device_MinMax_setter(self, data):

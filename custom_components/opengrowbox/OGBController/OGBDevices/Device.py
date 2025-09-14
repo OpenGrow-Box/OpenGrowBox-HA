@@ -26,7 +26,7 @@ class Device:
         # EVENTS
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
         self.eventManager.on("WorkModeChange", self.WorkMode)
-        self.eventManager.on("SetMinMax", self.setMinMax)
+        self.eventManager.on("SetMinMax", self.userSetMinMax)
    
     def __iter__(self):
         return iter(self.__dict__.items())
@@ -62,7 +62,7 @@ class Device:
         self.checkMinMax(False)
         self.identifyCapabilities()
         if(self.initialization == True):
-            self.registerListener()
+            self.deviceUpdater()
             _LOGGER.debug(f"Device {self.deviceName} Initialization Completed")
             self.initialization = False
         else:
@@ -119,21 +119,23 @@ class Device:
     def checkMinMax(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
+
         if not minMaxSets or not minMaxSets.get("active", False):
             return  # Nichts aktiv → nichts tun
 
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = minMaxSets.get("minVoltage")
             self.maxVoltage = minMaxSets.get("maxVoltage")
-
+            logging.warning(f"{self.deviceName} Device MinMax sets: {minMaxSets}")
+        
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = minMaxSets.get("minDuty")
             self.maxDuty = minMaxSets.get("maxDuty")
-         
+            logging.warning(f"{self.deviceName} Device MinMax sets: {minMaxSets}")
+          
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
-        """Prüft, ob ein Sensor interessant ist (z. B. temperature, humidity, dewpoint, co2)."""
-        interested_mapping = ("temperature", "humidity", "dewpoint", "co2","duty","voltage","moisture")
+        interested_mapping = ("_temperature", "_humidity", "_dewpoint", "_co2","_duty","_moisture","_intensity","_ph","_ec","_tds")
         return any(keyword in sensor_id for keyword in interested_mapping)
 
     # Mapp Entity Types to Class vars
@@ -245,10 +247,10 @@ class Device:
                     continue  # number-Entitäten überspringen
                     
                 option_value = select.get("value")
-                if option_value == "On":
+                if option_value == "on" or option_value == "On":
                     self.isRunning = True
                     return  # Früh beenden, da Zustand gefunden
-                elif option_value == "off":
+                elif option_value == "off" or option_value == "Off":
                     self.isRunning = False
                     return
                 elif option_value in (None, "unknown", "Unbekannt", "unavailable"):
@@ -271,7 +273,7 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust","intake","light"]
+        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","humdifier","dehumidifier","heater","cooler"]
 
         #if self.isAcInfinDev == True:
         #    self.isDimmable == True
@@ -281,7 +283,7 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
             return
 
-        dimmableKeys = ["fan.", "light.","number.","duty","intensity"]
+        dimmableKeys = ["fan.", "light.","number.","_duty","_intensity"]
 
         # Prüfen, ob ein Schlüssel in switches, options oder sensors vorhanden ist
         for source in (self.switches, self.options, self.sensors):
@@ -304,7 +306,7 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: NO Sensor data or Options found ")
             return
 
-        relevant_keys = ["duty","intensity"]
+        relevant_keys = ["_duty","_intensity"]
 
         for sensor in self.sensors:
             _LOGGER.debug(f"Prüfe Sensor: {sensor}")
@@ -317,7 +319,10 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: No Value in Sensor: {sensor}")
                         continue
                     if self.deviceType == "Light":
-                        self.voltage = value
+                        if self.isAcInfinDev == False:
+                            self.voltage = int(float(value))
+                        else:
+                            self.voltage = int(float(value) * 10)   
                         _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to  {self.voltage}%.")
                     elif self.deviceType == "Exhaust" or self.deviceType == "Intake" or self.deviceType == "Ventilation":
                         if self.isAcInfinDev == False:
@@ -358,7 +363,10 @@ class Device:
     
                     if self.deviceType == "Light":
                         self.voltageFromNumber = True # Identifier for number control on as voltage Value
-                        self.voltage = value
+                        if self.isAcInfinDev:
+                            self.voltage = int(float(value) * 10)
+                        else:
+                            self.voltage = value
                         _LOGGER.debug(f"{self.deviceName}: Voltage set from  Options to {self.voltage}%.")
                     else:
                         if self.isAcInfinDev == False:
@@ -381,29 +389,46 @@ class Device:
 
             # === Sonderfall: AcInfinity Geräte ===
             if self.isAcInfinDev:
-                entity_ids = [switch["entity_id"] for switch in self.switches] if self.switches else []
+                entity_ids = []
+                if self.switches:
+                    entity_ids = [
+                        switch["entity_id"] for switch in self.switches 
+                        if "select." in switch["entity_id"]
+                    ]
                 if not entity_ids:
-                    _LOGGER.warning(f"{self.deviceName}: Keine Switches, nutze Fallback auf deviceName")
-                    entity_ids = [self.deviceName]
+                    _LOGGER.warning(f"{self.deviceName}: Keine passenden Select-Switches, nutze Fallback auf Options")
+                    if self.options:
+                        entity_ids = [
+                            option["entity_id"] for option in self.options
+                            if "select." in option["entity_id"]
+                        ]
 
                 for entity_id in entity_ids:
-                    
+                    logging.error(f"{self.deviceName} ON ACTION with ID {entity_id}")
                     if self.isRunning == False:
                         await self.hass.services.async_call(
                             domain="select",
                             service="select_option",
                             service_data={
                                 "entity_id": entity_id,
-                                "options": "On"
+                                "option": "On"
                             },
                         )
                     # Zusatzaktionen je nach Gerätetyp
                     if self.deviceType in ["Light", "Humidifier", "Deumidifier", "Exhaust", "Intake", "Ventilation"]:
                         # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
-                        if percentage is not None:
-                            await self.set_value(percentage/10)
+                        
+                        if self.deviceType == "Light":
+                            if brightness_pct is not None:
+                                _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
+                                await self.set_value(int(brightness_pct/10))                      
+                        else:
+                            if percentage is not None:
+                                _LOGGER.warning(f"{self.deviceName}: set value to {percentage}")
+                                await self.set_value(percentage/10)
+   
                     self.isRunning = True
-                    _LOGGER.debug(f"{self.deviceName}: AcInfinity per select ON.")
+
                 return
 
             # === Standardgeräte ===
@@ -618,12 +643,22 @@ class Device:
         try:
             # === Sonderfall: AcInfinity Geräte ===
             if self.isAcInfinDev:
-                entity_ids = [switch["entity_id"] for switch in self.switches] if self.switches else []
+                entity_ids = []
+                if self.switches:
+                    entity_ids = [
+                        switch["entity_id"] for switch in self.switches 
+                        if "select." in switch["entity_id"]
+                    ]
                 if not entity_ids:
-                    _LOGGER.warning(f"{self.deviceName}: Keine Switches, nutze Fallback auf deviceName")
-                    entity_ids = [self.deviceName]
+                    _LOGGER.warning(f"{self.deviceName}: Keine passenden Select-Switches, nutze Fallback auf Options")
+                    if self.options:
+                        entity_ids = [
+                            option["entity_id"] for option in self.options
+                            if "select." in option["entity_id"]
+                        ]
 
                 for entity_id in entity_ids:
+                    logging.error(f"{self.deviceName} OFF ACTION with ID {entity_id}")
                     await self.hass.services.async_call(
                         domain="select",
                         service="select_option",
@@ -802,9 +837,9 @@ class Device:
                         await self.hass.services.async_call(
                             domain="number",
                             service="set_value",
-                            service_data={"entity_id": entity_id, "value": value},
+                            service_data={"entity_id": entity_id, "value": int(value)},
                         )
-                        _LOGGER.warning(f"Wert für {self.deviceName} wurde für {entity_id} to {value} set.")
+                        _LOGGER.warning(f"Wert für {self.deviceName} wurde für {entity_id} to {int(value)} set.")
                         return                       
                     else:
                         await self.hass.services.async_call(
@@ -884,7 +919,7 @@ class Device:
                     await self.turn_on()           
                
     # Update Listener
-    def registerListener(self):
+    def deviceUpdater(self):
         deviceEntitiys = self.getEntitys()
         _LOGGER.debug(f"UpdateListener für {self.deviceName} registriert for {deviceEntitiys}.")
         
@@ -916,6 +951,23 @@ class Device:
                     f"Device State-Change für {self.deviceName} an {entity_id} in {self.inRoom}: "
                     f"Alt: {old_state_value}, Neu: {new_state_value}"
                 )
+                
+                # Check if this is a switch/control entity that affects running state
+                if any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier.", "select."]):
+                    # Update the entity value first
+                    for entity_list in [self.switches, self.options]:
+                        for entity in entity_list:
+                            if entity.get("entity_id") == entity_id:
+                                entity["value"] = new_state_value
+                                break
+                    
+                    # Now update the running state
+                    try:
+                        self.identifyIfRunningState()
+                        _LOGGER.warning(f"{self.deviceName}: Running state updated to {self.isRunning} after {entity_id} changed to {new_state_value}")
+                    except Exception as e:
+                        _LOGGER.error(f"{self.deviceName}: Error updating running state: {e}")
+                
                 self.checkForControlValue()
 
                 # Gib das Update-Publication-Objekt weiter
@@ -925,15 +977,17 @@ class Device:
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
         _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")  
 
-    async def setMinMax(self,data):
+    async def userSetMinMax(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
         if not self.isDimmable: 
             return
 
+        logging.warning(f"Device MinMax SEts {minMaxSets}")
+
         if not minMaxSets or not minMaxSets.get("active", False):
             return
-
+        
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = float(minMaxSets.get("minVoltage")) 
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
