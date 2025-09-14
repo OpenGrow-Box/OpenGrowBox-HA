@@ -280,7 +280,7 @@ class Device:
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
-            _LOGGER.error(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
+            _LOGGER.warning(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
             return
 
         dimmableKeys = ["fan.", "light.","number.","_duty","_intensity"]
