@@ -983,65 +983,108 @@ class OGBActionManager:
         return self._prioritizeOptimalDevices(enhancedMap, optimalDevices, caps)
 
     def _getDeviationActions(self, tempDeviation, humDeviation, caps, vpdLightControl):
-        """Erstellt Actions basierend auf Temperatur- und Humdiditysabweichungen"""
+        """Erstellt Actions basierend auf Temperatur- und Humdiditysabweichungen mit Pufferzonen"""
         
         actions = []
         
+        # Temperature buffer zones (in degrees)
+        HEATER_BUFFER = 2.0  # Don't use heater within 2°C of maxTemp
+        COOLER_BUFFER = 2.0  # Don't use cooler within 2°C of minTemp
+        
+        # Get current temperature and limits
+        tentData = self.dataStore.get("tentData")
+        current_temp = tentData["temperature"]
+        max_temp = tentData["maxTemp"]
+        min_temp = tentData["minTemp"]
+        
+        # Calculate buffer zones
+        heater_cutoff_temp = max_temp - HEATER_BUFFER
+        cooler_cutoff_temp = min_temp + COOLER_BUFFER
+        
         if tempDeviation > 0 and humDeviation > 0:
-            # High Temperatur + High Humdidity
-            actionMessage = f"High Temperatur + High Humdidity in {self.room}"
+            # High Temperature + High Humidity
+            actionMessage = f"High Temperature + High Humidity in {self.room}"
             if caps.get("canDehumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
             if caps.get("canExhaust", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
             if caps.get("canVentilate", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canVentilate", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if caps.get("canCool", {}).get("state", False):
+            
+            # Only use cooler if temperature is above buffer zone
+            if caps.get("canCool", {}).get("state", False) and current_temp > cooler_cutoff_temp:
                 actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            else:
+                _LOGGER.debug(f"{self.room}: Cooler skipped - current temp {current_temp}°C within buffer of min temp {min_temp}°C")
                 
         elif tempDeviation > 0 and humDeviation < 0:
-            # High Temperatur + Low Humdidity
-            actionMessage = f"High Temperatur + Low Humdidity in {self.room}"
+            # High Temperature + Low Humidity
+            actionMessage = f"High Temperature + Low Humidity in {self.room}"
             if caps.get("canHumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if caps.get("canCool", {}).get("state", False):
+            
+            # Only use cooler if temperature is above buffer zone
+            if caps.get("canCool", {}).get("state", False) and current_temp > cooler_cutoff_temp:
                 actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            else:
+                _LOGGER.debug(f"{self.room}: Cooler skipped - current temp {current_temp}°C within buffer of min temp {min_temp}°C")
+                
             if vpdLightControl and caps.get("canLight", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canLight", action="Reduce", Name=self.room, message=actionMessage, priority=""))
                 
         elif tempDeviation < 0 and humDeviation > 0:
-            # Low Temperatur + High Humdidity
-            actionMessage = f"Low Temperatur + High Humdidity in {self.room}"
+            # Low Temperature + High Humidity
+            actionMessage = f"Low Temperature + High Humidity in {self.room}"
             if caps.get("canDehumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if caps.get("canHeat", {}).get("state", False):
+            
+            # Only use heater if temperature is below buffer zone
+            if caps.get("canHeat", {}).get("state", False) and current_temp < heater_cutoff_temp:
                 actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            else:
+                _LOGGER.debug(f"{self.room}: Heater skipped - current temp {current_temp}°C within buffer of max temp {max_temp}°C")
+                
             if caps.get("canExhaust", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
                 
         elif tempDeviation < 0 and humDeviation < 0:
-            # Low Temperatur + Low Humdidity
-            actionMessage = f"Low Temperature + Low Humdidity in {self.room}"
+            # Low Temperature + Low Humidity
+            actionMessage = f"Low Temperature + Low Humidity in {self.room}"
             if caps.get("canHumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
-            if caps.get("canHeat", {}).get("state", False):
+            
+            # Only use heater if temperature is below buffer zone
+            if caps.get("canHeat", {}).get("state", False) and current_temp < heater_cutoff_temp:
                 actions.append(OGBActionPublication(capability="canHeat", action="Increase", Name=self.room, message=actionMessage, priority=""))
+            else:
+                _LOGGER.debug(f"{self.room}: Heater skipped - current temp {current_temp}°C within buffer of max temp {max_temp}°C")
+                
             if vpdLightControl and caps.get("canLight", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canLight", action="Increase", Name=self.room, message=actionMessage, priority=""))
         
         return actions
-
+    
     def _getEmergencyActions(self, tentData, caps, vpdLightControl):
-        """Erstellt Notfall-Actions für kritische Situationen"""
+        """Erstellt Notfall-Actions für kritische Situationen mit Pufferzonen"""
         
         actions = []
         
-        # FIXED: Same threshold as emergency override
-        if tentData["temperature"] > tentData["maxTemp"]:  # Changed from > to >=
+        # Emergency overrides buffer zones
+        HEATER_BUFFER = 2.0
+        COOLER_BUFFER = 2.0
+        
+        current_temp = tentData["temperature"]
+        max_temp = tentData["maxTemp"]
+        min_temp = tentData["minTemp"]
+        
+        heater_cutoff_temp = max_temp - HEATER_BUFFER
+        cooler_cutoff_temp = min_temp + COOLER_BUFFER
+        
+        if tentData["temperature"] > tentData["maxTemp"]:
             actionMessage = f"Critical Over-Temp in {self.room}! Emergency Action activated."
-            _LOGGER.warning(actionMessage)  # Add warning log
+            _LOGGER.warning(actionMessage)
             
-            # Prioritize cooling actions
+            # Emergency: always use cooler regardless of buffer
             if caps.get("canCool", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canCool", action="Increase", 
                                                 Name=self.room, message=actionMessage, priority="emergency"))
@@ -1052,7 +1095,7 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canVentilate", action="Increase", 
                                                 Name=self.room, message=actionMessage, priority="emergency"))
             
-            # Reduce heat sources
+            # Reduce heat sources - but respect buffer for heater reduction
             if caps.get("canHeat", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHeat", action="Reduce", 
                                                 Name=self.room, message=actionMessage, priority="emergency"))
@@ -1060,11 +1103,11 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canLight", action="Reduce", 
                                                 Name=self.room, message=actionMessage, priority="emergency"))
 
-        # Similar fixes for cold temperatures
-        elif tentData["temperature"] < tentData["minTemp"]:  # Changed from < to <=
+        elif tentData["temperature"] < tentData["minTemp"]:
             actionMessage = f"Critical Under-Temp in {self.room}! Emergency Action activated."
             _LOGGER.warning(actionMessage)
             
+            # Emergency: always use heater regardless of buffer
             if caps.get("canHeat", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHeat", action="Increase", 
                                                 Name=self.room, message=actionMessage, priority="emergency"))
@@ -1075,8 +1118,35 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canLight", action="Increase", 
                                                 Name=self.room, message=actionMessage, priority="emergency"))
 
+        # Additional check for temperatures approaching buffer zones
+        elif current_temp > heater_cutoff_temp and current_temp <= max_temp:
+            # Within buffer zone - use alternative cooling methods
+            actionMessage = f"Temperature {current_temp}°C approaching max {max_temp}°C - using buffer zone cooling in {self.room}"
+            _LOGGER.info(actionMessage)
+            
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="high"))
+            if caps.get("canVentilate", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canVentilate", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="high"))
+            # Skip cooler in buffer zone unless emergency
+            
+        elif current_temp < cooler_cutoff_temp and current_temp >= min_temp:
+            # Within buffer zone - use alternative heating methods
+            actionMessage = f"Temperature {current_temp}°C approaching min {min_temp}°C - using buffer zone heating in {self.room}"
+            _LOGGER.info(actionMessage)
+            
+            if caps.get("canExhaust", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canExhaust", action="Reduce", 
+                                                Name=self.room, message=actionMessage, priority="high"))
+            if vpdLightControl and caps.get("canLight", {}).get("state", False):
+                actions.append(OGBActionPublication(capability="canLight", action="Increase", 
+                                                Name=self.room, message=actionMessage, priority="high"))
+            # Skip heater in buffer zone unless emergency
+
         return actions
-    
+
     def _getCO2Actions(self, caps, islightON):
         """Erstellt CO2-Management Actions"""
         
