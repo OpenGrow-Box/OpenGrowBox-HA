@@ -37,11 +37,14 @@ class OGBActionManager:
         ## Events Register
         self.eventManager.on("increase_vpd", self.increase_action)
         self.eventManager.on("reduce_vpd", self.reduce_action)
-        self.eventManager.on("FineTune_vpd", self.fine_tune_vpd)
+        self.eventManager.on("FineTune_vpd", self.fineTune_action)
+
+        self.eventManager.on("PIDActions",self.PIDActions)    
+
+        # Water Events
         self.eventManager.on("PumpAction", self.PumpAction) 
         self.eventManager.on("RetrieveAction",self.RetrieveAction)
-        self.eventManager.on("PIDActions",self.PIDActions)    
-    
+ 
     def _isActionAllowed(self, capability, action, deviation=0):
         """Prüft ob eine Aktion erlaubt ist basierend auf Cooldown"""
         now = datetime.now()
@@ -118,7 +121,7 @@ class OGBActionManager:
             deviation = 0
             if capability in ["canHumidify", "canDehumidify"]:
                 deviation = humDeviation
-            elif capability in ["canHeat", "canCool"]:
+            elif capability in ["canHeat", "canCool","canClimate"]:
                 deviation = tempDeviation
             else:
                 deviation = max(abs(tempDeviation), abs(humDeviation))
@@ -154,9 +157,7 @@ class OGBActionManager:
         """Löscht Cooldowns bei Notfällen"""
         if not emergencyConditions:
             return
-            
-        _LOGGER.warning(f"{self.room}: Notfall erkannt: {emergencyConditions}. Cooldowns werden überschrieben!")
-        
+                   
         # Set emergency mode flag
         self._emergency_mode = True
         
@@ -197,11 +198,11 @@ class OGBActionManager:
     
     # Control Actions
     async def increase_action(self,capabilities):
-       isDampeningActive =  self.dataStore.get("controlOptions.vpdDeviceDampening")
+        isDampeningActive =  self.dataStore.get("controlOptions.vpdDeviceDampening")
        
-       if isDampeningActive == True:
+        if isDampeningActive == True:
            await self.increase_vpd_damping(capabilities)
-       else:
+        else:
            await self.increase_vpd(capabilities)
            
     async def reduce_action(self,capabilities):
@@ -211,7 +212,15 @@ class OGBActionManager:
            await self.reduce_vpd_damping(capabilities)
        else:
            await self.reduce_vpd(capabilities)     
-        
+
+    async def fineTune_action(self,capabilities):
+        isDampeningActive =  self.dataStore.get("controlOptions.vpdDeviceDampening")
+       
+        if isDampeningActive == True:
+           await self.fine_tune_vpd_damping(capabilities)
+        else:
+           await self.fine_tune_vpd(capabilities)           
+
     async def increase_vpd(self, capabilities):
         """
         Erhöht den VPD-Wert durch Anpassung der entsprechenden Geräte.
@@ -397,10 +406,30 @@ class OGBActionManager:
     
         if delta > 0:
             _LOGGER.debug(f"Fine-tuning: {self.room}Increasing VPD by {delta}.")
+            await self.increase_vpd(capabilities)
+        elif delta < 0:
+            _LOGGER.debug(f"Fine-tuning: {self.room} Reducing VPD by {-delta}.")
+            await self.reduce_vpd(capabilities)
+
+    async def fine_tune_vpd_damping(self, capabilities):
+        """
+        Feintuning des VPD-Wertes, um den Zielwert zu erreichen.
+        """
+        
+        # Aktuelle VPD-Werte abrufen
+        currentVPD = self.dataStore.getDeep("vpd.current")
+        perfectionVPD = self.dataStore.getDeep("vpd.perfection")
+        
+        # Delta berechnen und auf zwei Dezimalstellen runden
+        delta = round(perfectionVPD - currentVPD, 2)
+    
+        if delta > 0:
+            _LOGGER.debug(f"Fine-tuning: {self.room}Increasing VPD by {delta}.")
             await self.increase_vpd_damping(capabilities)
         elif delta < 0:
             _LOGGER.debug(f"Fine-tuning: {self.room} Reducing VPD by {-delta}.")
             await self.reduce_vpd_damping(capabilities)
+
 
     # Premium Actions
     async def PIDActions(self, premActions):
@@ -556,73 +585,6 @@ class OGBActionManager:
         actionData = premActions.get("actionData")
         await self.eventManager.emit("SaveState",True)
         
-    async def OGBActions(self, premActions):
-        actionData = premActions.get("actionData")
-        
-        # Gruppiere nach Gerät um Konflikte zu erkennen
-        device_actions = {}
-        for action in actionData:
-            device = action.get("device").lower()
-            if device not in device_actions:
-                device_actions[device] = []
-            device_actions[device].append(action)
-        
-        # Verarbeite jedes Gerät einzeln
-        for device, actions in device_actions.items():
-            if len(actions) > 1:
-                # Bei mehreren Aktionen: höchste Priority gewinnt
-                priority_order = {'high': 1, 'medium': 2, 'low': 3}
-                best_action = min(actions, key=lambda x: priority_order.get(x.get('priority', 'medium'), 2))
-                actions = [best_action]
-            
-            for action in actions:
-                deviceAction = action.get("action")
-                requestedDevice = action.get("device").lower()
-               
-                if requestedDevice == "error":
-                    _LOGGER.error(f"{self.deviceName}: Requested CONTROL ERROR {premActions} ")
-                    return
-                
-                nightVPDHold = self.dataStore.getDeep("controlOptions.nightVPDHold")
-                islightON = self.dataStore.getDeep("isPlantDay.islightON")
-                
-                if islightON == False and nightVPDHold == False:
-                    _LOGGER.debug(f"{self.room}: VPD Night Hold Not Activ Ignoring VPD ") 
-                    # Need tu adjust fallback vpd for night times
-                    #await self.NightHoldFallBack(actionMap)
-                    return None    
-
-                # Aktionen basierend auf den Fähigkeiten
-                if requestedDevice == "exhaust":
-                    await self.eventManager.emit(f"{deviceAction} Exhaust", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Exhaust.")
-                if requestedDevice == "intake":
-                    await self.eventManager.emit(f"{deviceAction} Iintake", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Intake.")
-                if requestedDevice == "ventilate":
-                    await self.eventManager.emit(f"{deviceAction} Ventilation", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Ventilation.")
-                if requestedDevice == "humidify":
-                    await self.eventManager.emit(f"{deviceAction} Humidifier", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Humidifier.")
-                if requestedDevice == "dehumidify":
-                    await self.eventManager.emit(f"{deviceAction} Dehumidifier", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Dehumidifier.")
-                if requestedDevice == "heat":
-                    await self.eventManager.emit(f"{deviceAction} Heater", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Heater.")
-                if requestedDevice == "cool":
-                    await self.eventManager.emit(f"{deviceAction} Cooler", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Cooler.")
-                if requestedDevice == "climate":
-                    await self.eventManager.emit(f"{deviceAction} Climate", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} CO2.")
-                if requestedDevice == "co2":
-                    await self.eventManager.emit(f"{deviceAction} CO2", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} CO2.")
-                if requestedDevice == "light":
-                    await self.eventManager.emit(f"{deviceAction} Light", deviceAction)
-                    _LOGGER.debug(f"{self.room}: {deviceAction} Light.")
 
     # Action Handling
     async def checkLimitsAndPublicate(self, actionMap):
@@ -667,7 +629,7 @@ class OGBActionManager:
             tempDeviation = round((tentData["temperature"] - tentData["minTemp"]) * tempWeight, 2)
             weightMessage = f"Temp To Low: Deviation {tempDeviation}"
             
-        # Feuchtigkeitsabweichung prüfen
+        # Humdiditysabweichung prüfen
         if tentData["humidity"] > tentData["maxHumidity"]:
             humDeviation = round((tentData["humidity"] - tentData["maxHumidity"]) * humWeight, 2)
             weightMessage = f"Humidity To High: Deviation {humDeviation}"
@@ -772,7 +734,7 @@ class OGBActionManager:
             # Option 1: Log und Exit früh
             await self.eventManager.emit("LogForClient", {
                 "Name": self.room,
-                "message": "Alle Aktionen durch Dampening blockiert",
+                "message": "All Actions Blocked to Device Dampening - Device CoolDowns",
                 "blocked_actions": len(enhancedActionMap),
                 "emergency_conditions": emergencyConditions
             }, haEvent=True)
@@ -1021,13 +983,13 @@ class OGBActionManager:
         return self._prioritizeOptimalDevices(enhancedMap, optimalDevices, caps)
 
     def _getDeviationActions(self, tempDeviation, humDeviation, caps, vpdLightControl):
-        """Erstellt Actions basierend auf Temperatur- und Feuchtigkeitsabweichungen"""
+        """Erstellt Actions basierend auf Temperatur- und Humdiditysabweichungen"""
         
         actions = []
         
         if tempDeviation > 0 and humDeviation > 0:
-            # Hohe Temperatur + Hohe Feuchtigkeit
-            actionMessage = f"Hohe Temperatur + Hohe Feuchtigkeit in {self.room}"
+            # High Temperatur + High Humdidity
+            actionMessage = f"High Temperatur + High Humdidity in {self.room}"
             if caps.get("canDehumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
             if caps.get("canExhaust", {}).get("state", False):
@@ -1038,8 +1000,8 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canCool", action="Increase", Name=self.room, message=actionMessage, priority=""))
                 
         elif tempDeviation > 0 and humDeviation < 0:
-            # Hohe Temperatur + Niedrige Feuchtigkeit
-            actionMessage = f"Hohe Temperatur + Niedrige Feuchtigkeit in {self.room}"
+            # High Temperatur + Low Humdidity
+            actionMessage = f"High Temperatur + Low Humdidity in {self.room}"
             if caps.get("canHumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
             if caps.get("canCool", {}).get("state", False):
@@ -1048,8 +1010,8 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canLight", action="Reduce", Name=self.room, message=actionMessage, priority=""))
                 
         elif tempDeviation < 0 and humDeviation > 0:
-            # Niedrige Temperatur + Hohe Feuchtigkeit
-            actionMessage = f"Niedrige Temperatur + Hohe Feuchtigkeit in {self.room}"
+            # Low Temperatur + High Humdidity
+            actionMessage = f"Low Temperatur + High Humdidity in {self.room}"
             if caps.get("canDehumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canDehumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
             if caps.get("canHeat", {}).get("state", False):
@@ -1058,8 +1020,8 @@ class OGBActionManager:
                 actions.append(OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority=""))
                 
         elif tempDeviation < 0 and humDeviation < 0:
-            # Niedrige Temperatur + Niedrige Feuchtigkeit
-            actionMessage = f"Niedrige Temperatur + Niedrige Feuchtigkeit in {self.room}"
+            # Low Temperatur + Low Humdidity
+            actionMessage = f"Low Temperature + Low Humdidity in {self.room}"
             if caps.get("canHumidify", {}).get("state", False):
                 actions.append(OGBActionPublication(capability="canHumidify", action="Increase", Name=self.room, message=actionMessage, priority=""))
             if caps.get("canHeat", {}).get("state", False):
@@ -1076,7 +1038,7 @@ class OGBActionManager:
         
         # FIXED: Same threshold as emergency override
         if tentData["temperature"] > tentData["maxTemp"]:  # Changed from > to >=
-            actionMessage = f"Kritische Übertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
+            actionMessage = f"Critical Over-Temp in {self.room}! Emergency Action activated."
             _LOGGER.warning(actionMessage)  # Add warning log
             
             # Prioritize cooling actions
@@ -1100,7 +1062,7 @@ class OGBActionManager:
 
         # Similar fixes for cold temperatures
         elif tentData["temperature"] < tentData["minTemp"]:  # Changed from < to <=
-            actionMessage = f"Kritische Untertemperatur in {self.room}! Notfallmaßnahmen aktiviert."
+            actionMessage = f"Critical Under-Temp in {self.room}! Emergency Action activated."
             _LOGGER.warning(actionMessage)
             
             if caps.get("canHeat", {}).get("state", False):
@@ -1190,7 +1152,7 @@ class OGBActionManager:
                 finalActions.append(actions[0])
             else:
                 # Bei identischen Actions, wähle die mit der wichtigsten Message
-                priorityKeywords = ["Kritische", "Notfall", "Taupunkt", "CO₂"]
+                priorityKeywords = ["Critical", "Notfall", "Dewpoint", "CO₂"]
                 
                 bestAction = actions[0]
                 for action in actions:
@@ -1235,7 +1197,7 @@ class OGBActionManager:
             
             if increases and reduces:
                 # Existing priority logic with emergency keywords
-                emergencyKeywordActions = [a for a in capActions if any(kw in a.message for kw in ["Kritische", "Notfall", "Taupunkt"])]
+                emergencyKeywordActions = [a for a in capActions if any(kw in a.message for kw in ["Critical", "Notfall", "Dewpoint"])]
                 
                 if emergencyKeywordActions:
                     resolvedActions.append(emergencyKeywordActions[0])

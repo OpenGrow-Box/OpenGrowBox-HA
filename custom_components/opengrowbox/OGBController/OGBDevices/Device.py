@@ -23,11 +23,13 @@ class Device:
         self.inWorkMode = False
         
         
-        asyncio.create_task(self.deviceInit(deviceData))
+
         # EVENTS
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
         self.eventManager.on("WorkModeChange", self.WorkMode)
         self.eventManager.on("SetMinMax", self.userSetMinMax)
+   
+        asyncio.create_task(self.deviceInit(deviceData))
    
     def __iter__(self):
         return iter(self.__dict__.items())
@@ -60,12 +62,14 @@ class Device:
         self.identifySwitchesAndSensors(entitys)
         self.identifyIfRunningState()
         self.identifDimmable()
+        self.checkForControlValue()
         self.checkMinMax(False)
         self.identifyCapabilities()
         if(self.initialization == True):
             self.deviceUpdater()
             _LOGGER.debug(f"Device {self.deviceName} Initialization Completed")
             self.initialization = False
+            logging.warning(f"Device: {self.deviceName} Initialization done {self}")
         else:
             raise Exception(f"Device could not be Initialized {self.deviceName}")
 
@@ -148,7 +152,7 @@ class Device:
 
         try:
             for entity in entitys:
-                _LOGGER.warning(f"Entity {entity}")
+
                 entityID = entity.get("entity_id")
                 entityValue = entity.get("value")
                 entityPlatform = entity.get("platform")
@@ -161,8 +165,12 @@ class Device:
 
                 # Prüfe for special Platform
                 if entityPlatform == "ac_infinity":
-                    _LOGGER.warning(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
+                    _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.isAcInfinDev = True
+
+                if entityPlatform == "crescontrol":
+                    _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
+                    self.voltageFromNumber = True
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
@@ -291,28 +299,26 @@ class Device:
                 entity_id = entity.get("entity_id", "").lower()
                 if any(key in entity_id for key in dimmableKeys):
                     self.isDimmable = True
-                    _LOGGER.warning(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
+                    _LOGGER.debug(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
                     return
 
-        _LOGGER.warning(f"{self.deviceName}: No Dimmable Options Found")
-    
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend to Gerätetyp und Daten."""
         if not self.isDimmable:
-            _LOGGER.debug(f"{self.deviceName}: Device is not Dimmable")
+            _LOGGER.warning(f"{self.deviceName}: is not Dimmable ")
             return
-
+        
         if not self.sensors and not self.options:
-            _LOGGER.debug(f"{self.deviceName}: NO Sensor data or Options found ")
+            _LOGGER.warning(f"{self.deviceName}: NO Sensor data or Options found ")
             return
 
-        relevant_keys = ["_duty","_intensity"]
+        relevant_keys = ["_duty","_intensity","_dutyCycle"]
 
         for sensor in self.sensors:
             _LOGGER.debug(f"Prüfe Sensor: {sensor}")
 
             if any(key in sensor["entity_id"].lower() for key in relevant_keys):
-                _LOGGER.debug(f"{self.deviceName}: Relevant Sensor Found: {sensor['entity_id']}")
+                _LOGGER.warning(f"{self.deviceName}: Relevant Sensor Found: {sensor['entity_id']}")
                 try:
                     value = sensor.get("value", None)
                     if value is None:
@@ -349,7 +355,7 @@ class Device:
                     continue
 
         for option in self.options:
-            _LOGGER.debug(f"Prüfe Option: {option}")
+            _LOGGER.warning(f"Prüfe Option: {option}")
             if any(key in option["entity_id"] for key in relevant_keys):
                 raw_value = option.get("value", 0)
                 try:
@@ -357,7 +363,7 @@ class Device:
                         raw_value = float(raw_value)
                         
                     if isinstance(raw_value, float):
-                        value = int(raw_value)
+                        value = float(raw_value)
                     else:
                         value = int(raw_value)
     
@@ -365,9 +371,11 @@ class Device:
                         self.voltageFromNumber = True # Identifier for number control on as voltage Value
                         if self.isAcInfinDev:
                             self.voltage = int(float(value) * 10)
+                        elif self.voltageFromNumber:
+                            self.voltage = int(float(value) * 10)
                         else:
                             self.voltage = value
-                        _LOGGER.debug(f"{self.deviceName}: Voltage set from  Options to {self.voltage}%.")
+                        _LOGGER.warning(f"{self.deviceName}: Voltage set from  Options to {self.voltage}%.")
                     else:
                         if self.isAcInfinDev == False:
                             self.dutyCycle = int(float(value))  
@@ -486,16 +494,16 @@ class Device:
                 # Light einschalten
                 elif self.deviceType == "Light":
                     if self.isDimmable:
-                        if self.voltageFromNumber and self.islightON:
+                        if self.islightON :
                             await self.hass.services.async_call(
                                 domain="switch",
                                 service="turn_on",
                                 service_data={"entity_id": entity_id},
                             )
-                            await self.set_value(float(brightness_pct/10))
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: Light ON (via Number).")
-                            return
+                            _LOGGER.warning(f"{self.deviceName}: light changed to  {float(brightness_pct/10)}.")
+                            await self.set_value(float(brightness_pct/10)) # Send in Percent % 
+                            return   
                         else:
                             await self.hass.services.async_call(
                                 domain="light",
@@ -506,7 +514,7 @@ class Device:
                                 },
                             )
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: Light ON ({brightness_pct}%).")
+                            _LOGGER.warning(f"{self.deviceName}: Light ON ({brightness_pct}%).")
                             return
                     else:
                         await self.hass.services.async_call(
@@ -837,9 +845,9 @@ class Device:
                         await self.hass.services.async_call(
                             domain="number",
                             service="set_value",
-                            service_data={"entity_id": entity_id, "value": int(value)},
+                            service_data={"entity_id": entity_id, "value": float(int(value))},
                         )
-                        _LOGGER.warning(f"Wert für {self.deviceName} wurde für {entity_id} to {int(value)} set.")
+                        _LOGGER.warning(f"Wert für {self.deviceName} wurde für {entity_id} to {float(int(value))} set.")
                         return                       
                     else:
                         await self.hass.services.async_call(
@@ -1011,5 +1019,3 @@ class Device:
                     await self.turn_on(brightness_pct=float(newValue))
                 else:
                     await self.turn_on(percentage=newValue)
-
-      

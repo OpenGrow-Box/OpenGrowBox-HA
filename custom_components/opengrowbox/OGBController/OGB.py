@@ -1555,7 +1555,6 @@ class OpenGrowBox:
                 self.dataStore.setDeep("DeviceMinMax.Ventilation.active",value)    
         if "light" in data.Name:
                 self.dataStore.setDeep("DeviceMinMax.Light.active",value)
-        logging.warning(f"{self.room} MIN-MAX - {data} ")
         await self.eventManager.emit("SetMinMax",data)
    
     async def _device_MinMax_setter(self, data):

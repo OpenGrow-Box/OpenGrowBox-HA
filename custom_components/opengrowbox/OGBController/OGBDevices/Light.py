@@ -8,7 +8,7 @@ _LOGGER = logging.getLogger(__name__)
 class Light(Device):
     def __init__(self, deviceName, deviceData, eventManager, dataStore, deviceType, inRoom, hass=None):
         super().__init__(deviceName, deviceData, eventManager, dataStore, deviceType, inRoom, hass)
-        self.voltage = None
+        self.voltage = 0
         self.initVoltage = 20
         self.minVoltage = None
         self.maxVoltage = None
@@ -143,13 +143,11 @@ class Light(Device):
     def init(self):
         if not self.isInitialized:
             self.setLightTimes()
-            
+
             if self.isDimmable:
                 self.checkForControlValue()
-                self.checkMinMax(False)
-                
                 self.checkPlantStageLightValue() 
-                
+                self.checkMinMax(False) 
                 if self.voltage == None or self.voltage == 0:
                     self.initialize_voltage()
                 else:
@@ -159,6 +157,11 @@ class Light(Device):
     def checkPlantStageLightValue(self):
         if not self.isDimmable:
             return None
+        
+        minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
+        if minMaxSets or minMaxSets.get("active", True):
+            return  # Nichts aktiv → nichts tun
+
 
         plantStage = self.dataStore.get("plantStage")
         self.currentPlantStage = plantStage
@@ -172,8 +175,10 @@ class Light(Device):
           
     def initialize_voltage(self):
         """Initialisiert den Voltage auf MinVoltage."""
-        self.voltage = self.initVoltage  
-        _LOGGER.debug(f"{self.deviceName}: Voltage init to {self.voltage}%.")
+        if self.islightON:
+            self.voltage = self.initVoltage
+        else:
+            self.voltage = 0
 
     def setLightTimes(self):
 
@@ -553,14 +558,14 @@ class Light(Device):
         
         if lightState:
             if not self.isRunning:
-                if self.voltage == 0 or self.voltage == None:
+                if int(float(self.voltage)) == 0 or int(float(self.voltage)) == None:
                     if not self.isDimmable:
                         message = "Turn On"
                         lightAction = OGBLightAction(Name=self.inRoom,Device=self.deviceName,Type=self.deviceType,Action="ON",Message=message,Voltage=self.voltage,Dimmable=False,SunRise=self.sunrise_phase_active,SunSet=self.sunset_phase_active)
                         await self.eventManager.emit("LogForClient",lightAction,haEvent=True)
                         await self.turn_on()     
                     else:
-                        if self.voltage > 20:
+                        if int(float(self.voltage)) > 20:
                             message = "Turn On"
                             lightAction = OGBLightAction(Name=self.inRoom,Device=self.deviceName,Type=self.deviceType,Action="ON",Message=message,Voltage=self.voltage,Dimmable=True,SunRise=self.sunrise_phase_active,SunSet=self.sunset_phase_active)
                             await self.eventManager.emit("LogForClient",lightAction,haEvent=True)
