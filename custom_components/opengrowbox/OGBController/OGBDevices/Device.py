@@ -374,7 +374,7 @@ class Device:
                         elif self.voltageFromNumber:
                             self.voltage = int(float(value) * 10)
                         else:
-                            self.voltage = value
+                            self.voltage = int(float(value))
                         _LOGGER.warning(f"{self.deviceName}: Voltage set from  Options to {self.voltage}%.")
                     else:
                         if self.isAcInfinDev == False:
