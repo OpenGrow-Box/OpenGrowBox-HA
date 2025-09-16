@@ -198,7 +198,7 @@ class OGBActionManager:
     
     # Control Actions
     async def increase_action(self,capabilities):
-        isDampeningActive =  self.dataStore.get("controlOptions.vpdDeviceDampening")
+        isDampeningActive =  self.dataStore.getDeep("controlOptions.vpdDeviceDampening")
        
         if isDampeningActive == True:
            await self.increase_vpd_damping(capabilities)
@@ -206,7 +206,7 @@ class OGBActionManager:
            await self.increase_vpd(capabilities)
            
     async def reduce_action(self,capabilities):
-       isDampeningActive =  self.dataStore.get("controlOptions.vpdDeviceDampening")
+       isDampeningActive =  self.dataStore.getDeep("controlOptions.vpdDeviceDampening")
        
        if isDampeningActive == True:
            await self.reduce_vpd_damping(capabilities)
@@ -214,7 +214,7 @@ class OGBActionManager:
            await self.reduce_vpd(capabilities)     
 
     async def fineTune_action(self,capabilities):
-        isDampeningActive =  self.dataStore.get("controlOptions.vpdDeviceDampening")
+        isDampeningActive =  self.dataStore.getDeep("controlOptions.vpdDeviceDampening")
        
         if isDampeningActive == True:
            await self.fine_tune_vpd_damping(capabilities)
