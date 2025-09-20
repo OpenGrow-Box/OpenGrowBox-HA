@@ -30,10 +30,7 @@ class OGBDeviceManager:
         self._devicerefresh_task: asyncio.Task | None = None 
         self.init()
 
-        
         #EVENTS
-        self.eventManager.on("UpdateDeviceList",self._update_ownDeviceLists)
-        self.eventManager.on("MapNewDevice",self.mapDeviceFromList)
         self.eventManager.on("capClean",self.capCleaner)
           
     def init(self):
@@ -44,24 +41,21 @@ class OGBDeviceManager:
 
     async def setupDevice(self,device):            
 
-        ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
+        #ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
            
         controlOption = self.dataStore.get("mainControl")        
         
         if controlOption not in ["HomeAssistant", "Premium"]:
             return False
         
-        if ownDeviceSetup:
-           return
-        else:
-            await self.addDevice(device)       
+        await self.addDevice(device)   
 
     async def addDevice(self,device):
         """Gerät aus eigener Geräteliste hinzufügen."""
                       
         deviceName = device["name"]
         deviceData = device["entities"]
-        ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
+
 
         identified_device = await self.identify_device(deviceName, deviceData)
                       
@@ -71,17 +65,11 @@ class OGBDeviceManager:
         
         _LOGGER.debug(f"Device:->{identified_device} identification Success")
         
-        if ownDeviceSetup:
-            devices = self.dataStore.get("ownDeviceList")
-            devices.append(identified_device)
-            self.dataStore.set("ownDeviceList",devices)
-            _LOGGER.info(f"Added new device: {identified_device}")    
-        else:
-            devices = self.dataStore.get("devices")
-            devices.append(identified_device)
-            self.dataStore.set("devices",devices)
-            _LOGGER.info(f"Added new device From List: {identified_device}")    
-                   
+        devices = self.dataStore.get("devices")
+        devices.append(identified_device)
+        self.dataStore.set("devices",devices)
+        _LOGGER.info(f"Added new device From List: {identified_device}")    
+                
     
         return identified_device
     
@@ -148,7 +136,7 @@ class OGBDeviceManager:
             "Cooler": ["cooler", "kuehler"],
             "Climate": ["climate", "klima"],
             "Light": ["light", "lamp", "led"],
-            "Co2": ["co2", "carbon","co2pump"],
+            "C02": ["co2", "carbon","co2pump"],
             "Pump":["pump"],
             "Switch": ["generic", "switch"],
         }
@@ -176,13 +164,13 @@ class OGBDeviceManager:
             "Switch": GenericSwitch,
             "Sensor": Sensor,
             "Pump": Pump,
-            "co2":CO2,
+            "C02":CO2,
         }
         return device_classes.get(device_type, Device)
 
     async def DeviceUpdater(self):
         controlOption = self.dataStore.get("mainControl")
-        ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
+
         
         # Hole alle bekannten Geräte aus Home Assistant (z. B. Sensoren, Schalter etc.)
         groupedRoomEntities = await self.regListener.get_filtered_entities_with_valueForDevice(self.room.lower())
@@ -197,12 +185,8 @@ class OGBDeviceManager:
         if controlOption not in ["HomeAssistant", "Premium"]:
             return False
         
-        if ownDeviceSetup:
-            # Hole aktuelle Geräteinstanzen aus dem Speicher (Objekte, keine Dicts!)
-            currentDevices = self.dataStore.get("ownDeviceList") or []
-        else:
-            # Hole aktuelle Geräteinstanzen aus dem Speicher (Objekte, keine Dicts!)
-            currentDevices = self.dataStore.get("devices") or []
+        # Hole aktuelle Geräteinstanzen aus dem Speicher (Objekte, keine Dicts!)
+        currentDevices = self.dataStore.get("devices") or []
 
         # Sichere Extraktion von Gerätenamen aus aktuellen Geräteobjekten
         knownDeviceNames = {device.deviceName for device in currentDevices if hasattr(device, "deviceName")}
@@ -231,121 +215,6 @@ class OGBDeviceManager:
         else:
             _LOGGER.debug("Device-Check: No new devices found.")
 
-    async def _update_ownDeviceLists(self, device_info_list):
-        """
-        Extrahiert entity_ids aus device_info_list und schreibt sie in die *_device_select_{room}-Entities.
-        """
-        
-        if device_info_list == None: return
-        
-        controlOption = self.dataStore.get("mainControl")        
-        
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return False
-        
-        #groupedRoomEntities = await self.regListener.get_filtered_entities_with_value(self.room.lower())
-        #realDevices = [group for group in groupedRoomEntities if "ogb" not in group["name"].lower()]
-
-        # Alle entity_ids sammeln
-        deviceList = []
-        for device in device_info_list:
-            for entity in device.get("entities", []):
-                entity_id = entity.get("entity_id")
-                if entity_id and entity_id not in deviceList:
-                    deviceList.append(entity_id)
-
-        _LOGGER.debug(f"[{self.room}] deviceList: {deviceList} from {device_info_list}")
-
-        # Deine festen Ziel-Entities mit Room-Namen
-        ownLightDevice_entity        = f"select.ogb_light_device_select_{self.room.lower()}"
-        ownClimateDevice_entity      = f"select.ogb_climate_device_select_{self.room.lower()}"
-        ownHumidiferDevice_entity    = f"select.ogb_humidifier_device_select_{self.room.lower()}"
-        ownDehumidiferDevice_entity  = f"select.ogb_dehumidifier_device_select_{self.room.lower()}"
-        ownExhaustDevice_entity      = f"select.ogb_exhaust_device_select_{self.room.lower()}"
-        ownIntakeDevice_entity      = f"select.ogb_intake_device_select_{self.room.lower()}"
-        ownVentilationDevice_entity  = f"select.ogb_vents_device_select_{self.room.lower()}"
-        ownHeaterDevice_entity       = f"select.ogb_heater_device_select_{self.room.lower()}"
-        ownCoolerDevice_entity       = f"select.ogb_cooler_device_select_{self.room.lower()}"
-        ownco2PumpDevice_entity      = f"select.ogb_co2_device_select_{self.room.lower()}"
-        ownwaterPumpDevice_entity    = f"select.ogb_waterpump_device_select_{self.room.lower()}"
-
-        try:
-            async def set_value(entity_id, value):
-                safe_value = value if value else []
-                await self.hass.services.async_call(
-                    domain="opengrowbox",
-                    service="add_select_options",
-                    service_data={
-                        "entity_id": entity_id,
-                        "options": safe_value  # <--- hier liegt der Fix
-                    },
-                    blocking=True
-                )
-                _LOGGER.debug(f"Updated {entity_id} to {safe_value}")
-
-            # An jede Entity die gesammelte Liste schreiben
-            await set_value(ownLightDevice_entity, deviceList)
-            await set_value(ownClimateDevice_entity, deviceList)
-            await set_value(ownHumidiferDevice_entity, deviceList)
-            await set_value(ownDehumidiferDevice_entity, deviceList)
-            await set_value(ownExhaustDevice_entity, deviceList)
-            await set_value(ownIntakeDevice_entity, deviceList)
-            await set_value(ownVentilationDevice_entity, deviceList)
-            await set_value(ownHeaterDevice_entity, deviceList)
-            await set_value(ownCoolerDevice_entity, deviceList)
-            await set_value(ownco2PumpDevice_entity, deviceList)
-            await set_value(ownwaterPumpDevice_entity, deviceList)
-
-        except Exception as e:
-            _LOGGER.error(f"Failed to update device select options for room {self.room}: {e}")
-
-    async def mapDeviceFromList(self, device):
-        """
-        Extrahiert entity_ids aus device_info_list und schreibt sie in die *_device_select_{room}-Entities.
-        """
-        if device.newState[0] == "unknown":
-            return
-
-        currentDevices = self.dataStore.getDeep("workData.Devices")    
-           
-        controlOption = self.dataStore.get("mainControl")        
-
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return False
-
-        pub_name = device.Name  # z. B. select.ogb_humidifier_device_select_dryingtent
-        try:
-            cleaned_name = pub_name.split("select.ogb_")[1].split("_device_select_")[0]
-        except IndexError:
-            _LOGGER.error(f"Could not extract name from: {pub_name}")
-            return
-
-        # Entity-ID aus dem neuen Status
-        target_entity = device.newState[0]  # z. B. "switch.heater"
-
-        # Finde das zugehörige Device in currentDevices
-        matched_device = None
-        for d in currentDevices:
-            entity_ids = [e.get("entity_id") for e in d.get("entities", [])]
-            if target_entity in entity_ids:
-                matched_device = d
-                break
-
-        if not matched_device:
-            _LOGGER.error(f"No matching device found for entity {target_entity}")
-            return
-
-        # Neue Struktur mit umbenanntem Namen, aber gleichen Entities
-        new_device = {
-            "name": cleaned_name,
-            "entities": matched_device.get("entities", [])
-        }
-
-        _LOGGER.info(f"Mapped new device structure: {new_device}")
-
-        # Hier kannst du dann z. B. await self.addOwnDevicList(new_device) machen
-        await self.addDevice(new_device)
-          
     def device_Worker(self):
         if self._devicerefresh_task and not self._devicerefresh_task.done():
             _LOGGER.debug("Device refresh task is already running. Skipping start.")
@@ -365,12 +234,8 @@ class OGBDeviceManager:
     def capCleaner(self,data):
         """Setzt alle Capabilities im DataStore auf den Ursprungszustand zurück."""
         capabilities = self.dataStore.get("capabilities")
-        ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
 
-        if ownDeviceSetup:
-            self.dataStore.set("Devices",[])
-        else:
-            self.dataStore.set("ownDeviceList",[])
+        self.dataStore.set("Devices",[])
 
         for key in capabilities:
             capabilities[key] = {

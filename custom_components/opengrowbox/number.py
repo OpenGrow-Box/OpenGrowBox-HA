@@ -176,10 +176,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomNumber(f"OGB_Exhaust_Duty_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=100, step=1, unit="%", initial_value=0),
 
-        # Inhaustt MinMax
-        CustomNumber(f"OGB_Inhaust_Duty_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+        # Intake MinMax
+        CustomNumber(f"OGB_Intake_Duty_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=100, step=1, unit="%", initial_value=0),
-        CustomNumber(f"OGB_Inhaust_Duty_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+        CustomNumber(f"OGB_Intake_Duty_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=100, step=1, unit="%", initial_value=0),
      
         # Ventilation MinMax

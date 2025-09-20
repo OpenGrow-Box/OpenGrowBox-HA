@@ -170,7 +170,20 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_HoldVpdNight_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="YES"),
         CustomSelect(f"OGB_VPD_DeviceDampening_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="YES"),
+                     options=["YES", "NO"], initial_value="NO"),
+
+        # Ambient
+        CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["YES", "NO"], initial_value="NO"),
+      
+      
+        ##Notifications
+        CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["Enabled", "Disabled"], initial_value="Disabled"),       
+        
+        #WorkMode
+        CustomSelect(f"OGB_WorkMode_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["YES","NO"], initial_value="NO"),
         
         CustomSelect(f"OGB_OwnWeights_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
@@ -199,40 +212,29 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_Feed_Plan_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["Own-Plan","Automatic","Disabled"], initial_value="Disabled"),
 
-        # Ambient
-        CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-        
-        ##Notifications
-        CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Enabled", "Disabled"], initial_value="Disabled"),       
-        
-        #WorkMode
-        CustomSelect(f"OGB_WorkMode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="NO"),
-        
+       
         ##DEVICES
-        CustomSelect(f"OGB_OwnDeviceSets_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_Light_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Light_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-        
-        CustomSelect(f"OGB_Exhaust_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-        
-        CustomSelect(f"OGB_Intake_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Intake_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-         
-        CustomSelect(f"OGB_Vents_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Ventilation_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-                
-        CustomSelect(f"OGB_Humidifier_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Dehumidifier_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Heater_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Cooler_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_Climate_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_CO2_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
-        CustomSelect(f"OGB_WaterPump_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_OwnDeviceSets_{coordinator.room_name}", coordinator.room_name, coordinator,
+        #            options=["YES", "NO"], initial_value="NO"),
+        #CustomSelect(f"OGB_Light_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Light_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        # 
+        #CustomSelect(f"OGB_Exhaust_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        # 
+        #CustomSelect(f"OGB_Intake_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Intake_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        # 
+        #CustomSelect(f"OGB_Vents_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Ventilation_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        #        
+        #CustomSelect(f"OGB_Humidifier_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Dehumidifier_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Heater_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Cooler_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_Climate_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_CO2_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
+        #CustomSelect(f"OGB_WaterPump_Device_Select_{coordinator.room_name}", coordinator.room_name, coordinator, options=[""], initial_value=None),
     ]
 
 

@@ -21,8 +21,6 @@ class Device:
         self.ogbsettings = []
         self.initialization = False
         self.inWorkMode = False
-        
-        
 
         # EVENTS
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
@@ -314,81 +312,75 @@ class Device:
 
         relevant_keys = ["_duty","_intensity","_dutyCycle"]
 
+        def convert_to_int(value, multiply_by_10=False):
+            """Konvertiert einen Wert sicher zu int, mit optionaler Multiplikation."""
+            try:
+                # Erst zu float konvertieren um alle String/numerischen Werte zu handhaben
+                float_value = float(value)
+                
+                # Optional mit 10 multiplizieren
+                if multiply_by_10:
+                    float_value *= 10
+                    
+                # Zu int konvertieren
+                return int(float_value)
+                
+            except (ValueError, TypeError) as e:
+                _LOGGER.error(f"Konvertierungsfehler für Wert '{value}': {e}")
+                return None
+
+        # Sensoren durchgehen
         for sensor in self.sensors:
             _LOGGER.debug(f"Prüfe Sensor: {sensor}")
 
             if any(key in sensor["entity_id"].lower() for key in relevant_keys):
                 _LOGGER.warning(f"{self.deviceName}: Relevant Sensor Found: {sensor['entity_id']}")
-                try:
-                    value = sensor.get("value", None)
-                    if value is None:
-                        _LOGGER.debug(f"{self.deviceName}: No Value in Sensor: {sensor}")
-                        continue
-                    if self.deviceType == "Light":
-                        if self.isAcInfinDev == False:
-                            self.voltage = int(float(value))
-                        else:
-                            self.voltage = int(float(value) * 10)   
-                        _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to  {self.voltage}%.")
-                    elif self.deviceType == "Exhaust" or self.deviceType == "Intake" or self.deviceType == "Ventilation":
-                        if self.isAcInfinDev == False:
-                            self.dutyCycle = int(float(value))
-                        else:
-                            self.dutyCycle = int(float(value) * 10)   
-                        _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
-                    elif self.deviceType == "Exhaust" or self.deviceType == "Intake" or self.deviceType == "Ventilation":
-                        if self.isAcInfinDev == False:
-                            self.dutyCycle = int(float(value))
-                        else:
-                            self.dutyCycle = int(float(value) * 10)   
-                        _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
-                    elif self.deviceType == "Humidifier" or self.deviceType == "Dehumidifier":
-                        if self.isAcInfinDev == False:
-                            self.dutyCycle = int(float(value))
-                        else:
-                            self.dutyCycle = int(float(value) * 10)   
-                        _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
-                    else:
-                        return
-                except ValueError as e:
-                    _LOGGER.error(f"{self.deviceName}: Error by Parsing Values from {sensor}: {e}")
+                
+                raw_value = sensor.get("value", None)
+                if raw_value is None:
+                    _LOGGER.debug(f"{self.deviceName}: No Value in Sensor: {sensor}")
                     continue
 
+                # Wert konvertieren
+                converted_value = convert_to_int(raw_value, multiply_by_10=self.isAcInfinDev)
+                if converted_value is None:
+                    continue
+
+                # Wert je nach Gerätetyp setzen
+                if self.deviceType == "Light":
+                    self.voltage = converted_value
+                    _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to {self.voltage}%.")
+                elif self.deviceType in ["Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"]:
+                    self.dutyCycle = converted_value
+                    _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
+
+        # Options durchgehen
         for option in self.options:
             _LOGGER.warning(f"Prüfe Option: {option}")
+            
             if any(key in option["entity_id"] for key in relevant_keys):
                 raw_value = option.get("value", 0)
-                try:
-                    if isinstance(raw_value, str):
-                        raw_value = float(raw_value)
-                        
-                    if isinstance(raw_value, float):
-                        value = float(raw_value)
-                    else:
-                        value = int(raw_value)
-    
-                    if self.deviceType == "Light":
-                        self.voltageFromNumber = True # Identifier for number control on as voltage Value
-                        if self.isAcInfinDev:
-                            self.voltage = int(float(value) * 10)
-                        elif self.voltageFromNumber:
-                            self.voltage = int(float(value) * 10)
-                        else:
-                            self.voltage = int(float(value))
-                        _LOGGER.warning(f"{self.deviceName}: Voltage set from  Options to {self.voltage}%.")
-                    else:
-                        if self.isAcInfinDev == False:
-                            self.dutyCycle = int(float(value))  
-                        else:
-                            self.dutyCycle = int(float(value) * 10)
-                        
+                
+                # Für Light-Geräte spezielle Logik
+                if self.deviceType == "Light":
+                    self.voltageFromNumber = True
+                    # Für Light: immer mit 10 multiplizieren wenn isAcInfinDev ODER voltageFromNumber
+                    multiply_by_10 = self.isAcInfinDev or self.voltageFromNumber
+                    converted_value = convert_to_int(raw_value, multiply_by_10=multiply_by_10)
+                    
+                    if converted_value is not None:
+                        self.voltage = converted_value
+                        _LOGGER.warning(f"{self.deviceName}: Voltage set from Options to {self.voltage}%.")
+                        return
+                else:
+                    # Für alle anderen Gerätetypen
+                    converted_value = convert_to_int(raw_value, multiply_by_10=self.isAcInfinDev)
+                    
+                    if converted_value is not None:
+                        self.dutyCycle = converted_value
                         _LOGGER.warning(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
-                    return 
-
-                except (ValueError, TypeError) as e:
-                    _LOGGER.error(f"{self.deviceName}: Error Parsing Values from {option}: {e}")
-                    continue
-
+                        return
+                
     async def turn_on(self, **kwargs):
         """Schaltet das Gerät ein."""
         try:
@@ -632,6 +624,30 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Ventilation ON (Switch).")
                         return
 
+                # Ventilation einschalten
+                elif self.deviceType == "co2":
+                    if self.isDimmable:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={
+                                "entity_id": entity_id,
+                                "percentage": percentage,
+                            },
+                        )
+                        self.isRunning = True
+                        _LOGGER.warning(f"{self.deviceName}: Ventilation ON ({percentage}%).")
+                        return
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = True
+                        _LOGGER.warning(f"{self.deviceName}: CO2 ON (Switch).")
+                        return
+
                 # Fallback
                 else:
                     await self.hass.services.async_call(
@@ -640,7 +656,7 @@ class Device:
                         service_data={"entity_id": entity_id},
                     )
                     self.isRunning = True
-                    _LOGGER.debug(f"{self.deviceName}: Default-Switch ON.")
+                    _LOGGER.warning(f"{self.deviceName}: Default-Switch ON.")
                     return
 
         except Exception as e:
@@ -814,6 +830,20 @@ class Device:
                         self.isRunning = False
                         _LOGGER.debug(f"{self.deviceName}: Ventilation OFF (Switch).")
                         return
+                # Intake ausschalten
+                elif self.deviceType == "co2":
+                    if self.isDimmable:
+                        return
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        _LOGGER.warning(f"{self.deviceName}: CO2 OFF.")
+                        return
+
 
                 # Fallback: Standard-Switch
                 else:

@@ -13,10 +13,7 @@ class Exhaust(Device):
         self.isInitialized = False
         self.isTasmota = False
         
-        if self.isAcInfinDev:
-            self.steps = 10 
-            self.maxDuty = 100
-            self.minDuty = 0
+
         
         self.init()
         
@@ -53,7 +50,11 @@ class Exhaust(Device):
 
     def initialize_duty_cycle(self):
         """Initialisiert den Duty Cycle auf 50%."""
-        self.dutyCycle = 50  
+        self.dutyCycle = 50
+        if self.isAcInfinDev:
+            self.steps = 10 
+            self.maxDuty = 100
+            self.minDuty = 0
         _LOGGER.info(f"{self.deviceName}: Duty Cycle Init to {self.dutyCycle}%.")
 
     def clamp_duty_cycle(self, duty_cycle):

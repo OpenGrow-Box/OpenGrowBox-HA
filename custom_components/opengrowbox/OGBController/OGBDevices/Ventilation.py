@@ -41,6 +41,8 @@ class Ventilation(Device):
 
     def identify_if_tasmota(self):
         """Prüft, ob das Gerät ein Tasmota-Gerät ist."""
+        
+
         self.isTasmota = any(
             switch["entity_id"].startswith("light.") for switch in self.switches
         )
@@ -124,4 +126,5 @@ class Ventilation(Device):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
         _LOGGER.warning(f"{action_name}: {log_message}")
+
 

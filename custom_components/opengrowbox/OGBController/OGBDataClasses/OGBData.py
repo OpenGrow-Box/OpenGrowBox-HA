@@ -99,7 +99,7 @@ class OGBConf:
     controlOptions: Dict[str, bool] = field(default_factory=lambda: {
         "ownDeviceSetup": False,
         "nightVPDHold": False,
-        "vpdDeviceDampening":True,
+        "vpdDeviceDampening":False,
         "lightbyOGBControl": False,
         "vpdLightControl": False,
         "co2Control": False,

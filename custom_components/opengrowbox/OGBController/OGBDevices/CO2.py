@@ -13,7 +13,6 @@ class CO2(Device):
         
         ## Events Register
         self.eventManager.on("NewCO2Publication", self.handleNewCO2Value)
-
         self.eventManager.on("Increase CO2", self.increaseAction)
         self.eventManager.on("Reduce CO2", self.reduceAction)
    
@@ -25,11 +24,13 @@ class CO2(Device):
     
     async def increaseAction(self, data):
         """Erhöht den CO2 Wert"""
+        logging.warning("INCREASE ACTION START")
         self.log_action("IncreaseAction/TurnOn" )
         await self.turn_on()
         
     async def reduceAction(self, data):
         """Reduziertden CO2 Wert"""
+        logging.warning("REDUCE ACTION START")
         self.log_action("ReduceAction/TurnOff" )
         await self.turn_off()
 

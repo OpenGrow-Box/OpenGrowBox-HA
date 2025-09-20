@@ -59,11 +59,11 @@ class OGBModeManager:
             await self.handle_targeted_vpd()
         elif tentMode == "Drying":
             await self.handle_drying()
-        elif tentMode == "MCP-Control":
+        elif tentMode == "MCP Control":
             await self.handle_premium_modes(False)
-        elif tentMode == "PID-Control":
+        elif tentMode == "PID Control":
             await self.handle_premium_modes(False)
-        elif tentMode == "AI-Control":
+        elif tentMode == "AI Control":
             await self.handle_premium_modes(False)
         elif tentMode == "Disabled":
             await self.handle_disabled_mode()

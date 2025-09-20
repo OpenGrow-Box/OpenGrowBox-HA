@@ -15,11 +15,19 @@ class Humidifier(Device):
         self.eventManager.on("Increase Humidifier", self.increaseAction)
         self.eventManager.on("Reduce Humidifier", self.reduceAction)
 
-        if self.isAcInfinDev:
-            self.dutyCycle = 0
-            self.steps = 10 
-            self.maxDuty = 100
-            self.minDuty = 0   
+        self.init()
+        
+
+
+    def init(self):
+       
+        if not self.isInitialized:
+            if self.isAcInfinDev:
+                self.dutyCycle = 0
+                self.steps = 10 
+                self.maxDuty = 100
+                self.minDuty = 0  
+            self.isInitialized = True
 
 
     def clamp_duty_cycle(self, duty_cycle):
@@ -36,7 +44,6 @@ class Humidifier(Device):
 
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
-
 
     def change_duty_cycle(self, increase=True):
         """

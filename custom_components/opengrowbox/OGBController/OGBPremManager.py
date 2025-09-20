@@ -761,11 +761,11 @@ class OGBPremManager:
         tent_control = f"select.ogb_tentmode_{self.room.lower()}"
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
-        ctrl_options = [ "PID Control"]
+        ctrl_options = [ "PID Control", "MCP Control"]
         dry_options = []
 
         current_tent_mode = self.dataStore.get("tentMode")
-        invalid_modes = ["PID Control"]
+        invalid_modes = ["PID Control", "MCP Control"]
 
         if not self.is_premium and not self.is_logged_in:
             for entity_id, options in [
