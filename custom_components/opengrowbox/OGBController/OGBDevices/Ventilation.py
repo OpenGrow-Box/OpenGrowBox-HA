@@ -7,14 +7,13 @@ class Ventilation(Device):
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
         _LOGGER.info(f"{self.deviceName}: Initialisiertes Gerät vom Typ: {self.deviceType}")
-        self.dutyCycle = 0  # Initialer Startwert
-        self.maxDuty = 100   # Maximaler Duty Cycle
-        self.minDuty = 85     # Minimaler Duty Cycle
-        self.steps = 5       # DutyCycle Steps
-        self.isTasmota = False
+        self.dutyCycle = 0  
+        self.minDuty = 10    
+        self.maxDuty = 100
+        self.steps = 5      
         self.isInitialized = False
 
-        self.init()  # Initialisierung der Klasse
+        self.init()
 
         # Events registrieren
         self.eventManager.on("Increase Ventilation", self.increaseAction)
@@ -28,30 +27,15 @@ class Ventilation(Device):
     def init(self):
         """Initialisiert die Ventilation."""
         if not self.isInitialized:
-            self.identify_if_tasmota()
-            if self.isTasmota == True:
+            self.checkMinMax(False)
+            self.checkForControlValue()
+            
+            if not self.dutyCycle or self.dutyCycle == 0:
                 self.initialize_duty_cycle()
-                self.checkMinMax(False)
-            else:
-                self.checkForControlValue()
-                self.checkMinMax(False)
-                if self.dutyCycle == 0 or self.dutyCycle == None:
-                    self.initialize_duty_cycle()
+            
             self.isInitialized = True
 
-    def identify_if_tasmota(self):
-        """Prüft, ob das Gerät ein Tasmota-Gerät ist."""
-        
 
-        self.isTasmota = any(
-            switch["entity_id"].startswith("light.") for switch in self.switches
-        )
-        _LOGGER.info(f"{self.deviceName}: Tasmota-Gerät erkannt: {self.isTasmota}")
-
-    def initialize_duty_cycle(self):
-        """Initialisiert den Duty Cycle auf 50%."""
-        self.dutyCycle = 50  # Immer auf 50% initialisieren
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle initialisiert auf {self.dutyCycle}%.")
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""

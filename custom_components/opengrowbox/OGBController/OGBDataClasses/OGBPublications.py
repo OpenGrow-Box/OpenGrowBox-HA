@@ -62,11 +62,30 @@ class OGBWaterPublication:
     def to_dict(self):
         return asdict(self)
     
+@dataclass(frozen=True)
+class OGBSoilPublication:
+    Name: str
+    ecCurrent: Optional[float] = None
+    moistCurrent: Optional[float] = None
+    phCurrent: Optional[float] = None
+    def to_dict(self):
+        return asdict(self) 
+  
 @dataclass
 class OGBMoisturePublication:
     Name: str
     MoistureValues: list
     AvgMoisture: float | None = None
+
+@dataclass
+class OGBDLIPublication:
+    Name: str
+    DLI: int
+
+@dataclass
+class OGBPPFDPublication:
+    Name: str
+    PPFD: int
 
      
 @dataclass(frozen=True)
@@ -107,6 +126,8 @@ class OGBHydroPublication:
     Duration: float
     Message: str
     Devices: List[str]
+
+
 
 @dataclass(frozen=True)
 class OGBRetrivePublication:

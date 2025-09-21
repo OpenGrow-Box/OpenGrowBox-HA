@@ -1,13 +1,13 @@
 import math
 import logging
 import asyncio
-from datetime import datetime, time, timedelta
-
+from datetime import datetime
+import aiohttp
 from .utils.calcs import calculate_avg_value,calculate_dew_point,calculate_current_vpd,calculate_perfect_vpd,calc_light_to_ppfd_dli
 from .utils.sensorUpdater import update_sensor_via_service,_update_specific_sensor,_update_specific_number
 from .utils.lightTimeHelpers import hours_between
 
-from .OGBDataClasses.OGBPublications import OGBInitData,OGBEventPublication,OGBVPDPublication,OGBHydroPublication,OGBModePublication,OGBModeRunPublication,OGBCO2Publication,OGBMoisturePublication,OGBWaterPublication
+from .OGBDataClasses.OGBPublications import OGBInitData,OGBEventPublication,OGBVPDPublication,OGBDLIPublication,OGBPPFDPublication,OGBModePublication,OGBModeRunPublication,OGBCO2Publication,OGBMoisturePublication,OGBWaterPublication,OGBSoilPublication
 
 # OGB IMPORTS
 from .OGBDataClasses.OGBData import OGBConf
@@ -120,7 +120,7 @@ class OpenGrowBox:
                     except (ValueError, TypeError):
                         pass
 
-
+        _LOGGER.debug(f"INT DATA TEMP/HUM {self.room} --- T:{temperatures} --- H:{humidities}")     
         # Temperatur- und Feuchtigkeitsdaten laden
         self.dataStore.setDeep("workData.temperature",temperatures)
         self.dataStore.setDeep("workData.humidity",humidities)
@@ -193,11 +193,28 @@ class OpenGrowBox:
         vpd = self.dataStore.getDeep("vpd.current")
         needs = ("temperature", "humidity","moisture","carbondioxide","water","wasser","plant","pflanzen","soil")
         
-        # Prüfe, ob die Entität für Temperatur oder Feuchtigkeit relevant ist
         if any(need in entity.Name for need in needs):
-            # Bestimme, ob es sich um Temperatur oder Feuchtigkeit handelt
-            # Wasser/Wasser-Entitäten (Hydro)
-            if "water" in entity.Name or "wasser" in entity.Name:
+
+
+            if "_temperature" in entity.Name:
+                # Update Temperaturdaten
+                temps = self._update_work_data_array(temps, entity)
+                self.dataStore.setDeep("workData.temperature", temps)
+                VPDPub = OGBVPDPublication(Name="TempUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
+                await self.eventManager.emit("VPDCreation",VPDPub)
+                _LOGGER.info(f"{self.room} OGB-Manager: Temperaturdaten aktualisiert {temps}")
+                return
+
+            elif "_humidity" in entity.Name:
+                # Update Feuchtigkeitsdaten
+                hums = self._update_work_data_array(hums, entity)
+                self.dataStore.setDeep("workData.humidity", hums)
+                VPDPub = OGBVPDPublication(Name="HumUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
+                await self.eventManager.emit("VPDCreation",VPDPub)
+                _LOGGER.info(f"{self.room} OGB-Manager: Feuchtigkeitsdaten aktualisiert {hums}")
+                return
+
+            elif "water" in entity.Name or "wasser" in entity.Name:
                 updated = False
 
                 if "_ec" in entity.Name:
@@ -240,61 +257,74 @@ class OpenGrowBox:
                     _LOGGER.info(f"{self.room} OGB-Manager: Hydro Daten aktualisiert EC:{ec_current}, TDS:{tds_current}, pH:{ph_current}, OXI:{oxi_current}, SAL:{sal_current}, TEMP:{temp_current}")
                     return
                 
-            # Wasser/Wasser-Entitäten (Hydro)
             elif "soil" in entity.Name or "boden" in entity.Name:
                 updated = False
-                return
 
-            elif "_temperature" in entity.Name:
-                # Update Temperaturdaten
-                temps = self._update_work_data_array(temps, entity)
-                self.dataStore.setDeep("workData.temperature", temps)
-                VPDPub = OGBVPDPublication(Name="TempUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
-                await self.eventManager.emit("VPDCreation",VPDPub)
-                _LOGGER.info(f"{self.room} OGB-Manager: Temperaturdaten aktualisiert {temps}")
-                return
+                if "_conductivity" in entity.Name:
+                    self.dataStore.setDeep("Soil.ec_current", entity.newState[0])
+                    updated = True
+                elif "_ph" in entity.Name:
+                    self.dataStore.setDeep("Soil.ph_current", entity.newState[0])
+                    updated = True
+                elif "_moisture" in entity.Name:
+                    self.dataStore.setDeep("Soil.moist_current", entity.newState[0])
+                    updated = True
 
-            elif "_humidity" in entity.Name:
-                # Update Feuchtigkeitsdaten
-                hums = self._update_work_data_array(hums, entity)
-                self.dataStore.setDeep("workData.humidity", hums)
-                VPDPub = OGBVPDPublication(Name="HumUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
-                await self.eventManager.emit("VPDCreation",VPDPub)
-                _LOGGER.info(f"{self.room} OGB-Manager: Feuchtigkeitsdaten aktualisiert {hums}")
-                return
+
+                if updated:
+                    ec_current = self.dataStore.getDeep("Soil.ec_current")
+                    ph_current = self.dataStore.getDeep("Soil.ph_current")
+                    moist_current = self.dataStore.getDeep("Soil.moist_curren")
+
+
+                    soilPublication = OGBSoilPublication(
+                        Name="SoilUpdate",
+                        ecCurrent=ec_current,
+                        moistCurrent=moist_current,
+                        phCurrent=ph_current,
+
+                    )
+                    await self.eventManager.emit("CheckForFeed-Soil", soilPublication)
+                    return
 
             elif "_moisture" in entity.Name:
                 # Update Feuchtigkeitsdaten
                 moists = self.dataStore.getDeep("workData.moisture")
                 moistures = self._update_work_data_array(moists, entity)
+                MOISTPub = OGBMoisturePublication(Name="MoistureUpdate",MoistureValues=moistures)
+                await self.eventManager.emit("MoistureUpdate",MOISTPub)
                 self.dataStore.setDeep("workData.moisture", moistures)
                 return
                 
-            if "_lumen" in entity.Name:
+            elif "_lumen" in entity.Name or "_lux" in entity.Name or "_illuminance" in entity.Name:
+                if "_lumen" in entity.Name:
+                    unit = "lumen"
+                else:
+                    unit = "lux"
                 growSpace = self.dataStore.get("growAreaM2")
                 lightStart = self.dataStore.getDeep("isPlantDay.lightOnTime")
                 lightStop = self.dataStore.getDeep("isPlantDay.lightOffTime")
-                lightDuration = hours_between(lightStart,lightStop)
-                ppfd,dli = calc_light_to_ppfd_dli(entity.newState[0],"lumen",lightDuration,growSpace)
+                lightDuration = hours_between(lightStart, lightStop)
+
+                ppfd, dli = calc_light_to_ppfd_dli(entity.newState[0], unit, lightDuration, growSpace)
+
                 self.dataStore.setDeep("tentData.DLI", dli)
-                await _update_specific_sensor("ogb_ppfd_",self.room,ppfd,self.hass)
                 self.dataStore.setDeep("tentData.PPFD", ppfd)
-                await _update_specific_sensor("ogb_dli_",self.room,dli,self.hass)
-                return
+
+                await _update_specific_sensor("ogb_ppfd_", self.room, ppfd, self.hass)
+                await _update_specific_sensor("ogb_dli_", self.room, dli, self.hass)
                 
-            elif "_lux" or "_illuminance" in entity.Name:
-                growSpace = self.dataStore.get("growAreaM2")
-                lightStart = self.dataStore.getDeep("isPlantDay.lightOnTime")
-                lightStop = self.dataStore.getDeep("isPlantDay.lightOffTime")
-                lightDuration = hours_between(lightStart,lightStop)
-                ppfd,dli = calc_light_to_ppfd_dli(entity.newState[0],"lux",lightDuration,growSpace)
-                self.dataStore.setDeep("tentData.DLI", dli)
-                await _update_specific_sensor("ogb_ppfd_",self.room,ppfd,self.hass)
-                self.dataStore.setDeep("tentData.PPFD", ppfd)
-                await _update_specific_sensor("ogb_dli_",self.room,dli,self.hass)
+                self.dataStore.setDeep("Light.DLICurrent",dli)
+                self.dataStore.setDeep("Light.PPFDCurrent",ppfd)
+                
+                DLIPub = OGBDLIPublication(Name="DLIUpdate", DLI=dli)
+                await self.eventManager.emit("MoistureUpdate", DLIPub)
+
+                PPFDPub = OGBPPFDPublication(Name="DLIUpdate", PPFD=ppfd)
+                await self.eventManager.emit("PPFDUpdate", PPFDPub)
+
                 return
-            
-            # CO2-Entitäten
+
             elif "_co2" in entity.Name or "_carbondioxide" in entity.Name:
                 self.dataStore.setDeep("tentData.co2Level", entity.newState[0])
                 self.dataStore.setDeep("controlOptionData.co2ppm.current", entity.newState[0])
@@ -503,8 +533,6 @@ class OpenGrowBox:
     async def get_weather_data(self):
         """Hole aktuelle Temperatur und Luftfeuchtigkeit über Open-Meteo API (kostenlos)."""
         try:
-            import aiohttp
-            import asyncio
             
             lat = self.hass.config.latitude
             lon = self.hass.config.longitude

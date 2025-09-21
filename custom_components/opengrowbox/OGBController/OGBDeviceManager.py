@@ -129,14 +129,14 @@ class OGBDeviceManager:
             "Sensor": ["ogb","sensor", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
             "Exhaust": ["exhaust", "abluft"],
             "Intake": ["intake", "zuluft"],
-            "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet", "outlet"],
-            "Dehumidifier": ["dehumidifier", "drying", "dryer", "entfeuchter"],
+            "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet"],
+            "Dehumidifier": ["dehumidifier", "entfeuchter"],
             "Humidifier": ["humidifier","befeuchter"],
             "Heater": ["heater", "heizung"],
             "Cooler": ["cooler", "kuehler"],
             "Climate": ["climate", "klima"],
             "Light": ["light", "lamp", "led"],
-            "C02": ["co2", "carbon","co2pump"],
+            "C02": ["co2", "carbon"],
             "Pump":["pump"],
             "Switch": ["generic", "switch"],
         }
@@ -146,8 +146,9 @@ class OGBDeviceManager:
                 DeviceClass = self.get_device_class(device_type)
                 return DeviceClass(device_name,device_data,self.eventManager,self.dataStore,device_type,self.room, self.hass)
 
-        _LOGGER.error(f"Device {device_name} not recognized, returning unknown device.")
-        return Device(device_name, "unknown", self.eventManager,self.dataStore, "UNKOWN",self.room, self.hass)
+        _LOGGER.error(f"Device {device_name} not recognized, returning unknown device. check this data {device_data} and the DeviceName see on WIKI")
+        return False 
+        #Device(device_name, "unknown", self.eventManager,self.dataStore, "UNKOWN",self.room, self.hass)
 
     def get_device_class(self, device_type):
         """Geräteklasse erhalten."""

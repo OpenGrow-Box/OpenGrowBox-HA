@@ -13,9 +13,5 @@ class OGBFallBackManager:
         self.is_initialized = False
         
         ## Events Register
-        self.eventManager.on("LogValidation", self._handleLogForClient)
 
-    async def _handleLogForClient(self, data):
-        data.Name = self.room
-        await self.eventManager.emit("ClientLogs",data,haEvent=True)          
                

@@ -41,6 +41,70 @@ class OGBConf:
         "sal_current:":0,
         "WaterTEMP":0,       
     })
+    Soil: Dict[str, Any] = field(default_factory=lambda: {
+        "Active": False,
+        "Cycle": False,
+        "Mode": None,
+        "Intervall":None, 
+        "Duration":None,
+        "Retrieve": None,
+        "R_Active": False,
+        "R_Intervall":None, 
+        "R_Duration": None,
+        "ph_current":0,
+        "ec_current":0,
+        "moist_current":0,
+        "SoilMaxMoisture":0,
+        "SoilTemp":0,      
+    })
+    Light: Dict[str, Any] = field(default_factory=lambda: {
+        "DLICurrent": 0,
+        "DLITarget": 0,
+        "PPFDCurrent": 0,
+        "PPFDTarget": 0,
+        "plans": {
+            "photoperiodic": {
+                "veg": {
+                    "curve": [
+                        {"week": 1, "PPFDTarget": 200, "DLITarget": 12},
+                        {"week": 2, "PPFDTarget": 300, "DLITarget": 20},
+                        {"week": 3, "PPFDTarget": 350, "DLITarget": 25},
+                        {"week": 4, "PPFDTarget": 400, "DLITarget": 30},
+                    ],
+                },
+                "flower": {
+                    "curve": [
+                        {"week": 1, "PPFDTarget": 450, "DLITarget": 25},
+                        {"week": 2, "PPFDTarget": 600, "DLITarget": 35},
+                        {"week": 3, "PPFDTarget": 700, "DLITarget": 40},
+                        {"week": 4, "PPFDTarget": 800, "DLITarget": 45},
+                        {"week": 5, "PPFDTarget": 850, "DLITarget": 48},
+                        {"week": 6, "PPFDTarget": 900, "DLITarget": 50},
+                        {"week": 7, "PPFDTarget": 900, "DLITarget": 50},
+                        {"week": 8, "PPFDTarget": 900, "DLITarget": 50},
+                    ],
+                },
+            },
+            "auto": {
+                "veg": {
+                    "curve": [
+                        {"week": 1, "PPFDTarget": 200, "DLITarget": 15},
+                        {"week": 2, "PPFDTarget": 300, "DLITarget": 22},
+                        {"week": 3, "PPFDTarget": 400, "DLITarget": 28},
+                    ],
+                },
+                "flower": {
+                    "curve": [
+                        {"week": 4, "PPFDTarget": 500, "DLITarget": 32},
+                        {"week": 5, "PPFDTarget": 600, "DLITarget": 35},
+                        {"week": 6, "PPFDTarget": 700, "DLITarget": 38},
+                        {"week": 7, "PPFDTarget": 750, "DLITarget": 40},
+                        {"week": 8, "PPFDTarget": 800, "DLITarget": 42},
+                    ],
+                },
+            },
+        }
+    })
     Feed: Dict[str, Any] = field(default_factory=lambda: {
         "Mode":"",
         "Active": False,

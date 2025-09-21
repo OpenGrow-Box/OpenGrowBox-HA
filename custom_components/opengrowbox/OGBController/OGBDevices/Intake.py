@@ -8,7 +8,7 @@ class Intake(Device):
         super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
         self.dutyCycle = 0  # Initialer Duty Cycle
         self.minDuty = 0    # Minimaler Duty Cycle
-        self.maxDuty = 95    # Maximaler Duty Cycle
+        self.maxDuty = 100    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
         self.isTasmota = False
         self.isInitialized = False
@@ -26,37 +26,22 @@ class Intake(Device):
 
     #Actions Helpers
     
-    def init(self):
 
+    def init(self):
+        """Initialisiert die Ventilation."""
         if not self.isInitialized:
-            self.identify_if_tasmota()
-            if self.isTasmota == True:
+            self.checkMinMax(False)
+            self.checkForControlValue()
+            
+            if not self.dutyCycle or self.dutyCycle == 0:
                 self.initialize_duty_cycle()
-            else:
-                self.checkForControlValue()
-                self.checkMinMax(False)
-                if self.dutyCycle == 0 or self.dutyCycle == None:
-                    self.initialize_duty_cycle()
+            
             self.isInitialized = True
 
     def __repr__(self):
         return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
                 f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
                 f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' ")
-
-    def identify_if_tasmota(self):
-        """Prüft, ob das Device ein Tasmota-Device ist."""
-        self.isTasmota = any(
-            switch["entity_id"].startswith("light.") for switch in self.switches
-        )
-        _LOGGER.info(f"{self.deviceName}: Tasmota-Device Found: {self.isTasmota}")
-
-
-    def initialize_duty_cycle(self):
-        """Initialisiert den Duty Cycle auf 50%."""
-        self.dutyCycle = 50  
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle initialisiert auf {self.dutyCycle}%.")
-
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
@@ -72,7 +57,6 @@ class Intake(Device):
 
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
-
 
     def change_duty_cycle(self, increase=True):
         """
@@ -125,7 +109,6 @@ class Intake(Device):
         else:
             self.log_action("TurnOff")
             await self.turn_off()
-
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""

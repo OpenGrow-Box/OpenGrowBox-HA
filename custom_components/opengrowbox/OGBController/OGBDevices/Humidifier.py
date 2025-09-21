@@ -14,7 +14,7 @@ class Humidifier(Device):
         ## Events Register
         self.eventManager.on("Increase Humidifier", self.increaseAction)
         self.eventManager.on("Reduce Humidifier", self.reduceAction)
-
+        self.isInitialized = False
         self.init()
         
 

@@ -131,13 +131,28 @@ class Device:
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = minMaxSets.get("minVoltage")
             self.maxVoltage = minMaxSets.get("maxVoltage")
-            logging.warning(f"{self.deviceName} Device MinMax sets: Max-Voltage:{self.maxVoltage} Min-Voltage:{self.minVoltage}")
+            logging.debug(f"{self.deviceName} Device MinMax sets: Max-Voltage:{self.maxVoltage} Min-Voltage:{self.minVoltage}")
         
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = minMaxSets.get("minDuty")
             self.maxDuty = minMaxSets.get("maxDuty")
-            logging.warning(f"{self.deviceName} Device MinMax sets: Max-Duty:{self.maxDuty} Min-Duty:{self.minDuty}")
-          
+            logging.debug(f"{self.deviceName} Device MinMax sets: Max-Duty:{self.maxDuty} Min-Duty:{self.minDuty}")
+
+    def initialize_duty_cycle(self):
+        """Initialisiert den Duty Cycle auf 50%, falls nichts anderes vorliegt."""
+        
+        # Generischer Default
+        self.dutyCycle = 50  
+        
+        if self.isTasmota:
+            self.dutyCycle = 50
+        elif self.isAcInfinDev:
+            self.steps = 10 
+            self.maxDuty = 100
+            self.minDuty = 0
+        
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle Init to {self.dutyCycle}%.")
+      
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
         interested_mapping = ("_temperature", "_humidity", "_dewpoint", "_co2","_duty","_moisture","_intensity","_ph","_ec","_tds")
@@ -169,6 +184,10 @@ class Device:
                 if entityPlatform == "crescontrol":
                     _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.voltageFromNumber = True
+                    
+                if entityPlatform == "tasmota":
+                    _LOGGER.debug(f"FOUND Tasmota Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
+                    self.isTasmota = True
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
@@ -286,7 +305,7 @@ class Device:
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
-            _LOGGER.warning(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
+            _LOGGER.debug(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
             return
 
         dimmableKeys = ["fan.", "light.","number.","_duty","_intensity"]
@@ -303,11 +322,11 @@ class Device:
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend to Gerätetyp und Daten."""
         if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: is not Dimmable ")
+            _LOGGER.debug(f"{self.deviceName}: is not Dimmable ")
             return
         
         if not self.sensors and not self.options:
-            _LOGGER.warning(f"{self.deviceName}: NO Sensor data or Options found ")
+            _LOGGER.debug(f"{self.deviceName}: NO Sensor data or Options found ")
             return
 
         relevant_keys = ["_duty","_intensity","_dutyCycle"]
@@ -334,7 +353,7 @@ class Device:
             _LOGGER.debug(f"Prüfe Sensor: {sensor}")
 
             if any(key in sensor["entity_id"].lower() for key in relevant_keys):
-                _LOGGER.warning(f"{self.deviceName}: Relevant Sensor Found: {sensor['entity_id']}")
+                _LOGGER.debug(f"{self.deviceName}: Relevant Sensor Found: {sensor['entity_id']}")
                 
                 raw_value = sensor.get("value", None)
                 if raw_value is None:
@@ -370,7 +389,7 @@ class Device:
                     
                     if converted_value is not None:
                         self.voltage = converted_value
-                        _LOGGER.warning(f"{self.deviceName}: Voltage set from Options to {self.voltage}%.")
+                        _LOGGER.debug(f"{self.deviceName}: Voltage set from Options to {self.voltage}%.")
                         return
                 else:
                     # Für alle anderen Gerätetypen
@@ -378,7 +397,7 @@ class Device:
                     
                     if converted_value is not None:
                         self.dutyCycle = converted_value
-                        _LOGGER.warning(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
+                        _LOGGER.debug(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
                         return
                 
     async def turn_on(self, **kwargs):
@@ -625,7 +644,7 @@ class Device:
                         return
 
                 # Ventilation einschalten
-                elif self.deviceType == "co2":
+                elif self.deviceType == "CO2":
                     if self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -831,7 +850,7 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Ventilation OFF (Switch).")
                         return
                 # Intake ausschalten
-                elif self.deviceType == "co2":
+                elif self.deviceType == "CO2":
                     if self.isDimmable:
                         return
                     else:
@@ -1002,7 +1021,7 @@ class Device:
                     # Now update the running state
                     try:
                         self.identifyIfRunningState()
-                        _LOGGER.warning(f"{self.deviceName}: Running state updated to {self.isRunning} after {entity_id} changed to {new_state_value}")
+                        _LOGGER.debug(f"{self.deviceName}: Running state updated to {self.isRunning} after {entity_id} changed to {new_state_value}")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Error updating running state: {e}")
                 
@@ -1037,7 +1056,7 @@ class Device:
     async def changeMinMaxValues(self,newValue):
         if self.isDimmable:
             
-            _LOGGER.warning(f"{self.deviceName}:as Type:{self.deviceType} NewValue: {newValue}")
+            _LOGGER.debug(f"{self.deviceName}:as Type:{self.deviceType} NewValue: {newValue}")
     
             if self.deviceType == "Light":
                 if self.isDimmable:
