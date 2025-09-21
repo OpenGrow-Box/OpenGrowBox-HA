@@ -505,16 +505,16 @@ class Device:
                 # Light einschalten
                 elif self.deviceType == "Light":
                     if self.isDimmable:
-                        if self.islightON :
+                        if self.voltageFromNumber and self.islightON:
                             await self.hass.services.async_call(
                                 domain="switch",
                                 service="turn_on",
                                 service_data={"entity_id": entity_id},
                             )
+                            await self.set_value(float(brightness_pct/10))
                             self.isRunning = True
-                            _LOGGER.warning(f"{self.deviceName}: light changed to  {float(brightness_pct/10)}.")
-                            await self.set_value(float(brightness_pct/10)) # Send in Percent % 
-                            return   
+                            _LOGGER.debug(f"{self.deviceName}: Light ON (via Number).")
+                            return
                         else:
                             await self.hass.services.async_call(
                                 domain="light",
@@ -525,7 +525,7 @@ class Device:
                                 },
                             )
                             self.isRunning = True
-                            _LOGGER.warning(f"{self.deviceName}: Light ON ({brightness_pct}%).")
+                            _LOGGER.debug(f"{self.deviceName}: Light ON ({brightness_pct}%).")
                             return
                     else:
                         await self.hass.services.async_call(
