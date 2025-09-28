@@ -540,17 +540,28 @@ class Device:
                 # Exhaust einschalten
                 elif self.deviceType == "Exhaust":
                     if self.isTasmota:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_on",
-                            service_data={
-                                "entity_id": entity_id,
-                                "brightness_pct": brightness_pct,
-                            },
-                        )
-                        self.isRunning = True
-                        _LOGGER.debug(f"{self.deviceName}: Exhaust ON ({brightness_pct}%).")
-                        return
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON ({brightness_pct}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON (Switch).")
+                            return
+
                     elif self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
@@ -576,16 +587,27 @@ class Device:
                 # Intake einschalten
                 elif self.deviceType == "Intake":
                     if self.isTasmota:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_on",
-                            service_data={
-                                "entity_id": entity_id,
-                                "brightness_pct": brightness_pct,
-                            },
-                        )
-                        self.isRunning = True
-                        return
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON ({brightness_pct}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON (Switch).")
+                            return
                     elif self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
