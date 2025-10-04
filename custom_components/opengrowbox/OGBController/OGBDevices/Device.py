@@ -281,6 +281,10 @@ class Device:
                 elif option_value == "off" or option_value == "Off":
                     self.isRunning = False
                     return
+                elif option_value == "Schedule":
+                    self.isRunning = False
+                    logging.warning("AC-INFINTY RUNNING OVER OWN CONTROLLER")
+                    return
                 elif option_value in (None, "unknown", "Unbekannt", "unavailable"):
                     raise ValueError(f"Invalid Entity state '{option_value}' for {self.deviceName}")
                 else:
@@ -424,15 +428,14 @@ class Device:
 
                 for entity_id in entity_ids:
                     logging.error(f"{self.deviceName} ON ACTION with ID {entity_id}")
-                    if self.isRunning == False:
-                        await self.hass.services.async_call(
-                            domain="select",
-                            service="select_option",
-                            service_data={
-                                "entity_id": entity_id,
-                                "option": "On"
-                            },
-                        )
+                    await self.hass.services.async_call(
+                        domain="select",
+                        service="select_option",
+                        service_data={
+                            "entity_id": entity_id,
+                            "option": "On"
+                        },
+                    )
                     # Zusatzaktionen je nach Gerätetyp
                     if self.deviceType in ["Light", "Humidifier", "Deumidifier", "Exhaust", "Intake", "Ventilation"]:
                         # Bei AcInfinity wird oft ein Prozentwert extra gesetzt

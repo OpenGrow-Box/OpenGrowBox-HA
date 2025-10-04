@@ -53,6 +53,9 @@ class OGBPremManager:
 
     def _setup_event_listeners(self):
         """Setup Home Assistant event listeners."""
+        
+        self.hass.bus.async_listen("ogb_premium_devlogin", self._on_prem_dev_login)
+        
         self.hass.bus.async_listen("ogb_premium_login", self._on_prem_login)
         self.hass.bus.async_listen("ogb_premium_logout", self._on_prem_logout)
         self.hass.bus.async_listen("ogb_premium_get_profile", self._get_user_profile)
@@ -230,7 +233,7 @@ class OGBPremManager:
     # Authentication
     # =================================================================
 
-    async def _on_prem_login(self, event):
+    async def _on_prem_dev_login(self,event):
         """Enhanced login handler using integrated client"""
         try:
             if self.room != event.data.get("room"):
@@ -239,16 +242,16 @@ class OGBPremManager:
             # Set premium selected FIRST
             self.is_main_auth_room = True
             self.is_premium_selected = True
-            requestingRoom = event.data.get("room")
+            user_id = event.data.get("user_id")
             email = event.data.get("email")
-            password = event.data.get("password")
+            OGBToken = event.data.get("OGBToken")
+
             event_id = event.data.get("event_id")
-
-            _LOGGER.debug(f"🔐 {self.room} Premium login attempt for: {email}")
-
-            success = await self.ogb_ws.login_and_connect(
+            _LOGGER.warning(f" {self.room} Premium OGB DEV login started")
+            success = await self.ogb_ws._perform_dev_login(
+                user_id=user_id,
                 email=email,
-                password=password,
+                OGBToken=OGBToken,
                 room_id=self.room_id,
                 room_name=self.room,
                 event_id=event_id,
@@ -263,6 +266,46 @@ class OGBPremManager:
                 self.is_premium = user_info["is_premium"]
                 self.is_logged_in = user_info["is_logged_in"]
                 
+            else:
+                # Reset premium selected on failure
+                self.is_premium_selected = False
+                _LOGGER.error(f"❌ {self.room} Premium login failed")
+
+        except Exception as e:
+            self.is_premium_selected = False  # Reset on error
+            _LOGGER.error(f"❌ {self.room} Premium login error: {e}")    
+
+
+    async def _on_prem_login(self, event):
+        """Enhanced login handler using integrated client"""
+        try:
+            if self.room != event.data.get("room"):
+                return
+
+            # Set premium selected FIRST
+            self.is_main_auth_room = True
+            self.is_premium_selected = True
+            email = event.data.get("email")
+            OGBToken = event.data.get("OGBToken")
+            event_id = event.data.get("event_id")
+
+            success = await self.ogb_ws.login_and_connect(
+                email=email,
+                OGBToken=OGBToken,
+                room_id=self.room_id,
+                room_name=self.room,
+                event_id=event_id,
+                auth_callback=self._send_auth_response
+            )
+
+            if success:
+                # Store additional data
+                user_info = self.ogb_ws.get_user_info()
+                self.subscription_data = user_info["subscription_data"]
+                self.user_id = user_info["user_id"]
+                self.is_premium = user_info["is_premium"]
+                self.is_logged_in = user_info["is_logged_in"]
+
                 _LOGGER.info(f"✅ {self.room} Premium login and connection successful")
                 
                 # Update main control

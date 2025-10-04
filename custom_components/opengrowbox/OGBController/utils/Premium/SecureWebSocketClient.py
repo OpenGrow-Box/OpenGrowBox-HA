@@ -20,6 +20,7 @@ class OGBWebSocketConManager:
         self.base_url = f"{self._validate_url(base_url)}/ws"
         self.api_url = base_url.replace('ws://', 'http://').replace('wss://', 'https://')
         self.login_url = f"{self.api_url}/api/auth/login"
+        self.dev_login_url = f"{self.api_url}/api/auth/devlogin"
         self.timeout = timeout
         self.ogbevents = eventManager
         self.ws_room = ws_room
@@ -99,7 +100,7 @@ class OGBWebSocketConManager:
     async def login_and_connect(
         self,
         email: str,
-        password: str,
+        OGBToken: str,
         room_id: str,
         room_name: str,
         event_id: str = None,
@@ -108,12 +109,12 @@ class OGBWebSocketConManager:
         """Login und sichere Verbindung in einem Schritt"""
         try:
             async with self._connection_lock:
-                if not email or not password:
-                    await self._send_auth_response(event_id, "error", "Email and password required")
+                if not email or not OGBToken:
+                    await self._send_auth_response(event_id, "error", "Email and OGB-token required")
                     return False
 
                 # Step 1: Login
-                if not await self._perform_login(email, password, room_id, room_name, event_id):
+                if not await self._perform_login(email, OGBToken, room_id, room_name, event_id):
                     if auth_callback:
                         await auth_callback(event_id, "error", "Login failed")
                     return False
@@ -147,12 +148,12 @@ class OGBWebSocketConManager:
                 await auth_callback(event_id, "error", f" {self.ws_room} Connection error: {str(e)}")
             return False
 
-    async def _perform_login(self, email: str, password: str, room_id: str, room_name: str, event_id: str) -> bool:
+    async def _perform_login(self, email: str, OGBToken: str, room_id: str, room_name: str, event_id: str) -> bool:
         """Perform login and send user-facing error messages if something goes wrong."""
         try:
             login_data = {
                 "email": email,
-                "password": password,
+                "OGBToken": OGBToken,
                 "room_id": room_id,
                 "room_name": room_name,
                 "event_id": event_id,
@@ -199,6 +200,7 @@ class OGBWebSocketConManager:
                         await self._send_auth_response(event_id, "error", result.get('message', 'Login failed'))
                         return False
 
+                    logging.error(result)
                     # Store login data
                     self._user_id = result.get("user_id")
                     self._session_id = result.get("session_id")
@@ -243,8 +245,8 @@ class OGBWebSocketConManager:
                     
                     await self._send_auth_response(event_id, "success", "LoginSuccess", {
                         "currentPlan": self.subscription_data.get("plan_name"),
-                        "is_premium": self.is_premium,
-                        "subscription_data": self.subscription_data,
+                        "is_premium": self.is_premium ,
+                        "subscription_data": self.subscription_data ,
                         "ogb_sessions": self.ogb_sessions,
                         "ogb_max_sessions": self.ogb_max_sessions,
                     })
@@ -262,6 +264,104 @@ class OGBWebSocketConManager:
             logging.error(f"❌ {self.ws_room} Login error: {e}")
             await self._send_auth_response(event_id, "error", "Unexpected server error during login")
             return False
+  
+    async def _perform_dev_login(self, user_id: str, email: str, OGBToken: str, room_id: str, room_name: str, event_id: str,auth_callback: Optional[Callable] = None) -> bool:
+        """Perform login and send user-facing error messages if something goes wrong."""
+        try:
+            login_data = {
+                "user_id": user_id,
+                "email": email,
+                "ogbaccesstoken": OGBToken,  # ✅ Angepasst an API-Erwartung
+            }
+            logging.warning(f"{self.ws_room} Premium OGB DEV login Data {login_data}")
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "OGB-Python-Client/1.0",
+                "Accept": "application/json",
+                "origin": "https://opengrowbox.net",
+                "ogb-client": "ogb-ws-ha-connector 1.0",
+                "ogb-client-id": self.client_id,
+            }
+
+            logging.warning(f"🔄 {self.ws_room} Attempting login for: {email}")
+
+            timeout_config = aiohttp.ClientTimeout(total=15)
+
+            async with aiohttp.ClientSession(timeout=timeout_config) as session:
+                async with session.post(
+                    self.dev_login_url,
+                    json=login_data,
+                    headers=headers
+                ) as response:
+
+                    response_text = await response.text()
+                    logging.debug(f"📥 {self.ws_room} Login response: {response.status}")
+
+                    # Handle HTTP errors (400, 403, etc.)
+                    if response.status == 400:
+                        logging.error(f"❌ {self.ws_room} Login failed: Missing required fields")
+                        await self._send_auth_response(event_id, "error", "Missing required fields")
+                        return False
+                    
+                    if response.status == 403:
+                        try:
+                            result = json.loads(response_text)
+                            message = result.get("message", "Access denied")
+                            await self._send_auth_response(event_id, "error", message, {
+                                "access": False,
+                                "releaseDate": result.get("releaseDate"),
+                                "version": result.get("version")
+                            })
+                        except json.JSONDecodeError:
+                            await self._send_auth_response(event_id, "error", "Access denied")
+                        return False
+
+                    if response.status != 200:
+                        logging.error(f"❌ {self.ws_room} Login HTTP error: {response.status}")
+                        await self._send_auth_response(event_id, "error", f"Login failed (HTTP {response.status})")
+                        return False
+
+                    # Parse successful response
+                    try:
+                        result = json.loads(response_text)
+                    except json.JSONDecodeError as e:
+                        logging.error(f"❌ {self.ws_room} Invalid JSON response: {e}")
+                        await self._send_auth_response(event_id, "error", "Server returned invalid response")
+                        return False
+
+                    # ✅ API gibt direkt access, message, releaseDate, version zurück
+                    if not result.get("access"):
+                        logging.error(f"❌ {self.ws_room} Access denied: {result.get('message')}")
+                        await self._send_auth_response(event_id, "error", result.get("message", "Access denied"))
+                        return False
+
+                    logging.warning(f"DEV LOGIN SUCCESS ✅ - {result}")
+
+                    # ✅ Erfolgreiche Antwort mit den tatsächlichen API-Daten
+                    if auth_callback:
+                        await auth_callback(event_id,  "success", "DevLoginSuccess", {
+                        "access": result.get("access"),
+                        "message": result.get("message"),
+                        "version": result.get("version")
+                    })
+
+                    await self.ogbevents.emit(
+                        "LogForClient",
+                        f"Dev Tester Welcome - you got Validated.",
+                        haEvent=True
+                    )
+                    return True
+
+
+        except aiohttp.ClientError as e:
+            logging.error(f"❌ {self.ws_room} Network error during login: {e}")
+            await self._send_auth_response(event_id, "error", "Network error during login")
+            return False
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Login error: {e}")
+            await self._send_auth_response(event_id, "error", "Unexpected server error during login")
+            return False
+  
      
     async def _connect_websocket(self) -> bool:
         """Verbinde WebSocket mit Session-Authentifizierung"""
@@ -604,9 +704,9 @@ class OGBWebSocketConManager:
             logging.warning(f"Manual session rotation initiated for {self.ws_room}: {data}")
 
         ## Token Refresh
-        @self.sio.event
-        async def token_refresh_required(data):
-            await self._refresh_access_token()
+        # @self.sio.event
+        # async def token_refresh_required(data):
+        #     await self._refresh_access_token()
         
         @self.sio.event
         async def token_refresh_success(data):
