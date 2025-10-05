@@ -200,7 +200,6 @@ class OGBWebSocketConManager:
                         await self._send_auth_response(event_id, "error", result.get('message', 'Login failed'))
                         return False
 
-                    logging.error(result)
                     # Store login data
                     self._user_id = result.get("user_id")
                     self._session_id = result.get("session_id")
@@ -334,8 +333,6 @@ class OGBWebSocketConManager:
                         logging.error(f"❌ {self.ws_room} Access denied: {result.get('message')}")
                         await self._send_auth_response(event_id, "error", result.get("message", "Access denied"))
                         return False
-
-                    logging.warning(f"DEV LOGIN SUCCESS ✅ - {result}")
 
                     # ✅ Erfolgreiche Antwort mit den tatsächlichen API-Daten
                     if auth_callback:
@@ -803,11 +800,6 @@ class OGBWebSocketConManager:
             error_msg = data.get('error', 'Unknown token refresh error')
             logging.error(f"❌ {self.ws_room} Token refresh failed: {error_msg}")
             
-            await self.ogbevents.emit(
-                "LogForClient",
-                f"Token refresh failed for {self.ws_room}: {error_msg}. Please re-login.",
-                haEvent=True
-            )
 
         @self.sio.event
         async def message_error(data):

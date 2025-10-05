@@ -191,7 +191,7 @@ class OGBPremManager:
             event_id = event.data.get("event_id")
             
             if not self.is_logged_in or not self.is_premium:
-                await self._send_auth_response(event_id, "error", "Not authenticated")
+                #await self._send_auth_response(event_id, "error", "Not authenticated")
                 return
             
             connection_info = self.ogb_ws.get_connection_info()
@@ -274,7 +274,6 @@ class OGBPremManager:
         except Exception as e:
             self.is_premium_selected = False  # Reset on error
             _LOGGER.error(f"❌ {self.room} Premium login error: {e}")    
-
 
     async def _on_prem_login(self, event):
         """Enhanced login handler using integrated client"""
@@ -369,6 +368,8 @@ class OGBPremManager:
 
     async def _handle_authenticated(self, event):
         """Handle authentication event from other rooms"""
+        
+       
         try:
             if self.room == "Ambient":
                 return
@@ -461,6 +462,11 @@ class OGBPremManager:
     # =================================================================
    
     async def _send_growdata_to_prem_api(self,event):
+        
+        if not self.is_premium and not self.is_logged_in:
+            #await self._send_auth_response(event_id, "error", "Not authenticated")
+            return
+        
         mainControl = self.dataStore.get("mainControl")
         if mainControl != "Premium": return
 
@@ -508,7 +514,7 @@ class OGBPremManager:
             return
 
         if not self.is_premium and not self.is_logged_in:
-            await self._send_auth_response(event_id, "error", "Not authenticated")
+            #await self._send_auth_response(event_id, "error", "Not authenticated")
             return
 
         await self._get_prem_grow_plans(event)
@@ -537,6 +543,11 @@ class OGBPremManager:
             await self._send_auth_response(event_id, "success", "GrowPlan Added", self.growPlanManager.grow_plans)
      
     async def _ui_grow_plan_add_request(self,event):
+
+        if not self.is_premium and not self.is_logged_in:
+            #await self._send_auth_response(event_id, "error", "Not authenticated")
+            return
+
         raw_plan = event.data.get("growPlan")
         event_id = event.data.get("event_id")
         
@@ -569,6 +580,10 @@ class OGBPremManager:
     async def _ui_grow_plan_del_request(self,event):
         pass
         """Handle get profile event from frontend."""
+        if not self.is_premium and not self.is_logged_in:
+            #await self._send_auth_response(event_id, "error", "Not authenticated")
+            return 
+ 
         _LOGGER.warning(f"Hanlde GrowPlan Delete Request From UI: {event}")
         
         mainControl = self.dataStore.get("mainControl")
@@ -606,7 +621,11 @@ class OGBPremManager:
 
     async def _ui_grow_plan_activation(self,event):
         """Handle get profile event from frontend."""
-      
+
+        if not self.is_premium and not self.is_logged_in:
+            #await self._send_auth_response(event_id, "error", "Not authenticated")
+            return
+        
         requestingRoom = event.data.get("requestingRoom")     
       
         if not self.is_logged_in or not self.is_premium:
@@ -636,7 +655,9 @@ class OGBPremManager:
    
     async def _handle_ctrl_change(self, data):
         _LOGGER.debug(f"CTRL Change from API : {self.room} ------ {data}")
-
+        if not self.is_premium and not self.is_logged_in:
+            #await self._send_auth_response(event_id, "error", "Not authenticated")
+            return
         if isinstance(data, str):
             # String = TentMode only
             await self._change_ctrl_values(tentmode=data)
@@ -854,6 +875,7 @@ class OGBPremManager:
     # =================================================================
 
     async def _save_request(self,event):
+
         if self.is_main_auth_room == False:
             return
         logging.warning(f"{self.room} Saving New State after Rotation")
