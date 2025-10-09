@@ -240,18 +240,18 @@ class OGBPremManager:
                 return
 
             # Set premium selected FIRST
-            self.is_main_auth_room = True
-            self.is_premium_selected = True
-            user_id = event.data.get("user_id")
+            #self.is_main_auth_room = True
+            #self.is_premium_selected = True
             email = event.data.get("email")
-            OGBToken = event.data.get("OGBToken")
+            ogbAccessToken = event.data.get("ogbAccessToken")
+            ogbBetaToken = event.data.get("ogbBetaToken")
 
             event_id = event.data.get("event_id")
             _LOGGER.warning(f" {self.room} Premium OGB DEV login started")
             success = await self.ogb_ws._perform_dev_login(
-                user_id=user_id,
                 email=email,
-                OGBToken=OGBToken,
+                ogbAccessToken=ogbAccessToken,
+                ogbBetaToken=ogbBetaToken,
                 room_id=self.room_id,
                 room_name=self.room,
                 event_id=event_id,
@@ -825,11 +825,11 @@ class OGBPremManager:
         tent_control = f"select.ogb_tentmode_{self.room.lower()}"
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
-        ctrl_options = [ "PID Control", "MCP Control"]
+        ctrl_options = [ "PID Control", "MPC Control"]
         dry_options = []
 
         current_tent_mode = self.dataStore.get("tentMode")
-        invalid_modes = ["PID Control", "MCP Control"]
+        invalid_modes = ["PID Control", "MPC Control"]
 
         if not self.is_premium and not self.is_logged_in:
             for entity_id, options in [

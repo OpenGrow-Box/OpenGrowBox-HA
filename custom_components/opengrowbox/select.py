@@ -265,7 +265,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             """Handle the remove options service."""
             entity_id = call.data.get("entity_id")
             options_to_remove = call.data.get("options")
-            invalid_modes = ["AI Control", "MCP Control", "PID Control", "OGB Control"]
+            invalid_modes = ["AI Control", "MPC Control", "PID Control", "OGB Control"]
             fallback_option = "VPD-Perfection"
             found = False
 

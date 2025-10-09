@@ -40,7 +40,7 @@ class OGBActionManager:
         self.eventManager.on("FineTune_vpd", self.fineTune_action)
 
         self.eventManager.on("PIDActions",self.PIDActions)    
-        self.eventManager.on("MCPActions",self.MCPActions)
+        self.eventManager.on("MPCActions",self.MPCActions)
         
         # Water Events
         self.eventManager.on("PumpAction", self.PumpAction) 
@@ -513,7 +513,7 @@ class OGBActionManager:
         
         await self.eventManager.emit("SaveState",True)   
 
-    async def MCPActions(self, premActions):
+    async def MPCActions(self, premActions):
         actionData = premActions.get("actionData")
         _LOGGER.warning(f"{self.room}: Start PID Actions Handling with data {actionData}")
         # Gruppiere nach Gerät um Konflikte zu erkennen

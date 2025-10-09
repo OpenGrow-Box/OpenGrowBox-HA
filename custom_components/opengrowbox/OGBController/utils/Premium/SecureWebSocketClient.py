@@ -264,13 +264,13 @@ class OGBWebSocketConManager:
             await self._send_auth_response(event_id, "error", "Unexpected server error during login")
             return False
   
-    async def _perform_dev_login(self, user_id: str, email: str, OGBToken: str, room_id: str, room_name: str, event_id: str,auth_callback: Optional[Callable] = None) -> bool:
+    async def _perform_dev_login(self,email: str, ogbAccessToken: str,  ogbBetaToken: str, room_id: str, room_name: str, event_id: str,auth_callback: Optional[Callable] = None) -> bool:
         """Perform login and send user-facing error messages if something goes wrong."""
         try:
             login_data = {
-                "user_id": user_id,
                 "email": email,
-                "ogbaccesstoken": OGBToken,  # ✅ Angepasst an API-Erwartung
+                "ogbAccessToken": ogbAccessToken,
+                "ogbBetaToken": ogbBetaToken, 
             }
             logging.warning(f"{self.ws_room} Premium OGB DEV login Data {login_data}")
             headers = {

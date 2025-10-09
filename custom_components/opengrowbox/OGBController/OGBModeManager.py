@@ -59,7 +59,7 @@ class OGBModeManager:
             await self.handle_targeted_vpd()
         elif tentMode == "Drying":
             await self.handle_drying()
-        elif tentMode == "MCP Control":
+        elif tentMode == "MPC Control":
             await self.handle_premium_modes(False)
         elif tentMode == "PID Control":
             await self.handle_premium_modes(False)
@@ -151,8 +151,8 @@ class OGBModeManager:
         controllerType = data.get("controllerType")
         if controllerType == "PID":
             await self.eventManager.emit("PIDActions",data)
-        if controllerType == "MCP":
-            await self.eventManager.emit("MCPActions",data)
+        if controllerType == "MPC":
+            await self.eventManager.emit("MPCActions",data)
         if controllerType == "AI":
             await self.eventManager.emit("AIActions",data)
         return
