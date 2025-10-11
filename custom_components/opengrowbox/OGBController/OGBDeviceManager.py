@@ -52,12 +52,18 @@ class OGBDeviceManager:
 
     async def addDevice(self,device):
         """Gerät aus eigener Geräteliste hinzufügen."""
-                      
+        logging.error(f"DEVICE:{device}")              
         deviceName = device["name"]
         deviceData = device["entities"]
+        deviceLabels = device["labels"]
+        
 
-
-        identified_device = await self.identify_device(deviceName, deviceData)
+        deviceLabelIdent = self.dataStore.get("DeviceLabelIdent")        
+        
+        if deviceLabelIdent == True:
+            identified_device = await self.identify_device(deviceName, deviceData,deviceLabels)
+        else:
+            identified_device = await self.identify_device(deviceName, deviceData)
                       
         if not identified_device:
             _LOGGER.error(f"Failed to identify device: {deviceName}")
@@ -123,32 +129,61 @@ class OGBDeviceManager:
 
         return True
 
-    async def identify_device(self, device_name, device_data):
-        """Gerät anhand des Namens und Typs identifizieren."""
+    async def identify_device(self, device_name, device_data, device_labels=None):
+        """
+        Gerät anhand von Namen, Labels und Typzuordnung identifizieren.
+        Wenn Labels vorhanden sind, werden sie bevorzugt zur Geräteerkennung genutzt.
+        """
         device_type_mapping = {
-            "Sensor": ["ogb","sensor", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179","govee","ens160","tasmota"],
+            "Sensor": ["ogb", "sensor", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179", "govee", "ens160", "tasmota"],
             "Exhaust": ["exhaust", "abluft"],
             "Intake": ["intake", "zuluft"],
             "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet"],
             "Dehumidifier": ["dehumidifier", "entfeuchter"],
-            "Humidifier": ["humidifier","befeuchter"],
+            "Humidifier": ["humidifier", "befeuchter"],
             "Heater": ["heater", "heizung"],
             "Cooler": ["cooler", "kuehler"],
             "Climate": ["climate", "klima"],
             "Light": ["light", "lamp", "led"],
-            "C02": ["co2", "carbon"],
-            "Pump":["pump"],
+            "CO2": ["co2", "carbon"],
+            "Pump": ["pump"],
             "Switch": ["generic", "switch"],
         }
 
-        for device_type, keywords in device_type_mapping.items():
-            if any(keyword in device_name.lower() for keyword in keywords):
-                DeviceClass = self.get_device_class(device_type)
-                return DeviceClass(device_name,device_data,self.eventManager,self.dataStore,device_type,self.room, self.hass)
+        # 🏷️ Schritt 1: Labels prüfen
+        label_matches = []
+        if device_labels:
+            for lbl in device_labels:
+                label_name = lbl.get("name", "").lower()
+                if not label_name:
+                    continue
+                for device_type, keywords in device_type_mapping.items():
+                    if any(keyword in label_name for keyword in keywords):
+                        label_matches.append(device_type)
 
-        _LOGGER.error(f"Device {device_name} not recognized, returning unknown device. check this data {device_data} and the DeviceName see on WIKI")
-        return False 
-        #Device(device_name, "unknown", self.eventManager,self.dataStore, "UNKOWN",self.room, self.hass)
+        # Falls mehrere Labels passen → das häufigste nehmen
+        detected_type = None
+        if label_matches:
+            from collections import Counter
+            detected_type = Counter(label_matches).most_common(1)[0][0]
+            _LOGGER.debug(f"Device '{device_name}' identified via label as {detected_type}")
+
+        # 🧠 Schritt 2: Wenn kein Label passt, Name prüfen
+        if not detected_type:
+            for device_type, keywords in device_type_mapping.items():
+                if any(keyword in device_name.lower() for keyword in keywords):
+                    detected_type = device_type
+                    _LOGGER.debug(f"Device '{device_name}' identified via name as {detected_type}")
+                    break
+
+        # 🪫 Fallback
+        if not detected_type:
+            _LOGGER.warning(f"Device '{device_name}' could not be identified. Returning generic Device.")
+            return Device(device_name, device_data, self.eventManager, self.dataStore, "UNKNOWN", self.room, self.hass)
+
+        # 🧩 Schritt 3: Device-Klasse instanziieren
+        DeviceClass = self.get_device_class(detected_type)
+        return DeviceClass(device_name, device_data, self.eventManager, self.dataStore, detected_type, self.room, self.hass)
 
     def get_device_class(self, device_type):
         """Geräteklasse erhalten."""

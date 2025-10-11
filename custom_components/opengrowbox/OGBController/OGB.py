@@ -452,6 +452,8 @@ class OpenGrowBox:
             f"ogb_ventilation_duty_max_{self.room.lower()}": self._device_MinMax_setter,
                                     
             # Device Selects
+            f"ogb_device_labelident_{self.room.lower()}": self._device_from_label,
+                                    
 
             #WorkMode
             f"ogb_workmode_{self.room.lower()}": self._update_WrokMode_control,
@@ -1395,6 +1397,18 @@ class OpenGrowBox:
         if current_value != value:
             _LOGGER.info(f"{self.room}: Update CO2 Control to {value}")
             self.dataStore.setDeep("controlOptions.co2Control", self._stringToBool(value))
+           
+    ## Device Label
+    async def _device_from_label(self,data):
+        """
+        Update OGB CO2 Control 
+        """
+        value = data.newState[0]
+        current_value = self._stringToBool(self.dataStore.getDeep("DeviceLabelIdent"))
+        if current_value != value:
+            _LOGGER.info(f"{self.room}: Update Device Label Ident Set {value}")
+            self.dataStore.setDeep("DeviceLabelIdent", self._stringToBool(value))   
+           
            
     async def _update_co2Target_value(self,data):
         """

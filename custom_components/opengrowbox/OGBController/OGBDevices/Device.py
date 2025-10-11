@@ -187,7 +187,7 @@ class Device:
                     _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.voltageFromNumber = True
                     
-                if any(x in entityPlatform for x in ["esphome", "tasmota", "shelly", "tuya"]):
+                if any(x in entityPlatform for x in ["tasmota", "shelly", "tuya"]):
                     _LOGGER.debug(f"FOUND ESP-HOME Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.isSpecialDevice = True
 

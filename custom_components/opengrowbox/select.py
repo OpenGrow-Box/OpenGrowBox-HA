@@ -213,6 +213,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     options=["Own-Plan","Automatic","Disabled"], initial_value="Disabled"),
 
         ##DEVICES
+        CustomSelect(f"OGB_Device_LabelIdent_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
+        
         CustomSelect(f"OGB_Ventilation_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_Light_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),

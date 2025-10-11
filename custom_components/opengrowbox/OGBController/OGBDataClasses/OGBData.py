@@ -24,6 +24,7 @@ class OGBConf:
     mainControl: str = ""
     growAreaM2: int = 0.0
     notifyControl: str = "Disabled"
+    DeviceLabelIdent: bool = False
     Hydro: Dict[str, Any] = field(default_factory=lambda: {
         "Active": False,
         "Cycle": False,
