@@ -50,21 +50,21 @@ class OGBDeviceManager:
         
         await self.addDevice(device)   
 
-    async def addDevice(self,device):
+    async def addDevice(self, device):
         """Gerät aus eigener Geräteliste hinzufügen."""
-        logging.error(f"DEVICE:{device}")              
-        deviceName = device["name"]
-        deviceData = device["entities"]
-        deviceLabels = device["labels"]
+        logging.error(f"DEVICE:{device}")
         
-
+        deviceName = device.get("name", "unknown_device")
+        deviceData = device.get("entities", [])
+        deviceLabels = device.get("labels", [])
+        
         deviceLabelIdent = self.dataStore.get("DeviceLabelIdent")        
         
-        if deviceLabelIdent == True:
-            identified_device = await self.identify_device(deviceName, deviceData,deviceLabels)
+        if deviceLabelIdent:  # Vereinfacht (True-Check nicht nötig)
+            identified_device = await self.identify_device(deviceName, deviceData, deviceLabels)
         else:
             identified_device = await self.identify_device(deviceName, deviceData)
-                      
+        
         if not identified_device:
             _LOGGER.error(f"Failed to identify device: {deviceName}")
             return
