@@ -25,6 +25,17 @@ class FeedParameterType(Enum):
     NUT_Y_ML = "Nut_Y_ml"
     NUT_PH_ML = "Nut_PH_ml"
 
+class PumpType(Enum):
+    """Feed pump types with their Home Assistant entity IDs"""
+    NUTRIENT_A = "switch.feedpump_a"      # Veg nutrient
+    NUTRIENT_B = "switch.feedpump_b"      # Flower nutrient
+    NUTRIENT_C = "switch.feedpump_c"      # Micro nutrient
+    WATER = "switch.feedpump_w"           # Water pump
+    CUSTOM_X = "switch.feedpump_x"        # Custom - free use
+    CUSTOM_Y = "switch.feedpump_y"        # Custom - free use
+    PH_DOWN = "switch.feedpump_pp"        # pH minus (pH-)
+    PH_UP = "switch.feedpump_pm"          # pH plus (pH+)
+
 @dataclass
 class PlantStageConfig:
     vpdRange: list[float]
@@ -39,6 +50,13 @@ class FeedConfig:
     ec_target: float = 1.2
     nutrients: Dict[str, float] = field(default_factory=dict)
 
+@dataclass
+class PumpConfig:
+    """Configuration for pump dosing"""
+    ml_per_second: float = 1.0  # Flow rate in ml/s
+    min_dose_ml: float = 0.5    # Minimum dose
+    max_dose_ml: float = 50.0   # Maximum dose per action
+
 class OGBFeedManager:
     def __init__(self, hass, dataStore, eventManager, room: str):
         self.name = "OGB Feed Manager"
@@ -50,30 +68,57 @@ class OGBFeedManager:
         
         # Feed Mode
         self.feed_mode = FeedMode.DISABLED
-        self.current_plant_stage = "EarlyVeg"  # Default stage
+        self.current_plant_stage = "EarlyVeg"
         
         # Plant stages configuration
-        self.plantStages: Dict[str, PlantStageConfig] = {
-            "Germination": PlantStageConfig([0.412, 0.70], 20, 24, 65, 80),
-            "Clones": PlantStageConfig([0.412, 0.65], 20, 24, 65, 80),
-            "EarlyVeg": PlantStageConfig([0.65, 0.80], 20, 26, 55, 70),
-            "MidVeg": PlantStageConfig([0.80, 1.0], 20, 27, 55, 65),
-            "LateVeg": PlantStageConfig([1.05, 1.1], 20, 27, 55, 65),
-            "EarlyFlower": PlantStageConfig([1.0, 1.25], 22, 26, 50, 65),
-            "MidFlower": PlantStageConfig([1.1, 1.35], 22, 25, 45, 60),
-            "LateFlower": PlantStageConfig([1.2, 1.65], 20, 24, 40, 55),
-        }
+        self.plantStages = self.dataStore.get("plantStages")
+        
+        # Pump configurations
+        self.pump_config = PumpConfig()
+        self.pump_states: Dict[str, bool] = {pump.value: False for pump in PumpType}
         
         # Automatic mode feed configs per stage
         self.automaticFeedConfigs: Dict[str, FeedConfig] = {
-            "Germination": FeedConfig(ph_target=6.2, ec_target=0.6, nutrients={"A": 0.5, "B": 0.5}),
-            "Clones": FeedConfig(ph_target=6.0, ec_target=0.8, nutrients={"A": 1.0, "B": 1.0}),
-            "EarlyVeg": FeedConfig(ph_target=5.8, ec_target=1.2, nutrients={"A": 2.0, "B": 2.0, "C": 1.0}),
-            "MidVeg": FeedConfig(ph_target=5.8, ec_target=1.6, nutrients={"A": 3.0, "B": 3.0, "C": 2.0}),
-            "LateVeg": FeedConfig(ph_target=5.8, ec_target=1.8, nutrients={"A": 3.5, "B": 3.5, "C": 2.5}),
-            "EarlyFlower": FeedConfig(ph_target=6.0, ec_target=2.0, nutrients={"A": 2.0, "B": 4.0, "C": 3.0}),
-            "MidFlower": FeedConfig(ph_target=6.0, ec_target=2.2, nutrients={"A": 1.5, "B": 5.0, "C": 4.0}),
-            "LateFlower": FeedConfig(ph_target=6.2, ec_target=1.8, nutrients={"A": 1.0, "B": 3.0, "C": 2.0}),
+            "Germination": FeedConfig(
+                ph_target=6.2, 
+                ec_target=0.6, 
+                nutrients={"A": 0.5, "B": 0.5, "C": 0.3}
+            ),
+            "Clones": FeedConfig(
+                ph_target=6.0, 
+                ec_target=0.8, 
+                nutrients={"A": 1.0, "B": 1.0, "C": 0.5}
+            ),
+            "EarlyVeg": FeedConfig(
+                ph_target=5.8, 
+                ec_target=1.2, 
+                nutrients={"A": 2.0, "B": 1.0, "C": 1.0}  # More A for veg
+            ),
+            "MidVeg": FeedConfig(
+                ph_target=5.8, 
+                ec_target=1.6, 
+                nutrients={"A": 3.0, "B": 1.5, "C": 2.0}
+            ),
+            "LateVeg": FeedConfig(
+                ph_target=5.8, 
+                ec_target=1.8, 
+                nutrients={"A": 3.5, "B": 2.0, "C": 2.5}
+            ),
+            "EarlyFlower": FeedConfig(
+                ph_target=6.0, 
+                ec_target=2.0, 
+                nutrients={"A": 2.0, "B": 4.0, "C": 3.0}  # More B for flower
+            ),
+            "MidFlower": FeedConfig(
+                ph_target=6.0, 
+                ec_target=2.2, 
+                nutrients={"A": 1.5, "B": 5.0, "C": 4.0}
+            ),
+            "LateFlower": FeedConfig(
+                ph_target=6.2, 
+                ec_target=1.8, 
+                nutrients={"A": 1.0, "B": 3.0, "C": 2.0}
+            ),
         }
         
         # Target parameters
@@ -98,8 +143,11 @@ class OGBFeedManager:
         # Rate limiting and sensor settling
         self.last_pump_action: Dict[str, datetime] = {}
         self.min_interval_between_actions: timedelta = timedelta(seconds=30)
-        self.sensor_settle_time: timedelta = timedelta(seconds=60)
+        self.sensor_settle_time: timedelta = timedelta(seconds=90)  # Increased for better accuracy
         self.last_action_time: Optional[datetime] = None
+        
+        # Dosing calculation
+        self.reservoir_volume_liters: float = 100.0  # Default reservoir size
         
         # Register event handlers
         self.eventManager.on("LogValidation", self._handleLogForClient)
@@ -108,15 +156,65 @@ class OGBFeedManager:
         self.eventManager.on("FeedModeChange", self._feed_mode_change)
         self.eventManager.on("FeedModeValueChange", self._feed_mode_targets_change)
         self.eventManager.on("PlantStageChange", self._plant_stage_change)
+        self.eventManager.on("PumpStateChange", self._on_pump_state_change)
                 
         asyncio.create_task(self.init())
 
     async def init(self):
         """Initialize the feed manager with validation"""
         self.is_initialized = True
-        # Load current plant stage from dataStore
+        
+        # Load current plant stage
         self.current_plant_stage = self.dataStore.getDeep("Plant.CurrentStage") or "EarlyVeg"
-        _LOGGER.info(f"[{self.room}] OGB Feed Manager initialized successfully")
+        
+        # Load reservoir volume
+        self.reservoir_volume_liters = self.dataStore.getDeep("Feed.ReservoirVolume") or 100.0
+        
+        # Initialize pump states from Home Assistant
+        await self._sync_pump_states()
+        
+        _LOGGER.info(f"[{self.room}] OGB Feed Manager initialized - Reservoir: {self.reservoir_volume_liters}L")
+
+    async def _sync_pump_states(self):
+        """Sync pump states with Home Assistant"""
+        try:
+            for pump in PumpType:
+                entity_id = pump.value
+                state = self.hass.states.get(entity_id)
+                if state:
+                    self.pump_states[entity_id] = state.state == "on"
+                    _LOGGER.debug(f"[{self.room}] Pump {entity_id}: {self.pump_states[entity_id]}")
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error syncing pump states: {e}")
+
+    async def _on_pump_state_change(self, data: Dict[str, Any]):
+        """Handle pump state changes from Home Assistant"""
+        try:
+            entity_id = data.get("entity_id")
+            new_state = data.get("new_state") == "on"
+            
+            if entity_id in self.pump_states:
+                old_state = self.pump_states[entity_id]
+                self.pump_states[entity_id] = new_state
+                
+                if old_state != new_state:
+                    state_str = "ON" if new_state else "OFF"
+                    _LOGGER.info(f"[{self.room}] Pump {entity_id} changed to {state_str}")
+                    
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error handling pump state change: {e}")
+
+    def _calculate_dose_time(self, ml_amount: float) -> float:
+        """Calculate pump run time in seconds for desired ml amount"""
+        if ml_amount < self.pump_config.min_dose_ml:
+            return 0.0
+        
+        ml_amount = min(ml_amount, self.pump_config.max_dose_ml)
+        return ml_amount / self.pump_config.ml_per_second
+
+    def _calculate_nutrient_dose(self, nutrient_ml_per_liter: float) -> float:
+        """Calculate actual ml dose based on reservoir volume"""
+        return nutrient_ml_per_liter * self.reservoir_volume_liters
 
     async def _plant_stage_change(self, new_stage: str):
         """Handle plant stage changes"""
@@ -143,18 +241,18 @@ class OGBFeedManager:
         self.target_ec = feed_config.ec_target
         self.nutrients = feed_config.nutrients.copy()
         
-        # Update dataStore with automatic values
+        # Update dataStore
         self.dataStore.setDeep("Feed.PH_Target", self.target_ph)
         self.dataStore.setDeep("Feed.EC_Target", self.target_ec)
         
         for nutrient, amount in self.nutrients.items():
             self.dataStore.setDeep(f"Feed.Nut_{nutrient}_ml", amount)
         
-        _LOGGER.info(f"[{self.room}] Updated automatic targets for stage {self.current_plant_stage}: "
+        _LOGGER.info(f"[{self.room}] Auto targets for {self.current_plant_stage}: "
                     f"pH={self.target_ph}, EC={self.target_ec}, Nutrients={self.nutrients}")
 
     async def _feed_mode_change(self, feedMode: str):
-        """Check current Feed mode"""
+        """Handle feed mode changes"""
         controlOption = self.dataStore.get("mainControl")        
         if controlOption not in ["HomeAssistant", "Premium"]:
             return False
@@ -175,21 +273,17 @@ class OGBFeedManager:
         _LOGGER.info(f"[{self.room}] Feed mode changed to: {feedMode}")
 
     async def _handle_automatic_mode(self):
-        """Handle automatic feed mode - uses predefined values based on plant stage"""
+        """Handle automatic feed mode"""
         await self._update_automatic_targets()
-        await self._emit_vpd_targets()
         
-        # Start automatic monitoring
         if self.is_initialized:
             await self._apply_feeding()
 
     async def _handle_own_plan_mode(self):
-        """Handle own plan mode - uses user-defined min/max values"""
-        # Load user-defined targets from dataStore
+        """Handle own plan mode"""
         self.target_ph = self.dataStore.getDeep("Feed.PH_Target") or 6.0
         self.target_ec = self.dataStore.getDeep("Feed.EC_Target") or 1.2
         
-        # Load nutrient settings
         self.nutrients = {
             "A": self.dataStore.getDeep("Feed.Nut_A_ml") or 0.0,
             "B": self.dataStore.getDeep("Feed.Nut_B_ml") or 0.0,
@@ -200,29 +294,25 @@ class OGBFeedManager:
             "PH": self.dataStore.getDeep("Feed.Nut_PH_ml") or 0.0,
         }
         
-        # Emit VPD targets based on current stage
-        await self._emit_vpd_targets()
-        
-        _LOGGER.info(f"[{self.room}] Own plan mode activated with pH={self.target_ph}, "
+        _LOGGER.info(f"[{self.room}] Own plan mode: pH={self.target_ph}, "
                     f"EC={self.target_ec}, Nutrients={self.nutrients}")
 
     async def _handle_disabled_mode(self):
-        """Handle disabled mode - no automatic feeding"""
+        """Handle disabled mode"""
         self.target_ph = 0.0
         self.target_ec = 0.0
         self.nutrients = {}
         _LOGGER.info(f"[{self.room}] Feed mode disabled")
 
     async def _feed_mode_targets_change(self, data):
-        """Handle changes to feed mode values with type detection"""
+        """Handle changes to feed parameters"""
         if not isinstance(data, dict) or 'type' not in data or 'value' not in data:
-            _LOGGER.error(f"[{self.room}] Invalid feed mode value change data: {data}")
+            _LOGGER.error(f"[{self.room}] Invalid feed data: {data}")
             return
         
         param_type = data['type']
         new_value = data['value']
 
-        # Mapping von kurzen Strings auf FeedParameterType
         mapper = {
             "ec_target": FeedParameterType.EC_TARGET,
             "ph_target": FeedParameterType.PH_TARGET,
@@ -236,14 +326,12 @@ class OGBFeedManager:
         }
         
         try:
-            # String in Enum umwandeln
             if isinstance(param_type, str):
                 param_type = mapper.get(param_type)
                 if not param_type:
-                    _LOGGER.error(f"[{self.room}] Unknown feed parameter type: {data['type']}")
+                    _LOGGER.error(f"[{self.room}] Unknown parameter: {data['type']}")
                     return
             
-            # Handle different parameter types
             if param_type == FeedParameterType.EC_TARGET:
                 await self._update_feed_parameter("EC_Target", float(new_value))
                 self.target_ec = float(new_value)
@@ -258,116 +346,30 @@ class OGBFeedManager:
                 FeedParameterType.NUT_X_ML, FeedParameterType.NUT_Y_ML,
                 FeedParameterType.NUT_PH_ML
             ]:
-                nutrient_key = param_type.value.split('_')[1]  # Extract A, B, C, etc.
+                nutrient_key = param_type.value.split('_')[1]
                 await self._update_feed_parameter(param_type.value, float(new_value))
                 self.nutrients[nutrient_key] = float(new_value)
             
-            # Nur anwenden, wenn im OWN_PLAN Modus
             if self.feed_mode == FeedMode.OWN_PLAN and self.is_initialized:
                 await self._apply_feeding()
                 
         except (ValueError, KeyError) as e:
-            _LOGGER.error(f"[{self.room}] Error processing feed parameter change: {e}")
+            _LOGGER.error(f"[{self.room}] Error processing parameter: {e}")
 
     async def _update_feed_parameter(self, parameter: str, value: float):
-        """Update a feed parameter in dataStore"""
+        """Update feed parameter in dataStore"""
         current_value = self.dataStore.getDeep(f"Feed.{parameter}")
         
         if current_value != value:
             self.dataStore.setDeep(f"Feed.{parameter}", value)
             _LOGGER.info(f"[{self.room}] Updated {parameter}: {current_value} -> {value}")
 
-    # Updated setter methods with type information
-    async def _update_feed_mode(self, data):
-        """Update OGB Feed Modes"""
-        controlOption = self.dataStore.get("mainControl")        
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return
-        
-        value = data.newState[0]
-        await self._feed_mode_change(value)
-
-    async def _update_feed_ec_target(self, data):
-        """Update Hydro Feed EC"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.EC_TARGET,
-            'value': new_value
-        })
-
-    async def _update_feed_ph_target(self, data):
-        """Update Feed PH Target"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.PH_TARGET,
-            'value': new_value
-        })
-
-    async def _update_feed_nut_a_ml(self, data):
-        """Update Nutrient A ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_A_ML,
-            'value': new_value
-        })
-
-    async def _update_feed_nut_b_ml(self, data):
-        """Update Nutrient B ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_B_ML,
-            'value': new_value
-        })
-            
-    async def _update_feed_nut_c_ml(self, data):
-        """Update Nutrient C ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_C_ML,
-            'value': new_value
-        })
-
-    async def _update_feed_nut_w_ml(self, data):
-        """Update Nutrient W ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_W_ML,
-            'value': new_value
-        })
-
-    async def _update_feed_nut_x_ml(self, data):
-        """Update Nutrient X ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_X_ML,
-            'value': new_value
-        })
-            
-    async def _update_feed_nut_y_ml(self, data):
-        """Update Nutrient Y ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_Y_ML,
-            'value': new_value
-        })
-
-    async def _update_feed_nut_ph_ml(self, data):
-        """Update PH Nutrient ml"""
-        new_value = float(data.newState[0])
-        await self._feed_mode_targets_change({
-            'type': FeedParameterType.NUT_PH_ML,
-            'value': new_value
-        })
-
-    # Rest of the original methods remain the same...
     async def _check_if_feed_need(self, payload):
-        """Handle incoming hydro values and check if feeding is needed"""
+        """Handle incoming hydro sensor values"""
         try:
-            # Only process if feeding is enabled
             if self.feed_mode == FeedMode.DISABLED:
                 return
                 
-            # Update current measurements
             self.current_ec = float(getattr(payload, 'ecCurrent', 0.0) or 0.0)
             self.current_tds = float(getattr(payload, 'tdsCurrent', 0.0) or 0.0)
             self.current_ph = float(getattr(payload, 'phCurrent', 0.0) or 0.0)
@@ -375,176 +377,180 @@ class OGBFeedManager:
             self.current_oxi = float(getattr(payload, 'oxiCurrent', 0.0) or 0.0)
             self.current_sal = float(getattr(payload, 'salCurrent', 0.0) or 0.0)
 
-            _LOGGER.info(f"[{self.room}] Incoming Hydro values: pH={self.current_ph:.2f}, "
-                        f"EC={self.current_ec:.2f}, TDS={self.current_tds:.2f}, "
-                        f"TEMP={self.current_temp:.2f}, OXI={self.current_oxi:.2f}, "
-                        f"SAL={self.current_sal:.2f}")
+            _LOGGER.info(f"[{self.room}] Hydro values: pH={self.current_ph:.2f}, "
+                        f"EC={self.current_ec:.2f}, Temp={self.current_temp:.2f}°C")
 
-            # Check if feeding is needed
             await self._check_ranges_and_feed()
 
         except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error processing hydro values: {str(e)}")
+            _LOGGER.error(f"[{self.room}] Error processing hydro values: {e}")
 
     async def _check_ranges_and_feed(self):
-        """Check if current values are within tolerances and trigger actions if needed"""
+        """Check values and trigger dosing if needed"""
         try:
             if self.feed_mode == FeedMode.DISABLED:
                 return
                 
-            # Check if enough time has passed since last action
             current_time = datetime.now()
             if self.last_action_time and (current_time - self.last_action_time) < self.sensor_settle_time:
-                _LOGGER.debug(f"[{self.room}] Waiting for sensor settle time")
+                _LOGGER.debug(f"[{self.room}] Waiting for sensor settle")
                 return
 
-            # pH check
-            if self.current_ph is not None and self.target_ph > 0:
+            # pH adjustment (always first priority)
+            if self.current_ph > 0 and self.target_ph > 0:
                 ph_diff = self.current_ph - self.target_ph
-                if abs(ph_diff) > self.ph_toleration:
-                    action = "pH_up_pump" if ph_diff < 0 else "pH_down_pump"
-                    _LOGGER.warning(f"[{self.room}] pH out of range ({self.current_ph:.2f} vs target {self.target_ph:.2f}), "
-                                  f"triggering {action}")
-                    if await self.feed_action(action):
+                
+                if ph_diff > self.ph_toleration:
+                    # pH too high, need pH down
+                    _LOGGER.warning(f"[{self.room}] pH too high ({self.current_ph:.2f} > {self.target_ph:.2f})")
+                    if await self._dose_ph_down():
+                        self.last_action_time = current_time
+                        return
+                        
+                elif ph_diff < -self.ph_toleration:
+                    # pH too low, need pH up
+                    _LOGGER.warning(f"[{self.room}] pH too low ({self.current_ph:.2f} < {self.target_ph:.2f})")
+                    if await self._dose_ph_up():
                         self.last_action_time = current_time
                         return
 
-            # EC check
-            if self.current_ec is not None and self.target_ec > 0:
+            # EC adjustment (second priority)
+            if self.current_ec > 0 and self.target_ec > 0:
                 ec_diff = self.current_ec - self.target_ec
-                if abs(ec_diff) > self.ec_toleration:
-                    if ec_diff < 0:
-                        _LOGGER.warning(f"[{self.room}] EC too low ({self.current_ec:.2f} vs target {self.target_ec:.2f}), "
-                                      f"dosing nutrients")
-                        if await self.feed_action("ec_up_pump"):
-                            self.last_action_time = current_time
-                            return
+                
+                if ec_diff < -self.ec_toleration:
+                    # EC too low, add nutrients
+                    _LOGGER.warning(f"[{self.room}] EC too low ({self.current_ec:.2f} < {self.target_ec:.2f})")
+                    if await self._dose_nutrients():
+                        self.last_action_time = current_time
+                        return
 
         except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error in range check: {str(e)}")
+            _LOGGER.error(f"[{self.room}] Error in range check: {e}")
+
+    async def _dose_ph_down(self) -> bool:
+        """Dose pH down solution"""
+        try:
+            # Small incremental dose to avoid overshooting
+            dose_ml = 5.0
+            run_time = self._calculate_dose_time(dose_ml)
+            
+            if run_time > 0:
+                return await self._activate_pump(PumpType.PH_DOWN, run_time, dose_ml)
+                
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing pH down: {e}")
+        return False
+
+    async def _dose_ph_up(self) -> bool:
+        """Dose pH up solution"""
+        try:
+            dose_ml = 5.0
+            run_time = self._calculate_dose_time(dose_ml)
+            
+            if run_time > 0:
+                return await self._activate_pump(PumpType.PH_UP, run_time, dose_ml)
+                
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing pH up: {e}")
+        return False
+
+    async def _dose_nutrients(self) -> bool:
+        """Dose nutrients based on current stage and targets"""
+        try:
+            # Dose in order: A, B, C with delays between
+            for nutrient in ["A", "B", "C"]:
+                if nutrient in self.nutrients and self.nutrients[nutrient] > 0:
+                    ml_per_liter = self.nutrients[nutrient]
+                    total_ml = self._calculate_nutrient_dose(ml_per_liter)
+                    
+                    if total_ml > 0:
+                        pump_type = getattr(PumpType, f"NUTRIENT_{nutrient}")
+                        run_time = self._calculate_dose_time(total_ml)
+                        
+                        if await self._activate_pump(pump_type, run_time, total_ml):
+                            # Wait between nutrients
+                            await asyncio.sleep(5)
+                            
+            return True
+                    
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing nutrients: {e}")
+        return False
+
+    async def _activate_pump(self, pump_type: PumpType, run_time: float, dose_ml: float) -> bool:
+        """Activate a pump for specified time"""
+        try:
+            entity_id = pump_type.value
+            
+            # Check rate limiting
+            last_action = self.last_pump_action.get(entity_id)
+            if last_action and (datetime.now() - last_action) < self.min_interval_between_actions:
+                _LOGGER.warning(f"[{self.room}] Pump {entity_id} rate limited")
+                return False
+
+            _LOGGER.info(f"[{self.room}] Activating {pump_type.name}: {dose_ml:.1f}ml for {run_time:.1f}s")
+            
+            # Turn on pump
+            await self.hass.services.async_call(
+                "switch", "turn_on",
+                {"entity_id": entity_id}
+            )
+            
+            # Log action
+            waterAction = OGBWaterAction(
+                Name=self.room,
+                Device=pump_type.name,
+                Cycle=dose_ml,
+                Action="on",
+                Message=f"Dosing {dose_ml:.1f}ml"
+            )
+            await self.eventManager.emit("LogForClient", waterAction, haEvent=True)
+            
+            # Wait for dose time
+            await asyncio.sleep(run_time)
+            
+            # Turn off pump
+            await self.hass.services.async_call(
+                "switch", "turn_off",
+                {"entity_id": entity_id}
+            )
+            
+            self.last_pump_action[entity_id] = datetime.now()
+            return True
+            
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error activating pump {pump_type.name}: {e}")
+            return False
 
     async def _on_feed_update(self, payload):
-        """Handle new feed target values"""
+        """Handle feed target updates"""
         try:
             if self.feed_mode == FeedMode.DISABLED:
                 return
                 
-            # Update target values with validation
             self.target_ph = float(payload.get("ph", self.target_ph))
             self.target_ec = float(payload.get("ec", self.target_ec))
             self.target_temp = float(payload.get("temp", self.target_temp))
             self.target_oxi = float(payload.get("oxi", self.target_oxi))
             self.nutrients = payload.get("nutrients", self.nutrients)
 
-            _LOGGER.info(f"[{self.room}] New Feed targets: pH={self.target_ph:.2f}, "
-                        f"EC={self.target_ec:.2f}, TEMP={self.target_temp:.2f}, "
-                        f"OXI={self.target_oxi:.2f}, Nutrients={self.nutrients}")
+            _LOGGER.info(f"[{self.room}] New targets: pH={self.target_ph:.2f}, "
+                        f"EC={self.target_ec:.2f}")
 
             if self.is_initialized:
                 await self._apply_feeding()
 
         except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error processing feed update: {str(e)}")
+            _LOGGER.error(f"[{self.room}] Error processing feed update: {e}")
 
     async def _apply_feeding(self):
-        """Apply dosing based on target values"""
-        try:
-            if self.feed_mode == FeedMode.DISABLED:
-                return
-                
-            # Check if enough time has passed since last action
-            current_time = datetime.now()
-            if self.last_action_time and (current_time - self.last_action_time) < self.sensor_settle_time:
-                return
-
-            # pH adjustment
-            current_ph = self.dataStore.get_value(f"OGB_HydroCurrentPH_{self.room}")
-            if current_ph is not None and self.target_ph > 0:
-                ph_diff = current_ph - self.target_ph
-                if abs(ph_diff) > self.ph_toleration:
-                    action = "pH_up_pump" if ph_diff < 0 else "pH_down_pump"
-                    if await self.feed_action(action):
-                        self.last_action_time = current_time
-                        return
-
-            # EC adjustment
-            current_ec = self.dataStore.get_value(f"OGB_HydroCurrentEC_{self.room}")
-            if current_ec is not None and self.target_ec > 0:
-                if current_ec < self.target_ec - self.ec_toleration:
-                    if await self.feed_action("ec_up_pump"):
-                        self.last_action_time = current_time
-                        return
-
-            # Nutrient dosing
-            for nutrient, amount in self.nutrients.items():
-                if amount > 0:
-                    if await self.feed_action(f"nutrient_{nutrient.lower()}", cycle=amount):
-                        self.last_action_time = current_time
-                        return
-
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error applying feeding: {str(e)}")
-
-    async def feed_action(self, device_id: str, action: str = "on", cycle: float = 1.0) -> bool:
-        """Execute a pump action with rate limiting"""
-        try:
-            # Check rate limiting
-            last_action_time = self.last_pump_action.get(device_id)
-            current_time = datetime.now()
-            
-            if last_action_time and (current_time - last_action_time) < self.min_interval_between_actions:
-                _LOGGER.warning(f"[{self.room}] Pump action for {device_id} rate limited")
-                return False
-
-            pump_action = {
-                "Device": device_id,
-                "Action": action,
-                "Cycle": float(cycle),
-            }
-            _LOGGER.warning(f"[{self.room}] FeedAction: {pump_action}")
-            
-            await self.PumpAction(pump_action)
-            self.last_pump_action[device_id] = current_time
-            return True
-
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error in feed action for {device_id}: {str(e)}")
-            return False
-
-    async def PumpAction(self, pumpAction):
-        """Execute pump action and emit events"""
-        try:
-            if isinstance(pumpAction, dict):
-                dev = pumpAction.get("Device", "<unknown>")
-                action = pumpAction.get("Action", "off")
-                cycle = float(pumpAction.get("Cycle", 1.0))
-            else:
-                dev = pumpAction.Device
-                action = pumpAction.Action
-                cycle = float(pumpAction.Cycle)
-
-            message = "Start Pump" if action == "on" else "Stop Pump"
-            waterAction = OGBWaterAction(
-                Name=self.room,
-                Device=dev,
-                Cycle=cycle,
-                Action=action,
-                Message=message
-            )
-
-            await self.eventManager.emit("LogForClient", waterAction, haEvent=True)
-
-            if action == "on":
-                await self.eventManager.emit("Increase Pump", pumpAction)
-            elif action == "off":
-                await self.eventManager.emit("Reduce Pump", pumpAction)
-
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error in PumpAction: {str(e)}")
+        """Apply feeding logic"""
+        await self._check_ranges_and_feed()
 
     def _handleLogForClient(self, data):
         """Handle logging for client"""
         try:
             _LOGGER.info(f"[{self.room}] ClientLog: {data}")
         except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error in client log handling: {str(e)}")
+            _LOGGER.error(f"[{self.room}] Error in client log: {e}")

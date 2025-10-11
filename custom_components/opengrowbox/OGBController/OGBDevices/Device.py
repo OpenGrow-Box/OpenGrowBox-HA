@@ -10,7 +10,7 @@ class Device:
         self.dataStore = dataStore
         self.deviceName = deviceName
         self.deviceType = deviceType
-        self.isTasmota = False
+        self.isSpecialDevice = False
         self.isRunning = False
         self.isDimmable = False
         self.isAcInfinDev = False
@@ -144,7 +144,7 @@ class Device:
         # Generischer Default
         self.dutyCycle = 50  
         
-        if self.isTasmota:
+        if self.isSpecialDevice:
             self.dutyCycle = 50
         elif self.isAcInfinDev:
             self.steps = 10 
@@ -169,6 +169,8 @@ class Device:
                 entityID = entity.get("entity_id")
                 entityValue = entity.get("value")
                 entityPlatform = entity.get("platform")
+                entityLabels = entity.get("labels")
+                _LOGGER.debug(f"Entity {entityID} Value:{entityValue} Labels:{entityLabels} Platform:{entityPlatform}")
                 
                 # Clear OGB Devs out
                 if "ogb_" in entityID:
@@ -185,9 +187,10 @@ class Device:
                     _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.voltageFromNumber = True
                     
-                if entityPlatform == "tasmota":
-                    _LOGGER.debug(f"FOUND Tasmota Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
-                    self.isTasmota = True
+                if any(x in entityPlatform for x in ["esphome", "tasmota", "shelly", "tuya"]):
+                    _LOGGER.debug(f"FOUND ESP-HOME Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
+                    self.isSpecialDevice = True
+
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
@@ -542,7 +545,7 @@ class Device:
 
                 # Exhaust einschalten
                 elif self.deviceType == "Exhaust":
-                    if self.isTasmota:
+                    if self.isSpecialDevice:
                         if self.isDimmable:
                             await self.hass.services.async_call(
                                 domain="light",
@@ -589,7 +592,7 @@ class Device:
 
                 # Intake einschalten
                 elif self.deviceType == "Intake":
-                    if self.isTasmota:
+                    if self.isSpecialDevice:
                         if self.isDimmable:
                             await self.hass.services.async_call(
                                 domain="light",
@@ -634,7 +637,7 @@ class Device:
 
                 # Ventilation einschalten
                 elif self.deviceType == "Ventilation":
-                    if self.isTasmota:
+                    if self.isSpecialDevice:
                         await self.hass.services.async_call(
                             domain="light",
                             service="turn_on",
@@ -847,7 +850,7 @@ class Device:
 
                 # Ventilation ausschalten
                 elif self.deviceType == "Ventilation":
-                    if self.isTasmota:
+                    if self.isSpecialDevice:
                         await self.hass.services.async_call(
                             domain="light",
                             service="turn_off",
@@ -965,7 +968,7 @@ class Device:
                     await self.turn_on(brightness_pct=self.initVoltage)
                 else:
                     self.dutyCycle = self.minDuty
-                    if self.isTasmota:
+                    if self.isSpecialDevice:
                         await self.turn_on(brightness_pct=self.minDuty)
                     await self.turn_on(percentage=self.minDuty)
             else:
@@ -987,7 +990,7 @@ class Device:
                     await self.turn_on(brightness_pct=self.maxVoltage)
                 else:
                     self.dutyCycle = self.maxDuty
-                    if self.isTasmota:
+                    if self.isSpecialDevice:
                         await self.turn_on(brightness_pct=self.maxDuty)
                     await self.turn_on(percentage=self.maxDuty)
             else:
@@ -1089,7 +1092,7 @@ class Device:
                     await self.turn_on(brightness_pct=newValue)
             else:
                 self.dutyCycle = newValue
-                if self.isTasmota:
+                if self.isSpecialDevice:
                     await self.turn_on(brightness_pct=float(newValue))
                 else:
                     await self.turn_on(percentage=newValue)

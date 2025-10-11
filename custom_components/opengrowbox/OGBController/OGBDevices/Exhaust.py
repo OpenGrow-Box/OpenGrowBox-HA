@@ -77,7 +77,7 @@ class Exhaust(Device):
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""
         if self.isDimmable:
-            if self.isTasmota:
+            if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(brightness_pct=newDuty)   
@@ -92,7 +92,7 @@ class Exhaust(Device):
     async def reduceAction(self, data):
         """Reduziert den Duty Cycle."""
         if self.isDimmable:
-            if self.isTasmota:
+            if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=False)
                 self.log_action("ReduceAction")
                 await self.turn_on(brightness_pct=newDuty)

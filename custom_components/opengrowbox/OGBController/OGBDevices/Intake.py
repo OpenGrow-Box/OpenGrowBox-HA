@@ -10,7 +10,7 @@ class Intake(Device):
         self.minDuty = 0    # Minimaler Duty Cycle
         self.maxDuty = 100    # Maximaler Duty Cycle
         self.steps = 5        # DutyCycle Steps
-        self.isTasmota = False
+        self.isSpecialDevice = False
         self.isInitialized = False
 
         if self.isAcInfinDev:
@@ -83,7 +83,7 @@ class Intake(Device):
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""
         if self.isDimmable:
-            if self.isTasmota:
+            if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(brightness_pct=newDuty)   
@@ -98,7 +98,7 @@ class Intake(Device):
     async def reduceAction(self, data):
         """Reduziert den Duty Cycle."""
         if self.isDimmable:
-            if self.isTasmota:
+            if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=False)
                 self.log_action("ReduceAction")
                 await self.turn_on(brightness_pct=newDuty)

@@ -22,7 +22,7 @@ class Ventilation(Device):
     def __repr__(self):
         return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
                 f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
-                f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' isTasmota:'{self.isTasmota}'")
+                f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' isSpecialDevice:'{self.isSpecialDevice}'")
 
     def init(self):
         """Initialisiert die Ventilation."""
@@ -79,7 +79,7 @@ class Ventilation(Device):
         """Erhöht den Duty Cycle."""
         if self.isDimmable:
             
-            if self.isTasmota:
+            if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(brightness_pct=newDuty)    
@@ -94,7 +94,7 @@ class Ventilation(Device):
     async def reduceAction(self, data):
         """Reduziert den Duty Cycle."""
         if self.isDimmable:
-            if self.isTasmota:
+            if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=False)
                 self.log_action("ReduceAction")
                 await self.turn_on(brightness_pct=newDuty)

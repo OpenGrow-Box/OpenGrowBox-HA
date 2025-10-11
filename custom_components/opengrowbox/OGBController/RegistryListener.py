@@ -4,6 +4,7 @@ import json
 from homeassistant.helpers.area_registry import async_get as async_get_area_registry
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.label_registry import async_get as async_get_label_registry
 
 from .OGBDataClasses.OGBPublications import OGBEventPublication,OGBVPDPublication
 
@@ -96,10 +97,11 @@ class OGBRegistryEvenListener:
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
         Gruppiere Entitäten basierend auf ihrem Präfix (device_name).
-        Inkludiert Platform-Information.
+        Inkludiert Platform-Information und Labels.
         """
         entity_registry = async_get_entity_registry(self.hass)
         device_registry = async_get_device_registry(self.hass)
+        label_registry = async_get_label_registry(self.hass)  # Label Registry hinzufügen
 
         # Geräte im Raum filtern
         devices_in_room = {
@@ -150,6 +152,19 @@ class OGBRegistryEvenListener:
             # Platform-Information auslesen
             platform = entity.platform if hasattr(entity, 'platform') else "unknown"
             
+            # Labels auslesen
+            labels = []
+            if hasattr(entity, 'labels') and entity.labels:
+                for label_id in entity.labels:
+                    label_entry = label_registry.labels.get(label_id)
+                    if label_entry:
+                        labels.append({
+                            "id": label_id,
+                            "name": label_entry.name,
+                            "icon": getattr(label_entry, 'icon', None),
+                            "color": getattr(label_entry, 'color', None)
+                        })
+            
             # Optional: Device-Info für zusätzliche Informationen
             device_info = devices_in_room.get(entity.device_id, {})
             device_manufacturer = getattr(device_info, 'manufacturer', 'Unknown') if device_info else 'Unknown'
@@ -161,6 +176,7 @@ class OGBRegistryEvenListener:
                 "entity_id": entity.entity_id,
                 "value": state_value,
                 "platform": platform,
+                "labels": labels,
                 "device_manufacturer": device_manufacturer,
                 "device_model": device_model,
             }
@@ -193,6 +209,7 @@ class OGBRegistryEvenListener:
                 "entity_id": result["entity_id"],
                 "value": result["value"],
                 "platform": result["platform"],
+                "labels": result["labels"],
             })
 
             # Überprüfe auf relevante Schlüsselwörter in der `entity_id`
@@ -202,12 +219,13 @@ class OGBRegistryEvenListener:
                         _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
                         continue
                     
-                    # Füge die Entität zur WorkData hinzu (mit Platform-Info)
+                    # Füge die Entität zur WorkData hinzu (mit Platform-Info und Labels)
                     workdataStore = self.dataStore.getDeep(f"workData.{key}")
                     workdataStore.append({
                         "entity_id": result["entity_id"],
                         "value": result["value"],
                         "platform": result["platform"],
+                        "labels": result["labels"],
                     })
                     _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
                     self.dataStore.setDeep(f"workData.{key}", workdataStore)
@@ -216,7 +234,6 @@ class OGBRegistryEvenListener:
         _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
         return grouped_entities_array
 
- 
     async def get_filtered_entities_with_valueForDevice(self, room_name, max_retries=5, retry_interval=1):
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
@@ -235,11 +252,6 @@ class OGBRegistryEvenListener:
         # Relevante Präfixe und Schlüsselwörter
         relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.", "humidifier.", "fan.")
         relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage", "co2",)
-        relevant_types = {
-            "temperature": "Temperature entity found",
-            "humidity": "Humidity entity found",
-            "dewpoint": "Dewpoint entity found",
-        }
         invalid_values = [None, "unknown", "unavailable", "Unbekannt"]
 
         grouped_entities_array = []
