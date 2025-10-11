@@ -372,9 +372,11 @@ class OGBRegistryEvenListener:
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
         Gruppiere Entitäten basierend auf ihrem Präfix (device_name).
+        Inkludiert Platform-Information und Labels (Entity + Device).
         """
         entity_registry = async_get_entity_registry(self.hass)
         device_registry = async_get_device_registry(self.hass)
+        label_registry = async_get_label_registry(self.hass)
 
         # Geräte im Raum filtern
         devices_in_room = {
@@ -384,8 +386,8 @@ class OGBRegistryEvenListener:
         }
         
         # Relevante Präfixe und Schlüsselwörter
-        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.", "humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage", "co2",)
+        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.", "date.", "text.", "humidifier.", "fan.")
+        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty", "_voltage", "co2")
         invalid_values = [None, "unknown", "unavailable", "Unbekannt"]
 
         grouped_entities_array = []
@@ -417,11 +419,55 @@ class OGBRegistryEvenListener:
                 _LOGGER.debug(f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping...")
                 return None
 
+            # Platform-Information
+            platform = getattr(entity, 'platform', 'unknown')
+
+            # Labels auslesen (Entity + Device)
+            labels = []
+
+            # Entity-Labels
+            if getattr(entity, 'labels', None):
+                for label_id in entity.labels:
+                    label_entry = label_registry.labels.get(label_id)
+                    if label_entry:
+                        labels.append({
+                            "id": label_id,
+                            "name": label_entry.name,
+                            "icon": getattr(label_entry, 'icon', None),
+                            "color": getattr(label_entry, 'color', None)
+                        })
+
+            # Device-Labels (für Entity)
+            device_info = devices_in_room.get(entity.device_id)
+            device_labels = []  # Sammle Device-Labels separat
+            if device_info and getattr(device_info, 'labels', None):
+                for label_id in device_info.labels:
+                    label_entry = label_registry.labels.get(label_id)
+                    if label_entry:
+                        device_label = {
+                            "id": label_id,
+                            "name": label_entry.name,
+                            "icon": getattr(label_entry, 'icon', None),
+                            "color": getattr(label_entry, 'color', None),
+                            "scope": "device"
+                        }
+                        labels.append(device_label)
+                        device_labels.append(device_label)
+
+            device_manufacturer = getattr(device_info, 'manufacturer', 'Unknown') if device_info else 'Unknown'
+            device_model = getattr(device_info, 'model', 'Unknown') if device_info else 'Unknown'
+
             # Erstelle die Gruppierung
             return {
                 "device_name": device_name,
+                "device_id": entity.device_id,
                 "entity_id": entity.entity_id,
                 "value": state_value,
+                "platform": platform,
+                "labels": labels,
+                "device_labels": device_labels,
+                "device_manufacturer": device_manufacturer,
+                "device_model": device_model,
             }
 
         # Verarbeite alle Entitäten parallel
@@ -435,12 +481,23 @@ class OGBRegistryEvenListener:
             # Gruppiere nach Gerätename
             group = next((g for g in grouped_entities_array if g["name"] == device_name), None)
             if not group:
-                group = {"name": device_name, "entities": []}
+                group = {
+                    "name": device_name,
+                    "entities": [],
+                    "platform": result["platform"],
+                    "device_info": {
+                        "manufacturer": result["device_manufacturer"],
+                        "model": result["device_model"]
+                    },
+                    "labels": result["device_labels"]  # Device-Labels auf Gruppen-Ebene
+                }
                 grouped_entities_array.append(group)
 
             group["entities"].append({
                 "entity_id": result["entity_id"],
                 "value": result["value"],
+                "platform": result["platform"],
+                "labels": result["labels"],
             })
 
         # Debug-Ausgabe der gruppierten Ergebnisse
