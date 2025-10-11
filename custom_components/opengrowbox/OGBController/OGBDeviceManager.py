@@ -52,7 +52,7 @@ class OGBDeviceManager:
 
     async def addDevice(self, device):
         """Gerät aus eigener Geräteliste hinzufügen."""
-        logging.error(f"DEVICE:{device}")
+        logging.debug(f"DEVICE:{device}")
         
         deviceName = device.get("name", "unknown_device")
         deviceData = device.get("entities", [])
@@ -166,14 +166,14 @@ class OGBDeviceManager:
         if label_matches:
             from collections import Counter
             detected_type = Counter(label_matches).most_common(1)[0][0]
-            _LOGGER.debug(f"Device '{device_name}' identified via label as {detected_type}")
+            _LOGGER.warning(f"Device '{device_name}' identified via label as {detected_type}")
 
         # 🧠 Schritt 2: Wenn kein Label passt, Name prüfen
         if not detected_type:
             for device_type, keywords in device_type_mapping.items():
                 if any(keyword in device_name.lower() for keyword in keywords):
                     detected_type = device_type
-                    _LOGGER.debug(f"Device '{device_name}' identified via name as {detected_type}")
+                    _LOGGER.warning(f"Device '{device_name}' identified via name as {detected_type}")
                     break
 
         # 🪫 Fallback
