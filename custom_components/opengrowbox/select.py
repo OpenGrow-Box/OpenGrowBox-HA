@@ -202,7 +202,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         
         ## HYDRO
         CustomSelect(f"OGB_Hydro_Mode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Hydro","Plant-Watering","OFF"], initial_value="OFF"),
+                    options=["Hydro","Plant-Watering","Crop-Steering","OFF"], initial_value="OFF"),
         CustomSelect(f"OGB_Hydro_Cycle_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["YES","NO"], initial_value="NO"),
         CustomSelect(f"OGB_Hydro_Retrive_{coordinator.room_name}", coordinator.room_name, coordinator,
