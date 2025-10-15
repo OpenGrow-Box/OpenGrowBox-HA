@@ -3,6 +3,6 @@
   "domains": ["opengrowbox"],
   "content_in_root": false,
   "homeassistant": "2024.10.1",
-  "render_readme": true,
-  "country": "global"
+  "country": "all",
+  "render_readme": true
 }
