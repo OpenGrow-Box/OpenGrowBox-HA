@@ -472,23 +472,24 @@ class OGBPremManager:
 
         # Collect grow data
         grow_data = {
+            #"devices":self.dataStore.get("devices"),
             "vpd": self.dataStore.get("vpd"),
             "tentData": self.dataStore.get("tentData"),
+            "Soil": self.dataStore.get("Soil"),
+            "Hydro": self.dataStore.get("Hydro"),
+            "growMediums":self.dataStore.get("growMediums"),
             "isLightON": self.dataStore.get("isPlantDay"),
             "devCaps": self.dataStore.get("capabilities"),
             "plantStage": self.dataStore.get("plantStage"),
             "strainName": self.dataStore.get("strainName"),
             "plantDates": self.dataStore.get("plantDates"),
             "workdata": self.dataStore.get("workData"),
-            "hydro": self.dataStore.get("Hydro"),
-            "Feed": self.dataStore.get("Feed"),
             "plantStages": self.dataStore.get("plantStages"),
             "tentMode": self.dataStore.get("tentMode"),
             "drying":self.dataStore.get("drying"),
             "previousActions":self.dataStore.get("previousActions"),
             "DeviceProfiles":self.dataStore.get("DeviceProfiles"),
             "DeviceMinMax":self.dataStore.get("DeviceMinMax"),
-            #"lightPlantStages":self.dataStore.get("lightPlantStages"),
             "controlOptions": self.dataStore.get("controlOptions"),
             "controlOptionData":self.dataStore.get("controlOptionData"),
         }     
@@ -696,7 +697,7 @@ class OGBPremManager:
                 "nightVPDHold": f"select.ogb_holdvpdnight_{self.room.lower()}",
                 "minMaxControl": f"select.ogb_minmax_control_{self.room.lower()}",
                 "ambientControl": f"select.ogb_ambientcontrol_{self.room.lower()}",
-                "ownDeviceSetup": f"select.ogb_owndevicesets_{self.room.lower()}",
+                "vpdDeviceDampening": f"ogb_vpd_devicedampening_{self.room.lower()}",
                 "vpdLightControl": f"select.ogb_vpdlightcontrol_{self.room.lower()}",
                 "lightbyOGBControl": f"select.ogb_lightcontrol_{self.room.lower()}",
             }

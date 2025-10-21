@@ -4,7 +4,7 @@ import copy
 import dataclasses
 import time
 from datetime import datetime, timedelta
-
+from .OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
 _LOGGER = logging.getLogger(__name__)
 
 from .OGBDataClasses.OGBPublications import OGBActionPublication,OGBWeightPublication,OGBHydroAction,OGBWaterAction,OGBRetrieveAction
@@ -18,19 +18,8 @@ class OGBActionManager:
         self.eventManager = eventManager
         self.isInitialized = False
     
-        self.actionHistory = {}  # {capability: {"last_action": datetime, "action_type": str, "cooldown_until": datetime}}
-        self.defaultCooldownMinutes = {
-            "canHumidify": 3,      # Befeuchter braucht Zeit
-            "canDehumidify": 4,    # Entfeuchter braucht noch mehr Zeit
-            "canHeat": 1,          # Heizung reagiert relativ schnell
-            "canCool": 2,          # Kühlung braucht etwas Zeit
-            "canExhaust": 1,       # Abluft reagiert schnell
-            "canIntake": 1,        # Zuluft reagiert schnell
-            "canVentilate": 1,     # Ventilation reagiert schnell
-            "canLight": 1,         # Licht reagiert sofort, aber VPD-Effekt braucht Zeit
-            "canCO2": 2,           # CO2 braucht Zeit zur Verteilung
-            "canClimate": 2        # Klima-System braucht Zeit
-        }
+        self.actionHistory = {}  
+        self.defaultCooldownMinutes = DEFAULT_DEVICE_COOLDOWNS
         
         self.adaptiveCooldownEnabled = True
         
@@ -46,6 +35,20 @@ class OGBActionManager:
         self.eventManager.on("PumpAction", self.PumpAction) 
         self.eventManager.on("RetrieveAction",self.RetrieveAction)
  
+        self.eventManager.on("AdjustDeviceGCD",self.adjustDeviceGCD)
+
+    async def adjustDeviceGCD(self, data):
+        logging.warning(f"{data}")
+        cap = data.get("cap")
+        minutes = data.get("minutes")
+
+        if cap in self.defaultCooldownMinutes:
+            self.defaultCooldownMinutes[cap] = minutes
+            logging.warning(f"Cooldown für {cap} auf {minutes} Minuten gesetzt. GCDS{self.defaultCooldownMinutes}")
+            
+        else:
+            logging.error(f"Unbekannte Cap: {cap}")
+
     def _isActionAllowed(self, capability, action, deviation=0):
         """Prüft ob eine Aktion erlaubt ist basierend auf Cooldown"""
         now = datetime.now()

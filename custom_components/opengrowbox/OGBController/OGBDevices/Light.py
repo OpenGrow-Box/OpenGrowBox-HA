@@ -6,8 +6,8 @@ from ..OGBDataClasses.OGBPublications import OGBLightAction
 _LOGGER = logging.getLogger(__name__)
 
 class Light(Device):
-    def __init__(self, deviceName, deviceData, eventManager, dataStore, deviceType, inRoom, hass=None):
-        super().__init__(deviceName, deviceData, eventManager, dataStore, deviceType, inRoom, hass)
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
         self.voltage = 0
         self.initVoltage = 20
         self.minVoltage = None

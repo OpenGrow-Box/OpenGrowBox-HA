@@ -4,9 +4,8 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 class Ventilation(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
-        _LOGGER.info(f"{self.deviceName}: Initialisiertes Gerät vom Typ: {self.deviceType}")
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
         self.dutyCycle = 0  
         self.minDuty = 10    
         self.maxDuty = 100
@@ -35,8 +34,6 @@ class Ventilation(Device):
             
             self.isInitialized = True
 
-
-
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
 
@@ -59,10 +56,13 @@ class Ventilation(Device):
         """
         if not self.isDimmable:
             _LOGGER.warning(f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Gerät nicht dimmbar ist.")
-            return self.dutyCycle
+            return float(self.dutyCycle) 
 
+        # Konvertiere dutyCycle zu float für Berechnungen
+        current_duty = float(self.dutyCycle)
+        
         # Berechne neuen Wert basierend auf Schrittweite
-        new_duty_cycle = self.dutyCycle + self.steps if increase else self.dutyCycle - self.steps
+        new_duty_cycle = current_duty + self.steps if increase else current_duty - self.steps
         
         # Begrenze den neuen Duty Cycle auf erlaubte Werte
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
@@ -71,9 +71,7 @@ class Ventilation(Device):
         self.dutyCycle = clamped_duty_cycle
 
         _LOGGER.info(f"{self.deviceName}: Duty Cycle auf {self.dutyCycle}% geändert.")
-        return self.dutyCycle
-
-    # Actions
+        return float(self.dutyCycle) 
 
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""

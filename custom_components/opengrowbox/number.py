@@ -3,7 +3,6 @@ from homeassistant.helpers.restore_state import RestoreEntity
 import logging
 from .const import DOMAIN
 import voluptuous as vol
-
 _LOGGER = logging.getLogger(__name__)
 
 class CustomNumber(NumberEntity,RestoreEntity):
@@ -101,9 +100,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     min_value=0.0, max_value=25, step=0.1, unit="%", initial_value=0.1),
         
         CustomNumber(f"OGB_TemperatureWeight_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     min_value=00.0, max_value=2.0, step=0.1, unit="X", initial_value=1.0),
+                     min_value=0.0, max_value=2.0, step=0.05, unit="X", initial_value=1.0),
         CustomNumber(f"OGB_HumidityWeight_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     min_value=0.0, max_value=2.0, step=0.1, unit="X", initial_value=1.0),
+                     min_value=0.0, max_value=2.0, step=0.05, unit="X", initial_value=1.0),
         
         ##Temp/Hum Min/MAX
         CustomNumber(f"OGB_MinTemp_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -134,7 +133,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomNumber(f"OGB_PlantFoodIntervall_{coordinator.room_name}", coordinator.room_name, coordinator,
                      min_value=0, max_value=60000, step=1, unit="minutes", initial_value=60),           
 
-        
         # Hydro Watering 
         CustomNumber(f"OGB_HydroPumpDuration_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0.0, max_value=300, step=1, unit="Sec", initial_value=0),
@@ -145,7 +143,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomNumber(f"OGB_HydroRetriveIntervall_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=1440, step=1, unit="Min", initial_value=0),
 
-        # Hydro Watering         
+        # Hydro Tank Feed         
         CustomNumber(f"OGB_Feed_PH_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0.0, max_value=8, step=0.1, unit="ph", initial_value=0),        
         CustomNumber(f"OGB_Feed_EC_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -168,6 +166,108 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     min_value=0, max_value=50, step=1, unit="%", initial_value=0), 
         CustomNumber(f"OGB_Feed_Tolerance_EC_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=50, step=1, unit="%", initial_value=0), 
+
+        # Crop Steering
+        CustomNumber(f"OGB_CropSteering_P0_Shot_Duration_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="sec", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P0_Shot_Intervall_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="min", initial_value=0),      
+        CustomNumber(f"OGB_CropSteering_P0_Shot_Sum_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=30, step=1, unit="x", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P0_EC_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P0_EC_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),         
+        CustomNumber(f"OGB_CropSteering_P0_Moisture_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=100, step=1, unit="%", initial_value=0),   
+        CustomNumber(f"OGB_CropSteering_P0_MinMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P0_MaxMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P0_MaxEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P0_MinEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P0_VWC_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P0_VWC_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+
+        CustomNumber(f"OGB_CropSteering_P1_Shot_Duration_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="sec", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P1_Shot_Intervall_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="min", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P1_Shot_Sum_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=30, step=1, unit="x", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P1_EC_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P1_EC_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),         
+        CustomNumber(f"OGB_CropSteering_P1_Moisture_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=100, step=1, unit="%", initial_value=0),   
+        CustomNumber(f"OGB_CropSteering_P1_MinMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P1_MaxMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P1_MaxEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P1_MinEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P1_VWC_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P1_VWC_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+
+        CustomNumber(f"OGB_CropSteering_P2_Shot_Duration_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="sec", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P2_Shot_Intervall_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="min", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P2_Shot_Sum_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=30, step=1, unit="x", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P2_EC_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P2_EC_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),         
+        CustomNumber(f"OGB_CropSteering_P2_Moisture_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=100, step=1, unit="%", initial_value=0),   
+        CustomNumber(f"OGB_CropSteering_P2_MinMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P2_MaxMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P2_MaxEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P2_MinEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),        
+        CustomNumber(f"OGB_CropSteering_P2_VWC_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P2_VWC_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+    
+
+        CustomNumber(f"OGB_CropSteering_P3_Shot_Duration_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="sec", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P3_Shot_Intervall_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=300, step=1, unit="min", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P3_Shot_Sum_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=30, step=1, unit="x", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P3_EC_Target_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P3_EC_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=15, step=1, unit="ec", initial_value=0),         
+        CustomNumber(f"OGB_CropSteering_P3_Moisture_DryBack_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=1, max_value=100, step=1, unit="%", initial_value=0),   
+        CustomNumber(f"OGB_CropSteering_P3_MinMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P3_MaxMoisture_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0, max_value=100, step=1, unit="%", initial_value=0),  
+        CustomNumber(f"OGB_CropSteering_P3_MaxEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+        CustomNumber(f"OGB_CropSteering_P3_MinEC_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=15, step=0.1, unit="ec", initial_value=0),    
+         CustomNumber(f"OGB_CropSteering_P3_VWC_Max_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
+        CustomNumber(f"OGB_CropSteering_P3_VWC_Min_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=0.0, max_value=100, step=0.1, unit="%", initial_value=0),
 
 
         # Exhaust MinMax
@@ -197,6 +297,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         # Area
         CustomNumber(f"OGB_Grow_Area_M2_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0, max_value=5, step=0.01, unit="m²", initial_value=0),   
+        
     ]
 
     if "numbers" not in hass.data[DOMAIN]:

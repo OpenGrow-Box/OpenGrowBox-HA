@@ -10,6 +10,8 @@ from .OGBDataClasses.OGBPublications import OGBEventPublication,OGBVPDPublicatio
 
 from .utils.lightTimeHelpers import update_light_state
 
+from .OGBParams.OGBParams import RELEVANT_PREFIXES, RELEVANT_KEYWORDS, RELEVANT_TYPES,INVALID_VALUES
+
 _LOGGER = logging.getLogger(__name__)
 
 class OGBRegistryEvenListener:
@@ -93,130 +95,6 @@ class OGBRegistryEvenListener:
         # Rückgabe der `entity_id`s als Set
         return set(combined_entities.keys())
 
-    async def get_filtered_entities_with_value2(self, room_name, max_retries=5, retry_interval=1):
-        """
-        Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
-        Gruppiere Entitäten basierend auf ihrem Präfix (device_name).
-        Inkludiert Platform-Information.
-        """
-        entity_registry = async_get_entity_registry(self.hass)
-        device_registry = async_get_device_registry(self.hass)
-
-        # Geräte im Raum filtern
-        devices_in_room = {
-            device.id: device
-            for device in device_registry.devices.values()
-            if device.area_id == room_name
-        }
-        
-        # Relevante Präfixe und Schlüsselwörter
-        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.","date.","text.","humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty","_voltage","_co2","_intensity")
-        relevant_types = {
-            "temperature": "Temperature entity found",
-            "humidity": "Humidity entity found",
-            "dewpoint": "Dewpoint entity found",
-        }
-        invalid_values = [None, "unknown", "unavailable", "Unbekannt"]
-
-        grouped_entities_array = []
-
-        async def process_entity(entity):
-            """Verarbeite eine einzelne Entität mit Retry-Logik."""
-            if entity.device_id not in devices_in_room:
-                return None
-
-            if not (entity.entity_id.startswith(relevant_prefixes) or
-                    any(keyword in entity.entity_id for keyword in relevant_keywords)):
-                return None
-
-            # Extrahiere den Gerätenamen aus `entity_id`
-            parts = entity.entity_id.split(".")
-            device_name = parts[1].split("_")[0] if len(parts) > 1 else "Unknown"
-
-            # Retry-Logik für den Wert
-            state_value = None
-            for attempt in range(max_retries):
-                entity_state = self.hass.states.get(entity.entity_id)
-                state_value = entity_state.state if entity_state else None
-                if state_value not in invalid_values:
-                    break
-                _LOGGER.debug(f"Value for {entity.entity_id} is invalid ({state_value}). Retrying... ({attempt + 1}/{max_retries})")
-                await asyncio.sleep(retry_interval)
-
-            if state_value in invalid_values:
-                _LOGGER.debug(f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping...")
-                return None
-
-            # Platform-Information auslesen
-            platform = entity.platform if hasattr(entity, 'platform') else "unknown"
-            
-            # Optional: Device-Info für zusätzliche Informationen
-            device_info = devices_in_room.get(entity.device_id, {})
-            device_manufacturer = getattr(device_info, 'manufacturer', 'Unknown') if device_info else 'Unknown'
-            device_model = getattr(device_info, 'model', 'Unknown') if device_info else 'Unknown'
-
-            # Erstelle die Gruppierung
-            return {
-                "device_name": device_name,
-                "entity_id": entity.entity_id,
-                "value": state_value,
-                "platform": platform,
-                "device_manufacturer": device_manufacturer,
-                "device_model": device_model,
-            }
-
-        # Verarbeite alle Entitäten parallel
-        tasks = [process_entity(entity) for entity in entity_registry.entities.values()]
-        results = await asyncio.gather(*tasks)
-
-        # Gruppiere die Ergebnisse in das Array
-        for result in filter(None, results):
-            device_name = result["device_name"]
-
-            # Gruppiere nach Gerätename
-            group = next((g for g in grouped_entities_array if g["name"] == device_name), None)
-            if not group:
-                # Erstelle eine neue Gruppe, falls nicht vorhanden
-                group = {
-                    "name": device_name, 
-                    "entities": [],
-                    "platform": result["platform"],  # Platform der ersten Entität als Gruppen-Info
-                    "device_info": {
-                        "manufacturer": result["device_manufacturer"],
-                        "model": result["device_model"]
-                    }
-                }
-                grouped_entities_array.append(group)
-
-            # Füge die Entität zur Gruppe hinzu
-            group["entities"].append({
-                "entity_id": result["entity_id"],
-                "value": result["value"],
-                "platform": result["platform"],
-            })
-
-            # Überprüfe auf relevante Schlüsselwörter in der `entity_id`
-            for key, message in relevant_types.items():
-                if key in result["entity_id"]:
-                    if "ogb_" in result["entity_id"]:
-                        _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
-                        continue
-                    
-                    # Füge die Entität zur WorkData hinzu (mit Platform-Info)
-                    workdataStore = self.dataStore.getDeep(f"workData.{key}")
-                    workdataStore.append({
-                        "entity_id": result["entity_id"],
-                        "value": result["value"],
-                        "platform": result["platform"],
-                    })
-                    _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
-                    self.dataStore.setDeep(f"workData.{key}", workdataStore)
-
-        # Debug-Ausgabe der gruppierten Ergebnisse
-        _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
-        return grouped_entities_array
-
     async def get_filtered_entities_with_value(self, room_name, max_retries=5, retry_interval=1):
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
@@ -234,15 +112,6 @@ class OGBRegistryEvenListener:
             if device.area_id == room_name
         }
 
-        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.", "date.", "text.", "humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty", "_voltage", "_co2", "_intensity")
-        relevant_types = {
-            "temperature": "Temperature entity found",
-            "humidity": "Humidity entity found",
-            "dewpoint": "Dewpoint entity found",
-        }
-        invalid_values = [None, "unknown", "unavailable", "Unbekannt"]
-
         grouped_entities_array = []
 
         async def process_entity(entity):
@@ -250,8 +119,8 @@ class OGBRegistryEvenListener:
             if entity.device_id not in devices_in_room:
                 return None
 
-            if not (entity.entity_id.startswith(relevant_prefixes) or
-                    any(keyword in entity.entity_id for keyword in relevant_keywords)):
+            if not (entity.entity_id.startswith(RELEVANT_PREFIXES) or
+                    any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)):
                 return None
 
             parts = entity.entity_id.split(".")
@@ -262,12 +131,12 @@ class OGBRegistryEvenListener:
             for attempt in range(max_retries):
                 entity_state = self.hass.states.get(entity.entity_id)
                 state_value = entity_state.state if entity_state else None
-                if state_value not in invalid_values:
+                if state_value not in INVALID_VALUES:
                     break
                 _LOGGER.debug(f"Value for {entity.entity_id} invalid ({state_value}), retry {attempt + 1}/{max_retries}")
                 await asyncio.sleep(retry_interval)
 
-            if state_value in invalid_values:
+            if state_value in INVALID_VALUES:
                 _LOGGER.debug(f"Skipping {entity.entity_id}, value invalid after retries ({state_value})")
                 return None
 
@@ -349,21 +218,21 @@ class OGBRegistryEvenListener:
                 "labels": result["labels"],
             })
 
-            for key, message in relevant_types.items():
-                if key in result["entity_id"]:
-                    if "ogb_" in result["entity_id"]:
-                        _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
-                        continue
+            #for key, message in RELEVANT_TYPES.items():
+            #    if key in result["entity_id"]:
+            #        if "ogb_" in result["entity_id"]:
+            #            _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
+            #            continue
 
-                    workdataStore = self.dataStore.getDeep(f"workData.{key}")
-                    workdataStore.append({
-                        "entity_id": result["entity_id"],
-                        "value": result["value"],
-                        "platform": result["platform"],
-                        "labels": result["labels"],
-                    })
-                    _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
-                    self.dataStore.setDeep(f"workData.{key}", workdataStore)
+            #        workdataStore = self.dataStore.getDeep(f"workData.{key}")
+                    #workdataStore.append({
+                    #    "entity_id": result["entity_id"],
+                    #    "value": result["value"],
+                    #    "platform": result["platform"],
+                    #    "labels": result["labels"],
+                    #})
+                    #_LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
+                    #self.dataStore.setDeep(f"workData.{key}", workdataStore)
 
         _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
         return grouped_entities_array
@@ -385,11 +254,6 @@ class OGBRegistryEvenListener:
             if device.area_id == room_name
         }
         
-        # Relevante Präfixe und Schlüsselwörter
-        relevant_prefixes = ("number.", "select.", "switch.", "light.", "time.", "date.", "text.", "humidifier.", "fan.")
-        relevant_keywords = ("_temperature", "_humidity", "_dewpoint", "_duty", "_voltage", "co2")
-        invalid_values = [None, "unknown", "unavailable", "Unbekannt"]
-
         grouped_entities_array = []
 
         async def process_entity(entity):
@@ -397,8 +261,8 @@ class OGBRegistryEvenListener:
             if entity.device_id not in devices_in_room:
                 return None
 
-            if not (entity.entity_id.startswith(relevant_prefixes) or
-                    any(keyword in entity.entity_id for keyword in relevant_keywords)):
+            if not (entity.entity_id.startswith(RELEVANT_PREFIXES) or
+                    any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)):
                 return None
 
             # Extrahiere den Gerätenamen aus `entity_id`
@@ -410,12 +274,12 @@ class OGBRegistryEvenListener:
             for attempt in range(max_retries):
                 entity_state = self.hass.states.get(entity.entity_id)
                 state_value = entity_state.state if entity_state else None
-                if state_value not in invalid_values:
+                if state_value not in INVALID_VALUES:
                     break
                 _LOGGER.debug(f"Value for {entity.entity_id} is invalid ({state_value}). Retrying... ({attempt + 1}/{max_retries})")
                 await asyncio.sleep(retry_interval)
 
-            if state_value in invalid_values:
+            if state_value in INVALID_VALUES:
                 _LOGGER.debug(f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping...")
                 return None
 
@@ -544,7 +408,10 @@ class OGBRegistryEvenListener:
                 )
 
                 # Gib das Event-Publication-Objekt weiter
-                await self.eventManager.emit("RoomUpdate", eventData)
+
+                await self.eventManager.emit("SensorUpdate", eventData)
+                await self.eventManager.emit("RoomUpdate", eventData)      
+                
                 # Light Shedule Check
                 #await self.eventManager.emit("LightSheduleUpdate",None)
                 

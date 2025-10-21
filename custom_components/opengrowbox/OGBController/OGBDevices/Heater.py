@@ -4,8 +4,8 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 class Heater(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
 
         ## Events Register
         self.eventManager.on("Increase Heater", self.increaseAction)

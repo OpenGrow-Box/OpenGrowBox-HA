@@ -4,8 +4,8 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 class CO2(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
         self.targetCO2 = 0  # Zielwert für CO2 (ppm)
         self.currentCO2 = 0  # Aktueller CO2-Wert (ppm)
         self.autoRegulate = False  # Automatische Steuerung

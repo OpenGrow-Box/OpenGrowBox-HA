@@ -170,16 +170,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_HoldVpdNight_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="YES"),
         CustomSelect(f"OGB_VPD_DeviceDampening_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-
+                     options=["YES", "NO"], initial_value="YES"),
+        CustomSelect(f"OGB_VPD_Determination_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["LIVE","15 Seconds", "30 Seconds","1 Minutes", "2.5 Minutes", "5 Minutes", "10 Minutes"], initial_value="LIVE"),
+        
         # Ambient
         CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["YES", "NO"], initial_value="NO"),
       
-
         ##Notifications
         CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Enabled", "Disabled"], initial_value="Disabled"),       
+                    options=["Enabled", "Disabled"], initial_value="Disabled"),
         
         #WorkMode
         CustomSelect(f"OGB_WorkMode_{coordinator.room_name}", coordinator.room_name, coordinator,
@@ -202,15 +203,28 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         
         ## HYDRO
         CustomSelect(f"OGB_Hydro_Mode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Hydro","Plant-Watering","Crop-Steering","OFF"], initial_value="OFF"),
+                    options=["Hydro","Crop-Steering","Plant-Watering","Config","Disabled"], initial_value="Disabled"),
         CustomSelect(f"OGB_Hydro_Cycle_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["YES","NO"], initial_value="NO"),
         CustomSelect(f"OGB_Hydro_Retrive_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["YES","NO"], initial_value="NO"),
-        
+
+        CustomSelect(f"OGB_Hydro_Plant_Watering_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["Intervall","Sensor-Based","Config","Disabled"], initial_value="Disabled"),
+
         ## FEED
         CustomSelect(f"OGB_Feed_Plan_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Own-Plan","Automatic","Disabled"], initial_value="Disabled"),
+                    options=["Own-Plan","Automatic","Config","Disabled"], initial_value="Disabled"),
+
+        ##CROP_Steering
+        CustomSelect(f"OGB_CropSteering_Mode_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["Automatic","Manual","Config","Disabled"], initial_value="Disabled"),
+        CustomSelect(f"OGB_CropSteering_Phases_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["P0","P1","P2","P3",], initial_value="P0"),
+
+        # LIGHT 
+        CustomSelect(f"OGB_Light_ControlType_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["DLI","GLJ","Default"], initial_value="Default"),
 
         ##DEVICES
         CustomSelect(f"OGB_Device_LabelIdent_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
