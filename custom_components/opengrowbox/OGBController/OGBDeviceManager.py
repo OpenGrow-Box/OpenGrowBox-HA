@@ -14,6 +14,9 @@ from .OGBDevices.GenericSwitch import GenericSwitch
 from .OGBDevices.Pump import Pump
 from .OGBDevices.CO2 import CO2
 from .OGBDataClasses.OGBPublications import OGBownDeviceSetup
+
+from .OGBParams.OGBParams import DEVICE_TYPE_MAPPING, CAP_MAPPING
+
 import asyncio
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,12 +40,10 @@ class OGBDeviceManager:
         """initialized Device Manager."""
         self.device_Worker()
         self.is_initialized = True
-        _LOGGER.info("OGBDeviceManager initialized with event listeners.")
+        _LOGGER.debug("OGBDeviceManager initialized with event listeners.")
 
     async def setupDevice(self,device):            
-
-        #ownDeviceSetup = self.dataStore.getDeep("controlOptions.ownDeviceSetup")
-           
+   
         controlOption = self.dataStore.get("mainControl")        
         
         if controlOption not in ["HomeAssistant", "Premium"]:
@@ -53,18 +54,45 @@ class OGBDeviceManager:
     async def addDevice(self, device):
         """Gerät aus eigener Geräteliste hinzufügen."""
         logging.debug(f"DEVICE:{device}")
-        
+
         deviceName = device.get("name", "unknown_device")
         deviceData = device.get("entities", [])
+
+        allLabels = []
         deviceLabels = device.get("labels", [])
         
-        deviceLabelIdent = self.dataStore.get("DeviceLabelIdent")        
-        
-        if deviceLabelIdent:  # Vereinfacht (True-Check nicht nötig)
-            identified_device = await self.identify_device(deviceName, deviceData, deviceLabels)
-        else:
-            identified_device = await self.identify_device(deviceName, deviceData)
-        
+        # Labels direkt am Device (ohne entity_id)
+        for lbl in deviceLabels:
+            new_lbl = {
+                "id": lbl.get("id"),
+                "name": lbl.get("name"),
+                "scope": lbl.get("scope", "device"),
+                "entity": None  # Keine direkte Entity-Zuordnung
+            }
+            allLabels.append(new_lbl)
+
+        # Labels von Entities mit Entity-Zuordnung
+        for entity in deviceData:
+            entity_id = entity.get("entity_id")
+            for lbl in entity.get("labels", []):
+                new_lbl = {
+                    "id": lbl.get("id"),
+                    "name": lbl.get("name"),
+                    "scope": lbl.get("scope", "device"),
+                    "entity": entity_id
+                }
+                allLabels.append(new_lbl)
+
+        # Duplikate entfernen (nach id + entity)
+        uniqueLabels = []
+        seen = set()
+        for lbl in allLabels:
+            key = (lbl["id"], lbl["entity"])
+            if lbl["id"] and key not in seen:
+                seen.add(key)
+                uniqueLabels.append(lbl)
+
+        identified_device = await self.identify_device(deviceName, deviceData, uniqueLabels)
         if not identified_device:
             _LOGGER.error(f"Failed to identify device: {deviceName}")
             return
@@ -74,11 +102,9 @@ class OGBDeviceManager:
         devices = self.dataStore.get("devices")
         devices.append(identified_device)
         self.dataStore.set("devices",devices)
-        _LOGGER.info(f"Added new device From List: {identified_device}")    
-                
-    
+        _LOGGER.info(f"Added new device From List: {identified_device}") 
         return identified_device
-    
+   
     async def removeDevice(self, deviceName: str):
         """Entfernt ein Gerät anhand des Gerätenamens aus der Geräteliste."""
 
@@ -88,7 +114,11 @@ class OGBDeviceManager:
         if controlOption not in ["HomeAssistant", "Premium"]:
             return False
         
-        # Gerät anhand des Namens finden
+        # Add-on Sensoren sollen nicht entfernt werden
+        if any(deviceName.endswith(suffix) for suffix in ["_humidity", "_temperature", "_dewpoint"]):
+            _LOGGER.debug(f"Skipped remove for derived sensor device: {deviceName}")
+            return False
+
         deviceToRemove = next((device for device in devices if device.deviceName == deviceName), None)
 
         if not deviceToRemove:
@@ -98,24 +128,10 @@ class OGBDeviceManager:
         devices.remove(deviceToRemove)
         self.dataStore.set("devices", devices)
 
-        _LOGGER.debug(f"Removed device: {deviceName}")
+        _LOGGER.warning(f"Removed device: {deviceName}")
 
-        # ➕ Capability-Cleanup
-        capMapping = {
-            "canHeat": ["heater"],
-            "canCool": ["cooler"],
-            "canClimate": ["climate"],
-            "canHumidify": ["humidifier"],
-            "canDehumidify": ["dehumidifier"],
-            "canVentilate": ["ventilation"],
-            "canExhaust": ["exhaust"],
-            "canIntake": ["intake"],
-            "canLight": ["light"],
-            "canCO2": ["co2"],
-            "canPump": ["pump"],
-        }
-
-        for cap, deviceTypes in capMapping.items():
+        # Capability-Mapping anpassen
+        for cap, deviceTypes in CAP_MAPPING.items():
             if deviceToRemove.deviceType.lower() in (dt.lower() for dt in deviceTypes):
                 capPath = f"capabilities.{cap}"
                 currentCap = self.dataStore.getDeep(capPath)
@@ -125,7 +141,7 @@ class OGBDeviceManager:
                     currentCap["count"] = max(0, currentCap["count"] - 1)
                     currentCap["state"] = currentCap["count"] > 0
                     self.dataStore.setDeep(capPath, currentCap)
-                    _LOGGER.debug(f"Updated capability '{cap}' after removing device {deviceToRemove.deviceName}")
+                    _LOGGER.warning(f"Updated capability '{cap}' after removing device {deviceToRemove.deviceName}")
 
         return True
 
@@ -134,56 +150,48 @@ class OGBDeviceManager:
         Gerät anhand von Namen, Labels und Typzuordnung identifizieren.
         Wenn Labels vorhanden sind, werden sie bevorzugt zur Geräteerkennung genutzt.
         """
-        device_type_mapping = {
-            "Sensor": ["ogb", "sensor", "temperature", "temp", "humidity", "moisture", "dewpoint", "illuminance", "ppfd", "dli", "h5179", "govee", "ens160", "tasmota"],
-            "Exhaust": ["exhaust", "abluft"],
-            "Intake": ["intake", "zuluft"],
-            "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet"],
-            "Dehumidifier": ["dehumidifier", "entfeuchter"],
-            "Humidifier": ["humidifier", "befeuchter"],
-            "Heater": ["heater", "heizung"],
-            "Cooler": ["cooler", "kuehler"],
-            "Climate": ["climate", "klima"],
-            "Light": ["light", "lamp", "led"],
-            "CO2": ["co2", "carbon"],
-            "Pump": ["pump"],
-            "Switch": ["generic", "switch"],
-        }
 
-        # 🏷️ Schritt 1: Labels prüfen
         label_matches = []
         if device_labels:
             for lbl in device_labels:
                 label_name = lbl.get("name", "").lower()
                 if not label_name:
                     continue
-                for device_type, keywords in device_type_mapping.items():
+                for device_type, keywords in DEVICE_TYPE_MAPPING.items():
                     if any(keyword in label_name for keyword in keywords):
                         label_matches.append(device_type)
 
-        # Falls mehrere Labels passen → das häufigste nehmen
+
         detected_type = None
+        detected_label = None
+        
         if label_matches:
             from collections import Counter
             detected_type = Counter(label_matches).most_common(1)[0][0]
+            detected_label = detected_type
             _LOGGER.warning(f"Device '{device_name}' identified via label as {detected_type}")
 
-        # 🧠 Schritt 2: Wenn kein Label passt, Name prüfen
+
         if not detected_type:
-            for device_type, keywords in device_type_mapping.items():
+            for device_type, keywords in DEVICE_TYPE_MAPPING.items():
                 if any(keyword in device_name.lower() for keyword in keywords):
                     detected_type = device_type
+                    # Wenn Labels existieren, nimm den ersten Label-Namen als Fallback
+                    if device_labels:
+                        detected_label = device_labels[0].get("name", "unknown")
+                    else:
+                        detected_label = "EMPTY"
                     _LOGGER.warning(f"Device '{device_name}' identified via name as {detected_type}")
                     break
 
-        # 🪫 Fallback
+        
         if not detected_type:
-            _LOGGER.warning(f"Device '{device_name}' could not be identified. Returning generic Device.")
-            return Device(device_name, device_data, self.eventManager, self.dataStore, "UNKNOWN", self.room, self.hass)
+            _LOGGER.error(f"Device '{device_name}' could not be identified. Returning generic Device.")
+            return Device(device_name, device_data, self.eventManager, self.dataStore, "Generic", self.room, self.hass, detected_label,[])
 
-        # 🧩 Schritt 3: Device-Klasse instanziieren
+        _LOGGER.error(f"{device_name} Labels '{device_labels}' ")     
         DeviceClass = self.get_device_class(detected_type)
-        return DeviceClass(device_name, device_data, self.eventManager, self.dataStore, detected_type, self.room, self.hass)
+        return DeviceClass(device_name, device_data, self.eventManager, self.dataStore, detected_type, self.room, self.hass, detected_label,device_labels)
 
     def get_device_class(self, device_type):
         """Geräteklasse erhalten."""
@@ -197,7 +205,7 @@ class OGBDeviceManager:
             "Cooler": Cooler,
             "Light": Light,
             "Climate": Climate,
-            "Switch": GenericSwitch,
+            "Generic": GenericSwitch,
             "Sensor": Sensor,
             "Pump": Pump,
             "C02":CO2,
@@ -207,49 +215,71 @@ class OGBDeviceManager:
     async def DeviceUpdater(self):
         controlOption = self.dataStore.get("mainControl")
 
-        
-        # Hole alle bekannten Geräte aus Home Assistant (z. B. Sensoren, Schalter etc.)
         groupedRoomEntities = await self.regListener.get_filtered_entities_with_valueForDevice(self.room.lower())
         
-        # Filtere Geräte ohne "ogb" im Namen
         allDevices = [group for group in groupedRoomEntities if "ogb" not in group["name"].lower()]
         self.dataStore.setDeep("workData.Devices", allDevices)
-        
-        # Update Event auslösen
-        await self.eventManager.emit("UpdateDeviceList", allDevices)       
         
         if controlOption not in ["HomeAssistant", "Premium"]:
             return False
         
-        # Hole aktuelle Geräteinstanzen aus dem Speicher (Objekte, keine Dicts!)
         currentDevices = self.dataStore.get("devices") or []
+        deviceLabelIdent = self.dataStore.get("DeviceLabelIdent")
 
-        # Sichere Extraktion von Gerätenamen aus aktuellen Geräteobjekten
         knownDeviceNames = {device.deviceName for device in currentDevices if hasattr(device, "deviceName")}
         
-        # Extrahiere Gerätenamen aus der allDevices-Liste (diese besteht aus dicts)
         realDeviceNames = {device["name"] for device in allDevices}
 
-        # Finde neue Geräte
         newDevices = [device for device in allDevices if device["name"] not in knownDeviceNames]
         
-        # Finde entfernte Geräte
         removedDevices = [device for device in currentDevices if hasattr(device, "deviceName") and device.deviceName not in realDeviceNames]
 
-        # Entfernte Geräte entfernen
+        # Geräte mit geänderten Labels erkennen (nur wenn DeviceLabelIdent aktiv ist)
+        devicesToReidentify = []
+        if deviceLabelIdent:
+            for realDevice in allDevices:
+                currentDevice = next((d for d in currentDevices if hasattr(d, "deviceName") and d.deviceName == realDevice["name"]), None)
+                if currentDevice:
+                    # Vergleiche Labels
+                    realLabels = set(lbl.get("name", "").lower() for lbl in realDevice.get("labels", []))
+                    currentLabel = getattr(currentDevice, "deviceLabel", "EMPTY")
+                    
+                    # Bestimme das Label, das bei der aktuellen Identifizierung erkannt würde
+                    from collections import Counter
+                    label_matches = []
+                    for lbl in realDevice.get("labels", []):
+                        label_name = lbl.get("name", "").lower()
+                        if label_name:
+                            for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                                if any(keyword in label_name for keyword in keywords):
+                                    label_matches.append(device_type)
+                    
+                    expected_label = Counter(label_matches).most_common(1)[0][0] if label_matches else "EMPTY"
+                    
+                    # Nur neu identifizieren, wenn sich das erkannte Label tatsächlich geändert hat
+                    if currentLabel != expected_label:
+                        devicesToReidentify.append(realDevice)
+                        _LOGGER.warning(f"Device '{realDevice['name']}' label changed from '{currentLabel}' to '{expected_label}', will be re-identified")
+                        
         if removedDevices:
-            _LOGGER.info(f"Removing devices no longer found: {removedDevices}")
+            _LOGGER.debug(f"Removing devices no longer found: {removedDevices}")
             for device in removedDevices:
                 await self.removeDevice(device.deviceName)
 
-        # Neue Geräte initialisieren
+        # Geräte mit geänderten Labels entfernen und neu hinzufügen
+        if devicesToReidentify:
+            _LOGGER.warning(f"Re-identifying {len(devicesToReidentify)} devices due to label changes")
+            for device in devicesToReidentify:
+                await self.removeDevice(device["name"])
+                await self.setupDevice(device)
+
         if newDevices:
-            _LOGGER.info(f"Found {len(newDevices)} new devices, initializing...")
+            _LOGGER.warning(f"Found {len(newDevices)} new devices, initializing...")
             for device in newDevices:
-                _LOGGER.info(f"Registering new device: {device}")
+                _LOGGER.debug(f"Registering new device: {device}")
                 await self.setupDevice(device)
         else:
-            _LOGGER.debug("Device-Check: No new devices found.")
+            _LOGGER.warning("Device-Check: No new devices found.")
 
     def device_Worker(self):
         if self._devicerefresh_task and not self._devicerefresh_task.done():
@@ -264,7 +294,6 @@ class OGBDeviceManager:
                     _LOGGER.exception(f"Error during device refresh: {e}")
                 await asyncio.sleep(175)
 
-        # Starte den Task und speichere ihn zur Kontrolle
         self._devicerefresh_task = asyncio.create_task(periodicWorker())
 
     def capCleaner(self,data):

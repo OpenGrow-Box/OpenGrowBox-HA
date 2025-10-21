@@ -4,8 +4,8 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 class Exhaust(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
         self.dutyCycle = 0  # Initialer Duty Cycle
         self.minDuty = 10    # Minimaler Duty Cycle
         self.maxDuty = 100    # Maximaler Duty Cycle

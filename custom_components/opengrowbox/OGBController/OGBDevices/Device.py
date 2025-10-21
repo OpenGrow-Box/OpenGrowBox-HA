@@ -1,15 +1,17 @@
 import logging
 import asyncio
+from .Sensor import Sensor
 
 _LOGGER = logging.getLogger(__name__)
 
 class Device:
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
         self.hass = hass
         self.eventManager = eventManager
         self.dataStore = dataStore
         self.deviceName = deviceName
         self.deviceType = deviceType
+        self.deviceLabel = deviceLabel
         self.isSpecialDevice = False
         self.isRunning = False
         self.isDimmable = False
@@ -21,21 +23,147 @@ class Device:
         self.ogbsettings = []
         self.initialization = False
         self.inWorkMode = False
-
+        self.isInitialized = False
+        
         # EVENTS
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
         self.eventManager.on("WorkModeChange", self.WorkMode)
         self.eventManager.on("SetMinMax", self.userSetMinMax)
    
-        asyncio.create_task(self.deviceInit(deviceData))
-   
+        self.deviceInit(deviceData)
+
+    @property
+    def option_count(self) -> int:
+        """Gibt die Anzahl aller Optionen zurück."""
+        return len(self.options)
+    
+    @property
+    def switch_count(self) -> int:
+        """Gibt die Anzahl aller Optionen zurück."""
+        return len(self.switches)
+
+    @property
+    def sensor_count(self) -> int:
+        """Gibt die Anzahl aller Sensoren zurück."""
+        return len(self.sensors)
+
     def __iter__(self):
         return iter(self.__dict__.items())
 
     def __repr__(self):
-        return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
-                f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
-                f"Options:'{self.options}' OGBS:'{self.ogbsettings}'")
+        """Kompakte Darstellung für Debugging."""
+        if not self.isInitialized:
+            return f"Device(name='{self.deviceName}', room='{self.inRoom}', type='{self.deviceType}', status='NOT_INITIALIZED')"
+        
+        # Zähle alle Sensoren aus allen Containern
+        sensor_count = sum(
+            len(getattr(container, "sensors", []))
+            for container in (self, *self.switches, *self.options, *self.ogbsettings)
+        )
+        
+        status_flags = []
+        if self.isRunning:
+            status_flags.append("ACTIVE")
+        if self.isDimmable:
+            status_flags.append("DIMMABLE")
+        if self.isSpecialDevice:
+            status_flags.append("SPECIAL")
+        if self.isAcInfinDev:
+            status_flags.append("AC_INFIN")
+        if self.inWorkMode:
+            status_flags.append("WORKMODE")
+        
+        flags_str = f", flags=[{', '.join(status_flags)}]" if status_flags else ""
+        
+        return (
+            f"Device(name='{self.deviceName}', type='{self.deviceType}', room='{self.inRoom}', "
+            f"switches={self.switch_count}, options={self.option_count}, sensors={sensor_count}{flags_str})"
+        )
+
+
+    def __str__(self):
+        """Detaillierte, lesbare Darstellung für Nutzer."""
+        if not self.isInitialized:
+            return f"Device '{self.deviceName}' (Room: {self.inRoom}) - NOT INITIALIZED"
+        
+        # Header
+        lines = [
+            "╔" + "═" * 80 + "╗",
+            f"║ {'DEVICE INFORMATION':^78} ║",
+            "╠" + "═" * 80 + "╣",
+        ]
+        
+        # Basis-Informationen
+        lines.extend([
+            f"║ Name:          {self.deviceName:<65} ║",
+            f"║ Type:          {self.deviceType:<65} ║",
+            f"║ Room:          {self.inRoom:<65} ║",
+            f"║ Label:         {self.deviceLabel:<65} ║",
+        ])
+        
+        # Status Flags
+        lines.append("╠" + "─" * 80 + "╣")
+        status_items = [
+            f"Running: {'✓' if self.isRunning else '✗'}",
+            f"Dimmable: {'✓' if self.isDimmable else '✗'}",
+            f"Special: {'✓' if self.isSpecialDevice else '✗'}",
+            f"AC Infin: {'✓' if self.isAcInfinDev else '✗'}",
+            f"WorkMode: {'✓' if self.inWorkMode else '✗'}",
+        ]
+        lines.append(f"║ Status:        {' | '.join(status_items):<65} ║")
+        
+        # Komponenten-Übersicht
+        lines.append("╠" + "─" * 80 + "╣")
+        lines.extend([
+            f"║ Switches:      {self.switch_count:<65} ║",
+            f"║ Options:       {self.option_count:<65} ║",
+            f"║ OGB Settings:  {len(self.ogbsettings):<65} ║",
+        ])
+        
+        # Sensoren Detail
+        sensor_count = sum(
+            len(getattr(container, "sensors", []))
+            for container in (self, *self.switches, *self.options, *self.ogbsettings)
+        )
+        device_sensors = len(self.sensors)
+        child_sensors = sensor_count - device_sensors
+        
+        lines.extend([
+            f"║ Total Sensors: {sensor_count:<65} ║",
+            f"║   ├─ Device:   {device_sensors:<65} ║",
+            f"║   └─ Children: {child_sensors:<65} ║",
+        ])
+        
+        # Detaillierte Sensor-Liste (optional, wenn nicht zu viele)
+        if sensor_count > 0 and sensor_count <= 10:
+            lines.append("╠" + "─" * 80 + "╣")
+            lines.append(f"║ {'SENSORS':^78} ║")
+            lines.append("╠" + "─" * 80 + "╣")
+            
+            # Device Sensoren
+            if self.sensors:
+                lines.append(f"║ Device Sensors:                                                              ║")
+                for sensor in self.sensors[:5]:  # Max 5 anzeigen
+                    sensor_name = getattr(sensor, 'sensorName', str(sensor))[:60]
+                    lines.append(f"║   • {sensor_name:<75} ║")
+            
+            # Switch Sensoren
+            for idx, switch in enumerate(self.switches[:3]):  # Max 3 Switches
+                if hasattr(switch, 'sensors') and switch.sensors:
+                    switch_name = getattr(switch, 'switchName', f'Switch {idx}')[:20]
+                    lines.append(f"║ {switch_name} Sensors:                                                      ║")
+                    for sensor in switch.sensors[:3]:  # Max 3 Sensoren pro Switch
+                        sensor_name = getattr(sensor, 'sensorName', str(sensor))[:60]
+                        lines.append(f"║   • {sensor_name:<75} ║")
+        
+        elif sensor_count > 10:
+            lines.append("╠" + "─" * 80 + "╣")
+            lines.append(f"║ Too many sensors to display ({sensor_count} total)                                     ║")
+        
+        # Footer
+        lines.append("╚" + "═" * 80 + "╝")
+        
+        return '\n'.join(lines)
 
     def getEntitys(self):
         """
@@ -55,9 +183,12 @@ class Device:
         return entityList
         
     # Initialisiere das Gerät und identifiziere Eigenschaften
-    async def deviceInit(self, entitys):
+    def deviceInit(self, entitys):
     
-        self.identifySwitchesAndSensors(entitys)
+        # NEU: Suche nach dediziertem Sensor-Device für Sensor Erstellung
+        clean_entitys = self.discoverRelatedSensors(entitys)
+    
+        self.identifySwitchesAndSensors(clean_entitys)
         self.identifyIfRunningState()
         self.identifDimmable()
         self.checkForControlValue()
@@ -67,58 +198,145 @@ class Device:
             self.deviceUpdater()
             _LOGGER.debug(f"Device {self.deviceName} Initialization Completed")
             self.initialization = False
+            self.isInitialized = True
             logging.warning(f"Device: {self.deviceName} Initialization done {self}")
         else:
             raise Exception(f"Device could not be Initialized {self.deviceName}")
 
+    def discoverRelatedSensors(self, entitys):
+        """
+        Sucht nach dedizierten Sensor-Devices (temperature, humidity, dewpoint).
+        Erstellt zusätzliche Sensor-Objekte und entfernt diese Entities
+        aus der Rückgabe-Liste.
+        """
+        devices = self.dataStore.get("devices") or []
+        new_sensors = []
+        
+        sensor_groups = {
+            "temperature": [],
+            "humidity": [],
+            "dewpoint": [],
+            "co2": []
+        }
+
+        used_entities = set()
+
+        # Schritt 1: Gruppiere Sensor-Entities nach Typ
+        for entity in entitys:
+            entity_id = entity.get("entity_id", "")
+            for sensor_type in sensor_groups.keys():
+                if sensor_type in entity_id:
+                    sensor_groups[sensor_type].append(entity)
+                    used_entities.add(entity_id)
+                    _LOGGER.debug(f"[{self.deviceName}] Found {sensor_type} entity: {entity_id}")
+                    break
+
+        # Schritt 2: Erstelle Sensor-Objekte für jede Gruppe
+        for sensor_type, sensor_entities in sensor_groups.items():
+            if not sensor_entities:
+                continue
+
+            sensor_name = f"{self.deviceName}_{sensor_type}"
+            _LOGGER.debug(
+                f"[{self.deviceName}] Creating remapped sensor '{sensor_name}' "
+                f"with {len(sensor_entities)} entities"
+            )
+
+            try:
+                new_sensor = Sensor(
+                    sensor_name,
+                    sensor_entities,
+                    self.eventManager,
+                    self.dataStore,
+                    "Sensor",
+                    self.inRoom,
+                    self.hass,
+                    sensor_type,
+                    [],
+                    reMapped=True
+                )
+
+                if new_sensor:
+                    new_sensors.append(new_sensor)
+                    _LOGGER.debug(
+                        f"[{self.deviceName}] ✓ Remapped sensor '{sensor_name}' Label:{sensor_type} initialized successfully"
+                    )
+                    
+                else:
+                    _LOGGER.error(
+                        f"[{self.deviceName}] ✗ Failed to initialize sensor '{sensor_name}' (timeout)"
+                    )
+
+            except Exception as e:
+                _LOGGER.error(
+                    f"[{self.deviceName}] ✗ Error creating sensor '{sensor_name}': {e}",
+                    exc_info=True
+                )
+
+        # Schritt 3: Neue Sensoren speichern
+        if new_sensors:
+            devices.extend(new_sensors)
+            self.dataStore.set("devices", devices)
+            _LOGGER.info(
+                f"[{self.deviceName}] Added {len(new_sensors)} remapped sensors to dataStore"
+            )
+
+        # Schritt 4: Entferne genutzte Entities aus Rückgabe
+        remaining_entities = [
+            e for e in entitys if e.get("entity_id", "") not in used_entities
+        ]
+
+        return remaining_entities
+
     async def deviceUpdate(self, updateData):
         """
-        Verarbeitet Updates basierend to der `entity_id` und aktualisiert die entsprechenden Werte.
+        Verarbeitet Updates und synchronisiert mit WorkData.
         """
-
         parts = updateData["entity_id"].split(".")
         device_name = parts[1].split("_")[0] if len(parts) > 1 else "Unknown"
 
-        if self.deviceName != device_name: return
+        if self.deviceName != device_name: 
+            return
 
         entity_id = updateData["entity_id"]
         new_value = updateData["newValue"]
 
-        # Asynchrone Helper-Funktion, um die Entität in einer Liste zu finden und den Wert zu aktualisieren
+        # Helper-Funktion für Entity-Updates
         async def update_entity_value(entity_list, entity_id, new_value):
             for entity in entity_list:
                 if entity.get("entity_id") == entity_id:
                     old_value = entity.get("value")
                     entity["value"] = new_value
                     _LOGGER.debug(
-                        f"{self.deviceName} Updated {entity_id}: Old Value: {old_value}, New Value: {new_value}."
+                        f"{self.deviceName} Updated {entity_id}: {old_value} → {new_value}"
                     )
                     return True
             return False
 
-        # Aktualisiere Sensor-Werte
+        # Update entsprechend der Entity-Kategorie
+        updated = False
+        
         if "sensor." in entity_id:
-            _LOGGER.debug(f"{self.deviceName} Start Update Sensor for {updateData}.")
-            await update_entity_value(self.sensors, entity_id, new_value)
-            _LOGGER.debug(f"{self.deviceName} warning {self.__repr__()}.")
-
-        # Aktualisiere Switch-Werte
-        if any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier."]):
-            _LOGGER.debug(f"{self.deviceName} Start Update Switch for {updateData}.")
-            await update_entity_value(self.switches, entity_id, new_value)
-            self.identifyIfRunningState()
-            
-        # Aktualisiere weitere spezifische Werte
-        if any(prefix in entity_id for prefix in ["number.", "text.", "time.", "select.", "date."]):
-            _LOGGER.debug(f"{self.deviceName} Start Update Switches for {updateData}.")
-            await update_entity_value(self.options, entity_id, new_value)
-            _LOGGER.debug(f"{self.deviceName} warning {self.__repr__()}.")
-
-        # Aktualisiere spezifische OGB-Entitäten
-        if any(prefix in entity_id for prefix in ["ogb_"]):
-            _LOGGER.debug(f"{self.deviceName} Start Update OGBS for {updateData}.")
-            await update_entity_value(self.sensors, entity_id, new_value)
-
+            updated = await update_entity_value(self.sensors, entity_id, new_value)
+            if updated:
+                _LOGGER.debug(f"{self.deviceName} Sensor updated: {entity_id}")
+        
+        elif any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier."]):
+            updated = await update_entity_value(self.switches, entity_id, new_value)
+            if updated:
+                self.identifyIfRunningState()
+                _LOGGER.debug(f"{self.deviceName} Switch updated: {entity_id}")
+        
+        elif any(prefix in entity_id for prefix in ["number.", "text.", "time.", "select.", "date."]):
+            updated = await update_entity_value(self.options, entity_id, new_value)
+            if updated:
+                _LOGGER.debug(f"{self.deviceName} Option updated: {entity_id}")
+        
+        elif "ogb_" in entity_id:
+            updated = await update_entity_value(self.sensors, entity_id, new_value)
+            if updated:
+                _LOGGER.debug(f"{self.deviceName} OGB sensor updated: {entity_id}")
+        
     def checkMinMax(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
@@ -187,10 +405,9 @@ class Device:
                     _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.voltageFromNumber = True
                     
-                if any(x in entityPlatform for x in ["tasmota", "shelly", "tuya"]):
-                    _LOGGER.debug(f"FOUND ESP-HOME Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
+                if any(x in entityPlatform for x in ["tasmota", "shelly"]):
+                    _LOGGER.debug(f"FOUND Special Platform:{entityPlatform} Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.isSpecialDevice = True
-
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
@@ -956,21 +1173,21 @@ class Device:
             _LOGGER.error(f"Fehler beim Setzen des Mode für {self.deviceName}: {e}")
 
     # Modes for all Devices
-    async def WorkMode(self,workmode):
+    async def WorkMode(self, workmode):
         self.inWorkMode = workmode
         if self.inWorkMode:
             if self.isDimmable:
                 if self.deviceType == "Light":
                     if self.sunPhaseActive:
-                        await self.eventManager.emit("pauseSunPhase",False)
+                        await self.eventManager.emit("pauseSunPhase", False)
                         return
                     self.voltage = self.initVoltage
-                    await self.turn_on(brightness_pct=self.initVoltage)
+                    await self.turn_on(brightness_pct=self.initVoltage) 
                 else:
                     self.dutyCycle = self.minDuty
                     if self.isSpecialDevice:
-                        await self.turn_on(brightness_pct=self.minDuty)
-                    await self.turn_on(percentage=self.minDuty)
+                        await self.turn_on(brightness_pct=int(float(self.minDuty))) 
+                    await self.turn_on(percentage=int(float(self.minDuty)))
             else:
                 if self.deviceType == "Light":
                     return
@@ -984,15 +1201,15 @@ class Device:
             if self.isDimmable:
                 if self.deviceType == "Light":
                     if self.sunPhaseActive:
-                        await self.eventManager.emit("resumeSunPhase",False)
+                        await self.eventManager.emit("resumeSunPhase", False)
                         return
                     self.voltage = self.maxVoltage
-                    await self.turn_on(brightness_pct=self.maxVoltage)
+                    await self.turn_on(brightness_pct=self.maxVoltage) 
                 else:
                     self.dutyCycle = self.maxDuty
                     if self.isSpecialDevice:
-                        await self.turn_on(brightness_pct=self.maxDuty)
-                    await self.turn_on(percentage=self.maxDuty)
+                        await self.turn_on(brightness_pct=int(float(self.maxDuty))) 
+                    await self.turn_on(percentage=int(float(self.maxDuty)))
             else:
                 if self.deviceType == "Light":
                     return 
@@ -1001,8 +1218,8 @@ class Device:
                 if self.deviceType == "Sensor":
                     return  
                 else:
-                    await self.turn_on()           
-               
+                    await self.turn_on()
+                              
     # Update Listener
     def deviceUpdater(self):
         deviceEntitiys = self.getEntitys()

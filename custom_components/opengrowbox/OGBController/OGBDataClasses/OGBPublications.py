@@ -141,6 +141,31 @@ class OGBRetrivePublication:
     Devices: List[str]
 
 @dataclass(frozen=True)
+class OGBCropSteeringPublication:
+    Name: str
+    Active: bool
+    Mode:str
+    Message: str
+    SoilMaxMoisture: float
+    SoilMinMoisture: float
+    PlantPhase: str
+    GenerativeWeek:int
+    Devices: List[str]
+
+@dataclass(frozen=True)
+class OGBECAction:
+    Name: str
+    TargetEC:str
+    CurrentEC: str
+
+@dataclass(frozen=True)
+class OGBDripperAction:
+    Name: str
+    Device:str
+    Action: str
+
+
+@dataclass(frozen=True)
 class OGBRetrieveAction:
     Name: str
     Device:str

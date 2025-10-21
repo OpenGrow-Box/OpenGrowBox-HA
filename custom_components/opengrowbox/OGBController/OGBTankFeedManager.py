@@ -57,9 +57,9 @@ class PumpConfig:
     min_dose_ml: float = 0.5    # Minimum dose
     max_dose_ml: float = 50.0   # Maximum dose per action
 
-class OGBFeedManager:
+class OGBTankFeedManager:
     def __init__(self, hass, dataStore, eventManager, room: str):
-        self.name = "OGB Feed Manager"
+        self.name = "OGB Tank Feed Manager"
         self.hass = hass
         self.room = room
         self.dataStore = dataStore
@@ -68,7 +68,7 @@ class OGBFeedManager:
         
         # Feed Mode
         self.feed_mode = FeedMode.DISABLED
-        self.current_plant_stage = "EarlyVeg"
+        self.current_plant_stage = self.dataStore.get("plantStage") or "LateVeg"
         
         # Plant stages configuration
         self.plantStages = self.dataStore.get("plantStages")
@@ -92,27 +92,27 @@ class OGBFeedManager:
             "EarlyVeg": FeedConfig(
                 ph_target=5.8, 
                 ec_target=1.2, 
-                nutrients={"A": 2.0, "B": 1.0, "C": 1.0}  # More A for veg
+                nutrients={"A": 3.0, "B": 1.0, "C": 2.0}
             ),
             "MidVeg": FeedConfig(
                 ph_target=5.8, 
                 ec_target=1.6, 
-                nutrients={"A": 3.0, "B": 1.5, "C": 2.0}
+                nutrients={"A": 3.0, "B": 1.0, "C": 2.0}
             ),
             "LateVeg": FeedConfig(
                 ph_target=5.8, 
                 ec_target=1.8, 
-                nutrients={"A": 3.5, "B": 2.0, "C": 2.5}
+                nutrients={"A": 3.0, "B": 1.0, "C": 2.0}
             ),
             "EarlyFlower": FeedConfig(
                 ph_target=6.0, 
                 ec_target=2.0, 
-                nutrients={"A": 2.0, "B": 4.0, "C": 3.0}  # More B for flower
+                nutrients={"A": 1.0, "B": 3.0, "C": 2.0}  # More B for flower
             ),
             "MidFlower": FeedConfig(
                 ph_target=6.0, 
                 ec_target=2.2, 
-                nutrients={"A": 1.5, "B": 5.0, "C": 4.0}
+                nutrients={"A": 1.0, "B": 3.0, "C": 2.0}
             ),
             "LateFlower": FeedConfig(
                 ph_target=6.2, 
@@ -165,10 +165,10 @@ class OGBFeedManager:
         self.is_initialized = True
         
         # Load current plant stage
-        self.current_plant_stage = self.dataStore.getDeep("Plant.CurrentStage") or "EarlyVeg"
+        self.current_plant_stage = self.dataStore.get("plantStage")
         
         # Load reservoir volume
-        self.reservoir_volume_liters = self.dataStore.getDeep("Feed.ReservoirVolume") or 100.0
+        self.reservoir_volume_liters = self.dataStore.getDeep("Hydro.ReservoirVolume") or 100.0
         
         # Initialize pump states from Home Assistant
         await self._sync_pump_states()
@@ -242,8 +242,8 @@ class OGBFeedManager:
         self.nutrients = feed_config.nutrients.copy()
         
         # Update dataStore
-        self.dataStore.setDeep("Feed.PH_Target", self.target_ph)
-        self.dataStore.setDeep("Feed.EC_Target", self.target_ec)
+        self.dataStore.setDeep("Hydro.PH_Target", self.target_ph)
+        self.dataStore.setDeep("Hydro.EC_Target", self.target_ec)
         
         for nutrient, amount in self.nutrients.items():
             self.dataStore.setDeep(f"Feed.Nut_{nutrient}_ml", amount)
@@ -281,17 +281,17 @@ class OGBFeedManager:
 
     async def _handle_own_plan_mode(self):
         """Handle own plan mode"""
-        self.target_ph = self.dataStore.getDeep("Feed.PH_Target") or 6.0
-        self.target_ec = self.dataStore.getDeep("Feed.EC_Target") or 1.2
+        self.target_ph = self.dataStore.getDeep("Hydro.PH_Target") or 6.0
+        self.target_ec = self.dataStore.getDeep("Hydro.EC_Target") or 1.2
         
         self.nutrients = {
-            "A": self.dataStore.getDeep("Feed.Nut_A_ml") or 0.0,
-            "B": self.dataStore.getDeep("Feed.Nut_B_ml") or 0.0,
-            "C": self.dataStore.getDeep("Feed.Nut_C_ml") or 0.0,
-            "W": self.dataStore.getDeep("Feed.Nut_W_ml") or 0.0,
-            "X": self.dataStore.getDeep("Feed.Nut_X_ml") or 0.0,
-            "Y": self.dataStore.getDeep("Feed.Nut_Y_ml") or 0.0,
-            "PH": self.dataStore.getDeep("Feed.Nut_PH_ml") or 0.0,
+            "A": self.dataStore.getDeep("Hydro.Nut_A_ml") or 0.0,
+            "B": self.dataStore.getDeep("Hydro.Nut_B_ml") or 0.0,
+            "C": self.dataStore.getDeep("Hydro.Nut_C_ml") or 0.0,
+            "W": self.dataStore.getDeep("Hydro.Nut_W_ml") or 0.0,
+            "X": self.dataStore.getDeep("Hydro.Nut_X_ml") or 0.0,
+            "Y": self.dataStore.getDeep("Hydro.Nut_Y_ml") or 0.0,
+            "PH": self.dataStore.getDeep("Hydro.Nut_PH_ml") or 0.0,
         }
         
         _LOGGER.info(f"[{self.room}] Own plan mode: pH={self.target_ph}, "
@@ -358,10 +358,10 @@ class OGBFeedManager:
 
     async def _update_feed_parameter(self, parameter: str, value: float):
         """Update feed parameter in dataStore"""
-        current_value = self.dataStore.getDeep(f"Feed.{parameter}")
+        current_value = self.dataStore.getDeep(f"Hydro.{parameter}")
         
         if current_value != value:
-            self.dataStore.setDeep(f"Feed.{parameter}", value)
+            self.dataStore.setDeep(f"Hydro.{parameter}", value)
             _LOGGER.info(f"[{self.room}] Updated {parameter}: {current_value} -> {value}")
 
     async def _check_if_feed_need(self, payload):

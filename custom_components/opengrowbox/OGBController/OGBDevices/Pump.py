@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 _LOGGER = logging.getLogger(__name__)
 
 class Pump(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass)
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
         self.isRunning = False
         self.Interval = None  # Mindestintervall zwischen Pumpzyklen (in Sekunden)
         self.Duration = None  # Pumpdauer in Sekunden

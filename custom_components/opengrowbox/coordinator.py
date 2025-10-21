@@ -47,7 +47,9 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
             name=f"{DOMAIN}_{self.room_name}",
             update_interval=timedelta(seconds=15),
         )
-
+        
+        asyncio.create_task(self.update_room_selector())
+        
     def create_room_selector(self):
         """Create a new global Room Selector."""
         area_registry = async_get_area_registry(self.hass)
@@ -82,53 +84,35 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
         Start the OpenGrowBox-Init.
         """
         _LOGGER.debug("Starting OpenGrowBox initialization.")
-        self.is_ready = False  # Verhindert die Verarbeitung von Events während der Initialisierung
-
+        self.is_ready = False 
+        await asyncio.sleep(3)
         try:
-            # Abrufen und Verarbeiten der Raum-Entitäten
             room = self.room_name.lower()
             groupedRoomEntities = await self.OGB.registryListener.get_filtered_entities_with_value(room)
 
-            #_LOGGER.warning(f"All Groups {groupedRoomEntities} in {self.room_name}")
-
-            # Filtern der Gruppen
             ogbGroup = [group for group in groupedRoomEntities if "ogb" in group["name"].lower()]
             realDevices = [group for group in groupedRoomEntities if "ogb" not in group["name"].lower()]
 
-
-
-            #_LOGGER.warning(f"OGB group {ogbGroup} in {self.room_name}")
-            _LOGGER.debug(f"Real-Devices {realDevices} in {self.room_name}")
-
-            # Verarbeite zuerst die OGB-Gruppen
             if ogbGroup:
                 _LOGGER.debug(f"Starting OGB initialization for {len(ogbGroup)} groups.")
                 ogbTasks = [self.OGB.managerInit(group) for group in ogbGroup]
-                await asyncio.gather(*ogbTasks)  # Warte, bis alle OGB-Tasks abgeschlossen sind
+                await asyncio.gather(*ogbTasks) 
             else:
                 _LOGGER.error(f"No OGB groups found in room {self.room_name}. Proceeding with device initialization.")
 
-            # Danach die anderen Geräte verarbeiten
-            if realDevices:
-                # Add real devices to datastore
-                
+            if realDevices:              
                 self.OGB.dataStore.setDeep("workData.Devices",realDevices)
-                await self.OGB.eventManager.emit("UpdateDeviceList",realDevices)
-                
                 _LOGGER.debug(f"Starting device initialization for {len(realDevices)} groups.")
                 deviceTasks = [self.OGB.deviceManager.setupDevice(deviceGroup) for deviceGroup in realDevices]
-                await asyncio.gather(*deviceTasks)  # Warte, bis alle Geräte-Tasks abgeschlossen sind
+                await asyncio.gather(*deviceTasks)
             else:
                 _LOGGER.warning(f"No devices found in room {self.room_name}.")
-
-            # Abschließende Initialisierungen
-            await self.OGB.firstInit()
 
             _LOGGER.debug(f"OpenGrowBox initialization completed in {self.room_name}.")
         except Exception as e:
             _LOGGER.error(f"Error during OpenGrowBox initialization: {e}")
         finally:
-            self.is_ready = True  # Initialisierung abgeschlossen
+            self.is_ready = True 
 
         # Starte das Monitoring
         asyncio.create_task(self.wait_until_ready_and_start_monitoring())
@@ -142,6 +126,8 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Still waiting for OpenGrowBox to be ready...")
             await asyncio.sleep(0.1)
         _LOGGER.debug("OpenGrowBox is ready. Starting monitoring...")
+
+        await self.OGB.firstStart()
         await self.startAllMonitorings()
 
     # OGB Monitorings
