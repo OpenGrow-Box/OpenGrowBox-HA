@@ -516,7 +516,14 @@ class OGBPremManager:
         try:
             if self.ogb_ws.ws_connected == True:
                 # Send via available connection
-                await self._send_auth_response(event_id, "success", "GrowPlans retrieved", self.growPlanManager.grow_plans)
+                
+                growPlans = {
+                    "PrivatePlans":self.growPlanManager.grow_plans,
+                    "PublicPlans":self.growPlanManager.grow_plans_public,
+                    "ActivePlan":self.growPlanManager.active_grow_plan,
+                }
+                
+                await self._send_auth_response(event_id, "success", "GrowPlans retrieved", growPlans)
         except Exception as e:
             _LOGGER.error(f"GET Grow Plan error: {str(e)}")
             await self._send_auth_response(event_id, "error", f"Failed to GET Grow Plans: {str(e)}")

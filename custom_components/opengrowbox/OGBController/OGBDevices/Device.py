@@ -663,15 +663,17 @@ class Device:
                         if self.deviceType == "Light":
                             if brightness_pct is not None:
                                 _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
-                                await self.set_value(int(brightness_pct/10))                      
+                                await self.set_value(int(brightness_pct/10))
+                                self.isRunning = True  
+                                return                    
                         else:
                             if percentage is not None:
                                 _LOGGER.warning(f"{self.deviceName}: set value to {percentage}")
                                 await self.set_value(percentage/10)
-   
-                    self.isRunning = True
+                                self.isRunning = True
+                                return
 
-                return
+                
 
             # === Standardgeräte ===
             if not self.switches:
@@ -955,6 +957,7 @@ class Device:
                             "option": "Off"
                         },
                     )
+                    self.isRunning = False
                     # Zusatzaktionen je nach Gerätetyp
                     if self.deviceType in ["Light", "Humidifier","Exhaust","Ventilation"]:
                         await self.hass.services.async_call(
@@ -965,8 +968,7 @@ class Device:
                                 "value": 1
                             },
                         )
-
-                    self.isRunning = False
+                        self.isRunning = False
                     _LOGGER.debug(f"{self.deviceName}: AcInfinity über select OFF.")
                 return
 

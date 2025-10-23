@@ -29,7 +29,9 @@ class OGBGrowPlanManager:
         self.is_premium = False
         
         # GrowPlans
-        self.grow_plans = []    
+        self.grow_plans = []  
+        self.grow_plans_public  = []
+          
         self.active_grow_plan = None
         self.active_grow_plan_id = None
         self.plan_start_date = None
@@ -109,15 +111,43 @@ class OGBGrowPlanManager:
                 _LOGGER.error(f"Fehler im täglichen Update-Loop: {e}")
                 await asyncio.sleep(3600)  # Warte 1 Stunde bei Fehlern
 
-    def _on_new_grow_plans(self, growPlan):
-        """Handle neue Grow Plans"""
+    def _on_new_grow_plans(self, data):
+        """Handle neue Grow Plans."""
+        grow_plans = data.get("grow_plans", [])
+        public_plans = data.get("public_plans", [])
+        active_plan = data.get("active_plan", "")
         try:
-            self.grow_plans = growPlan
-            _LOGGER.warning(f"Got New Grow Plans in Total: {len(growPlan)} ")
+            self.grow_plans = grow_plans
+            self.grow_plans_public = public_plans
+            self.active_grow_plan_id = active_plan
+            self.active_grow_plan = self.get_grow_plan_name_by_id(active_plan)
+            _LOGGER.info(f"Neue Grow Plans empfangen")
+        except Exception as e:
+            _LOGGER.exception(f"Fehler beim Verarbeiten neuer Grow Plans: {e}")
+
+    ## Helpers
+    def get_grow_plan_name_by_id(self, plan_id: str) -> Optional[str]:
+        """Gibt den Namen eines Grow Plans anhand seiner ID zurück."""
+        try:
+            if not plan_id:
+                _LOGGER.warning("get_grow_plan_name_by_id wurde ohne plan_id aufgerufen.")
+                return None
+
+            # Beide Listen zusammenführen (private + public)
+            all_plans = (self.grow_plans or []) + (self.grow_plans_public or [])
+
+            # Passenden Plan suchen
+            for plan in all_plans:
+                if str(plan.get("id")) == str(plan_id):
+                    return plan.get("plan_name")
+
+            _LOGGER.debug(f"Kein Grow Plan mit ID {plan_id} gefunden.")
+            return None
 
         except Exception as e:
-            _LOGGER.error(f"Error by getting Grow Plans: {e}")
-    
+            _LOGGER.error(f"Fehler in get_grow_plan_name_by_id: {e}")
+            return None
+
     def _on_plan_activation(self, growPlan):
         """Handle Plan Aktivierung"""
         try:
