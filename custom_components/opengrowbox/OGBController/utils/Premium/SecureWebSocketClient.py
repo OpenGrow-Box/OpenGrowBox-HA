@@ -706,9 +706,8 @@ class OGBWebSocketConManager:
         # Grow Plans
         @self.sio.event
         async def grow_plans_response(data):
-            logging.debug(f"Recieved GrowPlans For {self.ws_room}: {data}")
-            grow_plans = data.get("grow_plans", [])
-            await self.ogbevents.emit("new_grow_plans",grow_plans)          
+            logging.warning(f"Recieved GrowPlans For {self.ws_room}: {data}")
+            await self.ogbevents.emit("new_grow_plans",data)          
 
         # PREM UI CONTROLS
         @self.sio.event

@@ -984,48 +984,51 @@ class OGBActionManager:
     def _enhanceActionMap(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
         """Erweitert die ActionMap intelligent mit Deduplizierung"""
         
-        # ✅ Verwende Dict für automatische Deduplizierung
+        # ✅ Dict für Deduplizierung: key = "capability_action"
         actionDict = {}
         
-        # Hilfsfunktion zum Hinzufügen mit Prioritätsprüfung
-        def add_action(action):
+        def add_action(action, source=""):
+            """Fügt Action hinzu, überschreibt nur bei höherer Priorität"""
             key = f"{action.capability}_{action.action}"
             existing = actionDict.get(key)
             
             if not existing:
                 actionDict[key] = action
+                _LOGGER.debug(f"{self.room}: Added {key} from {source}")
             else:
-                # Nur überschreiben wenn neue Action höhere Priorität hat
-                priority_order = {'emergency': 0, 'high': 1, 'normal': 2, '': 2}
-                new_prio = priority_order.get(getattr(action, 'priority', ''), 2)
-                existing_prio = priority_order.get(getattr(existing, 'priority', ''), 2)
+                # Prioritäten vergleichen
+                priority_order = {'emergency': 0, 'high': 1, 'normal': 2, '': 3}
+                new_prio = priority_order.get(getattr(action, 'priority', ''), 3)
+                existing_prio = priority_order.get(getattr(existing, 'priority', ''), 3)
                 
                 if new_prio < existing_prio:
                     actionDict[key] = action
+                    _LOGGER.debug(f"{self.room}: Replaced {key} from {source} (higher priority)")
         
-        # 1. Basis-Actions hinzufügen
+        # 1. Basis-Actions (niedrigste Priorität)
         for action in baseActionMap:
-            add_action(action)
+            add_action(action, "base_vpd")
         
-        # 2. Deviation-Actions hinzufügen (können Basis-Actions überschreiben)
-        if tempDeviation > 0 or humDeviation > 0:
+        # 2. Deviation-Actions (überschreiben Basis wenn nötig)
+        if tempDeviation != 0 or humDeviation != 0:
             for action in self._getDeviationActions(tempDeviation, humDeviation, caps, vpdLightControl):
-                add_action(action)
+                add_action(action, "deviation")
         
-        # 3. Emergency-Actions (höchste Priorität)
+        # 3. Emergency-Actions (höchste Priorität außer emergency-flag)
         for action in self._getEmergencyActions(tentData, caps, vpdLightControl):
-            add_action(action)
+            add_action(action, "emergency")
         
         # 4. CO2-Actions
         for action in self._getCO2Actions(caps, islightON):
-            add_action(action)
+            add_action(action, "co2")
         
-        # Zurück in Liste konvertieren
+        # Zurück in Liste
         enhancedMap = list(actionDict.values())
         
-        # Priorisiere optimale Geräte
+        _LOGGER.info(f"{self.room}: Enhanced map has {len(enhancedMap)} unique actions (from {len(baseActionMap)} base actions)")
+        
         return self._prioritizeOptimalDevices(enhancedMap, optimalDevices, caps)
-
+    
     def _enhanceActionMap2(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
         """Erweitert die ActionMap intelligent basierend auf Bedingungen"""
         
@@ -1330,7 +1333,6 @@ class OGBActionManager:
         # Prüfe auf direkte Konflikte (Increase vs Reduce für gleiche Capability)
         return self._resolveIncreaseReduceConflicts(finalActions)
 
-    # Enhanced conflict resolution with emergency priority
     def _resolveIncreaseReduceConflicts(self, actions):
         """Löst Increase/Reduce Konflikte mit klarer Priorisierung"""
         
@@ -1348,52 +1350,64 @@ class OGBActionManager:
                 resolvedActions.extend(capActions)
                 continue
             
-            # ✅ NEUE LOGIK: Intelligente Auswahl
             increases = [a for a in capActions if a.action == "Increase"]
             reduces = [a for a in capActions if a.action == "Reduce"]
             
             if increases and reduces:
-                # 1. Emergency hat immer Vorrang
+                # 1. Emergency hat IMMER Vorrang
                 emergencyActions = [a for a in capActions if getattr(a, 'priority', '') == 'emergency']
                 if emergencyActions:
                     resolvedActions.append(emergencyActions[0])
+                    _LOGGER.warning(f"{self.room}: Emergency override for {capability}")
                     continue
                 
                 # 2. High Priority Actions
                 highPriorityActions = [a for a in capActions if getattr(a, 'priority', '') == 'high']
                 if highPriorityActions:
                     resolvedActions.append(highPriorityActions[0])
+                    _LOGGER.info(f"{self.room}: High priority action for {capability}")
                     continue
                 
-                # 3. ✅ NEU: Wähle basierend auf aktueller Situation
+                # Deviation-Actions kommen aus _getDeviationActions() und haben spezifische Messages
+                deviationActions = [a for a in capActions if any(keyword in a.message for keyword in 
+                    ["High Temperature", "Low Temperature", "High Humidity", "Low Humidity", "buffer"])]
+                
+                if deviationActions:
+                    resolvedActions.append(deviationActions[0])
+                    _LOGGER.info(f"{self.room}: Deviation-based action wins for {capability}")
+                    continue
+                
+                # 4. Bei Temperature-Geräten: Sicherheit geht vor
                 tentData = self.dataStore.get("tentData")
                 current_temp = tentData["temperature"]
                 max_temp = tentData["maxTemp"]
                 min_temp = tentData["minTemp"]
                 
-                # Für Heizung/Kühlung: Wähle die sichere Option
                 if capability == "canHeat":
                     if current_temp > (max_temp - 2.0):
-                        # Zu nah an maxTemp → Reduce wählen
-                        resolvedActions.extend([a for a in reduces if a is not None] or increases[:1])
+                        # Gefährlich nah an maxTemp → Reduce wählen
+                        chosen = reduces[0] if reduces else increases[0]
+                        resolvedActions.append(chosen)
+                        _LOGGER.warning(f"{self.room}: {capability} - temperature safety: choosing Reduce (temp={current_temp}, max={max_temp})")
                     else:
-                        # Sicher zu heizen
-                        resolvedActions.extend(increases[:1])
+                        # Sicher → VPD-Logik (Increase) kann laufen
+                        resolvedActions.append(increases[0])
+                    continue
+                    
                 elif capability == "canCool":
                     if current_temp < (min_temp + 2.0):
-                        # Zu nah an minTemp → Reduce wählen
-                        resolvedActions.extend([a for a in reduces if a is not None] or increases[:1])
+                        # Gefährlich nah an minTemp → Reduce wählen
+                        chosen = reduces[0] if reduces else increases[0]
+                        resolvedActions.append(chosen)
+                        _LOGGER.warning(f"{self.room}: {capability} - temperature safety: choosing Reduce (temp={current_temp}, min={min_temp})")
                     else:
-                        # Sicher zu kühlen
-                        resolvedActions.extend(increases[:1])
-                else:
-                    # Für andere Capabilities: Emergency-Keywords prüfen
-                    emergencyKeywordActions = [a for a in capActions if any(kw in a.message for kw in ["Critical", "Notfall", "Dewpoint", "buffer"])]
-                    if emergencyKeywordActions:
-                        resolvedActions.append(emergencyKeywordActions[0])
-                    else:
-                        # Fallback: Erste Action
-                        resolvedActions.append(capActions[0])
+                        # Sicher → kann kühlen wenn nötig
+                        resolvedActions.append(increases[0])
+                    continue
+                
+                # 5. Fallback für andere Capabilities
+                _LOGGER.debug(f"{self.room}: {capability} - using first action as fallback")
+                resolvedActions.append(capActions[0])
             else:
                 # Kein Konflikt
                 resolvedActions.extend(capActions)
