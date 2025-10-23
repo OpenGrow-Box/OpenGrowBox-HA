@@ -187,7 +187,7 @@ class OGBDeviceManager:
         
         if not detected_type:
             _LOGGER.error(f"Device '{device_name}' could not be identified. Returning generic Device.")
-            return Device(device_name, device_data, self.eventManager, self.dataStore, "Generic", self.room, self.hass, detected_label,[])
+            return
 
         _LOGGER.error(f"{device_name} Labels '{device_labels}' ")     
         DeviceClass = self.get_device_class(detected_type)

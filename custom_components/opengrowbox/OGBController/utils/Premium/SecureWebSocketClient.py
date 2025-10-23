@@ -42,7 +42,6 @@ class OGBWebSocketConManager:
         self._user_id = None
         self._access_token = None
         self.token_expires_at = None
-        self._refresh_token = None
         
         
         # Connection state
@@ -205,7 +204,6 @@ class OGBWebSocketConManager:
                     self._session_id = result.get("session_id")
                     self._access_token = result.get("access_token")
                     self.token_expires_at = result.get("token_expires_at")
-                    self._refresh_token = result.get("refresh_token")
                     
                     self.is_premium = result.get("is_premium", False)
                     self.subscription_data = result.get("subscription_data", {})
@@ -700,49 +698,6 @@ class OGBWebSocketConManager:
             """Handle manual rotation confirmation"""
             logging.warning(f"Manual session rotation initiated for {self.ws_room}: {data}")
 
-        ## Token Refresh
-        # @self.sio.event
-        # async def token_refresh_required(data):
-        #     await self._refresh_access_token()
-        
-        @self.sio.event
-        async def token_refresh_success(data):
-            """Handle successful token refresh from server"""
-            try:
-                session_id = data.get('session_id')
-                new_access_token = data.get('new_access_token')
-                new_expires_at = data.get('new_expires_at')
-                new_refresh_token = data.get('new_refresh_token')
-                
-                if not all([session_id, new_access_token, new_expires_at]):
-                    logging.error(f"❌ {self.ws_room} Incomplete token refresh data")
-                    return
-                    
-                if session_id != self._session_id:
-                    logging.warning(f"⚠️ {self.ws_room} Token refresh for wrong session")
-                    return
-                    
-                # Update stored tokens
-                self._access_token = new_access_token
-                self.token_expires_at = new_expires_at
-                if new_refresh_token:
-                    self._refresh_token = new_refresh_token
-                    
-                # Acknowledge the refresh
-                await self.sio.emit('token_refresh_acknowledged', {
-                    'session_id': session_id,
-                    'new_access_token': new_access_token,
-                    'new_expires_at': new_expires_at
-                })
-                
-                # Save to persistent storage
-                await self.ogbevents.emit("SaveRequest", True)
-                
-                logging.warning(f"✅ {self.ws_room} Token refresh successful")
-                
-            except Exception as e:
-                logging.error(f"❌ {self.ws_room} Token refresh success handler error: {e}")
-
         # ACTIONS
         @self.sio.event
         async def prem_actions(data):
@@ -793,13 +748,7 @@ class OGBWebSocketConManager:
                 f"Session rotation error for {self.ws_room}: {data.get('error', 'Unknown error')}",
                 haEvent=True
             )
-
-        @self.sio.event
-        async def token_refresh_error(data):
-            """Handle token refresh error"""
-            error_msg = data.get('error', 'Unknown token refresh error')
-            logging.error(f"❌ {self.ws_room} Token refresh failed: {error_msg}")
-            
+          
 
         @self.sio.event
         async def message_error(data):
@@ -817,39 +766,6 @@ class OGBWebSocketConManager:
     # =================================================================
     # Reconnection Logic
     # =================================================================
-
-    async def _refresh_access_token(self) -> bool:
-        """Refresh the access token using refresh token."""
-        if not self.is_logged_in or not self.is_premium:
-            return False
-        
-        try:
-            refresh_data = {
-                "refresh_token": self._refresh_token,
-            }
-            success = None
-            
-            # Try via WebSocket first
-            if self.sio and self.is_connected():
-                try:
-                    success = await self.prem_event("token-refresh", refresh_data)
-
-                    logging.warning(f"🔄 Token refresh request sent via WebSocket {self.ws_room}")
-                    return True  # Response will be handled by _handle_auth_response
-                except Exception as e:
-                    logging.warning(f"WebSocket token refresh failed: {e}")
-            
-            # Try via REST
-            if success == False:
-                logging.error(f"Token refresh error: {success}")
-                return False
-            else:
-                await self.prem_event("token_refresh_acknowledged",{"session_id":self._session_id,"new_access_token":self._access_token,"new_expires_at":self.token_expires_at})
-       
-        
-        except Exception as e:
-            logging.error(f"Token refresh error: {e}")
-            return False
 
     async def _handle_connection_loss(self, reason: str = "unknown"):
         """Simplified connection loss handler"""
@@ -1551,7 +1467,6 @@ class OGBWebSocketConManager:
             self._user_id = None
             self._access_token = None
             self.token_expires_at = None
-            self._refresh_token = None
             self.authenticated = False
             self.ws_connected = False
             self.ws_reconnect_attempts = 0
@@ -1743,9 +1658,7 @@ class OGBWebSocketConManager:
             "session_key": base64.urlsafe_b64encode(self._session_key).decode() if self._session_key else None,
             "access_token": self._access_token,
             "token_expires_at":self.token_expires_at,
-            "refresh_token":self._refresh_token,
             "access_token_hash": hashlib.sha256(self._access_token.encode()).hexdigest() if self._access_token else None,
-            "refresh_token":self._refresh_token,
             "ogb_sessions":self.ogb_sessions,
             "ogb_max_sessions":self.ogb_max_sessions,
             "is_premium": self.is_premium,
