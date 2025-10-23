@@ -98,7 +98,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     min_value=0.0, max_value=5.0, step=0.1, unit="kPa", initial_value=0.0),
         CustomNumber(f"OGB_VPDTolerance_{coordinator.room_name}", coordinator.room_name, coordinator,
                     min_value=0.0, max_value=25, step=0.1, unit="%", initial_value=0.1),
-        
+        CustomNumber(f"OGB_LuxToPPFDFactor_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    min_value=10.0, max_value=100.0, step=1, unit="Lux/PPFD", initial_value=15.0),
         CustomNumber(f"OGB_TemperatureWeight_{coordinator.room_name}", coordinator.room_name, coordinator,
                      min_value=0.0, max_value=2.0, step=0.05, unit="X", initial_value=1.0),
         CustomNumber(f"OGB_HumidityWeight_{coordinator.room_name}", coordinator.room_name, coordinator,
