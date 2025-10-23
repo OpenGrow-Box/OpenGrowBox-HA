@@ -55,6 +55,12 @@ SENSOR_CONTEXTS = {
         "icon": "mdi:weather-partly-cloudy",
         "suffixes": ["", "air", "luft", "umgebung"]
     },
+    "leaf": {
+        "name": "Leaf/Blatt",
+        "description": "Blattbasierte Sensoren (Plant, Growbox)",
+        "icon": "mdi:weather-partly-cloudy",
+        "suffixes": ["", "leaf", "blatt"]
+    },
     "water": {
         "name": "Water/Hydro",
         "description": "Wasserbasierte Sensoren (Hydroponik, Reservoir)",
@@ -96,6 +102,13 @@ SENSOR_TYPES = {
                 "max_value": 40,
                 "optimal_min": 18,
                 "optimal_max": 25,
+                "name": "Soil Temperature"
+            },
+            "leaf": {
+                "min_value": -5,
+                "max_value": 40,
+                "optimal_min": 0,
+                "optimal_max": 2,
                 "name": "Soil Temperature"
             }
         }
