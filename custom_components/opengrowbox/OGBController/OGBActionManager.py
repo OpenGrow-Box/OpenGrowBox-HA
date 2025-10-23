@@ -321,7 +321,21 @@ class OGBActionManager:
         vpdLightControl = self.dataStore.getDeep("controlOptions.vpdLightControl")       
         actionMessage = "VPD-Increase Action"
         
+        # ✅ NEUE BUFFER-PRÜFUNG HIER
+        tentData = self.dataStore.get("tentData")
+        current_temp = tentData["temperature"]
+        max_temp = tentData["maxTemp"]
+        min_temp = tentData["minTemp"]
+        
+        HEATER_BUFFER = 2.0
+        COOLER_BUFFER = 2.0
+        heater_cutoff_temp = max_temp - HEATER_BUFFER
+        cooler_cutoff_temp = min_temp + COOLER_BUFFER
+        
         actionMap = []
+        
+        
+        
         if capabilities["canExhaust"]["state"]:
             actionPublication = OGBActionPublication(capability="canExhaust", action="Increase", Name=self.room, message=actionMessage, priority="")
             actionMap.append(actionPublication)
@@ -968,6 +982,51 @@ class OGBActionManager:
             return "vpd_low" if currentVPD < perfectionVPD else "vpd_high"
 
     def _enhanceActionMap(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
+        """Erweitert die ActionMap intelligent mit Deduplizierung"""
+        
+        # ✅ Verwende Dict für automatische Deduplizierung
+        actionDict = {}
+        
+        # Hilfsfunktion zum Hinzufügen mit Prioritätsprüfung
+        def add_action(action):
+            key = f"{action.capability}_{action.action}"
+            existing = actionDict.get(key)
+            
+            if not existing:
+                actionDict[key] = action
+            else:
+                # Nur überschreiben wenn neue Action höhere Priorität hat
+                priority_order = {'emergency': 0, 'high': 1, 'normal': 2, '': 2}
+                new_prio = priority_order.get(getattr(action, 'priority', ''), 2)
+                existing_prio = priority_order.get(getattr(existing, 'priority', ''), 2)
+                
+                if new_prio < existing_prio:
+                    actionDict[key] = action
+        
+        # 1. Basis-Actions hinzufügen
+        for action in baseActionMap:
+            add_action(action)
+        
+        # 2. Deviation-Actions hinzufügen (können Basis-Actions überschreiben)
+        if tempDeviation > 0 or humDeviation > 0:
+            for action in self._getDeviationActions(tempDeviation, humDeviation, caps, vpdLightControl):
+                add_action(action)
+        
+        # 3. Emergency-Actions (höchste Priorität)
+        for action in self._getEmergencyActions(tentData, caps, vpdLightControl):
+            add_action(action)
+        
+        # 4. CO2-Actions
+        for action in self._getCO2Actions(caps, islightON):
+            add_action(action)
+        
+        # Zurück in Liste konvertieren
+        enhancedMap = list(actionDict.values())
+        
+        # Priorisiere optimale Geräte
+        return self._prioritizeOptimalDevices(enhancedMap, optimalDevices, caps)
+
+    def _enhanceActionMap2(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
         """Erweitert die ActionMap intelligent basierend auf Bedingungen"""
         
         enhancedMap = list(baseActionMap)  # Kopiere ursprüngliche Actions
@@ -1273,6 +1332,75 @@ class OGBActionManager:
 
     # Enhanced conflict resolution with emergency priority
     def _resolveIncreaseReduceConflicts(self, actions):
+        """Löst Increase/Reduce Konflikte mit klarer Priorisierung"""
+        
+        capabilityActions = {}
+        for action in actions:
+            cap = action.capability
+            if cap not in capabilityActions:
+                capabilityActions[cap] = []
+            capabilityActions[cap].append(action)
+        
+        resolvedActions = []
+        
+        for capability, capActions in capabilityActions.items():
+            if len(capActions) <= 1:
+                resolvedActions.extend(capActions)
+                continue
+            
+            # ✅ NEUE LOGIK: Intelligente Auswahl
+            increases = [a for a in capActions if a.action == "Increase"]
+            reduces = [a for a in capActions if a.action == "Reduce"]
+            
+            if increases and reduces:
+                # 1. Emergency hat immer Vorrang
+                emergencyActions = [a for a in capActions if getattr(a, 'priority', '') == 'emergency']
+                if emergencyActions:
+                    resolvedActions.append(emergencyActions[0])
+                    continue
+                
+                # 2. High Priority Actions
+                highPriorityActions = [a for a in capActions if getattr(a, 'priority', '') == 'high']
+                if highPriorityActions:
+                    resolvedActions.append(highPriorityActions[0])
+                    continue
+                
+                # 3. ✅ NEU: Wähle basierend auf aktueller Situation
+                tentData = self.dataStore.get("tentData")
+                current_temp = tentData["temperature"]
+                max_temp = tentData["maxTemp"]
+                min_temp = tentData["minTemp"]
+                
+                # Für Heizung/Kühlung: Wähle die sichere Option
+                if capability == "canHeat":
+                    if current_temp > (max_temp - 2.0):
+                        # Zu nah an maxTemp → Reduce wählen
+                        resolvedActions.extend([a for a in reduces if a is not None] or increases[:1])
+                    else:
+                        # Sicher zu heizen
+                        resolvedActions.extend(increases[:1])
+                elif capability == "canCool":
+                    if current_temp < (min_temp + 2.0):
+                        # Zu nah an minTemp → Reduce wählen
+                        resolvedActions.extend([a for a in reduces if a is not None] or increases[:1])
+                    else:
+                        # Sicher zu kühlen
+                        resolvedActions.extend(increases[:1])
+                else:
+                    # Für andere Capabilities: Emergency-Keywords prüfen
+                    emergencyKeywordActions = [a for a in capActions if any(kw in a.message for kw in ["Critical", "Notfall", "Dewpoint", "buffer"])]
+                    if emergencyKeywordActions:
+                        resolvedActions.append(emergencyKeywordActions[0])
+                    else:
+                        # Fallback: Erste Action
+                        resolvedActions.append(capActions[0])
+            else:
+                # Kein Konflikt
+                resolvedActions.extend(capActions)
+        
+        return resolvedActions
+
+    def _resolveIncreaseReduceConflicts2(self, actions):
         """Löst Increase/Reduce Konflikte für gleiche Capability auf"""
         
         capabilityActions = {}

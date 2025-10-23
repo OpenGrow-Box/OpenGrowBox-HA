@@ -24,7 +24,7 @@ class OGBPremManager:
         self.dataStore = dataStore
         self.eventManager = eventManager
         self.growPlanManager = OGBGrowPlanManager(self.hass, self.dataStore, self.eventManager,self.room)
-
+        self.access_token = None
         self.room_id = None
         
         # Main Control Status
@@ -135,7 +135,6 @@ class OGBPremManager:
                         self.ogb_ws.authenticated = False
                 
                 self.ogb_ws.token_expires_at = ws_data.get("token_expires_at")
-                self.ogb_ws._refresh_token = ws_data.get("refresh_token")
                 
                 # Restore session data (will be validated/refreshed during connection)
                 session_data = {}
@@ -148,7 +147,6 @@ class OGBPremManager:
                     "user_id": self.ogb_ws._user_id,
                     "access_token": self.ogb_ws._access_token,
                     "token_expires_at":self.ogb_ws.token_expires_at,
-                    "refresh_token":self.ogb_ws._refresh_token,
                     "is_logged_in": self.ogb_ws.is_logged_in,
                     "is_premium": self.ogb_ws.is_premium,
                     "subscription_data": self.ogb_ws.subscription_data,
@@ -355,7 +353,6 @@ class OGBPremManager:
                 "subscription_data": self.subscription_data,
                 "access_token": self.ogb_ws._access_token,
                 "token_expires_at":self.ogb_ws.token_expires_at,
-                "refresh_token":self.ogb_ws._refresh_token,
                 "ogb_sessions":self.ogb_ws.ogb_sessions,
                 "ogb_max_sessions":self.ogb_ws.ogb_max_sessions,
             }
@@ -368,8 +365,6 @@ class OGBPremManager:
 
     async def _handle_authenticated(self, event):
         """Handle authentication event from other rooms"""
-        
-       
         try:
             if self.room == "Ambient":
                 return
@@ -386,7 +381,6 @@ class OGBPremManager:
             is_premium = event.data.get("is_premium", False)
             subscription_data = event.data.get("subscription_data", {})
             token_expires_at = event.data.get('token_expires_at')
-            refresh_token = event.data.get("refresh_token")
             ogb_sessions = event.data.get("ogb_sessions")
             ogb_max_sessions = event.data.get("ogb_max_sessions")
             _LOGGER.warning(f"🔐 {self.room} Received auth from {authenticated_room}: is_premium={event.data.get('is_premium')} Sessions:{ogb_sessions} MaxSessions:{ogb_max_sessions} ")   
@@ -398,7 +392,6 @@ class OGBPremManager:
             
             self.ogb_ws._access_token = access_token
             self.ogb_ws.token_expires_at = token_expires_at
-            self.ogb_ws._refresh_token  = refresh_token
             
             self.ogb_ws._user_id = user_id
             self.ogb_ws.is_logged_in = is_logged_in
@@ -589,7 +582,6 @@ class OGBPremManager:
         
         mainControl = self.dataStore.get("mainControl")
         if mainControl != "Premium": return
-        if self.access_token == None: return
 
         event_room = event.data.get("room") or ""
         if self.room.lower() != event_room.lower():
@@ -811,7 +803,6 @@ class OGBPremManager:
                         self.ogb_ws._access_token.encode('utf-8') if self.ogb_ws._access_token else b''
                     ).decode('utf-8'),
                     "token_expires_at": ws_backup.get("token_expires_at"),
-                    "refresh_token":ws_backup.get("refresh_token")
                 },
                 "saved_at": datetime.now(timezone.utc).isoformat(),
             }
