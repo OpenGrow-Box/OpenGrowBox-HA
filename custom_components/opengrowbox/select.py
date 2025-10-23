@@ -225,6 +225,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         # LIGHT 
         CustomSelect(f"OGB_Light_ControlType_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["DLI","GLJ","Default"], initial_value="Default"),
+        CustomSelect(f"OGB_LightLedType_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["fullspektrum_grow", "quantum_board", "red_blue_grow", "high_end_grow", "cob_grow", "hps_equivalent", "burple", "white_led", "manual"], initial_value="fullspektrum_grow"),
 
         ##DEVICES
         CustomSelect(f"OGB_Device_LabelIdent_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),

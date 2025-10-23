@@ -161,7 +161,7 @@ def calc_Dry5Days_vpd(temp, humidity, leaf_offset=0):
 
     return round(vpd, 2)
 
-def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="fullspektrum_grow",default_value=10000):
+def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="fullspektrum_grow", factor=15, default_value=10000):
     """
     Convert Lux or Lumen to PPFD (µmol/m²/s) and DLI (mol/m²/d) for Grow LEDs.
     
@@ -183,6 +183,7 @@ def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="f
     - "hps_equivalent": LED as HPS replacement (factor 15)
     - "burple": Old "Burple" LEDs (factor 12)
     - "white_led": Standard white LEDs (factor 54) - NOT for growing
+    - "manual": Default factor (factor 15)
     """
 
     # Wenn None oder leer, Standardwert nutzen
@@ -204,7 +205,8 @@ def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="f
         "cob_grow": 20,
         "hps_equivalent": 15,
         "burple": 12,
-        "white_led": 54
+        "white_led": 54,
+        "manual": factor,
     }
 
     # Input validation
