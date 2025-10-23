@@ -186,6 +186,8 @@ class OGBConf:
         "DLITarget": 0,
         "PPFDCurrent": 0,
         "PPFDTarget": 0,
+        "ledType": "fullspektrum_grow",
+        "luxToPPFDFactor": 15.0,
         "plans": {
             "photoperiodic": {
                 "veg": {
@@ -326,6 +328,19 @@ class OGBConf:
         "MidFlower": LightStage(min=70, max=100, phase=""),
         "LateFlower": LightStage(min=70, max=100, phase=""),
     })
+
+    lightLedTyes: Dict[str, Any] = field(default_factory=lambda: {
+        "fullspektrum_grow": 15,
+        "quantum_board": 16,
+        "red_blue_grow": 12,
+        "high_end_grow": 18,
+        "cob_grow": 20,
+        "hps_equivalent": 15,
+        "burple": 12,
+        "white_led": 54,
+        "manual": 0,
+    })
+
     drying: Dict[str, Any] = field(default_factory=lambda: {
         "mode_start_time": None,
         "currentDryMode": "",

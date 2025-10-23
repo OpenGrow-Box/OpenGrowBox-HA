@@ -196,7 +196,7 @@ class OpenGrowBox:
                 _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
                 await self.eventManager.emit("DataRelease",vpdPub)
-                
+    
     async def _get_vpd_onStart(self, data):
         if data != True:
             return
@@ -397,8 +397,19 @@ class OpenGrowBox:
                 lightStart = self.dataStore.getDeep("isPlantDay.lightOnTime")
                 lightStop = self.dataStore.getDeep("isPlantDay.lightOffTime")
                 lightDuration = hours_between(lightStart, lightStop)
+                
+                # Get LED type and factor from dataStore
+                led_type = self.dataStore.getDeep("Light.ledType") or "fullspektrum_grow"
+                lux_factor = self.dataStore.getDeep("Light.luxToPPFDFactor") or 15.0
 
-                ppfd, dli = calc_light_to_ppfd_dli(entity.newState[0], unit, lightDuration, growSpace)
+                ppfd, dli = calc_light_to_ppfd_dli(
+                    entity.newState[0], 
+                    unit, 
+                    lightDuration, 
+                    growSpace,
+                    led_type=led_type,
+                    factor=lux_factor
+                )
 
                 self.dataStore.setDeep("tentData.DLI", dli)
                 self.dataStore.setDeep("tentData.PPFD", ppfd)
@@ -566,8 +577,19 @@ class OpenGrowBox:
                 lightStart = self.dataStore.getDeep("isPlantDay.lightOnTime")
                 lightStop = self.dataStore.getDeep("isPlantDay.lightOffTime")
                 lightDuration = hours_between(lightStart, lightStop)
+                
+                # Get LED type and factor from dataStore
+                led_type = self.dataStore.getDeep("Light.ledType") or "fullspektrum_grow"
+                lux_factor = self.dataStore.getDeep("Light.luxToPPFDFactor") or 15.0
 
-                ppfd, dli = calc_light_to_ppfd_dli(entity.newState[0], unit, lightDuration, growSpace)
+                ppfd, dli = calc_light_to_ppfd_dli(
+                    entity.newState[0], 
+                    unit, 
+                    lightDuration, 
+                    growSpace,
+                    led_type=led_type,
+                    factor=lux_factor
+                )
 
                 self.dataStore.setDeep("tentData.DLI", dli)
                 self.dataStore.setDeep("tentData.PPFD", ppfd)
@@ -635,6 +657,10 @@ class OpenGrowBox:
             f"ogb_lightofftime_{self.room.lower()}": self._update_lightOff_time,
             f"ogb_sunrisetime_{self.room.lower()}": self._update_sunrise_time,
             f"ogb_sunsettime_{self.room.lower()}": self._update_sunset_time,
+            
+            # Light Calculation Settings
+            f"ogb_lightledtype_{self.room.lower()}": self._update_light_led_type,
+            f"ogb_luxtoppfdfactor_{self.room.lower()}": self._update_lux_to_ppfd_factor,
             
             # Control Settings
             f"ogb_lightcontrol_{self.room.lower()}": self._update_ogbLightControl_control,
@@ -1389,7 +1415,8 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("isPlantDay.lightOffTime",value)
             await self.eventManager.emit("LightTimeChanges",True)
-            
+
+
     async def _update_sunrise_time(self,data):
         """
         Update Sunrise Time
@@ -1400,6 +1427,34 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("isPlantDay.sunRiseTime",value)
             await self.eventManager.emit("SunRiseTimeUpdates",value)
+
+    async def _update_light_led_type(self, data):
+        """
+        Update Light LED Type for PPFD/DLI calculation
+        """
+        value = data.newState[0]
+        if value is None:
+            return
+        current_value = self.dataStore.getDeep("Light.ledType")
+        if current_value != value:
+            self.dataStore.setDeep("Light.ledType", value)
+            _LOGGER.info(f"{self.room}: LED type updated to '{value}'")
+
+    async def _update_lux_to_ppfd_factor(self, data):
+        """
+        Update Lux to PPFD conversion factor
+        """
+        value = data.newState[0]
+        if value is None:
+            return
+        try:
+            factor = float(value)
+            current_value = self.dataStore.getDeep("Light.luxToPPFDFactor")
+            if current_value != factor:
+                self.dataStore.setDeep("Light.luxToPPFDFactor", factor)
+                _LOGGER.info(f"{self.room}: Lux to PPFD factor updated to {factor}")
+        except (ValueError, TypeError):
+            _LOGGER.error(f"{self.room}: Invalid Lux to PPFD factor value: {value}")
 
     async def _update_sunset_time(self,data):
         """
