@@ -3,6 +3,10 @@ import logging
 import re
 from datetime import datetime, timedelta
 from typing import Optional
+from ..utils.lightTimeHelpers import hours_between
+from ..utils.calcs import calc_light_to_ppfd_dli
+from ..utils.sensorUpdater import _update_specific_sensor
+from ..OGBDataClasses.OGBPublications import OGBPPFDPublication,OGBDLIPublication,OGBWaterPublication
 from ..OGBParams.OGBTranslations import SENSOR_TRANSLATIONS
 from ..OGBParams.OGBParams import (
     SENSOR_CONTEXTS, 
@@ -15,13 +19,13 @@ _LOGGER = logging.getLogger(__name__)
 
 class Sensor():
     """Sensor-Klasse mit Context-Support und Event-basiertem Update."""  
-    def __init__(self, deviceName, deviceData, eventManager, dataStore, deviceType, inRoom, hass=None, deviceLabel="EMPTY", allLabels=[], reMapped=False):
+    def __init__(self, deviceName, deviceData, eventManager, dataStore, deviceType, room, hass=None, deviceLabel="EMPTY", allLabels=[], reMapped=False):
         self.hass = hass
         self.eventManager = eventManager
         self.dataStore = dataStore
         self.deviceName = deviceName
         self.deviceType = deviceType
-        self.inRoom = inRoom
+        self.room = room
         self.deviceData = deviceData
         self.deviceLabel = deviceLabel
         self.isRemapped = reMapped
@@ -35,7 +39,8 @@ class Sensor():
         self.sensorReadings = {
             "air": {},
             "water": {},
-            "soil": {}
+            "soil": {},
+            "light":{}
         }
         
         # Entity-ID zu Sensor-Config Mapping für schnellen Zugriff
@@ -66,7 +71,7 @@ class Sensor():
     def __repr__(self):
         """Entwickler-freundliche Repräsentation."""
         if not self.isInitialized:
-            return f"Sensor(name='{self.deviceName}', room='{self.inRoom}', status='NOT_INITIALIZED')"
+            return f"Sensor(name='{self.deviceName}', room='{self.room}', status='NOT_INITIALIZED')"
         
         sensor_count = sum(
             len(sensors) 
@@ -76,7 +81,7 @@ class Sensor():
         
         return (
             f"Sensor(name='{self.deviceName}', "
-            f"room='{self.inRoom}', "
+            f"room='{self.room}', "
             f"count={sensor_count}, "
             f"initialized={self.isInitialized})"
         )
@@ -84,14 +89,14 @@ class Sensor():
     def __str__(self):
         """Benutzer-freundliche String-Repräsentation mit Kontext-Gruppierung."""
         if not self.isInitialized:
-            return f"Sensor '{self.deviceName}' (Room: {self.inRoom}) - NOT INITIALIZED"
+            return f"Sensor '{self.deviceName}' (Room: {self.room}) - NOT INITIALIZED"
         
         lines = [
-            f"║ Sensor Device: {self.deviceName} ║ Room: {self.inRoom} ║ Platform: {self.devicePlatform} ║ Status: {'✓ Initialized' if self.isInitialized else '✗ Not Initialized'}",
+            f"║ Sensor Device: {self.deviceName} ║ Room: {self.room} ║ Platform: {self.devicePlatform} ║ Status: {'✓ Initialized' if self.isInitialized else '✗ Not Initialized'}",
         ]
         
         # Nach Kontext gruppieren
-        for context in ["air", "water", "soil"]:
+        for context in ["air", "water", "soil","light"]:
             context_sensors = self.sensorReadings[context]
             
             if not context_sensors:
@@ -136,74 +141,13 @@ class Sensor():
         self.sensorPlatformIdent()
         await self.sensorDataGetter()
 
-    def sensorPlatformIdent2(self):
-        """Analysiert deviceData und identifiziert Sensortypen MIT Kontext."""
-        if not hasattr(self, "deviceData") or not self.deviceData:
-            _LOGGER.warning("Keine deviceData vorhanden.")
-            return None
-
-        sensor_map = {
-            "air": {},
-            "water": {},
-            "soil": {}
-        }
-        platform_set = set()
-        unrecognized_suffixes = []
-
-        for entry in self.deviceData:
-            entity_id = entry.get("entity_id", "")
-            value = entry.get("value")
-            label = entry.get("label")
-            platform = entry.get("platform", "unknown")
-            platform_set.add(platform)
-
-            # Kontext aus Entity-ID extrahieren
-            context = extract_context_from_entity(entity_id)
-            
-            # Sensor-Typ identifizieren
-            sensor_suffix = entity_id.split("_")[-1].lower() if "_" in entity_id else "unknown"
-            sensor_type = self._identify_sensor_type(sensor_suffix)
-
-            if not sensor_type:
-                sensor_type = f"unknown_{sensor_suffix}"
-                unrecognized_suffixes.append(sensor_suffix)
-                _LOGGER.error(
-                    f"Unerkannter Sensor-Typ '{sensor_suffix}' für entity '{entity_id}'"
-                )
-
-            # Sensor-Entry erstellen
-            sensor_entry = {
-                "entity_id": entity_id,
-                "value": value,
-                "platform": platform,
-                "label": label,
-                "raw_suffix": sensor_suffix,
-                "canonical_type": sensor_type,
-                "context": context
-            }
-
-            # In Kontext-Map speichern
-            if sensor_type not in sensor_map[context]:
-                sensor_map[context][sensor_type] = [sensor_entry]
-            else:
-                sensor_map[context][sensor_type].append(sensor_entry)
-
-        self.devicePlatform = platform_set.pop() if len(platform_set) == 1 else list(platform_set)
-        self.sensorMap = {
-            "sensors": sensor_map,
-            "unrecognized": list(set(unrecognized_suffixes))
-        }
-
-        _LOGGER.info(f"{self.deviceName} - SensorMap mit Kontexten erstellt")
-        return self.sensorMap
-
     def sensorPlatformIdent(self):
         """Analysiert deviceData und identifiziert Sensortypen MIT Kontext UND Label-Mapping."""
         if not hasattr(self, "deviceData") or not self.deviceData:
             _LOGGER.warning("Keine deviceData vorhanden.")
             return None
 
-        sensor_map = {"air": {}, "water": {}, "soil": {}}
+        sensor_map = {"air": {}, "water": {}, "soil": {},"light":{}}
         platform_set = set()
         unrecognized_suffixes = []
 
@@ -227,6 +171,8 @@ class Sensor():
                 context = "air"
             elif "water" in label_ids:
                 context = "water"
+            elif "dli" in label_ids or "ppfd" in label_ids:
+                context = "light"
             else:
                 context = extract_context_from_entity(entity_id) or "air"
 
@@ -288,7 +234,7 @@ class Sensor():
                 return
             
             # Initialisiere jeden Kontext
-            for context in ["air", "water", "soil"]:
+            for context in ["air", "water", "soil","light"]:
                 context_sensors = self.sensorMap["sensors"][context]
                 
                 for sensor_type, sensor_entries in context_sensors.items():
@@ -363,18 +309,14 @@ class Sensor():
         self.sensorReadings[context][sensor_type].append(sensor_config)
         self._entity_to_config[entity_id] = sensor_config
         
-        if context == "soil":
-            logging.warning(f"Medium Sensor Detect: {self.medium_label} {self.deviceLabel} - {entity_id} {sensor_type} - {config}")       
-        
         if self.medium_label and context == "soil":
+            logging.debug(f"Medium Sensor Detect: {self.medium_label} {self.deviceLabel} - {entity_id} {sensor_type} - {config}")       
             await self._register_sensor_to_medium(entity_id, sensor_type)
             
-        if self.ppfdDLI_label and context == "air":
+        if self.medium_label and context == "light":
             await self._register_sensor_to_medium(entity_id, sensor_type)
-        # NEU: Conitune with logic here     
-        
-        
-        _LOGGER.warning(f"Sensor {sensor_type} ({context}) ({entity_id}) {self.medium_label} {self.deviceLabel} initialisiert")
+
+        _LOGGER.warning(f" ✓ Sensor {sensor_type} ({context}) ({entity_id}) {self.medium_label} {self.deviceLabel} initialisiert")
 
     ## MEDIUM 
     def _extract_medium_label(self, device_label: str) -> Optional[str]:
@@ -385,7 +327,6 @@ class Sensor():
             labelMap enthält {'id': 'medium_1'} -> Rückgabe 'medium_1'
             keine Medium-Labels -> Rückgabe None
         """
-        logging.warning(f"{self.deviceName} SENS-L-CHECK {device_label} {self.labelMap}")
 
         if not getattr(self, "labelMap", None):
             return None
@@ -404,7 +345,7 @@ class Sensor():
             sensor_config = self._entity_to_config.get(entity_id)
             
             if not sensor_config:
-                _LOGGER.error(f"Keine Config für Sensor {entity_id} gefunden")
+                _LOGGER.error(f"NO Sensor Config {entity_id} found")
                 return
             
             # Aktuellen Wert und zusätzliche Infos holen
@@ -414,79 +355,17 @@ class Sensor():
                 "entity_id": entity_id,
                 "sensor_type": sensor_type,
                 "medium_label": self.medium_label,
-                "room": self.inRoom,
+                "room": self.room,
                 "value": current_value,
                 "unit": sensor_config.get('unit', ''),
                 "context": sensor_config.get('context', 'unknown'),
                 "device_name": self.deviceName
             })
-            
-            _LOGGER.warning(
-                f"Sensor {entity_id} ({sensor_type}={current_value}) "
-                f"zur Registrierung bei Medium {self.medium_label} gesendet"
-            )
+
             
         except Exception as e:
             _LOGGER.error(f"Fehler bei Medium-Registrierung für {entity_id}: {e}")
  
-    async def _register_sensor_to_medium2(self, entity_id: str, sensor_type: str):
-        """Registriert diesen Sensor bei seinem Medium."""
-        try:
-            await self.eventManager.emit("RegisterSensorToMedium", {
-                "entity_id": entity_id,
-                "sensor_type": sensor_type,
-                "medium_label": self.medium_label,
-                "room": self.inRoom
-            })
-            _LOGGER.warning(f"Sensor {entity_id} zur Registrierung bei Medium {self.medium_label} gesendet")
-        except Exception as e:
-            _LOGGER.error(f"Fehler bei Medium-Registrierung: {e}")
-    
-    async def handleSensorUpdate2(self, event_data):
-        """
-        Verarbeitet eingehende SensorUpdate-Events.
-        Leitet Soil-Sensor-Updates an Medium Manager weiter.
-        """
-        try:
-            entity_id = event_data.Name
-            new_state = event_data.newState[0] if event_data.newState else None
-            
-            if entity_id not in self._entity_to_config:
-                return
-            
-            sensor_config = self._entity_to_config[entity_id]
-            
-            if new_state is not None and new_state not in ["unavailable", "unknown"]:
-                try:
-                    numeric_value = float(new_state)
-                    await self._updateSensorValue(sensor_config, numeric_value)
-                    
-                    # Wenn Sensor zu Medium gehört, Event weiterleiten
-                    if self.medium_label and sensor_config["context"] == "soil":
-                        self.eventManager.emit("MediumSensorUpdate", {
-                            "entity_id": entity_id,
-                            "sensor_type": sensor_config["sensor_type"],
-                            "value": numeric_value,
-                            "timestamp": datetime.now(),
-                            "medium_label": self.medium_label,
-                            "room": self.inRoom
-                        })
-                        
-                        _LOGGER.debug(
-                            f"🔄 {self.deviceName}: Medium-Update gesendet für {entity_id} = {numeric_value}"
-                        )
-                    
-                    _LOGGER.debug(
-                        f"{self.deviceName}: Sensor {entity_id} aktualisiert auf {numeric_value}"
-                    )
-                    
-                except (ValueError, TypeError):
-                    await self._updateSensorValue(sensor_config, new_state)
-                    
-        except Exception as e:
-            _LOGGER.error(f"Fehler beim SensorUpdate: {e}", exc_info=True)
-        
-    # NEU: Event-Handler für automatische Updates
     async def handleSensorUpdate(self, event_data):
             """
             Verarbeitet eingehende SensorUpdate-Events.
@@ -515,6 +394,93 @@ class Sensor():
                             f"{self.deviceName}: Sensor {entity_id} aktualisiert auf {numeric_value} "
                             f"({sensor_config['sensor_type']} / {sensor_config['context']})"
                         )
+                        
+                        if sensor_config['context'] == "soil":
+                            #await self.eventManager.emit("MediumSensorUpdate",{"from":self.room,"sensor_type":sensor_config['sensor_type'],"value":numeric_value})
+                            await self.eventManager.emit("MediumSensorUpdate",sensor_config)
+
+                        if sensor_config['sensor_type'] == "co2":
+                            pass
+                         
+                        if sensor_config['sensor_type'] == "light":
+                            if "_lumen" in entity_id:
+                                unit = "lumen"
+                            else:
+                                unit = "lux"
+                            growSpace = self.dataStore.get("growAreaM2")
+                            lightStart = self.dataStore.getDeep("isPlantDay.lightOnTime")
+                            lightStop = self.dataStore.getDeep("isPlantDay.lightOffTime")
+                            lightDuration = hours_between(lightStart, lightStop)        
+                                            
+                            # Get LED type and factor from dataStore
+                            led_type = self.dataStore.getDeep("Light.ledType") or "fullspektrum_grow"
+                            lux_factor = self.dataStore.getDeep("Light.luxToPPFDFactor") or 15.0 
+                                            
+                            ppfd, dli = calc_light_to_ppfd_dli(
+                                numeric_value, 
+                                unit, 
+                                lightDuration, 
+                                growSpace,
+                                led_type=led_type,
+                                factor=lux_factor
+                            )
+
+                            self.dataStore.setDeep("tentData.DLI", dli)
+                            self.dataStore.setDeep("tentData.PPFD", ppfd)
+
+                            await _update_specific_sensor("ogb_ppfd_", self.room, ppfd, self.hass)
+                            await _update_specific_sensor("ogb_dli_", self.room, dli, self.hass)
+                            
+                            self.dataStore.setDeep("Light.DLICurrent",dli)
+                            self.dataStore.setDeep("Light.PPFDCurrent",ppfd)
+                            
+                            DLIPub = OGBDLIPublication(Name="DLIUpdate", DLI=dli)
+                            await self.eventManager.emit("DLIUpdate", DLIPub)
+                            PPFDPub = OGBPPFDPublication(Name="PPFDUpdate", PPFD=ppfd)
+                            await self.eventManager.emit("PPFDUpdate", PPFDPub)
+                            return                       
+                              
+                        if sensor_config['context'] == "water":
+                            updated = False
+                            if "_ec" in entity_id:
+                                self.dataStore.setDeep("Hydro.ec_current", numeric_value)
+                                updated = True
+                            elif "_tds" in entity_id:
+                                self.dataStore.setDeep("Hydro.tds_current", numeric_value)
+                                updated = True
+                            elif "_ph" in entity_id:
+                                self.dataStore.setDeep("Hydro.ph_current", numeric_value)
+                                updated = True
+                            elif "_oxi" in entity_id:
+                                self.dataStore.setDeep("Hydro.oxi_current", numeric_value)
+                                updated = True
+                            elif "_sal" in entity_id:
+                                self.dataStore.setDeep("Hydro.sal_current", numeric_value)
+                                updated = True
+                            elif "_temp" in entity_id:
+                                self.dataStore.setDeep("Hydro.current_temp", numeric_value)
+                                updated = True
+                                               
+                            if updated:
+                                ec_current = self.dataStore.getDeep("Hydro.ec_current")
+                                tds_current = self.dataStore.getDeep("Hydro.tds_current")
+                                ph_current = self.dataStore.getDeep("Hydro.ph_current")
+                                oxi_current = self.dataStore.getDeep("Hydro.oxi_current")
+                                sal_current = self.dataStore.getDeep("Hydro.sal_current")
+                                temp_current = self.dataStore.getDeep("Hydro.current_temp")
+
+                                hydroPublication = OGBWaterPublication(
+                                    Name="HydroUpdate",
+                                    ecCurrent=ec_current,
+                                    tdsCurrent=tds_current,
+                                    phCurrent=ph_current,
+                                    oxiCurrent=oxi_current,
+                                    salCurrent=sal_current,
+                                    waterTemp=temp_current
+                                )
+                                await self.eventManager.emit("CheckForFeed", hydroPublication)
+                                return                        
+                        
                     except (ValueError, TypeError):
                         # Falls nicht numerisch, als String speichern
                         await self._updateSensorValue(sensor_config, new_state)
@@ -550,7 +516,7 @@ class Sensor():
                     )
                 
                 sensor_config["last_reading"] = calibrated_value
-                sensor_config["last_update"] = datetime.now()
+                sensor_config["last_update"] = datetime.now()              
                 
                 # Schwellwert-Prüfung
                 self._checkThresholdsForSensor(calibrated_value, sensor_config)
@@ -562,7 +528,6 @@ class Sensor():
         except Exception as e:
             _LOGGER.error(f"Fehler beim Update von {sensor_config['entity_id']}: {e}")
 
-    # Hilfsmethoden für Zugriff
     def getSensorValue(self, sensor_type, context=None, event_data=None):
         """
         Gibt die aktuellen Werte für einen Sensortyp zurück.
@@ -708,7 +673,7 @@ class Sensor():
                 "alert_type": "below_minimum",
                 "value": value,
                 "threshold": threshold_min,
-                "room": self.inRoom
+                "room": self.room
             })
         
         if threshold_max is not None and value > threshold_max:
@@ -721,7 +686,7 @@ class Sensor():
                 "alert_type": "above_maximum",
                 "value": value,
                 "threshold": threshold_max,
-                "room": self.inRoom
+                "room": self.room
             })
         
         sensor_config["alert_active"] = alert_triggered
@@ -902,7 +867,7 @@ class Sensor():
         # Event auslösen
         self.eventManager.emit("AllSensorsRead", {
             "device": self.deviceName,
-            "room": self.inRoom,
+            "room": self.room,
             "readings": all_readings,
             "timestamp": datetime.now().isoformat()
         })
@@ -925,7 +890,7 @@ class Sensor():
             "device_name": self.deviceName,
             "device_type": self.deviceType,
             "platform": self.devicePlatform,
-            "room": self.inRoom,
+            "room": self.room,
             "sensor_types": self.getSensorTypes(),
             "contexts": self.getAllContexts(),
             "total_sensors": len(self._entity_to_config),

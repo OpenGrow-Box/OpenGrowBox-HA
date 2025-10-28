@@ -706,8 +706,19 @@ class OGBWebSocketConManager:
         # Grow Plans
         @self.sio.event
         async def grow_plans_response(data):
-            logging.warning(f"Recieved GrowPlans For {self.ws_room}: {data}")
+            logging.warning(f" {self.ws_room}:Recieved GrowPlans For {data}")
             await self.ogbevents.emit("new_grow_plans",data)          
+
+        @self.sio.event
+        async def growplan_ack_response(data):
+            logging.warning(f"{self.ws_room}: Recieved Activation Response For  {data}")
+            growPlan = data.get("growPlan")
+            await self.ogbevents.emit("plan_activation",growPlan)
+            
+            #await self._send_auth_response(event_id, "success", "Grow Plan Activated", {})
+
+            #await self._save_current_state()
+
 
         # PREM UI CONTROLS
         @self.sio.event
@@ -1159,8 +1170,10 @@ class OGBWebSocketConManager:
             if final_test:
                 logging.warning(f"Session rotation completed successfully for {self.ws_room}")
                 await self.ogbevents.emit(
-                    "LogForClient",
-                    f"Session key rotated successfully for {self.ws_room}",
+                    "LogForClient",{
+                        "Name":f"{self.ws_room} - Session rotation completed successfully",
+                        "rotation_success":True,
+                    },
                     haEvent=True
                 )
                 await self.ogbevents.emit("SaveRequest",True)

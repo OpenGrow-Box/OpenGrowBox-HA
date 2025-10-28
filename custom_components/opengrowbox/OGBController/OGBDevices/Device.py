@@ -384,6 +384,9 @@ class Device:
         try:
             for entity in entitys:
 
+
+                
+
                 entityID = entity.get("entity_id")
                 entityValue = entity.get("value")
                 entityPlatform = entity.get("platform")
@@ -487,14 +490,16 @@ class Device:
         _LOGGER.debug(f"{self.deviceName}: Capabilities identified: {self.dataStore.get('capabilities')}")
 
     def identifyIfRunningState(self):
+
         if self.isAcInfinDev:
             for select in self.options:
                 # Nur select-Entitäten prüfen, number-Entitäten überspringen
                 entity_id = select.get("entity_id", "")
                 if entity_id.startswith("number."):
                     continue  # number-Entitäten überspringen
-                    
+                switch_value = switch.get("value")
                 option_value = select.get("value")
+
                 if option_value == "on" or option_value == "On":
                     self.isRunning = True
                     return  # Früh beenden, da Zustand gefunden

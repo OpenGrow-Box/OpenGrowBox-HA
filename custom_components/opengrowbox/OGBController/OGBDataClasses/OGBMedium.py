@@ -7,7 +7,6 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class MediumType(Enum):
     """Enum for different grow mediums"""
     ROCKWOOL = "rockwool"
@@ -18,13 +17,11 @@ class MediumType(Enum):
     PERLITE = "perlite"
     CUSTOM = "custom"
 
-
 class DeviceAction(Enum):
     """Actions that can be performed on devices"""
     TURN_ON = "turn_on"
     TURN_OFF = "turn_off"
     SET_LEVEL = "set_level"
-
 
 @dataclass
 class MediumProperties:
@@ -37,7 +34,6 @@ class MediumProperties:
     drainage_speed: str
     nutrient_storage: float  # 0-100%
 
-
 @dataclass
 class ThresholdConfig:
     """Configuration for medium thresholds that trigger device actions"""
@@ -49,7 +45,6 @@ class ThresholdConfig:
     moisture_max: Optional[float] = None  # 0-100%
     temp_min: Optional[float] = None  # °C
     temp_max: Optional[float] = None  # °C
-
 
 class DeviceBinding:
     """Represents a device bound to the medium with conditions"""
@@ -98,6 +93,8 @@ class DeviceBinding:
                 _LOGGER.error(f"Error triggering device {self.device_name}: {e}")
                 return False
         return True
+
+
 
 
 class GrowMedium:
@@ -155,6 +152,9 @@ class GrowMedium:
 
     def __init__(
         self,
+        eventManager:None,
+        dataStore:None,
+        room:None,
         medium_type: MediumType,
         name: Optional[str] = None,
         properties: Optional[MediumProperties] = None,
@@ -162,13 +162,14 @@ class GrowMedium:
         thresholds: Optional[ThresholdConfig] = None,
         custom_attributes: Optional[Dict[str, Any]] = None
     ):
+        self.room = room
+        self.dataStore = dataStore
         self.medium_type = medium_type
         self.name = name or medium_type.value
         self.created_at = datetime.now()
         self.volume_liters = volume_liters
         self.custom_attributes = custom_attributes or {}
-
-        # FIXED: Normal dictionary initialization (not field())
+        self.eventManager = eventManager
         self.registered_sensors: Dict[str, List[str]] = {}
         self.sensor_readings: Dict[str, Any] = {}
         self.last_reading_time: Dict[str, datetime] = {}
@@ -201,10 +202,27 @@ class GrowMedium:
         self.current_ec: Optional[float] = None
         self.current_moisture: Optional[float] = None
         self.current_temp: Optional[float] = None
-        
+        self.current_light: Optional[int] = None
         # Fallback mode
         self.fallback_enabled = True
         self.fallback_triggered = False
+        
+        # Rate-Limiting für LogForClient Events
+        self.last_log_event_time: Optional[datetime] = None
+
+    def _safe_float_convert(self, value: Any) -> Optional[float]:
+        """Safely convert a value to float, return None if conversion fails"""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                _LOGGER.warning(f"Cannot convert '{value}' to float")
+                return None
+        return None
 
     async def register_sensor(self, sensor_data: dict):
         """
@@ -228,25 +246,30 @@ class GrowMedium:
         unit = sensor_data.get("unit", "")
         device_name = sensor_data.get("device_name", "Unknown")
 
+        # Convert value to float safely
+        numeric_value = self._safe_float_convert(value)
+        
         # Sensor-Typ registrieren
         if sensor_type not in self.registered_sensors:
             self.registered_sensors[sensor_type] = []
                     
         if entity_id not in self.registered_sensors[sensor_type]:
             self.registered_sensors[sensor_type].append(entity_id)
-            _LOGGER.info(f"✓ Medium {self.name}: Sensor {entity_id} ({sensor_type}) registriert")
+            _LOGGER.warning(f"✓ Medium {self.name}: Sensor {entity_id} ({sensor_type}) registriert")
         
-        # Wert auf entsprechende Property schreiben
+        # Wert auf entsprechende Property schreiben (as float)
         if sensor_type == "ph":
-            self.current_ph = value
+            self.current_ph = numeric_value
         elif sensor_type == "ec":
-            self.current_ec = value
+            self.current_ec = numeric_value
         elif sensor_type in ["moisture", "humidity"]:
-            self.current_moisture = value
+            self.current_moisture = numeric_value
         elif sensor_type in ["temperature", "temp"]:
-            self.current_temp = value
-        
-        # Sensorwerte speichern
+            self.current_temp = numeric_value
+        elif sensor_type in ["light"]:
+            self.current_light = numeric_value
+            
+        # Sensorwerte speichern (original value for display)
         self.sensor_readings[entity_id] = {
             "value": value,
             "unit": unit,
@@ -255,11 +278,11 @@ class GrowMedium:
         }
         self.last_reading_time[entity_id] = datetime.now()
         
-        _LOGGER.debug(f"Medium {self.name}: {sensor_type} = {value} {unit}")
+        _LOGGER.warning(f"Medium {self.name}: {sensor_type} = {value} {unit}")
         
         # Schwellenwerte prüfen und ggf. Geräte triggern
-        if self.fallback_enabled:
-            await self._check_thresholds(sensor_type, value)
+        #if self.fallback_enabled:
+        #    await self._check_thresholds(sensor_type, value)
     
     def unregister_sensor(self, entity_id: str) -> bool:
         """Entfernt einen Sensor von diesem Medium."""
@@ -270,18 +293,99 @@ class GrowMedium:
                 return True
         return False
     
-    def update_sensor_reading(self, sensor_type: str, value: Any, timestamp: datetime = None):
-        """Aktualisiert einen Sensor-Wert."""
+    async def update_sensor_reading_async(self, data):
+        """Aktualisiert einen Sensor-Wert mit Rate-Limiting für Events (max. 1x pro Minute)."""
+
+        sensor_type = data.get("sensor_type")
+        value = data.get("state")
+        entity_id = data.get("entity_id")
+        timestamp = data.get("timestamp") or datetime.now()
+
         old_value = self.sensor_readings.get(sensor_type)
+
+        # Nur fortfahren wenn sich der Wert wirklich geändert hat
+        if old_value == value:
+            return
+
+        # Wert in den internen Cache schreiben
         self.sensor_readings[sensor_type] = value
-        self.last_reading_time[sensor_type] = timestamp or datetime.now()
-        
-        if old_value != value:
+        self.last_reading_time[sensor_type] = datetime.now()
+
+        # Wert auf interne Properties schreiben
+        numeric_value = self._safe_float_convert(value)
+        if sensor_type == "ph":
+            self.current_ph = numeric_value
+        elif sensor_type == "ec":
+            self.current_ec = numeric_value
+        elif sensor_type in ["moisture", "humidity"]:
+            self.current_moisture = numeric_value
+        elif sensor_type in ["temperature", "temp"]:
+            self.current_temp = numeric_value
+        elif sensor_type in ["light"]:
+            self.current_light = numeric_value
+
+        # --- Moisture speichern ---
+        if sensor_type == "moisture":
+            moistures = self.dataStore.getDeep("workData.moisture") or []
+            updated = False
+
+            for item in moistures:
+                if item.get("entity_id") == entity_id:
+                    item["value"] = value
+                    item["sensor_type"] = sensor_type
+                    item["timestamp"] = timestamp
+                    updated = True
+                    break
+
+            if not updated:
+                moistures.append({
+                    "entity_id": entity_id,
+                    "value": value,
+                    "sensor_type": sensor_type,
+                    "timestamp": timestamp
+                })
+
+            self.dataStore.setDeep("workData.moisture", moistures)
+
+        # --- EC speichern ---
+        if sensor_type == "ec":
+            ecs = self.dataStore.getDeep("workData.ec") or []
+            updated = False
+
+            for item in ecs:
+                if item.get("entity_id") == entity_id:
+                    item["value"] = value
+                    item["sensor_type"] = sensor_type
+                    item["timestamp"] = timestamp
+                    updated = True
+                    break
+
+            if not updated:
+                ecs.append({
+                    "entity_id": entity_id,
+                    "value": value,
+                    "sensor_type": sensor_type,
+                    "timestamp": timestamp
+                })
+
+            self.dataStore.setDeep("workData.ec", ecs)
+
+        # Rate-Limit für LogForClient Events
+        should_send_event = True
+        if self.last_log_event_time:
+            time_diff = (datetime.now() - self.last_log_event_time).total_seconds()
+            if time_diff < 60:
+                should_send_event = False
+
+        if should_send_event:
             _LOGGER.warning(
-                f"📊 Medium {self.name}: {sensor_type} = {value} "
+                f"{self.room} - 📊 Medium {self.name}: {sensor_type} = {value} "
                 f"(vorher: {old_value})"
             )
-    
+            mediumStats = self.get_all_medium_values()
+            await self.eventManager.emit("LogForClient", mediumStats, haEvent=True)
+            self.last_log_event_time = datetime.now()
+
     def get_sensor_value(self, sensor_type: str) -> Optional[Any]:
         """Gibt den aktuellen Wert eines Sensor-Typs zurück."""
         return self.sensor_readings.get(sensor_type)
@@ -370,13 +474,13 @@ class GrowMedium:
                     _LOGGER.warning(f"Ungültiger Zeitstempel für {k}: {v}, überspringe")
                     continue
         
-        # Setze aktuelle Readings (Fallback-Werte)
+        # Setze aktuelle Readings (Fallback-Werte) - SAFE FLOAT CONVERSION
         status = data.get("status", {})
         current_readings = status.get("current_readings", {})
-        medium.current_ph = current_readings.get("ph")
-        medium.current_ec = current_readings.get("ec")
-        medium.current_moisture = current_readings.get("moisture")
-        medium.current_temp = current_readings.get("temp")
+        medium.current_ph = medium._safe_float_convert(current_readings.get("ph"))
+        medium.current_ec = medium._safe_float_convert(current_readings.get("ec"))
+        medium.current_moisture = medium._safe_float_convert(current_readings.get("moisture"))
+        medium.current_temp = medium._safe_float_convert(current_readings.get("temp"))
         
         return medium
 
@@ -479,13 +583,13 @@ class GrowMedium:
         This triggers device actions if thresholds are exceeded
         """
         if ph is not None:
-            self.current_ph = ph
+            self.current_ph = self._safe_float_convert(ph)
         if ec is not None:
-            self.current_ec = ec
+            self.current_ec = self._safe_float_convert(ec)
         if moisture is not None:
-            self.current_moisture = moisture
+            self.current_moisture = self._safe_float_convert(moisture)
         if temp is not None:
-            self.current_temp = temp
+            self.current_temp = self._safe_float_convert(temp)
         
         # Evaluate conditions and trigger devices if needed
         if self.fallback_enabled:
@@ -540,21 +644,47 @@ class GrowMedium:
         return triggered
     
     # Status checks
+    def get_all_medium_values(self):
+        mediumValues = {
+            "Name":f"{self.room} - Medium: {self.name.upper()} Info",
+            "medium":True,
+            "room":self.room,
+            "medium_type": self.medium_type.value,
+            "medium_ec": self.current_ec,
+            "medium_ph": self.current_ph,
+            "medium_moisture": self.current_moisture,
+            "medium_light": self.current_light if hasattr(self, 'current_light') else None,
+            "medium_temp": self.current_temp,
+            "medium_sensors_total": len(self.registered_sensors),
+            "medium_sensors": self.registered_sensors,
+            "timestamp": datetime.now()
+        }
+        logging.debug(f"{self.room} Current Medium Values: {mediumValues}") 
+        return mediumValues
+    
     def is_ph_optimal(self, ph_value: Optional[float] = None) -> bool:
         """Check if pH is in optimal range"""
         value = ph_value if ph_value is not None else self.current_ph
         if value is None:
             return False
+        # Ensure value is float
+        numeric_value = self._safe_float_convert(value)
+        if numeric_value is None:
+            return False
         min_ph, max_ph = self.properties.ph_range
-        return min_ph <= value <= max_ph
+        return min_ph <= numeric_value <= max_ph
     
     def is_ec_optimal(self, ec_value: Optional[float] = None) -> bool:
         """Check if EC is in optimal range"""
         value = ec_value if ec_value is not None else self.current_ec
         if value is None:
             return False
+        # Ensure value is float
+        numeric_value = self._safe_float_convert(value)
+        if numeric_value is None:
+            return False
         min_ec, max_ec = self.properties.ec_range
-        return min_ec <= value <= max_ec
+        return min_ec <= numeric_value <= max_ec
     
     def get_watering_interval_hours(self) -> float:
         """Get recommended watering interval"""

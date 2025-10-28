@@ -30,6 +30,7 @@ DEVICE_TYPE_MAPPING = {
     "CO2": ["co2", "carbon"],
     "Pump": ["pump"],
     "Switch": ["generic", "switch"],
+    "Fridge": ["fridge","kuehlschrank"]
 }
 
 # OGB ROOM DEVICE-CAPS Defintion and Mapping List
@@ -405,10 +406,10 @@ CS_PARAMETER_MAPPING = {
     "ec_target": ("ECTarget", "value"),
     "ec_dryback": ("ECDryBack", "value"),
     "moisture_dryback": ("MoistureDryBack", "value"),
-    "minmoisture": ("MinMoisture", "value"),
-    "maxmoisture": ("MaxMoisture", "value"),
+    "moisture_dryback": ("MoistureDryBack", "value"),
     "maxec": ("MaxEC", "value"),
     "minec": ("MinEC", "value"),
+    "vwc_target":("VWCTarget","value"),
     "vwc_max": ("VWCMax", "value"),
     "vwc_min": ("VWCMin", "value"),
 }

@@ -13,7 +13,8 @@ from .OGBDevices.Dehumidifier import Dehumidifier
 from .OGBDevices.GenericSwitch import GenericSwitch
 from .OGBDevices.Pump import Pump
 from .OGBDevices.CO2 import CO2
-from .OGBDataClasses.OGBPublications import OGBownDeviceSetup
+from .OGBDevices.Fridge import Fridge
+
 
 from .OGBParams.OGBParams import DEVICE_TYPE_MAPPING, CAP_MAPPING
 
@@ -189,7 +190,6 @@ class OGBDeviceManager:
             _LOGGER.error(f"Device '{device_name}' could not be identified. Returning generic Device.")
             return
 
-        _LOGGER.error(f"{device_name} Labels '{device_labels}' ")     
         DeviceClass = self.get_device_class(detected_type)
         return DeviceClass(device_name, device_data, self.eventManager, self.dataStore, detected_type, self.room, self.hass, detected_label,device_labels)
 
@@ -209,6 +209,7 @@ class OGBDeviceManager:
             "Sensor": Sensor,
             "Pump": Pump,
             "C02":CO2,
+            "Fridge":Fridge
         }
         return device_classes.get(device_type, Device)
 

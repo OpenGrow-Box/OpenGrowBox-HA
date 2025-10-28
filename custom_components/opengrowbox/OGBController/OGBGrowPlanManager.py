@@ -30,6 +30,7 @@ class OGBGrowPlanManager:
         
         # GrowPlans
         self.grow_plans = []  
+        self.grow_plans_private  = []
         self.grow_plans_public  = []
           
         self.active_grow_plan = None
@@ -115,12 +116,13 @@ class OGBGrowPlanManager:
         """Handle neue Grow Plans."""
         grow_plans = data.get("grow_plans", [])
         public_plans = data.get("public_plans", [])
-        active_plan = data.get("active_plan", "")
+        private_plans = data.get("private_plans", [])
+        active_plan = data.get("active_plan", [])
         try:
             self.grow_plans = grow_plans
+            self.grow_plans_private = private_plans
             self.grow_plans_public = public_plans
-            self.active_grow_plan_id = active_plan
-            self.active_grow_plan = self.get_grow_plan_name_by_id(active_plan)
+            self.active_grow_plan = active_plan 
             _LOGGER.info(f"Neue Grow Plans empfangen")
         except Exception as e:
             _LOGGER.exception(f"Fehler beim Verarbeiten neuer Grow Plans: {e}")
@@ -135,10 +137,11 @@ class OGBGrowPlanManager:
 
             # Beide Listen zusammenführen (private + public)
             all_plans = (self.grow_plans or []) + (self.grow_plans_public or [])
-
+            logging.warning(f"PLANOUTPUT-: {all_plans}. - {self.grow_plans}")
             # Passenden Plan suchen
             for plan in all_plans:
                 if str(plan.get("id")) == str(plan_id):
+                    logging.warning(f"PLANOUTPUT-: {plan}")
                     return plan.get("plan_name")
 
             _LOGGER.debug(f"Kein Grow Plan mit ID {plan_id} gefunden.")
@@ -152,6 +155,9 @@ class OGBGrowPlanManager:
         """Handle Plan Aktivierung"""
         try:
             plan_id = growPlan.get("id")
+            newGrowPlan = growPlan.get("growPlan")
+            self.grow_plans.append(newGrowPlan)
+            _LOGGER.error(f"ALL PLANS:{self.grow_plans}")
             if plan_id:
                 asyncio.create_task(self.activate_grow_plan(plan_id))
         except Exception as e:
@@ -182,7 +188,7 @@ class OGBGrowPlanManager:
             # Aktualisiere aktuelle Woche
             await self._update_current_week()
             
-            _LOGGER.info(f"Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}")
+            _LOGGER.warning(f"Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}")
             
             # Event senden
             self.hass.bus.async_fire("grow_plan_activated", {
