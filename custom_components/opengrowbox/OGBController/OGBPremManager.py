@@ -468,7 +468,7 @@ class OGBPremManager:
             #"devices":self.dataStore.get("devices"),
             "vpd": self.dataStore.get("vpd"),
             "tentData": self.dataStore.get("tentData"),
-            "Soil": self.dataStore.get("Soil"),
+            "CropSteering": self.dataStore.get("CropSteering"),
             "Hydro": self.dataStore.get("Hydro"),
             "growMediums":self.dataStore.get("growMediums"),
             "isLightON": self.dataStore.get("isPlantDay"),
@@ -479,9 +479,7 @@ class OGBPremManager:
             "workdata": self.dataStore.get("workData"),
             "plantStages": self.dataStore.get("plantStages"),
             "tentMode": self.dataStore.get("tentMode"),
-            "drying":self.dataStore.get("drying"),
             "previousActions":self.dataStore.get("previousActions"),
-            "DeviceProfiles":self.dataStore.get("DeviceProfiles"),
             "DeviceMinMax":self.dataStore.get("DeviceMinMax"),
             "controlOptions": self.dataStore.get("controlOptions"),
             "controlOptionData":self.dataStore.get("controlOptionData"),
@@ -518,7 +516,8 @@ class OGBPremManager:
                 # Send via available connection
                 
                 growPlans = {
-                    "PrivatePlans":self.growPlanManager.grow_plans,
+                    "AllPlans":self.growPlanManager.grow_plans,
+                    "PrivatePlans":self.growPlanManager.grow_plans_private,
                     "PublicPlans":self.growPlanManager.grow_plans_public,
                     "ActivePlan":self.growPlanManager.active_grow_plan,
                 }
@@ -635,16 +634,15 @@ class OGBPremManager:
             return
         
         growPlan = event.data.get("growPlan")
-        
-        _LOGGER.warning(f"Hanlde GrowPlan Activation Request From UI: {event}") 
-        _LOGGER.warning(f"{self.room} Grow Plan to Activate: {growPlan}")  
+
+        _LOGGER.debug(f"{self.room} Grow Plan to Activate: {growPlan}")  
         try:
             event_id = event.data.get("event_id")
             if event_id:
                 await self.ogb_ws.prem_event("grow_plan_activation", growPlan)
-                await self.eventManager.emit("plan_activation",growPlan)
-                await self._send_auth_response(event_id, "success", "Grow Plan Activated", {})
-                await self._save_current_state()
+               
+
+
         except Exception as e:
             _LOGGER.error(f"Activate Grow Plan error: {str(e)}")
             await self._send_auth_response(event_id, "error", f"Failed to Activate Grow Plan: {str(e)}")

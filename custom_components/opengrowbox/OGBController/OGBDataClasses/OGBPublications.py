@@ -19,11 +19,6 @@ class OGBEventPublication:
     newState: tuple[Union[float, str]] = field(default_factory=list)
 
 @dataclass(frozen=True)
-class OGBownDeviceSetup:
-    name: str
-    entities: tuple[Union[float, str]] = field(default_factory=list)
-
-@dataclass(frozen=True)
 class OGBDeviceEventPublication:
     Name: str
     oldState: tuple[Union[float, str]] = field(default_factory=list)

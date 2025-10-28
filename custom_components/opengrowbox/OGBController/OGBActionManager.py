@@ -808,76 +808,6 @@ class OGBActionManager:
         # Fallback: Erste verfügbare Aktion
         return actionMap[0] if actionMap else None
 
-    # Water Actions
-    async def PumpAction(self, pumpAction: OGBHydroAction):
-        if isinstance(pumpAction, dict):
-            dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
-            action = pumpAction.get("Action") or pumpAction.get("action")
-            cycle = pumpAction.get("Cycle") or pumpAction.get("cycle")
-        else:
-            # your dataclass
-            dev = pumpAction.Device
-            action = pumpAction.Action
-            cycle = pumpAction.Cycle
-            
-        if action == "on":
-            message = "Start Pump"
-            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
-            await self.eventManager.emit(
-                "LogForClient",
-                waterAction,
-                haEvent=True
-            )
-            await self.eventManager.emit("Increase Pump", pumpAction)
-
-        elif action == "off":
-            message = "Stop Pump"
-            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
-            await self.eventManager.emit(
-                "LogForClient",
-                waterAction,
-                haEvent=True
-            )
-            await self.eventManager.emit("Reduce Pump", pumpAction)
-
-        else:
-            # unknown action
-            return None
-        
-    async def RetrieveAction(self, pumpAction: OGBRetrieveAction):
-        if isinstance(pumpAction, dict):
-            dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
-            action = pumpAction.get("Action") or pumpAction.get("action")
-            cycle = pumpAction.get("Cycle") or pumpAction.get("cycle")
-        else:
-            # your dataclass
-            dev = pumpAction.Device
-            action = pumpAction.Action
-            cycle = pumpAction.Cycle
-            
-        if action == "on":
-            message = "Start Pump"
-            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
-            await self.eventManager.emit(
-                "LogForClient",
-                waterAction,
-                haEvent=True
-            )
-            await self.eventManager.emit("Increase Pump", pumpAction)
-
-        elif action == "off":
-            message = "Stop Pump"
-            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
-            await self.eventManager.emit(
-                "LogForClient",
-                waterAction,
-                haEvent=True
-            )
-            await self.eventManager.emit("Reduce Pump", pumpAction)
-
-        else:
-            # unknown action
-            return None
 
     # Action Helpers
     async def publicationActionHandler(self, actionMap):
@@ -981,7 +911,7 @@ class OGBActionManager:
             perfectionVPD = self.dataStore.getDeep("vpd.perfection")
             return "vpd_low" if currentVPD < perfectionVPD else "vpd_high"
 
-    def _enhanceActionMap(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
+    def _enhanceActionMapNext(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
         """Erweitert die ActionMap intelligent mit Deduplizierung"""
         
         # ✅ Dict für Deduplizierung: key = "capability_action"
@@ -1029,7 +959,7 @@ class OGBActionManager:
         
         return self._prioritizeOptimalDevices(enhancedMap, optimalDevices, caps)
     
-    def _enhanceActionMap2(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
+    def _enhanceActionMap(self, baseActionMap, tempDeviation, humDeviation, tentData, caps, vpdLightControl, islightON, optimalDevices):
         """Erweitert die ActionMap intelligent basierend auf Bedingungen"""
         
         enhancedMap = list(baseActionMap)  # Kopiere ursprüngliche Actions
@@ -1333,7 +1263,7 @@ class OGBActionManager:
         # Prüfe auf direkte Konflikte (Increase vs Reduce für gleiche Capability)
         return self._resolveIncreaseReduceConflicts(finalActions)
 
-    def _resolveIncreaseReduceConflicts(self, actions):
+    def _resolveIncreaseReduceConflictsNext(self, actions):
         """Löst Increase/Reduce Konflikte mit klarer Priorisierung"""
         
         capabilityActions = {}
@@ -1414,7 +1344,7 @@ class OGBActionManager:
         
         return resolvedActions
 
-    def _resolveIncreaseReduceConflicts2(self, actions):
+    def _resolveIncreaseReduceConflicts(self, actions):
         """Löst Increase/Reduce Konflikte für gleiche Capability auf"""
         
         capabilityActions = {}
@@ -1515,3 +1445,74 @@ class OGBActionManager:
                     result.extend(cap_info["devEntities"])
 
         return list(set(result))
+    
+    # Water Actions
+    async def PumpAction(self, pumpAction: OGBHydroAction):
+        if isinstance(pumpAction, dict):
+            dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
+            action = pumpAction.get("Action") or pumpAction.get("action")
+            cycle = pumpAction.get("Cycle") or pumpAction.get("cycle")
+        else:
+            # your dataclass
+            dev = pumpAction.Device
+            action = pumpAction.Action
+            cycle = pumpAction.Cycle
+            
+        if action == "on":
+            message = "Start Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
+            await self.eventManager.emit(
+                "LogForClient",
+                waterAction,
+                haEvent=True
+            )
+            await self.eventManager.emit("Increase Pump", pumpAction)
+
+        elif action == "off":
+            message = "Stop Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
+            await self.eventManager.emit(
+                "LogForClient",
+                waterAction,
+                haEvent=True
+            )
+            await self.eventManager.emit("Reduce Pump", pumpAction)
+
+        else:
+            # unknown action
+            return None
+        
+    async def RetrieveAction(self, pumpAction: OGBRetrieveAction):
+        if isinstance(pumpAction, dict):
+            dev = pumpAction.get("Device") or pumpAction.get("id") or "<unknown>"
+            action = pumpAction.get("Action") or pumpAction.get("action")
+            cycle = pumpAction.get("Cycle") or pumpAction.get("cycle")
+        else:
+            # your dataclass
+            dev = pumpAction.Device
+            action = pumpAction.Action
+            cycle = pumpAction.Cycle
+            
+        if action == "on":
+            message = "Start Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
+            await self.eventManager.emit(
+                "LogForClient",
+                waterAction,
+                haEvent=True
+            )
+            await self.eventManager.emit("Increase Pump", pumpAction)
+
+        elif action == "off":
+            message = "Stop Pump"
+            waterAction = OGBWaterAction(Name=self.room,Device=dev,Cycle=cycle,Action=action,Message=message)
+            await self.eventManager.emit(
+                "LogForClient",
+                waterAction,
+                haEvent=True
+            )
+            await self.eventManager.emit("Reduce Pump", pumpAction)
+
+        else:
+            # unknown action
+            return None

@@ -222,6 +222,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_CropSteering_Phases_{coordinator.room_name}", coordinator.room_name, coordinator,
                     options=["P0","P1","P2","P3",], initial_value="P0"),
 
+        # Multi Medium Control 
+        CustomSelect(f"OGB_Multi_Mediumctrl_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["YES","NO"], initial_value="NO"),
+
         # LIGHT 
         CustomSelect(f"OGB_Light_ControlType_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["DLI","GLJ","Default"], initial_value="Default"),

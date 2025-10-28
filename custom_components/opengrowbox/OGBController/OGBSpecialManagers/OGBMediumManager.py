@@ -15,7 +15,9 @@ class OGBMediumManager:
         self.room = room
         self.dataStore = dataStore
         self.eventManager = eventManager
-
+        self._save_task: Optional[asyncio.Task] = None
+        self._save_delay_seconds = 5  # Warte 5 Sekunden nach letztem Update
+        
         self.media: List[GrowMedium] = []
         self.current_medium_type: Optional[MediumType] = None
         
@@ -53,7 +55,7 @@ class OGBMediumManager:
         }
         """
         try:
-            logging.warning(f"{self.room} Sensor Registration on medium {data} ")
+            logging.debug(f"{self.room} Sensor Registration on medium {data} ")
             # Nur für diesen Room
             if data.get("room") != self.room:
                 return
@@ -94,11 +96,11 @@ class OGBMediumManager:
                     "medium_label": medium_label
                 }
                 
-                medium.register_sensor(sensor_data)
+                await medium.register_sensor(sensor_data)
                 self._entity_to_medium_index[entity_id] = medium_index
                 
-                _LOGGER.warning(
-                    f"✓ Sensor {entity_id} ({sensor_type}) zu Medium {medium.name} "
+                _LOGGER.debug(
+                    f" Sensor {entity_id} ({sensor_type}) zu Medium {medium.name} "
                     f"(Index {medium_index}) registriert"
                 )
                 
@@ -148,38 +150,55 @@ class OGBMediumManager:
         """
         try:
             # Nur für diesen Room
-            if data.get("room") != self.room:
-                return
+
             
             entity_id = data.get("entity_id")
             sensor_type = data.get("sensor_type")
-            value = data.get("value")
+            sensor_context = data.get("context")
+            device_class = data.get("device_class")
+            last_value = data.get("state")
+
             timestamp = data.get("timestamp")
             
             # Prüfe ob Sensor registriert ist
             if entity_id not in self._entity_to_medium_index:
-                _LOGGER.debug(f"Sensor {entity_id} ist keinem Medium zugeordnet")
+                _LOGGER.error(f"Sensor {entity_id} ist keinem Medium zugeordnet")
                 return
             
             medium_index = self._entity_to_medium_index[entity_id]
             
             # Prüfe ob Medium noch existiert
             if medium_index >= len(self.media):
-                _LOGGER.warning(f"Medium Index {medium_index} existiert nicht mehr")
+                _LOGGER.error(f"Medium Index {medium_index} existiert nicht mehr")
                 # Cleanup
                 del self._entity_to_medium_index[entity_id]
                 return
             
             medium = self.media[medium_index]
-            
-            # Update Sensor-Wert im Medium
-            medium.update_sensor_reading(sensor_type, value, timestamp)
-            
-            # Periodisch speichern (z.B. alle 10 Updates oder via Timer)
-            # self._save_mediums_to_store()
+            await medium.update_sensor_reading_async(data)
+            # Debounced save
+            await self._schedule_save()
             
         except Exception as e:
             _LOGGER.error(f"Fehler beim Medium-Sensor-Update: {e}", exc_info=True)
+
+    async def _schedule_save(self):
+        """Speichert nach Verzögerung, resettet Timer bei neuen Updates"""
+        # Cancel pending save
+        if self._save_task and not self._save_task.done():
+            self._save_task.cancel()
+        
+        # Schedule new save
+        self._save_task = asyncio.create_task(self._delayed_save())
+
+    async def _delayed_save(self):
+        """Wartet und speichert dann"""
+        try:
+            await asyncio.sleep(self._save_delay_seconds)
+            self._save_mediums_to_store()
+            _LOGGER.debug(f"Mediums nach Update-Batch gespeichert")
+        except asyncio.CancelledError:
+            pass  # Normal wenn neue Updates kommen
 
     async def _load_mediums_from_store(self):
         """Load existing mediums from dataStore on startup"""
@@ -293,7 +312,7 @@ class OGBMediumManager:
         for i in range(count):
             index = start_index + i + 1
             name = f"{medium_type.value}_{index}"
-            medium = GrowMedium(medium_type=medium_type, name=name)
+            medium = GrowMedium(self.eventManager,self.dataStore,self.room, medium_type=medium_type, name=name)
             self.media.append(medium)
             _LOGGER.info(f"Created medium {name}")
         
@@ -304,8 +323,7 @@ class OGBMediumManager:
         """Save current mediums to dataStore"""
         mediums_as_dicts = [medium.to_dict() for medium in self.media]
         self.dataStore.set("growMediums", mediums_as_dicts)
-        _LOGGER.debug(f"Saved {len(self.media)} mediums to dataStore for room {self.room}")
-        
+             
     async def _start_daily_update_timer(self):
         """Schedule daily update for media status"""
         async def daily_update():

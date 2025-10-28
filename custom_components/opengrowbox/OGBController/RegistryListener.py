@@ -409,8 +409,9 @@ class OGBRegistryEvenListener:
 
                 # Gib das Event-Publication-Objekt weiter
 
-                await self.eventManager.emit("SensorUpdate", eventData)
-                await self.eventManager.emit("RoomUpdate", eventData)      
+                await self.eventManager.emit("SensorUpdate", eventData)                
+                await self.eventManager.emit("RoomUpdate", eventData)
+
                 
                 # Light Shedule Check
                 #await self.eventManager.emit("LightSheduleUpdate",None)

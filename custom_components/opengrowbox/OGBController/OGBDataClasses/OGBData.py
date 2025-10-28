@@ -44,7 +44,7 @@ class OGBConf:
         "current_temp":0,
         "min_temp":0,
         "max_temp":0,
-        "FeedMode":"",
+        "FeedMode":None,
         ## TANK FEED 
         "FeedModeActive":False,
         "PH_Target": False,
@@ -58,127 +58,55 @@ class OGBConf:
         "Nut_PH_ml":None, 
         "ReservoirVolume":0,
     })
-    Soil: Dict[str, Any] = field(default_factory=lambda: {
+    CropSteering: Dict[str, Any] = field(default_factory=lambda: {
         "Mode": None,
-        "ActiveMode": None,
-        "CropPhase":None,
         "Active": False,
-        "Cycle": None,
-        "Intervall": None, 
-        "Duration": None,
-        "Retrieve": None,
-        "R_Active": False,
-        "R_Intervall": None, 
-        "R_Duration": None,
+        "ActiveMode": None,
         "CropPhase": None,
-        
-        # Phase-spezifische Daten für p0-p3 CropSteering
-        "ShotIntervall": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "ShotDuration": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "ShotSum": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "ECTarget": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "ECDryBack": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MoistureDryBack": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MinMoisture": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MaxWeight": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MinWeight": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MaxMoisture": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MaxEC": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "MinEC": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "VWCMax": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-        "VWCMin": {
-            "p0": {"value": 0},
-            "p1": {"value": 0},
-            "p2": {"value": 0},
-            "p3": {"value": 0}
-        },
-
-        # Runtime State Crop Steering
+        "currentPhase": None,
         "phaseStartTime": None,
-        "lastIrrigationTime": None,
-        "shotCounter": 0,
+        "lastCheck": None,
 
-        # Default Values for Normal Watering 
-        "ph_current": 0,
-        "ph_target": 0,
-        "ph_min": 0,
-        "ph_max": 0,
+        "shotCounter": 0,
+        "lastIrrigationTime": None,
+
+        # Aktuelle Werte (Numerisch!)
+        "irrigation_target_ec": 0,
         "ec_current": 0,
+        "vwc_current": 0,
+        "weight_current": 0,
+
+        "startNightMoisture": None,
+
+        # Target/System Werte
         "ec_target": 0,
         "ec_min": 0,
         "ec_max": 0,
-        "moist_current": 0,
-        "weight_current": 0,
+
         "weight_max": 0,
         "weight_min": 0,
         "max_moisture": 0,
         "min_moisture": 0,
-        "SoilTemp": 0,      
+
+        # Phase-spezifische Werte für p0–p3
+        **{
+            key: {phase: {"value": 0} for phase in ["p0", "p1", "p2", "p3"]}
+            for key in [
+                "ShotIntervall",
+                "ShotDuration",
+                "ShotSum",
+                "ECTarget",
+                "ECDryBack",
+                "MoistureDryBack",
+                "MaxWeight",
+                "MinWeight",
+                "MaxEC",
+                "MinEC",
+                "VWCTarget"
+                "VWCMax",
+                "VWCMin",
+            ]
+        },
     })
     growMediums: List[Any] = field(default_factory=list)
     Light: Dict[str, Any] = field(default_factory=lambda: {
@@ -283,6 +211,7 @@ class OGBConf:
         "minMaxControl":False,
         "ownWeights": False,
         "ambientControl": False,
+        "multiMediumControl":False,
     })
     controlOptionData: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "co2ppm": {"target": 0, "current":400, "minPPM": 400, "maxPPM": 1800},
@@ -381,6 +310,7 @@ class OGBConf:
         "humidity": [],
         "dewpoint": [],
         "moisture": [],
+        "ec":[],
         "Devices": [],
     })
     DeviceMinMax: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {

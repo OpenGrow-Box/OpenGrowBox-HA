@@ -1,8 +1,18 @@
 import logging
 import asyncio
 from datetime import datetime
+from enum import Enum
 
 _LOGGER = logging.getLogger(__name__)
+
+class CSMode(Enum):
+    DISABLED = "Disabled"
+    CONFIG = "Config"
+    AUTOMATIC = "Automatic"
+    MANUAL_P0 = "Manual-p0"
+    MANUAL_P1 = "Manual-p1"
+    MANUAL_P2 = "Manual-p2"
+    MANUAL_P3 = "Manual-p3"
 
 class OGBCSManager:
     def __init__(self, hass, dataStore, eventManager, room):
@@ -16,315 +26,344 @@ class OGBCSManager:
         # Calibration parameters
         self.calibration_readings = []
         self.calibration_threshold = 2
-        self.stability_tolerance = 0.5  # % change threshold for "stable"
+        self.stability_tolerance = 0.5
         self.max_irrigation_attempts = 5
+        self.blockCheckIntervall = 60
 
-        self._crop_steering_task = None
-        self._vwc_calibration_task = None
-
-        self.eventManager.on("CropSteeringChange", self.CropSteeringChanges)
+        # Single task for any CS operation
+        self._main_task = None
+        self._calibration_task = None
+        
+        # Event subscriptions
+        self.eventManager.on("CropSteeringChanges", self.handle_mode_change)
         self.eventManager.on("VWCCalibrationCommand", self.handle_vwc_calibration_command)
-
-    # ==================== CROP STEERING MAIN ====================
+ 
+    # ==================== ENTRY POINT ====================
     
-    async def CropSteeringChanges(self, data):
-        """Main handler for crop steering mode changes"""
-        _LOGGER.error(f"CropSteeringPhase-Change: {data}")
+    async def handle_mode_change(self, data):
+        """SINGLE entry point for all mode changes"""
+        _LOGGER.debug(f"CropSteering mode change: {data}")
         
-        mode = self.dataStore.getDeep("Soil.Mode")
-        isActive = self.dataStore.getDeep("Soil.Active")
-        cropMode = self.dataStore.getDeep("Soil.ActiveMode")
+        # Stop any existing operation first
+        await self.stop_all_operations()
         
+        # Parse mode
+        cropMode = self.dataStore.getDeep("CropSteering.ActiveMode")
+        mode = self._parse_mode(cropMode)
+        
+        if mode == CSMode.DISABLED or mode == CSMode.CONFIG:
+            _LOGGER.info(f"{self.room} - CropSteering {mode.value}")
+            return
+        
+        # Get sensor data
+        sensor_data = await self._get_sensor_averages()
+        if not sensor_data:
+            await self._log_missing_sensors()
+            return
+        
+        # Update current values
+        self.dataStore.setDeep("CropSteering.vwc_current", sensor_data['vwc'])
+        self.dataStore.setDeep("CropSteering.ec_current", sensor_data['ec'])
+        
+        # Get configuration
+        config = await self._get_configuration(mode)
+        if not config:
+            return
+        
+        # Log start
+        await self._log_mode_start(mode, config, sensor_data)
+        
+        # Start appropriate mode
+        if mode == CSMode.AUTOMATIC:
+            self._main_task = asyncio.create_task(
+                self._automatic_cycle()
+            )
+        elif mode.value.startswith("Manual"):
+            phase = mode.value.split("-")[1]  # Extract "p0", "p1", etc.
+            self._main_task = asyncio.create_task(
+                self._manual_cycle(phase)
+            )
+
+    async def handle_stop(self, event=None):
+        """Stop handler for external stop events"""
+        await self.stop_all_operations()
+
+    # ==================== MODE PARSING ====================
+    
+    def _parse_mode(self, cropMode: str) -> CSMode:
+        """Parse mode string to enum"""
         if "Automatic" in cropMode:
-            await self.start_automatic_mode()
-        elif "Disabled" in cropMode or "Config" in cropMode:
-            await self.stop_crop_steering()
+            return CSMode.AUTOMATIC
+        elif "Disabled" in cropMode:
+            return CSMode.DISABLED
+        elif "Config" in cropMode:
+            return CSMode.CONFIG
         elif "Manual" in cropMode:
             for phase in ["p0", "p1", "p2", "p3"]:
                 if phase in cropMode:
-                    _LOGGER.error(f"{self.room} CS-Phase: {phase} Start")
-                    await self.start_manual_mode(phase)
-                    break
-        else:
-            return
+                    return CSMode[f"MANUAL_{phase.upper()}"]
+            return CSMode.MANUAL_P0  # Default
+        return CSMode.DISABLED
 
-        soilMaxMoisture = self.dataStore.getDeep("isPlantDay.SoilMaxMoisture")
-        soilMinMoisture = self.dataStore.getDeep("isPlantDay.SoilMinMoisture")
-        plantPhase = self.dataStore.getDeep("isPlantDay.plantPhase")
-        generativeWeek = self.dataStore.getDeep("isPlantDay.generativeWeek")
-        dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-        
-        sysmessage = "Crop Steering mode active"
-        self.dataStore.setDeep("isPlantDay.CS_Active", True)
-        
-        await self.start_crop_steering_mode(
-            soilMaxMoisture, 
-            soilMinMoisture, 
-            plantPhase, 
-            generativeWeek,
-            dripperDevices
-        )
-        
-        await self.eventManager.emit(
-            "LogForClient",
-            f"CS Active: Phase={plantPhase}, Week={generativeWeek}",
-            haEvent=True
-        )
+    # ==================== SENSOR DATA ====================
+    
+    async def _get_sensor_averagesNew(self):
+        """Get averaged sensor data from dataStore moisture + ec arrays"""
 
-    async def start_crop_steering_mode(self, soilMaxMoisture, soilMinMoisture, 
-                                       plantPhase, generativeWeek, dripperDevices):
-        """Start the crop steering cycle"""
+        vwc_values = []
+        ec_values = []
+
+        # Moisture
+        moistures = self.dataStore.getDeep("workData.moisture") or []
+        for item in moistures:
+            raw = item.get("value")
+            if raw is None:
+                continue
+            try:
+                val = float(raw)
+            except ValueError:
+                continue
+            vwc_values.append(val)
+
+        # EC
+        ecs = self.dataStore.getDeep("workData.ec") or []
+        for item in ecs:
+            raw = item.get("value")
+            if raw is None:
+                continue
+            try:
+                val = float(raw)
+            except ValueError:
+                continue
+            ec_values.append(val)
+
+        if not vwc_values and not ec_values:
+            return None
+
+        result = {}
+
+        if vwc_values:
+            result['vwc'] = sum(vwc_values) / len(vwc_values)
+
+        if ec_values:
+            result['ec'] = sum(ec_values) / len(ec_values)
+
+        return result if result else None
+
+    
+    async def _get_sensor_averages(self):
+        """Get averaged sensor data"""
+        growMediums = self.dataStore.get("growMediums")
+        multiMediumCtrl = self.dataStore.getDeep("controlOptions.multiMediumControl")
         
-        valid_types = ["dripper"]
-        devices = dripperDevices.get("devEntities", [])
-        active_drippers = [dev for dev in devices if dev in valid_types]
+        if not growMediums:
+            return None
         
-        if not active_drippers:
+        if multiMediumCtrl == True:
+            pass
+        
+        vwc_values = []
+        ec_values = []
+        
+        for medium in growMediums:
+            sensors = medium.get('sensor_readings', {})
+
+            for sensor_id, sensor in sensors.items():
+                sensor_type = sensor["sensor_type"]
+                raw_value = sensor["value"]
+                if raw_value is None:
+                    continue
+
+                try:
+                    val = float(raw_value)
+                except ValueError:
+                    continue
+
+                if sensor_type == "moisture":
+                    vwc_values.append(val)
+
+                elif sensor_type == "ec":
+                    ec_values.append(val)
+                
+
+        if not vwc_values or not ec_values:
+            return None
+        
+        return {
+            'vwc': sum(vwc_values) / len(vwc_values),
+            'ec': sum(ec_values) / len(ec_values)
+        }
+
+    # ==================== CONFIGURATION ====================
+    
+    async def _get_configuration(self, mode: CSMode):
+        """Get configuration for mode"""
+        config = {
+            'mode': mode,
+            'drippers': self._get_drippers(),
+            'plant_phase': self.dataStore.getDeep("isPlantDay.plantPhase"),
+            'generative_week': self.dataStore.getDeep("isPlantDay.generativeWeek"),
+        }
+        
+        if not config['drippers']:
             await self.eventManager.emit(
-                "LogForClient",
-                "CropSteering: No valid dripper devices found.",
+                "LogForClient", {
+                    "Name": self.room,
+                    "Type": "INVALID PUMPS",
+                    "message": "No valid dripper devices found"
+                },
                 haEvent=True
             )
-            return
+            return None
         
-        if self._crop_steering_task is not None:
-            self._crop_steering_task.cancel()
-            try:
-                await self._crop_steering_task
-            except asyncio.CancelledError:
-                pass
-            self._crop_steering_task = None
+        if mode == CSMode.AUTOMATIC:
+            # Will use phase settings dynamically
+            pass
+        elif mode.value.startswith("Manual"):
+            phase = mode.value.split("-")[1]
+            config['phase_settings'] = self._get_phase_settings(phase)
         
-        self._crop_steering_task = asyncio.create_task(
-            self.crop_steering_cycle(
-                soilMaxMoisture, 
-                soilMinMoisture, 
-                plantPhase, 
-                generativeWeek,
-                active_drippers
-            )
-        )
-        
-        msg = f"CropSteering started: Phase={plantPhase}, Week={generativeWeek}"
-        await self.eventManager.emit("LogForClient", msg, haEvent=True)
+        return config
 
-    async def crop_steering_cycle(self, soilMaxMoisture, soilMinMoisture, 
-                                   plantPhase, generativeWeek, active_drippers):
-        """Main crop steering cycle with phase management"""
+    def _get_drippers(self):
+        """Get valid dripper devices"""
+        dripperDevices = self.dataStore.getDeep("capabilities.canPump")
+        if not dripperDevices:
+            return []
         
-        blockCheckIntervall = 5
+        devices = dripperDevices.get("devEntities", [])
+        valid_keywords = ["dripper", "pump"]
         
-        try:
-            self.dataStore.setDeep("cropSteering.currentPhase", "P0")
+        return [
+            dev for dev in devices
+            if any(keyword in dev.lower() for keyword in valid_keywords)
+        ]
+
+    def _get_phase_settings(self, phase):
+        """Get settings for specific phase"""
+        cs = self.dataStore.getDeep("CropSteering")
+        return {
+            "ShotIntervall": cs["ShotIntervall"][phase],
+            "ShotDuration": cs["ShotDuration"][phase],
+            "ShotSum": cs["ShotSum"][phase],
             
-            while True:
-                lightOnTime = self.dataStore.getDeep("isPlantDay.lightOnTime")
-                lightOffTime = self.dataStore.getDeep("isPlantDay.lightOffTime")
-                currentMoisture = self.dataStore.getDeep("Soil.moist_current")
-                currentEC = self.dataStore.getDeep("Soil.ec_current")
-                
-                if plantPhase == "veg":
-                    targetDryBack = 15
-                else:
-                    if generativeWeek <= 4:
-                        targetDryBack = 30
-                    else:
-                        targetDryBack = 25
-                
-                minMoistureAfterDryBack = soilMaxMoisture * (1 - targetDryBack / 100)
-                
-                currentTime = datetime.now().time()
-                isLightOn = lightOnTime <= currentTime < lightOffTime
-                
-                currentPhase = self.dataStore.getDeep("cropSteering.currentPhase")
-                
-                if currentPhase == "P0":
-                    if currentMoisture < soilMinMoisture:
-                        self.dataStore.setDeep("cropSteering.currentPhase", "P1")
-                        self.dataStore.setDeep("cropSteering.phaseStartTime", datetime.now())
-                        await self.eventManager.emit("LogForClient", "CropSteering: P0 -> P1 (Plant thirsty)", haEvent=True)
-                
-                elif currentPhase == "P1":
-                    if currentMoisture < soilMaxMoisture:
-                        await self.irrigate(active_drippers, duration=30)
-                    else:
-                        self.dataStore.setDeep("cropSteering.currentPhase", "P2")
-                        self.dataStore.setDeep("cropSteering.phaseStartTime", datetime.now())
-                        await self.eventManager.emit("LogForClient", "CropSteering: P1 -> P2 (Block full)", haEvent=True)
-                
-                elif currentPhase == "P2":
-                    if isLightOn:
-                        holdThreshold = soilMaxMoisture * 0.95
-                        if currentMoisture < holdThreshold:
-                            await self.irrigate(active_drippers, duration=15)
-                    else:
-                        self.dataStore.setDeep("cropSteering.currentPhase", "P3")
-                        self.dataStore.setDeep("cropSteering.phaseStartTime", datetime.now())
-                        self.dataStore.setDeep("cropSteering.startNightMoisture", currentMoisture)
-                        await self.eventManager.emit("LogForClient", "CropSteering: P2 -> P3 (Night DryBack)", haEvent=True)
-                
-                elif currentPhase == "P3":
-                    startNightMoisture = self.dataStore.getDeep("cropSteering.startNightMoisture")
-                    
-                    if not isLightOn:
-                        currentDryBack = ((startNightMoisture - currentMoisture) / startNightMoisture) * 100
-                        
-                        if plantPhase == "gen":
-                            if generativeWeek <= 4:
-                                if currentDryBack < targetDryBack * 0.8:
-                                    await self.adjust_ec(increase=True)
-                            else:
-                                if currentDryBack > targetDryBack * 1.1:
-                                    await self.adjust_ec(increase=False)
-                        
-                        if currentMoisture < minMoistureAfterDryBack * 0.9:
-                            await self.irrigate(active_drippers, duration=20)
-                            await self.eventManager.emit("LogForClient", "CropSteering: Emergency irrigation in P3", haEvent=True)
-                    else:
-                        self.dataStore.setDeep("cropSteering.currentPhase", "P0")
-                        await self.eventManager.emit("LogForClient", "CropSteering: P3 -> P0 (Day starts)", haEvent=True)
-                
-                self.dataStore.setDeep("cropSteering.lastCheck", datetime.now())
-                self.dataStore.setDeep("cropSteering.currentMoisture", currentMoisture)
-                self.dataStore.setDeep("cropSteering.currentEC", currentEC)
-                
-                await asyncio.sleep(blockCheckIntervall)
-                
-        except asyncio.CancelledError:
-            for dev_id in active_drippers:
-                await self.eventManager.emit("DripperAction", {
-                    "Name": self.room,
-                    "Action": "off",
-                    "Device": dev_id
-                })
-            await self.eventManager.emit("LogForClient", "CropSteering: Stopped, drippers turned off", haEvent=True)
-            raise
-
-    async def stop_crop_steering(self):
-        """Stoppe Crop Steering Task"""
-        if self._crop_steering_task is not None:
-            self._crop_steering_task.cancel()
-            try:
-                await self._crop_steering_task
-            except asyncio.CancelledError:
-                pass
-            self._crop_steering_task = None
+            "MoistureDryBack": cs["MoistureDryBack"][phase],
+            "ECDryBack": cs["ECDryBack"][phase],
+            
+            "ECTarget": cs["ECTarget"][phase],
+            "MaxEC": cs["MaxEC"][phase],
+            "MinEC": cs["MinEC"][phase],
+            
+            "VWCTarget": cs["VWCTarget"][phase],
+            "VWCMax": cs["VWCMax"][phase],
+            "VWCMin": cs["VWCMin"][phase],
+        }
 
     # ==================== AUTOMATIC MODE ====================
     
-    async def start_automatic_mode(self):
-        """Starte Automatic Mode - Sensor-gesteuert"""
-        await self.stop_crop_steering()
-        
-        self._crop_steering_task = asyncio.create_task(
-            self.automatic_crop_steering_cycle()
-        )
-        
-        await self.eventManager.emit(
-            "LogForClient",
-            "CropSteering: Automatic mode started",
-            haEvent=True
-        )
-
-    async def automatic_crop_steering_cycle(self):
-        """AUTOMATIC MODE: Sensor-gesteuert"""
+    async def _automatic_cycle(self):
+        """Automatic sensor-based cycle"""
         try:
-            self.dataStore.setDeep("Soil.CropPhase", "p0")
+            self.dataStore.setDeep("CropSteering.CropPhase", "p0")
+            _LOGGER.info(f"{self.room} - Automatic CS cycle started")
             
             while True:
-                currentMoisture = self.dataStore.getDeep("Soil.moist_current")
-                currentEC = self.dataStore.getDeep("Soil.ec_current")
-                currentPhase = self.dataStore.getDeep("Soil.CropPhase")
+                current_phase = self.dataStore.getDeep("CropSteering.CropPhase")
+                settings = self._get_phase_settings(current_phase)
                 
-                settings = self.get_phase_settings(currentPhase)
+                vwc = float(self.dataStore.getDeep("CropSteering.vwc_current"))
+                ec = int(float(self.dataStore.getDeep("CropSteering.ec_current")))
+                is_light_on = self.dataStore.getDeep("isPlantDay.islightON")
                 
-                lightOnTime = self.dataStore.getDeep("isPlantDay.lightOnTime")
-                lightOffTime = self.dataStore.getDeep("isPlantDay.lightOffTime")
-                currentTime = datetime.now().time()
-                isLightOn = lightOnTime <= currentTime < lightOffTime
+                if vwc is None:
+                    await asyncio.sleep(self.blockCheckIntervall)
+                    continue
                 
-                if currentPhase == "p0":
-                    if currentMoisture < settings["MinMoisture"]["value"]:
-                        self.dataStore.setDeep("Soil.CropPhase", "p1")
-                        self.dataStore.setDeep("Soil.phaseStartTime", datetime.now())
-                        await self.log_phase_change("p0", "p1", "Plant thirsty")
+                # Phase logic
+                if current_phase == "p0":
+                    await self._handle_phase_p0_auto(vwc, settings)
+                elif current_phase == "p1":
+                    await self._handle_phase_p1_auto(vwc, settings)
+                elif current_phase == "p2":
+                    await self._handle_phase_p2_auto(vwc, is_light_on, settings)
+                elif current_phase == "p3":
+                    await self._handle_phase_p3_auto(vwc, is_light_on, settings)
                 
-                elif currentPhase == "p1":
-                    if currentMoisture < settings["MaxMoisture"]["value"]:
-                        dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-                        await self.irrigate(dripperDevices, duration=30)
-                    else:
-                        self.dataStore.setDeep("Soil.CropPhase", "p2")
-                        self.dataStore.setDeep("Soil.phaseStartTime", datetime.now())
-                        await self.log_phase_change("p1", "p2", "Block full")
-                
-                elif currentPhase == "p2":
-                    if isLightOn:
-                        holdThreshold = settings["MaxMoisture"]["value"] * 0.95
-                        if currentMoisture < holdThreshold:
-                            dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-                            await self.irrigate(dripperDevices, duration=15)
-                    else:
-                        self.dataStore.setDeep("Soil.CropPhase", "p3")
-                        self.dataStore.setDeep("Soil.phaseStartTime", datetime.now())
-                        self.dataStore.setDeep("Soil.startNightMoisture", currentMoisture)
-                        await self.log_phase_change("p2", "p3", "Night DryBack")
-                
-                elif currentPhase == "p3":
-                    if not isLightOn:
-                        startNightMoisture = self.dataStore.getDeep("Soil.startNightMoisture")
-                        targetDryBack = settings["MoistureDryBack"]["value"]
-                        currentDryBack = ((startNightMoisture - currentMoisture) / startNightMoisture) * 100
-                        
-                        if currentDryBack < targetDryBack * 0.8:
-                            await self.adjust_ec_to_target(settings["ECTarget"]["value"], increase=True)
-                        elif currentDryBack > targetDryBack * 1.2:
-                            await self.adjust_ec_to_target(settings["ECTarget"]["value"], increase=False)
-                        
-                        minAllowed = settings["MinMoisture"]["value"] * 0.9
-                        if currentMoisture < minAllowed:
-                            dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-                            await self.irrigate(dripperDevices, duration=20)
-                            await self.eventManager.emit(
-                                "LogForClient",
-                                "CropSteering: Emergency irrigation in P3",
-                                haEvent=True
-                            )
-                    else:
-                        self.dataStore.setDeep("Soil.CropPhase", "p0")
-                        await self.log_phase_change("p3", "p0", "Day starts")
-                
-                await asyncio.sleep(5)
+                await asyncio.sleep(self.blockCheckIntervall)
                 
         except asyncio.CancelledError:
-            await self.turn_off_drippers()
+            await self._emergency_stop()
             raise
+        except Exception as e:
+            _LOGGER.error(f"Automatic cycle error: {e}", exc_info=True)
+            await self._emergency_stop()
+
+    async def _handle_phase_p0_auto(self, vwc, settings):
+        """P0: Monitoring phase"""
+        if vwc < float(settings["VWCMin"]["value"]):
+            self.dataStore.setDeep("CropSteering.CropPhase", "p1")
+            self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
+            await self._log_phase_change("p0", "p1", f"Plant thirsty Current:{vwc} Target:{float(settings["VWCMax"]["value"])}%")
+
+    async def _handle_phase_p1_auto(self, vwc, settings):
+        """P1: Saturation phase"""
+        if vwc < float(settings["VWCMax"]["value"]):
+            await self._irrigate(duration=30)
+        else:
+            self.dataStore.setDeep("CropSteering.CropPhase", "p2")
+            self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
+            await self._log_phase_change("p1", "p2", f"Block full Current:{vwc} Target:{float(settings["VWCMax"]["value"])}%")
+
+    async def _handle_phase_p2_auto(self, vwc, is_light_on, settings):
+        """P2: Maintenance phase"""
+        if is_light_on:
+            hold_threshold = float(settings["VWCMax"]["value"]) * 0.95
+            if vwc < hold_threshold:
+                await self._irrigate(duration=15)
+        else:
+            self.dataStore.setDeep("CropSteering.CropPhase", "p3")
+            self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
+            self.dataStore.setDeep("CropSteering.startNightMoisture", vwc)
+            await self._log_phase_change("p2", "p3", f"Night DryBack Current:{vwc} Target:{float(settings["VWCMax"]["value"])}%")
+
+    async def _handle_phase_p3_auto(self, vwc, is_light_on, settings):
+        """P3: Night dry-back phase"""
+        if not is_light_on:
+            start_night = self.dataStore.getDeep("CropSteering.startNightMoisture")
+            target_dryback = float(settings["MoistureDryBack"]["value"])
+            current_dryback = ((start_night - vwc) / start_night) * 100 if start_night else 0
+            
+            # EC adjustment based on dryback
+            if current_dryback < target_dryback * 0.8:
+                await self._adjust_ec_to_target(settings["ECTarget"]["value"], increase=True)
+            elif current_dryback > target_dryback * 1.2:
+                await self._adjust_ec_to_target(settings["ECTarget"]["value"], increase=False)
+            
+            # Emergency irrigation
+            min_allowed = float(settings["VWCMax"]["value"]) * 0.9
+            if vwc < min_allowed:
+                await self._irrigate(duration=15)
+                await self.eventManager.emit(
+                    "LogForClient",
+                    "CropSteering: Emergency irrigation in P3",
+                    haEvent=True
+                )
+        else:
+            self.dataStore.setDeep("CropSteering.CropPhase", "p0")
+            await self._log_phase_change("p3", "p0", "Day starts {vwc} % DryBackTarget {target_dryback} CurrentDryBack:}{current_dryback}")
 
     # ==================== MANUAL MODE ====================
     
-    async def start_manual_mode(self, phase):
-        """Starte Manual Mode - Zeit-gesteuert für eine Phase"""
-        await self.stop_crop_steering()
-        
-        self._crop_steering_task = asyncio.create_task(
-            self.manual_phase_cycle(phase)
-        )
-        
-        await self.eventManager.emit(
-            "LogForClient",
-            f"CropSteering: Manual mode started - Phase {phase}",
-            haEvent=True
-        )
-
-    async def manual_phase_cycle(self, phase):
-        """MANUAL MODE: Zeit-gesteuert"""
+    async def _manual_cycle(self, phase):
+        """Manual time-based cycle"""
         try:
-            settings = self.get_phase_settings(phase)
+            settings = self._get_phase_settings(phase)
             
-            shot_intervall = settings["ShotIntervall"]["value"]
+            shot_duration = settings["ShotDuration"]["value"]
+            shot_interval = settings["ShotIntervall"]["value"]
             shot_count = settings["ShotSum"]["value"]
             
-            if shot_intervall <= 0 or shot_count <= 0:
+            if shot_interval <= 0 or int(float(shot_count)) <= 0:
                 await self.eventManager.emit(
                     "LogForClient",
                     f"CropSteering: Invalid settings for {phase}",
@@ -332,70 +371,65 @@ class OGBCSManager:
                 )
                 return
             
-            self.dataStore.setDeep("Soil.shotCounter", 0)
-            self.dataStore.setDeep("Soil.phaseStartTime", datetime.now())
+            self.dataStore.setDeep("CropSteering.shotCounter", 0)
+            self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
             
-            await self.eventManager.emit(
-                "LogForClient",
-                f"CropSteering Manual {phase}: {shot_count} shots every {shot_intervall} min",
-                haEvent=True
-            )
+            _LOGGER.info(f"{self.room} - Manual {phase}: {shot_count} shots every {shot_interval}min")
             
             while True:
-                currentMoisture = self.dataStore.getDeep("Soil.moist_current")
-                currentEC = self.dataStore.getDeep("Soil.ec_current")
-                shotCounter = self.dataStore.getDeep("Soil.shotCounter")
+                vwc = int(float(self.dataStore.getDeep("CropSteering.vwc_current")))
+                ec = int(float(self.dataStore.getDeep("CropSteering.ec_current")))
+                shot_counter = int(float(self.dataStore.getDeep("CropSteering.shotCounter")))
                 
-                ec_target = settings["ECTarget"]["value"]
-                ec_min = settings["MinEC"]["value"]
-                ec_max = settings["MaxEC"]["value"]
+                # EC management
+                ec_target = int(float(settings["ECTarget"]["value"]))
+                if ec_target > 0 and ec:
+                    if ec < int(float(settings["MinEC"]["value"])):
+                        await self._adjust_ec_to_target(ec_target, increase=True)
+                    elif ec > settings["MaxEC"]["value"]:
+                        await self._adjust_ec_to_target(ec_target, increase=False)
                 
-                if ec_target > 0:
-                    if currentEC < ec_min:
-                        await self.adjust_ec_to_target(ec_target, increase=True)
-                    elif currentEC > ec_max:
-                        await self.adjust_ec_to_target(ec_target, increase=False)
-                
-                min_moisture = settings["MinMoisture"]["value"]
-                
-                if currentMoisture < min_moisture * 0.9:
+                # Emergency irrigation
+                if vwc and vwc < int(float(settings["VWCMin"]["value"])) * 0.9:
+                    await self._irrigate(duration=shot_duration)
                     await self.eventManager.emit(
-                        "LogForClient",
-                        f"CropSteering {phase}: Emergency irrigation",
+                        "LogForClient",{
+                            "Name":self.room,
+                            "Type":"Emergency irrigation",
+                            "Message":f"CropSteering {phase}: Emergency irrigation",
+                        },
                         haEvent=True
                     )
-                    dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-                    await self.irrigate(dripperDevices, duration=30)
                 
-                lastIrrigation = self.dataStore.getDeep("Soil.lastIrrigationTime")
+                # Scheduled irrigation
+                last_irrigation = self.dataStore.getDeep("CropSteering.lastIrrigationTime")
                 now = datetime.now()
                 
-                if lastIrrigation is None:
-                    should_irrigate = True
-                else:
-                    time_since_last = (now - lastIrrigation).total_seconds() / 60
-                    should_irrigate = time_since_last >= shot_intervall
+                should_irrigate = (
+                    last_irrigation is None or
+                    (now - last_irrigation).total_seconds() / 60 >= shot_interval
+                )
                 
-                if should_irrigate and shotCounter < shot_count:
-                    dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-                    await self.irrigate(dripperDevices, duration=30)
-                    shotCounter += 1
-                    self.dataStore.setDeep("Soil.shotCounter", shotCounter)
-                    self.dataStore.setDeep("Soil.lastIrrigationTime", now)
+                if should_irrigate and shot_counter < shot_count:
+                    await self._irrigate(duration=shot_duration)
+                    shot_counter += 1
+                    self.dataStore.setDeep("CropSteering.shotCounter", shot_counter)
+                    self.dataStore.setDeep("CropSteering.lastIrrigationTime", now)
                     
                     await self.eventManager.emit(
                         "LogForClient",
-                        f"CropSteering {phase}: Shot {shotCounter}/{shot_count}",
+                        f"CropSteering {phase}: Shot {shot_counter}/{shot_count}",
                         haEvent=True
                     )
                 
-                if shotCounter >= shot_count:
-                    phaseStartTime = self.dataStore.getDeep("Soil.phaseStartTime")
-                    elapsed_minutes = (now - phaseStartTime).total_seconds() / 60
+                # Reset counter after full cycle
+                if shot_counter >= shot_count:
+                    phase_start = self.dataStore.getDeep("CropSteering.phaseStartTime")
+                    elapsed = (now - phase_start).total_seconds() / 60
                     
-                    if elapsed_minutes >= shot_intervall:
-                        self.dataStore.setDeep("Soil.shotCounter", 0)
-                        self.dataStore.setDeep("Soil.phaseStartTime", now)
+                    if elapsed >= shot_interval:
+                        self.dataStore.setDeep("CropSteering.shotCounter", 0)
+                        self.dataStore.setDeep("CropSteering.phaseStartTime", now)
                         await self.eventManager.emit(
                             "LogForClient",
                             f"CropSteering {phase}: New cycle started",
@@ -405,8 +439,160 @@ class OGBCSManager:
                 await asyncio.sleep(10)
                 
         except asyncio.CancelledError:
-            await self.turn_off_drippers()
+            await self._emergency_stop()
             raise
+        except Exception as e:
+            _LOGGER.error(f"Manual cycle error: {e}", exc_info=True)
+            await self._emergency_stop()
+
+    # ==================== IRRIGATION ====================
+    
+    async def _irrigate(self, duration=30):
+        """Execute irrigation"""
+        drippers = self._get_drippers()
+        
+        if not drippers:
+            return
+        
+        try:
+            # Turn on
+            for dev_id in drippers:
+                from ...OGBDataClasses.OGBPublications import OGBHydroAction
+                action = OGBHydroAction(
+                    Name=self.room,
+                    Action="on",
+                    Device=dev_id,
+                    Cycle=False
+                )
+                await self.eventManager.emit("PumpAction", action)
+            
+            await self.eventManager.emit(
+                "LogForClient", {
+                    "Name": self.room,
+                    "Type": "CS-Irrigation",
+                    "Message": f"Irrigation started ({duration}s)"
+                },
+                haEvent=True
+            )
+            
+            await asyncio.sleep(duration)
+            
+            # Turn off
+            for dev_id in drippers:
+                action = OGBHydroAction(
+                    Name=self.room,
+                    Action="off",
+                    Device=dev_id,
+                    Cycle=False
+                )
+                await self.eventManager.emit("PumpAction", action)
+            
+        except Exception as e:
+            _LOGGER.error(f"Irrigation error: {e}")
+            await self._emergency_stop()
+
+    # ==================== STOP & CLEANUP ====================
+    
+    async def stop_all_operations(self):
+        """Stop all running operations"""
+        tasks_to_cancel = []
+        
+        if self._main_task and not self._main_task.done():
+            tasks_to_cancel.append(self._main_task)
+        
+        if self._calibration_task and not self._calibration_task.done():
+            tasks_to_cancel.append(self._calibration_task)
+        
+        for task in tasks_to_cancel:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        
+        self._main_task = None
+        self._calibration_task = None
+        
+        await self._turn_off_all_drippers()
+        _LOGGER.info(f"{self.room} - All CS operations stopped")
+
+    async def _emergency_stop(self):
+        """Emergency stop all operations"""
+        await self._turn_off_all_drippers()
+        await self.eventManager.emit(
+            "LogForClient",
+            f"{self.room}: Emergency stop activated",
+            haEvent=True
+        )
+
+    async def _turn_off_all_drippers(self):
+        """Turn off all drippers"""
+        drippers = self._get_drippers()
+        
+        for dev_id in drippers:
+            try:
+                from ...OGBDataClasses.OGBPublications import OGBHydroAction
+                action = OGBHydroAction(
+                    Name=self.room,
+                    Action="off",
+                    Device=dev_id,
+                    Cycle=False
+                )
+                await self.eventManager.emit("PumpAction", action)
+            except Exception as e:
+                _LOGGER.error(f"Error turning off {dev_id}: {e}")
+
+    # ==================== LOGGING ====================
+    
+    async def _log_mode_start(self, mode, config, sensor_data):
+        """Log mode start"""
+        await self.eventManager.emit(
+            "LogForClient", {
+                "Name": self.room,
+                "Type": "csaction",
+                "Message": f"CropSteering {mode.value} started",
+                "VWC": sensor_data['vwc'],
+                "EC": sensor_data['ec'],
+                "PlantPhase": config['plant_phase'],
+                "Week": config['generative_week']
+            },
+            haEvent=True
+        )
+
+    async def _log_phase_change(self, from_phase, to_phase, reason):
+        """Log phase change"""
+        await self.eventManager.emit(
+            "LogForClient",
+            {
+                "Name":self.room,
+                "Type":"CSLOG",
+                "Message":f"CropSteering: {from_phase} -> {to_phase} ({reason})",
+            },
+            haEvent=True
+        )
+
+    async def _log_missing_sensors(self):
+        """Log missing sensor data"""
+        logging.error(f"{self.room} Message: CropSteering: Waiting for sensor data (VWC/EC missing)")
+        await self.eventManager.emit(
+            "LogForClient", {
+                "Name": self.room,
+                "type": "missingno",
+                "Message": "CropSteering: Waiting for sensor data (VWC/EC missing)"
+            },
+            haEvent=True
+        )
+
+    # ==================== EC ADJUSTMENT ====================
+    
+    async def _adjust_ec_to_target(self, target_ec, increase=True):
+        """Adjust EC towards target"""
+        direction = "increase" if increase else "decrease"
+        await self.eventManager.emit(
+            "LogForClient",
+            f"CropSteering: Adjusting EC {direction} towards {target_ec}",
+            haEvent=True
+        )
 
     # ==================== VWC CALIBRATION ====================
     
@@ -523,10 +709,10 @@ class OGBCSManager:
                             haEvent=True
                         )
                         
-                        self.dataStore.setDeep(f"Soil.VWCMax.{phase}.value", max_vwc)
+                        self.dataStore.setDeep(f"CropSteering.VWCMax.{phase}.value", max_vwc)
                         
                         suggested_max_moisture = max_vwc * 0.95
-                        self.dataStore.setDeep(f"Soil.MaxMoisture.{phase}.value", suggested_max_moisture)
+                        self.dataStore.setDeep(f"CropSteering.VWCMax.{phase}.value", suggested_max_moisture)
                         
                         # Save to growMediums
                         await self.save_to_grow_mediums(
@@ -557,9 +743,9 @@ class OGBCSManager:
             
             if not calibration_complete and stable_readings:
                 max_vwc = max(stable_readings)
-                self.dataStore.setDeep(f"Soil.VWCMax.{phase}.value", max_vwc)
+                self.dataStore.setDeep(f"CropSteering.VWCMax.{phase}.value", max_vwc)
                 suggested_max_moisture = max_vwc * 0.95
-                self.dataStore.setDeep(f"Soil.MaxMoisture.{phase}.value", suggested_max_moisture)
+                self.dataStore.setDeep(f"CropSteering.VWCMax.{phase}.value", suggested_max_moisture)
                 
                 await self.eventManager.emit(
                     "LogForClient",
@@ -591,7 +777,7 @@ class OGBCSManager:
         min_readings = 3
         
         while (datetime.now() - start_time).total_seconds() < timeout:
-            current_vwc = self.dataStore.getDeep("Soil.moist_current")
+            current_vwc = self.dataStore.getDeep("CropSteering.vwc_current")
             
             if current_vwc is None or current_vwc == 0:
                 await asyncio.sleep(check_interval)
@@ -644,7 +830,7 @@ class OGBCSManager:
         
         try:
             while (datetime.now() - start_time).total_seconds() < dry_back_duration:
-                current_vwc = self.dataStore.getDeep("Soil.moist_current")
+                current_vwc = self.dataStore.getDeep("CropSteering.vwc_current")
                 
                 if current_vwc is not None and current_vwc > 0:
                     readings.append(current_vwc)
@@ -655,10 +841,10 @@ class OGBCSManager:
             if min_vwc_observed < float('inf'):
                 safe_min_vwc = min_vwc_observed * 1.1
                 
-                self.dataStore.setDeep(f"Soil.VWCMin.{phase}.value", safe_min_vwc)
+                self.dataStore.setDeep(f"CropSteering.VWCMin.{phase}.value", safe_min_vwc)
                 
                 suggested_min_moisture = safe_min_vwc * 1.05
-                self.dataStore.setDeep(f"Soil.MinMoisture.{phase}.value", suggested_min_moisture)
+                self.dataStore.setDeep(f"CropSteering.VWCMax.{phase}.value", suggested_min_moisture)
                 
                 await self.eventManager.emit(
                     "LogForClient",
@@ -710,155 +896,3 @@ class OGBCSManager:
                 "VWC Calibration: Stopped",
                 haEvent=True
             )
-
-    # ==================== HELPER METHODS ====================
-
-    async def irrigate(self, active_drippers, duration=30):
-        """Führt Bewässerung durch"""
-        try:
-            valid_types = ["dripper"]
-            devices = active_drippers.get("devEntities", [])
-            available_drippers = [dev for dev in devices if dev in valid_types]
-            
-            if not available_drippers:
-                await self.eventManager.emit(
-                    "LogForClient",
-                    "CropSteering: No drippers available",
-                    haEvent=True
-                )
-                return
-            
-            # Dripper einschalten
-            for dev_id in available_drippers:
-                await self.eventManager.emit("DripperAction", {
-                    "Name": self.room,
-                    "Action": "on",
-                    "Device": dev_id
-                })
-            
-            await self.eventManager.emit(
-                "LogForClient",
-                f"CropSteering: Irrigation started ({duration}s)",
-                haEvent=True
-            )
-            
-            await asyncio.sleep(duration)
-            
-            # Dripper ausschalten
-            for dev_id in available_drippers:
-                await self.eventManager.emit("DripperAction", {
-                    "Name": self.room,
-                    "Action": "off",
-                    "Device": dev_id
-                })
-            
-            await self.eventManager.emit(
-                "LogForClient",
-                "CropSteering: Irrigation completed",
-                haEvent=True
-            )
-            
-        except Exception as e:
-            # Emergency shutoff
-            if available_drippers:
-                for dev_id in available_drippers:
-                    try:
-                        await self.eventManager.emit("DripperAction", {
-                            "Name": self.room,
-                            "Action": "off",
-                            "Device": dev_id
-                        })
-                    except:
-                        pass
-            
-            await self.eventManager.emit(
-                "LogForClient",
-                f"CropSteering: Irrigation error - {str(e)}",
-                haEvent=True
-            )
-
-    async def turn_off_drippers(self):
-        """Schaltet alle Dripper aus"""
-        dripperDevices = self.dataStore.getDeep("capabilities.canPump")
-        
-        if not dripperDevices:
-            return
-        
-        valid_types = ["dripper"]
-        devices = dripperDevices.get("devEntities", [])
-        available_drippers = [dev for dev in devices if dev in valid_types]
-        
-        for dev_id in available_drippers:
-            try:
-                await self.eventManager.emit("DripperAction", {
-                    "Name": self.room,
-                    "Action": "off",
-                    "Device": dev_id
-                })
-            except Exception as e:
-                _LOGGER.error(f"Error turning off dripper {dev_id}: {e}")
-
-    def get_phase_settings(self, phase):
-        """Hole alle Settings für eine Phase"""
-        soil = self.dataStore.getDeep("Soil")
-        return {
-            "ShotIntervall": soil["ShotIntervall"][phase],
-            "ShotSum": soil["ShotSum"][phase],
-            "ECTarget": soil["ECTarget"][phase],
-            "ECDryBack": soil["ECDryBack"][phase],
-            "MoistureDryBack": soil["MoistureDryBack"][phase],
-            "MinMoisture": soil["MinMoisture"][phase],
-            "MaxMoisture": soil["MaxMoisture"][phase],
-            "MaxEC": soil["MaxEC"][phase],
-            "MinEC": soil["MinEC"][phase],
-            "VWCMax": soil["VWCMax"][phase],
-            "VWCMin": soil["VWCMin"][phase],
-        }
-
-    async def adjust_ec(self, increase=True):
-        """Passt EC-Wert an"""
-        currentEC = self.dataStore.getDeep("Soil.ec_current")
-        targetEC = self.dataStore.getDeep("Soil.ec_target")
-        step = 0.1
-        
-        if increase:
-            newEC = targetEC + step
-            direction = "increased"
-        else:
-            newEC = targetEC - step
-            direction = "decreased"
-        
-        minEC = 0.8
-        maxEC = 3.0
-        newEC = max(minEC, min(maxEC, newEC))
-        
-        self.dataStore.setDeep("irrigation.targetEC", newEC)
-        
-        await self.eventManager.emit(
-            "LogForClient",
-            f"CropSteering: EC {direction} from {targetEC:.2f} to {newEC:.2f}",
-            haEvent=True
-        )
-        
-        await self.eventManager.emit("ECAction", {
-            "Name": self.room,
-            "TargetEC": newEC,
-            "CurrentEC": currentEC
-        })
-
-    async def adjust_ec_to_target(self, target_ec, increase=True):
-        """Passt EC zum Ziel-Wert an"""
-        direction = "increase" if increase else "decrease"
-        await self.eventManager.emit(
-            "LogForClient",
-            f"CropSteering: Adjusting EC {direction} towards {target_ec}",
-            haEvent=True
-        )
-
-    async def log_phase_change(self, from_phase, to_phase, reason):
-        """Loggt Phasenwechsel"""
-        await self.eventManager.emit(
-            "LogForClient",
-            f"CropSteering: {from_phase} -> {to_phase} ({reason})",
-            haEvent=True
-        )

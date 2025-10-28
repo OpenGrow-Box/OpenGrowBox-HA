@@ -32,7 +32,7 @@ class OGBCastManager:
         self.eventManager.on("PlamtWateringStart", self.hydro_PlantWatering)
         self.eventManager.on("HydroModeRetrieveChange", self.HydroModRetrieveChange)
         self.eventManager.on("HydroRetriveModeStart", self.retrive_Mode)
-        self.eventManager.on("CropSteeringChange", self.CropSteeringManager.CropSteeringChanges) 
+        self.eventManager.on("CropSteeringChanges", self.CropSteeringManager.handle_mode_change) 
 
     ## Task Helper
     async def _cancel_all_tasks(self):
@@ -41,22 +41,22 @@ class OGBCastManager:
             self._hydro_task,
             self._retrive_task,
             self._plant_watering_task,
-            self._crop_steering_task
+
         ]
         
         for task in tasks:
+                       
             if task is not None and not task.done():
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
-        
+
         # Reset all task references
         self._hydro_task = None
         self._retrive_task = None
         self._plant_watering_task = None
-        self._crop_steering_task = None
   
     ## Hydro Modes
     async def HydroModeChange(self, pumpAction):
@@ -85,26 +85,27 @@ class OGBCastManager:
             sysmessage = "Hydro mode active"
             self.dataStore.setDeep("Hydro.Active", True)
             self.dataStore.setDeep("Hydro.Mode", mode)
-            self.dataStore.setDeep("Soil.Mode", None)
-            self.dataStore.setDeep("Soil.Active", False)
+            self.dataStore.setDeep("CropSteering.Mode", None)
+            self.dataStore.setDeep("CropSteering.Active", False)
             await self.hydro_Mode(cycle, intervall, duration, PumpDevices)
             
         elif mode == "Crop-Steering":
             sysmessage = "Crop-Steering mode active"
-            self.dataStore.setDeep("Soil.Active", True)
-            self.dataStore.setDeep("Soil.Mode", mode)
+            self.dataStore.setDeep("CropSteering.Active", True)
+            self.dataStore.setDeep("CropSteering.Mode", mode)
             self.dataStore.setDeep("Hydro.Mode", mode)
             self.dataStore.setDeep("Hydro.Active", False)
-            await self.CropSteeringManager.CropSteeringChanges(pumpAction)
+            await self.CropSteeringManager.handle_mode_change(pumpAction)
 
         elif mode == "Plant-Watering":
             sysmessage = "Plant watering mode active"
-            self.dataStore.setDeep("Soil.Active", True)
-            self.dataStore.setDeep("Soil.Mode", mode)
+            self.dataStore.setDeep("CropSteering.Active", False)
+            self.dataStore.setDeep("CropSteering.Mode", mode)
             self.dataStore.setDeep("Hydro.Mode", mode)
             self.dataStore.setDeep("Hydro.Active", False)
             await self.hydro_PlantWatering(intervall, duration, PumpDevices)
-
+        elif mode == "Config":
+            return
         else:
             sysmessage = f"Unknown mode: {mode}"
 
@@ -123,17 +124,26 @@ class OGBCastManager:
     async def hydro_Mode(self, cycle: bool, interval: float, duration: float, pumpDevices, log_prefix: str = "Hydro"):
         """Handle hydro pump operations - for mistpump, waterpump, aeropump, dwcpump, rdwcpump."""
         
-        valid_types = ["mistpump", "waterpump", "aeropump", "dwcpump", "rdwcpump","clonerpump"]
+        valid_types = ["mistpump","pumpmist", "waterpump","pumpwater",
+                       "aeropump","pumpaero", "dwcpump", "pumpdwc",
+                       "rdwcpump","pumprdwc","clonerpump","pumpcloner"]
+        valid_keywords = ["mist","water","aero","cloner","dwc","rdwc","pump"]        
         devices = pumpDevices["devEntities"]
-        active_pumps = [dev for dev in devices if dev in valid_types]
+        active_pumps = [
+                dev for dev in devices
+                if any(keyword in dev.lower() for keyword in valid_keywords)
+            ]
         await self.eventManager.emit("LogForClient", active_pumps, haEvent=True)
 
         if not active_pumps: return
 
         if not active_pumps:
             await self.eventManager.emit(
-                "LogForClient",
-                f"{log_prefix}: No valid pumps found.",
+                "LogForClient",{
+                    "Name":self.room,
+                    "Type":"INVALID PUMPS",
+                    "message":f"{log_prefix}: No valid pumps found.",
+                },
                 haEvent=True
             )
             return
@@ -190,7 +200,7 @@ class OGBCastManager:
         await self.eventManager.emit("LogForClient", msg, haEvent=True)
         
     async def hydro_PlantWatering(self,interval: float, duration: float, pumpDevices, cycle: bool = True,log_prefix: str = "Hydro"):
-        valid_types = ["waterpump"]
+        valid_types = ["waterpump","pumpwater","castpump","pumpcast"]
         devices = pumpDevices["devEntities"]
         active_pumps = [dev for dev in devices if any(t in dev for t in valid_types)]
 
@@ -285,9 +295,15 @@ class OGBCastManager:
     async def retrive_Mode(self, cycle: bool, interval: float, duration: float, pumpDevices, log_prefix: str = "Retrive"):
         """Handle retrive pump operations - only for retrievepump devices."""
         
-        valid_types = ["retrievepump","returnpump"]
+        valid_types = ["retrievepump","returnpump","pumpreturn","pumpretrieve"]
+        
+        valid_keywords = ["return","retrieve", "pump"]
+        
         devices = pumpDevices["devEntities"]
-        active_pumps = [dev for dev in devices if dev in valid_types]
+        active_pumps = [
+                dev for dev in devices
+                if any(keyword in dev.lower() for keyword in valid_keywords)
+            ]
         await self.eventManager.emit("LogForClient", active_pumps, haEvent=True)
   
         
@@ -356,4 +372,3 @@ class OGBCastManager:
         """Logs the performed action."""
         logHeader = f"{self.name}"
         _LOGGER.debug(f" {logHeader} : {log_message} ")
-    
