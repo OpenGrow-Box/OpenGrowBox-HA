@@ -271,15 +271,60 @@ class GrowMedium:
             
         # Sensorwerte speichern (original value for display)
         self.sensor_readings[entity_id] = {
-            "value": value,
+            "value": numeric_value,
             "unit": unit,
             "sensor_type": sensor_type,
             "device_name": device_name
         }
         self.last_reading_time[entity_id] = datetime.now()
         
-        _LOGGER.warning(f"Medium {self.name}: {sensor_type} = {value} {unit}")
+
+        # --- Moisture speichern ---
+        if sensor_type == "moisture":
+            moistures = self.dataStore.getDeep("workData.moisture") or []
+            updated = False
+
+            for item in moistures:
+                if item.get("entity_id") == entity_id:
+                    item["value"] = value
+                    item["sensor_type"] = sensor_type
+                    updated = True
+                    break
+
+            if not updated:
+                moistures.append({
+                    "entity_id": entity_id,
+                    "value": value,
+                    "sensor_type": sensor_type,
+                })
+
+            self.dataStore.setDeep("workData.moisture", moistures)
+
+        # --- EC speichern ---
+        if sensor_type == "ec":
+            ecs = self.dataStore.getDeep("workData.ec") or []
+            updated = False
+
+            for item in ecs:
+                if item.get("entity_id") == entity_id:
+                    item["value"] = value
+                    item["sensor_type"] = sensor_type
+                    updated = True
+                    break
+
+            if not updated:
+                ecs.append({
+                    "entity_id": entity_id,
+                    "value": value,
+                    "sensor_type": sensor_type,
+                })
+
+            self.dataStore.setDeep("workData.ec", ecs)
+
         
+        mediumStats = self.get_all_medium_values()
+        await self.eventManager.emit("LogForClient", mediumStats, haEvent=True)
+        self.last_log_event_time = datetime.now()    
         # Schwellenwerte prüfen und ggf. Geräte triggern
         #if self.fallback_enabled:
         #    await self._check_thresholds(sensor_type, value)
@@ -333,7 +378,6 @@ class GrowMedium:
                 if item.get("entity_id") == entity_id:
                     item["value"] = value
                     item["sensor_type"] = sensor_type
-                    item["timestamp"] = timestamp
                     updated = True
                     break
 
@@ -342,7 +386,6 @@ class GrowMedium:
                     "entity_id": entity_id,
                     "value": value,
                     "sensor_type": sensor_type,
-                    "timestamp": timestamp
                 })
 
             self.dataStore.setDeep("workData.moisture", moistures)
@@ -356,7 +399,6 @@ class GrowMedium:
                 if item.get("entity_id") == entity_id:
                     item["value"] = value
                     item["sensor_type"] = sensor_type
-                    item["timestamp"] = timestamp
                     updated = True
                     break
 
@@ -365,7 +407,6 @@ class GrowMedium:
                     "entity_id": entity_id,
                     "value": value,
                     "sensor_type": sensor_type,
-                    "timestamp": timestamp
                 })
 
             self.dataStore.setDeep("workData.ec", ecs)
@@ -459,12 +500,12 @@ class GrowMedium:
             except (ValueError, TypeError):
                 medium.created_at = datetime.now()
         
-        # FIXED: Normale Dictionary-Zuweisung
+        # Normale Dictionary-Zuweisung
         medium.registered_sensors = data.get("registered_sensors", {})
         medium.sensor_readings = data.get("sensor_readings", {})
         medium.custom_attributes = data.get("custom_attributes", {})
         
-        # FIXED: Sichere Initialisierung von last_reading_time
+        # Sichere Initialisierung von last_reading_time
         last_reading_data = data.get("last_reading_time", {})
         for k, v in last_reading_data.items():
             if v:

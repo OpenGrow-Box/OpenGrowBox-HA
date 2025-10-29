@@ -224,7 +224,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         # Multi Medium Control 
         CustomSelect(f"OGB_Multi_Mediumctrl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="NO"),
+                    options=["YES","NO"], initial_value="YES"),
 
         # LIGHT 
         CustomSelect(f"OGB_Light_ControlType_{coordinator.room_name}", coordinator.room_name, coordinator,
