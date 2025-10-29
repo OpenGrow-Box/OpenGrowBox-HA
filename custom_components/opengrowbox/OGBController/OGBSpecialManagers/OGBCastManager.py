@@ -50,10 +50,12 @@ class OGBCastManager:
                 task.cancel()
                 try:
                     await task
-                    await self.CropSteeringManager.stop_all_operations()
+                   
                 except asyncio.CancelledError:
                     pass
-
+        
+        await self.CropSteeringManager.stop_all_operations()           
+        
         # Reset all task references
         self._hydro_task = None
         self._retrive_task = None

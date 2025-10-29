@@ -263,7 +263,7 @@ class OGBCSManager:
             except ValueError:
                 continue
             vwc_values.append(val)
-
+            
         # EC
         ecs = self.dataStore.getDeep("workData.ec") or []
         for item in ecs:
@@ -299,7 +299,7 @@ class OGBCSManager:
             'plant_phase': self.dataStore.getDeep("isPlantDay.plantPhase"),
             'generative_week': self.dataStore.getDeep("isPlantDay.generativeWeek"),
         }
-        
+                
         if not config['drippers']:
             await self.eventManager.emit(
                 "LogForClient", {
@@ -369,7 +369,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-AUTO",
+                    "Type": "CSLOG",
                     "Message": f"Using automatic presets for {plant_phase} week {generative_week}"
                 },
                 haEvent=True
@@ -427,7 +427,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-P1",
+                    "Type": "CSLOG",
                     "Message": f"Saturating: VWC {vwc:.1f}% -> Target {preset['VWCMax']:.1f}%"
                 },
                 haEvent=True
@@ -452,7 +452,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-P2",
+                        "Type": "CSLOG",
                         "Message": f"Maintaining: VWC {vwc:.1f}% < Hold {hold_threshold:.1f}%"
                     },
                     haEvent=True
@@ -485,7 +485,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-P3",
+                        "Type": "CSLOG",
                         "Message": f"Low dryback {current_dryback:.1f}% < {target_dryback:.1f}% - Increasing EC"
                     },
                     haEvent=True
@@ -501,7 +501,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-P3",
+                        "Type": "CSLOG",
                         "Message": f"High dryback {current_dryback:.1f}% > {target_dryback:.1f}% - Decreasing EC"
                     },
                     haEvent=True
@@ -514,7 +514,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-EMERGENCY",
+                        "Type": "CSLOG",
                         "Message": f"Emergency irrigation: VWC {vwc:.1f}% < {emergency_level:.1f}%"
                     },
                     haEvent=True
@@ -647,7 +647,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-Irrigation",
+                    "Type": "CSLOG",
                     "Message": f"Irrigation started ({duration}s)"
                 },
                 haEvent=True
@@ -741,7 +741,7 @@ class OGBCSManager:
             "LogForClient",
             {
                 "Name":self.room,
-                "Type":"CS-PHASE",
+                "Type":"CSLOG",
                 "Message":f"{from_phase} -> {to_phase}: {reason}",
             },
             haEvent=True
@@ -753,7 +753,7 @@ class OGBCSManager:
         await self.eventManager.emit(
             "LogForClient", {
                 "Name": self.room,
-                "Type": "CS-ERROR",
+                "Type": "CSLOG",
                 "Message": "Waiting for sensor data (VWC/EC missing)"
             },
             haEvent=True
@@ -772,7 +772,7 @@ class OGBCSManager:
         await self.eventManager.emit(
             "LogForClient", {
                 "Name": self.room,
-                "Type": "CS-EC-ADJUST",
+                "Type": "CSLOG",
                 "Message": f"EC {direction}: {target_ec:.1f} -> {new_ec:.1f} (Dryback-Steuerung)"
             },
             haEvent=True
@@ -810,7 +810,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-ERROR",
+                    "Type": "CSLOG",
                     "Message": "VWC Calibration only available in Automatic Mode"
                 },
                 haEvent=True
@@ -849,7 +849,7 @@ class OGBCSManager:
         await self.eventManager.emit(
             "LogForClient", {
                 "Name": self.room,
-                "Type": "CS-CALIBRATION",
+                "Type": "CSLOG",
                 "Message": f"VWC Max Calibration started for {phase}"
             },
             haEvent=True
@@ -867,7 +867,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-CALIBRATION",
+                    "Type": "CSLOG",
                     "Message": "Starting VWC Max auto-calibration"
                 },
                 haEvent=True
@@ -879,7 +879,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-CALIBRATION",
+                        "Type": "CSLOG",
                         "Message": f"Irrigation cycle {irrigation_count}/{self.max_irrigation_attempts}"
                     },
                     haEvent=True
@@ -891,7 +891,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-CALIBRATION",
+                        "Type": "CSLOG",
                         "Message": "Waiting for VWC stabilization..."
                     },
                     haEvent=True
@@ -904,7 +904,7 @@ class OGBCSManager:
                     await self.eventManager.emit(
                         "LogForClient", {
                             "Name": self.room,
-                            "Type": "CS-CALIBRATION",
+                            "Type": "CSLOG",
                             "Message": "Timeout waiting for stabilization"
                         },
                         haEvent=True
@@ -920,7 +920,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-CALIBRATION",
+                        "Type": "CSLOG",
                         "Message": f"VWC={stable_vwc:.1f}%, Increase={vwc_increase_percent:.1f}%"
                     },
                     haEvent=True
@@ -938,7 +938,7 @@ class OGBCSManager:
                         await self.eventManager.emit(
                             "LogForClient", {
                                 "Name": self.room,
-                                "Type": "CS-CALIBRATION",
+                                "Type": "CSLOG",
                                 "Message": f"✓ COMPLETE! VWCMax={max_vwc:.1f}%"
                             },
                             haEvent=True
@@ -979,7 +979,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-CALIBRATION",
+                        "Type": "CSLOG",
                         "Message": f"Estimated VWCMax={max_vwc:.1f}% (max attempts reached)"
                     },
                     haEvent=True
@@ -990,7 +990,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-CALIBRATION",
+                    "Type": "CSLOG",
                     "Message": "Calibration cancelled"
                 },
                 haEvent=True
@@ -1001,7 +1001,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-ERROR",
+                    "Type": "CSLOG",
                     "Message": f"Calibration error: {str(e)}"
                 },
                 haEvent=True
@@ -1035,7 +1035,7 @@ class OGBCSManager:
                     await self.eventManager.emit(
                         "LogForClient", {
                             "Name": self.room,
-                            "Type": "CS-CALIBRATION",
+                            "Type": "CSLOG",
                             "Message": f"Stable at {avg_vwc:.1f}%"
                         },
                         haEvent=True
@@ -1066,7 +1066,7 @@ class OGBCSManager:
         await self.eventManager.emit(
             "LogForClient", {
                 "Name": self.room,
-                "Type": "CS-CALIBRATION",
+                "Type": "CSLOG",
                 "Message": f"VWC Min Calibration started for {phase} ({dry_back_duration}s)"
             },
             haEvent=True
@@ -1084,7 +1084,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-CALIBRATION",
+                    "Type": "CSLOG",
                     "Message": f"Monitoring dryback from {start_vwc:.1f}% for {dry_back_duration/60:.0f} minutes"
                 },
                 haEvent=True
@@ -1104,7 +1104,7 @@ class OGBCSManager:
                         await self.eventManager.emit(
                             "LogForClient", {
                                 "Name": self.room,
-                                "Type": "CS-CALIBRATION",
+                                "Type": "CSLOG",
                                 "Message": f"Current: {current_vwc:.1f}%, Dryback: {dryback_percent:.1f}%"
                             },
                             haEvent=True
@@ -1124,7 +1124,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-CALIBRATION",
+                        "Type": "CSLOG",
                         "Message": f"✓ COMPLETE! VWCMin={safe_min_vwc:.1f}% (observed: {min_vwc_observed:.1f}%, dryback: {final_dryback:.1f}%)"
                     },
                     haEvent=True
@@ -1148,7 +1148,7 @@ class OGBCSManager:
                 await self.eventManager.emit(
                     "LogForClient", {
                         "Name": self.room,
-                        "Type": "CS-ERROR",
+                        "Type": "CSLOG",
                         "Message": "VWC Min Calibration: No valid readings"
                     },
                     haEvent=True
@@ -1158,7 +1158,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-CALIBRATION",
+                    "Type": "CSLOG",
                     "Message": "Min Calibration cancelled"
                 },
                 haEvent=True
@@ -1179,7 +1179,7 @@ class OGBCSManager:
             await self.eventManager.emit(
                 "LogForClient", {
                     "Name": self.room,
-                    "Type": "CS-CALIBRATION",
+                    "Type": "CSLOG",
                     "Message": "Calibration stopped"
                 },
                 haEvent=True
