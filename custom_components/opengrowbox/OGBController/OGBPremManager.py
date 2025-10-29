@@ -36,18 +36,41 @@ class OGBPremManager:
         #User Data
         self.user_id = None
         self.subscription_data  = None
-
+        self._is_initialized = False
+        self._init_lock = asyncio.Lock()
+        
         self._setup_event_listeners()
+        asyncio.create_task(self._safe_init())
+        
+    @property
+    def is_ready(self):
+        """Check if manager is ready"""
+        return self._is_initialized and self.ogb_ws is not None
+    
 
-        asyncio.create_task(self.init())
-            
+    async def _safe_init(self):
+        """Safe initialization"""
+        async with self._init_lock:
+            try:
+                await self.init()
+                self._is_initialized = True
+                _LOGGER.info(f"✅ {self.room} Premium Manager initialized")
+            except Exception as e:
+                _LOGGER.error(f"❌ {self.room} Init failed: {e}", exc_info=True)
+    
     async def init(self):
         """Initialize Premium Manager"""
         await self._get_or_create_room_id()
         self.ogb_ws = OGB_WS(PREM_WS_API,self.eventManager,ws_room=self.room,room_id=self.room_id)
-        await asyncio.sleep(0.5)
+
         await self._load_last_state()
+        # Wait for WebSocket to be ready (with timeout)
+        for _ in range(20):
+            if self.ogb_ws.is_connected:
+                break
+            await asyncio.sleep(0.1)
         
+
         # Connection Configuration
         _LOGGER.info(f"OGBPremiumManager initialized for room: {self.room}")
 
@@ -275,6 +298,13 @@ class OGBPremManager:
 
     async def _on_prem_login(self, event):
         """Enhanced login handler using integrated client"""
+        if not self.is_ready:
+            _LOGGER.warning(f"⚠️ {self.room} Not ready for login, waiting...")
+            # Optional: wait briefly
+            await asyncio.sleep(1)
+            if not self.is_ready:
+                _LOGGER.error(f"❌ {self.room} Still not ready, aborting login")
+                return
         try:
             if self.room != event.data.get("room"):
                 return
@@ -465,24 +495,27 @@ class OGBPremManager:
 
         # Collect grow data
         grow_data = {
-            #"devices":self.dataStore.get("devices"),
+
+            "tentMode": self.dataStore.get("tentMode"),
+            
+            "plantStage": self.dataStore.get("plantStage"),
             "vpd": self.dataStore.get("vpd"),
             "tentData": self.dataStore.get("tentData"),
             "CropSteering": self.dataStore.get("CropSteering"),
             "Hydro": self.dataStore.get("Hydro"),
             "growMediums":self.dataStore.get("growMediums"),
             "isLightON": self.dataStore.get("isPlantDay"),
-            "devCaps": self.dataStore.get("capabilities"),
-            "plantStage": self.dataStore.get("plantStage"),
-            "strainName": self.dataStore.get("strainName"),
+
+
             "plantDates": self.dataStore.get("plantDates"),
             "workdata": self.dataStore.get("workData"),
-            "plantStages": self.dataStore.get("plantStages"),
-            "tentMode": self.dataStore.get("tentMode"),
+            "devCaps": self.dataStore.get("capabilities"),
+            #"devices":self.dataStore.get("devices"),
             "previousActions":self.dataStore.get("previousActions"),
             "DeviceMinMax":self.dataStore.get("DeviceMinMax"),
             "controlOptions": self.dataStore.get("controlOptions"),
             "controlOptionData":self.dataStore.get("controlOptionData"),
+            "plantStages": self.dataStore.get("plantStages"),
         }     
  
         success = await self.ogb_ws.prem_event("grow-data", grow_data)

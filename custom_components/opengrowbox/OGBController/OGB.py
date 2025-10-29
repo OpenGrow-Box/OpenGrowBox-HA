@@ -106,7 +106,7 @@ class OpenGrowBox:
         devices = self.dataStore.get("devices")
 
         if devices is None or len(devices) == 0:
-            _LOGGER.warning(f"NO Sensors Found to calc VPD in {self.room} Room. If you can Add Sensors to your OGB-Ambient Room Dont Forget to Created if not!")
+            _LOGGER.warning(f"NO Sensors Found to calc VPD in {self.room} Room. NOTE: Do not forgett to create an OGB-Ambient Room if you ned an Ambient VPD")
             return
 
         temperatures = []
@@ -1693,9 +1693,14 @@ class OpenGrowBox:
     
     async def _crop_steering_phase(self, data):
         """Update CropSteering Phase und Mode"""
+        activeCSMode = self.dataStore.getDeep("CropSteering.ActiveMode")
+        if activeCSMode != "Manual":
+            logging.error(f"{self.room} - Changing CS Phase Changes works only in Manual")
+            return
+
         value = data.newState[0]
         self.dataStore.setDeep("CropSteering.CropPhase",value)
-        await self.eventManager.emit("CropSteeringChanges",data)
+        #await self.eventManager.emit("CropSteeringChanges",data)
 
     async def _crop_steering_sets(self, data):
         """Dynamischer Setter für alle Crop Steering Parameter"""

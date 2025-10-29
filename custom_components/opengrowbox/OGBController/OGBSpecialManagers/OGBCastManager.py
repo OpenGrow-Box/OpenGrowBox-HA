@@ -50,6 +50,7 @@ class OGBCastManager:
                 task.cancel()
                 try:
                     await task
+                    await self.CropSteeringManager.stop_all_operations()
                 except asyncio.CancelledError:
                     pass
 
@@ -57,7 +58,8 @@ class OGBCastManager:
         self._hydro_task = None
         self._retrive_task = None
         self._plant_watering_task = None
-  
+
+        
     ## Hydro Modes
     async def HydroModeChange(self, pumpAction):
         isActive = self.dataStore.getDeep("Hydro.Active")
@@ -124,10 +126,7 @@ class OGBCastManager:
     async def hydro_Mode(self, cycle: bool, interval: float, duration: float, pumpDevices, log_prefix: str = "Hydro"):
         """Handle hydro pump operations - for mistpump, waterpump, aeropump, dwcpump, rdwcpump."""
         
-        valid_types = ["mistpump","pumpmist", "waterpump","pumpwater",
-                       "aeropump","pumpaero", "dwcpump", "pumpdwc",
-                       "rdwcpump","pumprdwc","clonerpump","pumpcloner"]
-        valid_keywords = ["mist","water","aero","cloner","dwc","rdwc","pump"]        
+        valid_keywords = ["mist","water","aero","cloner","dwc","rdwc"]        
         devices = pumpDevices["devEntities"]
         active_pumps = [
                 dev for dev in devices
@@ -200,9 +199,12 @@ class OGBCastManager:
         await self.eventManager.emit("LogForClient", msg, haEvent=True)
         
     async def hydro_PlantWatering(self,interval: float, duration: float, pumpDevices, cycle: bool = True,log_prefix: str = "Hydro"):
-        valid_types = ["waterpump","pumpwater","castpump","pumpcast"]
+        valid_keywords = ["water","cast"]        
         devices = pumpDevices["devEntities"]
-        active_pumps = [dev for dev in devices if any(t in dev for t in valid_types)]
+        active_pumps = [
+                dev for dev in devices
+                if any(keyword in dev.lower() for keyword in valid_keywords)
+            ]
 
         if not active_pumps:
             await self.eventManager.emit(
@@ -295,9 +297,7 @@ class OGBCastManager:
     async def retrive_Mode(self, cycle: bool, interval: float, duration: float, pumpDevices, log_prefix: str = "Retrive"):
         """Handle retrive pump operations - only for retrievepump devices."""
         
-        valid_types = ["retrievepump","returnpump","pumpreturn","pumpretrieve"]
-        
-        valid_keywords = ["return","retrieve", "pump"]
+        valid_keywords = ["return","retrieve"]
         
         devices = pumpDevices["devEntities"]
         active_pumps = [

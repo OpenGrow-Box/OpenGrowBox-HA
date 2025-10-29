@@ -1716,7 +1716,7 @@ class OGBWebSocketConManager:
         """Send message via WebSocket"""
         try:
             if not (self.is_premium and self.sio and self.sio.connected and self.authenticated):
-                logging.debug(f"❌ {self.ws_room} Cannot send - not ready (premium: {self.is_premium}, connected: {self.sio.connected if self.sio else False}, auth: {self.authenticated})")
+                logging.warning(f"❌ {self.ws_room} Cannot send - not ready (premium: {self.is_premium}, connected: {self.sio.connected if self.sio else False}, auth: {self.authenticated})")
                 return False
             
             message_data = {
