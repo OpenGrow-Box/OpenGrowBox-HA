@@ -29,7 +29,7 @@ class OGBCSManager:
         self.calibration_threshold = 2
         self.stability_tolerance = 0.5
         self.max_irrigation_attempts = 5
-        self.blockCheckIntervall = 60
+        self.blockCheckIntervall = 90
 
         # Single task for any CS operation
         self._main_task = None
