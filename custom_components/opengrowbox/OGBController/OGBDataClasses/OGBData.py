@@ -21,6 +21,7 @@ class OGBConf:
     vpdDetermination: str = ""
     tentMode: str = ""
     plantStage: str = ""
+    lightPlan: str = "auto"
     strainName: str = ""
     mainControl: str = ""
     growAreaM2: int = 0.0
@@ -205,6 +206,7 @@ class OGBConf:
         "nightVPDHold": False,
         "vpdDeviceDampening":False,
         "lightbyOGBControl": False,
+        "lightControlType": "Default",
         "vpdLightControl": False,
         "co2Control": False,
         "workMode":False,

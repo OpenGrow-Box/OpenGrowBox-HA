@@ -82,6 +82,7 @@ class Light(Device):
         self.eventManager.on("pauseSunPhase", self.pause_sun_phases)
         self.eventManager.on("resumeSunPhase", self.resume_sun_phases)
         self.eventManager.on("stopSunPhase", self.stop_sun_phases)
+        self.eventManager.on("DLIUpdate", self.updateLight)
 
     def __repr__(self):
         return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
@@ -645,6 +646,122 @@ class Light(Device):
             await self.eventManager.emit("LogForClient",lightAction,haEvent=True)
             await self.turn_on(brightness_pct=new_voltage)
 
+    #region DLI Light control
+    async def updateLight(self, data=None):
+        """Aktualisiert die Lichtdauer basierend auf der DLI"""
+        _LOGGER.debug(f"💡 {self.deviceName}: UpdateLight called")
+        #Passe die voltage des lichtes entsprechend des DLI an
+        if data is None:
+            _LOGGER.warning(f"💡 {self.deviceName}: No Data provided from Event for DLI Light Control: {data}. Trying to get DLI from Data Store.")
+            current_dli = self.dataStore.getDeep("Light.dli")
+        else:
+            _LOGGER.debug(f"💡 {self.deviceName}: Data provided from Event for DLI Light Control: {data}")
+            current_dli = data.DLI
+        _LOGGER.debug(f"💡 {self.deviceName}: Current DLI: {current_dli}")
+
+        light_control_type = self.dataStore.getDeep("controlOptions.lightControlType")
+        if light_control_type is None or light_control_type.upper() != "DLI":
+            _LOGGER.info(f"💡 {self.deviceName}: Light Control by OGB is set to {light_control_type}")
+            return
+        await self.updated_light_voltage_by_dli(current_dli)
+
+
+    async def updated_light_voltage_by_dli(self, dli):
+        """Berechnet die Voltage basierend auf dem DLI"""
+        calibration_step_size = 1.0 # Constant 
+        dli_tollerance = 0.05
+
+        if self.isDimmable == False:
+            _LOGGER.error(f"💡 {self.deviceName}: Device is not dimmable. DLI Light Control not possible.")
+            return
+        #get current DLI
+        selected_lightplan = self.dataStore.get("lightPlan")
+        if not selected_lightplan:
+            _LOGGER.error(f"💡 {self.deviceName}: No light plan selected. DLI Light Control not possible.")
+            return
+        plant_stage = self.dataStore.get("plantStage").lower()
+        if not plant_stage:
+            _LOGGER.error(f"💡 {self.deviceName}: No plant stage selected. DLI Light Control not possible.")
+            return
+        if self.islightON == False:
+            self.log_action("Not Allowed: LightSchedule is 'OFF'")
+            return
+        if self.ogbLightControl == False:
+            self.log_action("Not Allowed: OGBLightControl is 'OFF'")
+            return
+        
+        # Hat plant_stage Veg im String 
+        if plant_stage.lower().find("veg") != -1:
+            plant_stage = "veg"
+            week = (datetime.now().date() - datetime.strptime(self.dataStore.getDeep("plantDates.growstartdate"), '%Y-%m-%d').date()).days // 7
+        elif plant_stage.lower().find("flower") != -1:
+            plant_stage = "flower"
+            week = (datetime.now().date() - datetime.strptime(self.dataStore.getDeep("plantDates.bloomswitchdate"), '%Y-%m-%d').date()).days // 7
+        else:
+            _LOGGER.error(f"💡 {self.deviceName}: Invalid plant stage selected. DLI Light Control not possible. Set plant stage to '*Veg' or '*Flower'.")
+            return
+
+        light_plan = self.dataStore.getDeep("Light.plans." + selected_lightplan + "." + plant_stage + ".curve")
+        if not light_plan:
+            _LOGGER.error(f"💡 {self.deviceName}: No light curve found for selected plant stage {plant_stage} and light plan {selected_lightplan}.")
+            return
+        
+        # search dictionarray for curve object where week property is week
+        dli_target_week = None
+        for curve in light_plan:
+            if curve["week"] == week:
+                dli_target_week = curve["DLITarget"]
+                break
+
+        if not dli_target_week:
+            _LOGGER.error(f"💡 {self.deviceName}: No DLI target found for week {week}. Using last week's target.")
+            dli_target_week = light_plan[-1]["DLITarget"]
+        _LOGGER.info(f"💡 {self.deviceName}: DLI target for week {week}: {dli_target_week} from phase {plant_stage} for light plan {selected_lightplan}")
+
+        # get current DLI
+        _LOGGER.info(f"💡 {self.deviceName}: Current DLI: {dli}, Target DLI: {dli_target_week}")
+        
+        # Get light min max 
+        light_min_max_active = self.dataStore.getDeep("DeviceMinMax.Light").get("active", "True")
+        if not light_min_max_active:
+            _LOGGER.warning(f"💡 {self.deviceName}: No active light min max found. Using default values 20-100%.")
+            light_min = 20.0
+            light_max = 100.0
+        else:
+            light_min = float(self.dataStore.getDeep("DeviceMinMax.Light").get("minVoltage"))
+            light_max = float(self.dataStore.getDeep("DeviceMinMax.Light").get("maxVoltage"))
+            _LOGGER.info(f"💡 {self.deviceName}: Using min {light_min} and max {light_max} from data store.")
+    
+        _LOGGER.debug(f"{self.deviceName}: Light min: {light_min}, Light max: {light_max}")
+        if not light_min or not light_max:
+            _LOGGER.error(f"{self.deviceName}: No valid light min max found. No DLI control possible.")
+            return
+
+        # force min and max
+        if self.voltage < light_min:
+            self.voltage = light_min
+        elif self.voltage > light_max:
+            self.voltage = light_max
+
+        # Change Voltage if DLI is too high or too low. Use tollerance of 3%
+        if dli < dli_target_week * (1 - dli_tollerance):
+            new_voltage = min(light_max, self.voltage + calibration_step_size)
+            _LOGGER.info(f"💡 {self.deviceName}: DLI {dli} is lower than {dli_target_week * (1 - dli_tollerance)}. Voltage will be increased by {calibration_step_size} from {self.voltage}% to {new_voltage}%")
+        elif dli > dli_target_week * (1 + dli_tollerance):
+            new_voltage = max(light_min, self.voltage - calibration_step_size)
+            _LOGGER.info(f"💡 {self.deviceName}: DLI {dli} is lower than {dli_target_week * (1 - dli_tollerance)}. Voltage will be decreased by {calibration_step_size} from {self.voltage}% to {new_voltage}%")
+        else:
+            _LOGGER.info(f"💡 {self.deviceName}: DLI {dli} is within tolerance of {dli_tollerance}. No voltage change needed.")
+            return
+        
+        _LOGGER.debug(f"💡 {self.deviceName}: Voltage set to {new_voltage}%")
+        self.voltage = new_voltage
+        message = f"Update Light Voltage of {self.deviceName} to {new_voltage}%"
+        self.log_action(message)
+        light_action = OGBLightAction(Name=self.inRoom,Device=self.deviceName,Type=self.deviceType,Action="ON",Message=message,Voltage=new_voltage,Dimmable=True,SunRise=self.sunrise_phase_active,SunSet=self.sunset_phase_active)
+        await self.eventManager.emit("LogForClient",light_action,haEvent=True)
+        await self.turn_on(brightness_pct=new_voltage)
+        
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion mit tatsächlicher Spannung."""
         if self.voltage is not None:
@@ -653,3 +770,4 @@ class Light(Device):
         else:
             log_message = f"{self.deviceName} Voltage: Not Set"
         _LOGGER.debug(f"{self.deviceName} - {action_name}: {log_message}")
+    #endregion
