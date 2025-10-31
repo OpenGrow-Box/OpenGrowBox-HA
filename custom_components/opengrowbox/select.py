@@ -165,6 +165,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     selects = [
         CustomSelect(f"OGB_PlantStage_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["Germination", "Clones", "EarlyVeg", "MidVeg", "LateVeg", "EarlyFlower", "MidFlower", "LateFlower"], initial_value="Germination"),
+        CustomSelect(f"OGB_LightPlan_{coordinator.room_name}", coordinator.room_name, coordinator,
+                     options=["Photoperiodic", "Auto"], initial_value="Auto"),
         CustomSelect(f"OGB_TentMode_{coordinator.room_name}", coordinator.room_name, coordinator,
                      options=["VPD Perfection","VPD Target","Drying","Disabled"], initial_value="Disabled"),
         CustomSelect(f"OGB_HoldVpdNight_{coordinator.room_name}", coordinator.room_name, coordinator,

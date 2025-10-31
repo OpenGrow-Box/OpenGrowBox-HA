@@ -257,6 +257,7 @@ class OpenGrowBox:
             
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
+            f"ogb_light_plant_{self.room.lower()}": self._update_light_plan,
             f"ogb_tentmode_{self.room.lower()}": self._update_tent_mode, 
             f"ogb_leaftemp_offset_{self.room.lower()}": self._update_leafTemp_offset,
             f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_Target,                          
@@ -277,6 +278,7 @@ class OpenGrowBox:
             f"ogb_lightcontrol_{self.room.lower()}": self._update_ogbLightControl_control,
             f"ogb_holdvpdnight_{self.room.lower()}": self._update_vpdNightHold_control,
             f"ogb_vpdlightcontrol_{self.room.lower()}": self._update_vpdLight_control,
+            f"ogb_light_controltype_{self.room.lower()}": self._update_light_control_type,
             
             # CO2-Steuerung
             f"ogb_co2_control_{self.room.lower()}": self._update_co2_control,
@@ -878,6 +880,19 @@ class OpenGrowBox:
             await self._plantStageToVPD()
             await self.eventManager.emit("PlantStageChange",value)
   
+
+    async def _update_light_plan(self, data):
+        """
+        Update Plant Type.
+        """
+        value = data.newState[0]
+        current_light_plan = self.dataStore.get("lightPlan")
+        if current_light_plan != value:
+            self.dataStore.set("lightPlan",value)
+            await self.eventManager.emit("LightPlanChange",value)
+            _LOGGER.warning(f"Light Plan changed to {value}")
+
+
     async def _update_tent_mode(self, data):
         """
         Update Tentmodus.
@@ -1418,6 +1433,7 @@ class OpenGrowBox:
         
         await self.eventManager.emit("updateControlModes",self._stringToBool(value))   
         await self.eventManager.emit("VPDLightControl",self._stringToBool(value))
+
             
     async def _update_vpdNightHold_control(self,data):
         """
@@ -1428,6 +1444,18 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("controlOptions.nightVPDHold", self._stringToBool(value))
             await self.eventManager.emit("updateControlModes",self._stringToBool(value))    
+
+    async def _update_light_control_type(self,data):
+        """
+        Update Light Control Type
+        """
+        value = data.newState[0]
+        if value is None:
+            return
+        current_value = self.dataStore.getDeep("controlOptions.lightControlType")
+        if current_value != value:
+            self.dataStore.setDeep("controlOptions.lightControlType", value)
+            _LOGGER.info(f"{self.room}: Light control type updated to '{value}'")
       
     ## Device Label
     async def _device_from_label(self,data):
