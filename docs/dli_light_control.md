@@ -14,7 +14,7 @@ Diese Anleitung erklärt den DLI-basierten Lichtsteuerungsmodus in OpenGrowBox (
 3. Der Steuerungsmodus muss auf DLI gesetzt sein.
 4. Ein Light-Plan muss ausgewählt sein und passende Kurven für `*Veg` oder `*Flower` vorhanden sein.
 5. Pflanzphase muss gesetzt sein und die relevanten Growstartdaten bzw. Blütenwechseldatum muss gesetz sein.
-6. Min/Max-Werte für Licht sollten konfiguriert sein unter `DeviceMinMax.Light` (mind. `minVoltage` und `maxVoltage`).
+6. Min/Max-Werte für Licht sollten konfiguriert sein unter Licht MinMax.
    *HINWEIS: Wenn diese nicht gesetzt sind wird ein Bereich von 10-100% als mögliche Lichtstärke angenommen.*
 7. Licht Sensor muss für den Raum vorhanden sein. Das Updateintervall des Senssors darf nicht kleiner als 10 Sekunden. (Empfohen 1 Minute).
 
@@ -44,8 +44,8 @@ Diese Anleitung erklärt den DLI-basierten Lichtsteuerungsmodus in OpenGrowBox (
 
 Die Lichtwerte sind wie folgt vorkonfiguriert:
 
-### Photoperiodische Pflanzen
-#### Vegitationssphase 
+**Photoperiodische Pflanzen**
+***Vegitationssphase***
 | Woche | PPFDTarget (μmol·m⁻²·s⁻¹) | DLITarget (mol·m⁻²·d⁻¹) |
 | ----: | ------------------------: | ----------------------: |
 |     1 |                       200 |                      12 |
@@ -53,7 +53,7 @@ Die Lichtwerte sind wie folgt vorkonfiguriert:
 |     3 |                       350 |                      25 |
 |     4 |                       400 |                      30 |
 
-#### Blütephase 
+***Blütephase***
 | Woche | PPFDTarget (μmol·m⁻²·s⁻¹) | DLITarget (mol·m⁻²·d⁻¹) |
 | ----: | ------------------------: | ----------------------: |
 |     1 |                       450 |                      25 |
@@ -65,15 +65,15 @@ Die Lichtwerte sind wie folgt vorkonfiguriert:
 |     7 |                       900 |                      50 |
 |     8 |                       900 |                      50 |
 
-## Autoflower
-### Vegitationssphase
+**Autoflower**
+***Vegitationssphase***
 | Woche | PPFDTarget (μmol·m⁻²·s⁻¹) | DLITarget (mol·m⁻²·d⁻¹) |
 | ----: | ------------------------: | ----------------------: |
 |     1 |                       200 |                      15 |
 |     2 |                       300 |                      22 |
 |     3 |                       400 |                      28 |
 
-### Blütephase
+***Blütephase***
 | Woche | PPFDTarget (μmol·m⁻²·s⁻¹) | DLITarget (mol·m⁻²·d⁻¹) |
 | ----: | ------------------------: | ----------------------: |
 |     4 |                       500 |                      32 |
@@ -96,8 +96,6 @@ Die Lichtwerte sind wie folgt vorkonfiguriert:
     - Beispiel: DLI = 30, Lichtdauer = 12 h → Sekunden = 43.200
     - PPFD = 30 × 1.000.000 / 43.200 ≈ 694 μmol·m⁻²·s⁻¹
 *Hinweis zu Lux: OGB speichert einen `luxToPPFDFactor` (Standard z. B. 15.0) zur groben Umrechnung von Lux → PPFD, falls nur Lux-Sensoren vorliegen. Lux → PPFD ist aber sehr abhängig vom Lichtspektrum und bleibt eine Näherung.*
-
-
 
 ## Häufige Ursachen & Troubleshooting
 
