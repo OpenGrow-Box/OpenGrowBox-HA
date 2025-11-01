@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from urllib.parse import urlparse
 from datetime import datetime, timezone,timedelta
+from ....const import VERSION
 import uuid
 
 class OGBWebSocketConManager:
@@ -76,6 +77,17 @@ class OGBWebSocketConManager:
         # Message handlers
         self.message_handlers: Dict[str, Callable] = {}
 
+
+        self.headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "OGB-Python-Client/1.0",
+                "Accept": "application/json",
+                "origin": "https://opengrowbox.net",
+                "ogb-client": "ogb-ws-ha-connector 1.0",
+                "ogb-client-id": self.client_id,
+                "ogb-client-version":VERSION
+            }
+        
         # Setup socket.io ASYNC client
         self.sio = socketio.AsyncClient(
             reconnection=False,  # Handle reconnection ourselves
@@ -159,15 +171,6 @@ class OGBWebSocketConManager:
                 "client_id": self.client_id,
             }
 
-            headers = {
-                "Content-Type": "application/json",
-                "User-Agent": "OGB-Python-Client/1.0",
-                "Accept": "application/json",
-                "origin": "https://opengrowbox.net",
-                "ogb-client": "ogb-ws-ha-connector 1.0",
-                "ogb-client-id": self.client_id,
-            }
-
             logging.warning(f"🔄 {self.ws_room} Attempting login for: {email}")
 
             timeout_config = aiohttp.ClientTimeout(total=15)
@@ -176,7 +179,7 @@ class OGBWebSocketConManager:
                 async with session.post(
                     self.login_url,
                     json=login_data,
-                    headers=headers
+                    headers=self.headers
                 ) as response:
 
                     response_text = await response.text()
@@ -227,7 +230,7 @@ class OGBWebSocketConManager:
                             return False
 
                         self._aes_gcm = AESGCM(self._session_key)
-                        logging.warning(f"🔐 {self.ws_room} AES-GCM cipher initialized successfully")
+                        logging.debug(f"🔐 {self.ws_room} AES-GCM cipher initialized successfully")
 
                     except Exception as e:
                         logging.error(f"❌ {self.ws_room} Session key decode error: {e}")
@@ -270,17 +273,6 @@ class OGBWebSocketConManager:
                 "ogbAccessToken": ogbAccessToken,
                 "ogbBetaToken": ogbBetaToken, 
             }
-            logging.warning(f"{self.ws_room} Premium OGB DEV login Data {login_data}")
-            headers = {
-                "Content-Type": "application/json",
-                "User-Agent": "OGB-Python-Client/1.0",
-                "Accept": "application/json",
-                "origin": "https://opengrowbox.net",
-                "ogb-client": "ogb-ws-ha-connector 1.0",
-                "ogb-client-id": self.client_id,
-            }
-
-            logging.warning(f"🔄 {self.ws_room} Attempting login for: {email}")
 
             timeout_config = aiohttp.ClientTimeout(total=15)
 
@@ -288,7 +280,7 @@ class OGBWebSocketConManager:
                 async with session.post(
                     self.dev_login_url,
                     json=login_data,
-                    headers=headers
+                    headers=self.headers
                 ) as response:
 
                     response_text = await response.text()
@@ -357,7 +349,6 @@ class OGBWebSocketConManager:
             await self._send_auth_response(event_id, "error", "Unexpected server error during login")
             return False
   
-     
     async def _connect_websocket(self) -> bool:
         """Verbinde WebSocket mit Session-Authentifizierung"""
         try:
@@ -371,24 +362,28 @@ class OGBWebSocketConManager:
 
             # Ensure we have session data
             if not self._session_id or not self._session_key:
-                logging.warning(f"⚠️ {self.ws_room} No session data, requesting new session key")
+                logging.debug(f"⚠️ {self.ws_room} No session data, requesting new session key")
                 session_data = await self._request_session_key()
                 if not session_data:
                     logging.error(f"❌ {self.ws_room} Failed to get session key for connection")
                     return False
 
-            # Prepare headers
             auth_headers = {
-                "ogb-user-id": str(self._user_id),
-                "ogb-access-token": str(self._access_token),
-                "ogb-room-id": str(self.room_id),
-                "ogb-room-name": str(self.ws_room),
-                "ogb-session-id": str(self._session_id),
-                "ogb-client": "ogb-ws-ha-connector 1.0",
-                "ogb-client-id": self.client_id,
-                "origin": "https://opengrowbox.net",
-                "user-agent": "OGB-Python-Client/1.0"
-            }
+                    "origin": "https://opengrowbox.net",
+                    "user-agent": "OGB-Python-Client/1.0",
+                    "ogb-client": "ogb-ws-ha-connector 1.0",
+                    "ogb-client-id": self.client_id,
+                    "ogb-client-version":VERSION,
+
+                    "ogb-room-id": str(self.room_id),
+                    "ogb-room-name": str(self.ws_room),
+                    "ogb-session-id": str(self._session_id),
+                    
+                    "ogb-access-token": str(self._access_token),                
+                    "ogb-user-id": str(self._user_id),
+
+                }
+
 
             # Check for missing critical headers
             missing_headers = [k for k, v in auth_headers.items() if not v or str(v).strip() == '' or v == 'None']
@@ -452,10 +447,6 @@ class OGBWebSocketConManager:
             return True
 
         except Exception as e:
-            logging.error(f"❌ {self.ws_room} WebSocket connection error: {e}")
-            # Zusätzliches Debugging
-            if hasattr(e, '__dict__'):
-                logging.error(f"❌ {self.ws_room} Error details: {e.__dict__}")
             return False
         
     async def _request_session_key(self, event_id: str = None, room_id: str = None):
@@ -475,20 +466,11 @@ class OGBWebSocketConManager:
                 "room_name": self.ws_room,
             }
 
-            headers = {
-                "Content-Type": "application/json",
-                "User-Agent": "OGB-Python-Client/1.0",
-                "Accept": "application/json",
-                "origin": "https://opengrowbox.net",
-                "ogb-client": "ogb-ws-ha-connector 1.0",
-                "ogb-client-id": self.client_id,
-            }
-
             logging.warning(f"🔑 {self.ws_room} Requesting new session key")
 
             timeout_config = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout_config) as session:
-                async with session.post(url, json=request_data, headers=headers) as response:
+                async with session.post(url, json=request_data, headers=self.headers) as response:
                     
                     if response.status != 200:
                         logging.error(f"❌ {self.ws_room} Session request failed: HTTP {response.status}")
@@ -895,8 +877,7 @@ class OGBWebSocketConManager:
             except Exception as e:
                 logging.error(f"Reconnect attempt {self.reconnect_attempts} failed for {self.ws_room}: {e}")
 
-        # Max attempts reached or should not reconnect
-        logging.error(f"Max reconnect attempts reached for {self.ws_room} attempts:{self.reconnect_attempts}")
+        logging.debug(f"{self.ws_room} Max reconnect attempts:{self.reconnect_attempts} Reached")
         self._reconnection_in_progress = False
         
         if self.reconnect_attempts >= self.max_reconnect_attempts:
@@ -1068,7 +1049,9 @@ class OGBWebSocketConManager:
             logging.warning(f"No valid session data to restore for {self.ws_room}")
             if event_id:
                 await self._send_auth_response(event_id, "error", "No session data to restore - please login again")
-            
+                ## TOKEN RELOGIN HERE 
+                
+                
             return False
 
         except Exception as e:
@@ -1240,19 +1223,10 @@ class OGBWebSocketConManager:
                     "rotation_attempt": attempt + 1
                 }
 
-                headers = {
-                    "Content-Type": "application/json",
-                    "User-Agent": "OGB-Python-Client/1.0",
-                    "Accept": "application/json",
-                    "origin": "https://opengrowbox.net",
-                    "ogb-client": "ogb-ws-ha-connector 1.0",
-                    "ogb-client-id": self.client_id,
-                }
-
                 timeout_config = aiohttp.ClientTimeout(total=8)
 
                 async with aiohttp.ClientSession(timeout=timeout_config) as session:
-                    async with session.post(url, json=request_data, headers=headers) as response:
+                    async with session.post(url, json=request_data, headers=self.headers) as response:
                         
                         if response.status == 200:
                             try:
@@ -1309,95 +1283,6 @@ class OGBWebSocketConManager:
             f"Session rotation failed for {self.ws_room}: {reason}",
             haEvent=True
         )
-
-    async def request_manual_rotation(self, event_id: str = None) -> bool:
-        """Enhanced manual rotation request"""
-        try:
-            if not self.is_connected() or self._rotation_in_progress:
-                logging.warning(f"Cannot rotate for {self.ws_room} - not connected or rotation in progress")
-                return False
-
-            logging.warning(f"Requesting manual session rotation for {self.ws_room}")
-            
-            await self.sio.emit('request_session_rotation', {
-                'event_id': event_id or str(uuid.uuid4()),
-                'current_session_id': self._session_id,
-                'manual_request': True,
-                'immediate_cleanup_preferred': True,
-                'timestamp': time.time()
-            })
-
-            return True
-
-        except Exception as e:
-            logging.error(f"Manual rotation request error for {self.ws_room}: {e}")
-            return False
-
-    # =================================================================
-    # Session Distribution (for other rooms)
-    # =================================================================
-
-    async def distribute_session_to_others(self, target_room_id: str = None, event_id: str = None):
-        """Distribute session to other connected devices/clients"""
-        try:
-            if not self._user_id or not self._access_token or not self._session_id:
-                logging.error(f"❌ {self.ws_room} Cannot distribute - not fully authenticated")
-                if event_id:
-                    await self._send_auth_response(event_id, "error", "Not authenticated")
-                return None
-
-            url = f"{self.api_url}/api/auth/distribute-session"
-            
-            request_data = {
-                "client_id": self.client_id,
-                "user_id": self._user_id,
-                "access_token": self._access_token,
-                "requester_session_id": self._session_id,
-                "room_id": self.room_id,
-                "room_name":self.ws_room,
-                "target_room_id": target_room_id
-            }
-
-            headers = {
-                "Content-Type": "application/json",
-                "User-Agent": "OGB-Python-Client/1.0"
-            }
-
-            logging.warning(f"📤 {self.ws_room} Distributing session to others")
-
-            timeout_config = aiohttp.ClientTimeout(total=15)
-            async with aiohttp.ClientSession(timeout=timeout_config) as session:
-                async with session.post(url, json=request_data, headers=headers) as response:
-                    
-                    if response.status != 200:
-                        logging.error(f"❌ {self.ws_room} Session distribution failed: HTTP {response.status}")
-                        return None
-
-                    try:
-                        result = json.loads(await response.text())
-                    except json.JSONDecodeError as e:
-                        logging.error(f"❌ {self.ws_room} Invalid JSON in distribution response: {e}")
-                        return None
-
-                    if result.get("status") != "success":
-                        error_msg = result.get('message', 'Unknown error')
-                        logging.error(f"❌ {self.ws_room} Session distribution failed: {error_msg}")
-                        return None
-
-                    distribution_info = {
-                        "new_session_id": result.get("session_id"),
-                        "distributed_to_sockets": result.get("distributed_to_sockets", 0),
-                        "target_room_id": result.get("target_room_id"),
-                        "plan": result.get("plan"),
-                        "timestamp": result.get("timestamp")
-                    }
-
-                    logging.warning(f"✅ {self.ws_room} Session distributed to {distribution_info['distributed_to_sockets']} sockets")
-                    return distribution_info
-
-        except Exception as e:
-            logging.error(f"❌ {self.ws_room} Session distribution error: {e}")
-            return None
 
     # =================================================================
     # Cleanup Methods
@@ -1474,6 +1359,8 @@ class OGBWebSocketConManager:
                     pass
                 
             # Reset all state variables including rotation state
+
+            
             self._session_key = None
             self._session_id = None
             self._user_id = None

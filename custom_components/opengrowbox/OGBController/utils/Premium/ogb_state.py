@@ -45,17 +45,30 @@ def _read_file(path: str) -> bytes:
     with open(path, 'rb') as f:
         return f.read()
 
-async def _remove_state_file(hass):
-    """Deletes the saved encrypted state file if it exists."""
+async def _remove_state_file(hass, room: str = None):
+    """Deletes the saved encrypted state file(s). If room is None, deletes all."""
     try:
-        file_path = _get_secure_path(hass, "ogb_premium_state.enc")
-        if os.path.exists(file_path):
-            await hass.async_add_executor_job(os.remove, file_path)
-            _LOGGER.debug("Premium file deleted")
-    except Exception as e:
-        _LOGGER.error(f"Error while deleting Premium file: {e}")
+        subdir = hass.config.path(".ogb_premium")
+        if not os.path.exists(subdir):
+            return
 
-async def _save_state_securely(hass, state_data: dict):
+        if room:
+            # nur eine bestimmte Raumdatei löschen
+            file_path = os.path.join(subdir, f"ogb_premium_state_{room.lower()}.enc")
+            if os.path.exists(file_path):
+                await hass.async_add_executor_job(os.remove, file_path)
+                _LOGGER.debug(f"Premium file for room '{room}' deleted")
+        else:
+            # alle Premium-Dateien löschen
+            for fname in os.listdir(subdir):
+                if fname.startswith("ogb_premium_state_") and fname.endswith(".enc"):
+                    file_path = os.path.join(subdir, fname)
+                    await hass.async_add_executor_job(os.remove, file_path)
+                    _LOGGER.debug(f"Premium file '{fname}' deleted")
+    except Exception as e:
+        _LOGGER.error(f"Error while deleting Premium file(s): {e}")
+
+async def _save_state_securely(hass, state_data: dict, room: str):
     """Saves Premium data securely (encrypted)."""
     try:
         data_to_save = state_data.copy()
@@ -67,25 +80,25 @@ async def _save_state_securely(hass, state_data: dict):
         
         data_to_save["saved_at"] = datetime.now().isoformat()
         data_to_save["version"] = "1.0"
-        _LOGGER.debug(f"SAVED DATA: {data_to_save}")
+        _LOGGER.warning(f"SAVED DATA: {data_to_save}")
 
         key = await _load_or_create_key(hass)
         fernet = Fernet(key)
         encoded = json.dumps(data_to_save, indent=2).encode()
         encrypted = fernet.encrypt(encoded)
 
-        file_path = _get_secure_path(hass, "ogb_premium_state.enc")
+        file_path = _get_secure_path(hass, f"ogb_premium_state_{room.lower()}.enc")
         await hass.async_add_executor_job(_write_file, file_path, encrypted)
-        _LOGGER.debug("User session securely saved")
+        _LOGGER.debug(f"{room} - User session securely saved")
 
     except Exception as e:
         _LOGGER.error(f"Error while saving state: {e}")
         raise
 
-async def _load_state_securely(hass):
+async def _load_state_securely(hass, room:str):
     """Loads and decrypts saved state data."""
     try:
-        file_path = _get_secure_path(hass, "ogb_premium_state.enc")
+        file_path = _get_secure_path(hass, f"ogb_premium_state_{room.lower()}.enc")
         if not os.path.exists(file_path):
             return None
 

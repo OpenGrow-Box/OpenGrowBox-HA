@@ -497,7 +497,6 @@ class Device:
                 entity_id = select.get("entity_id", "")
                 if entity_id.startswith("number."):
                     continue  # number-Entitäten überspringen
-                switch_value = switch.get("value")
                 option_value = select.get("value")
 
                 if option_value == "on" or option_value == "On":
