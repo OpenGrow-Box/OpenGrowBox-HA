@@ -7,7 +7,7 @@ from enum import Enum
 
 _LOGGER = logging.getLogger(__name__)
 
-from .OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPublication
+from .OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPublication, OGBHydroAction
 
 class FeedMode(Enum):
     DISABLED = "Disabled"
@@ -26,15 +26,15 @@ class FeedParameterType(Enum):
     NUT_PH_ML = "Nut_PH_ml"
 
 class PumpType(Enum):
-    """Feed pump types with their Home Assistant entity IDs"""
-    NUTRIENT_A = "switch.feedpump_a"      # Veg nutrient
-    NUTRIENT_B = "switch.feedpump_b"      # Flower nutrient
-    NUTRIENT_C = "switch.feedpump_c"      # Micro nutrient
-    WATER = "switch.feedpump_w"           # Water pump
-    CUSTOM_X = "switch.feedpump_x"        # Custom - free use
-    CUSTOM_Y = "switch.feedpump_y"        # Custom - free use
-    PH_DOWN = "switch.feedpump_pp"        # pH minus (pH-)
-    PH_UP = "switch.feedpump_pm"          # pH plus (pH+)
+    """Feed pump device names"""
+    NUTRIENT_A = "feedpump_a"       # Veg nutrient
+    NUTRIENT_B = "feedpump_b"       # Flower nutrient
+    NUTRIENT_C = "feedpump_c"       # Micro nutrient
+    WATER = "feedpump_w"            # Water pump
+    CUSTOM_X = "feedpump_x"         # Custom - free use
+    CUSTOM_Y = "feedpump_y"         # Custom - free use
+    PH_DOWN = "feedpump_pp"         # pH minus (pH-)
+    PH_UP = "feedpump_pm"           # pH plus (pH+)
 
 @dataclass
 class PlantStageConfig:
@@ -75,7 +75,6 @@ class OGBTankFeedManager:
         
         # Pump configurations
         self.pump_config = PumpConfig()
-        self.pump_states: Dict[str, bool] = {pump.value: False for pump in PumpType}
         
         # Automatic mode feed configs per stage
         self.automaticFeedConfigs: Dict[str, FeedConfig] = {
@@ -141,10 +140,9 @@ class OGBTankFeedManager:
         self.current_oxi: float = 0.0
         
         # Rate limiting and sensor settling
-        self.last_pump_action: Dict[str, datetime] = {}
+        self.last_action_time: Optional[datetime] = None
         self.min_interval_between_actions: timedelta = timedelta(seconds=30)
         self.sensor_settle_time: timedelta = timedelta(seconds=90)  # Increased for better accuracy
-        self.last_action_time: Optional[datetime] = None
         
         # Dosing calculation
         self.reservoir_volume_liters: float = 100.0  # Default reservoir size
@@ -156,7 +154,6 @@ class OGBTankFeedManager:
         self.eventManager.on("FeedModeChange", self._feed_mode_change)
         self.eventManager.on("FeedModeValueChange", self._feed_mode_targets_change)
         self.eventManager.on("PlantStageChange", self._plant_stage_change)
-        self.eventManager.on("PumpStateChange", self._on_pump_state_change)
                 
         asyncio.create_task(self.init())
 
@@ -170,39 +167,7 @@ class OGBTankFeedManager:
         # Load reservoir volume
         self.reservoir_volume_liters = self.dataStore.getDeep("Hydro.ReservoirVolume") or 100.0
         
-        # Initialize pump states from Home Assistant
-        await self._sync_pump_states()
-        
         _LOGGER.info(f"[{self.room}] OGB Feed Manager initialized - Reservoir: {self.reservoir_volume_liters}L")
-
-    async def _sync_pump_states(self):
-        """Sync pump states with Home Assistant"""
-        try:
-            for pump in PumpType:
-                entity_id = pump.value
-                state = self.hass.states.get(entity_id)
-                if state:
-                    self.pump_states[entity_id] = state.state == "on"
-                    _LOGGER.debug(f"[{self.room}] Pump {entity_id}: {self.pump_states[entity_id]}")
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error syncing pump states: {e}")
-
-    async def _on_pump_state_change(self, data: Dict[str, Any]):
-        """Handle pump state changes from Home Assistant"""
-        try:
-            entity_id = data.get("entity_id")
-            new_state = data.get("new_state") == "on"
-            
-            if entity_id in self.pump_states:
-                old_state = self.pump_states[entity_id]
-                self.pump_states[entity_id] = new_state
-                
-                if old_state != new_state:
-                    state_str = "ON" if new_state else "OFF"
-                    _LOGGER.info(f"[{self.room}] Pump {entity_id} changed to {state_str}")
-                    
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error handling pump state change: {e}")
 
     def _calculate_dose_time(self, ml_amount: float) -> float:
         """Calculate pump run time in seconds for desired ml amount"""
@@ -393,7 +358,7 @@ class OGBTankFeedManager:
                 
             current_time = datetime.now()
             if self.last_action_time and (current_time - self.last_action_time) < self.sensor_settle_time:
-                _LOGGER.debug(f"[{self.room}] Waiting for sensor settle")
+                _LOGGER.debug(f"[{self.room}] Waiting for sensor settle ({self.sensor_settle_time.total_seconds()}s)")
                 return
 
             # pH adjustment (always first priority)
@@ -431,7 +396,6 @@ class OGBTankFeedManager:
     async def _dose_ph_down(self) -> bool:
         """Dose pH down solution"""
         try:
-            # Small incremental dose to avoid overshooting
             dose_ml = 5.0
             run_time = self._calculate_dose_time(dose_ml)
             
@@ -479,23 +443,20 @@ class OGBTankFeedManager:
         return False
 
     async def _activate_pump(self, pump_type: PumpType, run_time: float, dose_ml: float) -> bool:
-        """Activate a pump for specified time"""
+        """Activate a pump for specified time using PumpAction event"""
         try:
-            entity_id = pump_type.value
-            
-            # Check rate limiting
-            last_action = self.last_pump_action.get(entity_id)
-            if last_action and (datetime.now() - last_action) < self.min_interval_between_actions:
-                _LOGGER.warning(f"[{self.room}] Pump {entity_id} rate limited")
-                return False
+            device_id = pump_type.value
 
             _LOGGER.info(f"[{self.room}] Activating {pump_type.name}: {dose_ml:.1f}ml for {run_time:.1f}s")
             
-            # Turn on pump
-            await self.hass.services.async_call(
-                "switch", "turn_on",
-                {"entity_id": entity_id}
+            # Turn ON pump via PumpAction event (like OGBCastManager)
+            pumpAction = OGBHydroAction(
+                Name=self.room, 
+                Action="on", 
+                Device=device_id, 
+                Cycle=True
             )
+            await self.eventManager.emit("PumpAction", pumpAction)
             
             # Log action
             waterAction = OGBWaterAction(
@@ -510,13 +471,16 @@ class OGBTankFeedManager:
             # Wait for dose time
             await asyncio.sleep(run_time)
             
-            # Turn off pump
-            await self.hass.services.async_call(
-                "switch", "turn_off",
-                {"entity_id": entity_id}
+            # Turn OFF pump via PumpAction event
+            pumpAction = OGBHydroAction(
+                Name=self.room, 
+                Action="off", 
+                Device=device_id, 
+                Cycle=True
             )
+            await self.eventManager.emit("PumpAction", pumpAction)
             
-            self.last_pump_action[entity_id] = datetime.now()
+            _LOGGER.info(f"[{self.room}] Pump {pump_type.name} completed")
             return True
             
         except Exception as e:

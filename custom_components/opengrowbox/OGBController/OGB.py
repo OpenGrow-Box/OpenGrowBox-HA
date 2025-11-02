@@ -81,19 +81,37 @@ class OpenGrowBox:
     
     ## INIT 
     async def firstStart(self):
-        # Watering Initalisation on Device Start based on OGB-Data
-        Init=True
-        
+        Init = True
         await self._get_starting_vpd(Init)
-                
-        await self.eventManager.emit("HydroModeChange",Init)
-        await self.eventManager.emit("HydroModeRetrieveChange",Init)
-        await self.eventManager.emit("PlantTimeChange",Init)
+                    
+        await self.eventManager.emit("HydroModeChange", Init)
+        await self.eventManager.emit("HydroModeRetrieveChange", Init)
+        await self.eventManager.emit("PlantTimeChange", Init)
 
-        #await self._get_vpd_onStart(Init)
+        if self.premiumManager.growPlanManager.managerActive is True:
+            strain_name = self.dataStore.get("strainName")
+            planRequestData = {"event_id": "grow_plans_on_start", "strain_name": strain_name}
+            
+            # Starte den Plan Abruf ganz normal
+            success = await self.premiumManager.ogb_ws.prem_event("get_grow_plans", planRequestData)
+
+            # Wenn erfolgreich → starte Hintergrund-Task
+            if success and self.premiumManager.growPlanManager.managerActive:
+                asyncio.create_task(self._delayed_plan_activation())
+
         _LOGGER.debug(f"OpenGrowBox for {self.room} started successfully State:{self.dataStore}")
-        
         return True
+
+
+    async def _delayed_plan_activation(self):
+        """Aktiviert den Grow Plan nach 30 Sekunden Verzögerung im Hintergrund."""
+        await asyncio.sleep(30)
+
+        if self.premiumManager.growPlanManager.managerActive:
+            await self.eventManager.emit("plan_activation", self.premiumManager.growPlanManager.active_grow_plan)
+            _LOGGER.info(f"Delayed plan activation executed for {self.room}")
+        else:
+            _LOGGER.debug(f"Delayed plan activation skipped (manager inactive) for {self.room}")
 
     async def _get_starting_vpd(self, data):
         """
@@ -887,6 +905,8 @@ class OpenGrowBox:
         if current_light_plan != value:
             self.dataStore.set("plantType",value)
             await self.eventManager.emit("LightPlanChange",value)
+            _LOGGER.warning(f"Light Plan changed to {value}")
+
 
     async def _update_tent_mode(self, data):
         """
@@ -959,7 +979,7 @@ class OpenGrowBox:
     async def _update_lightOn_time(self,data):
         """
         Update Light ON Time
-        """
+        """       
         value = data.newState[0]
         if value == None: return
         current_value = self.dataStore.getDeep("isPlantDay.lightOnTime")

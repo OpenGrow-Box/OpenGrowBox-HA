@@ -129,7 +129,7 @@ class OGBDeviceManager:
         devices.remove(deviceToRemove)
         self.dataStore.set("devices", devices)
 
-        _LOGGER.warning(f"Removed device: {deviceName}")
+        _LOGGER.warning(f"{self.room} - Removed device: {deviceName}")
 
         # Capability-Mapping anpassen
         for cap, deviceTypes in CAP_MAPPING.items():
@@ -142,7 +142,7 @@ class OGBDeviceManager:
                     currentCap["count"] = max(0, currentCap["count"] - 1)
                     currentCap["state"] = currentCap["count"] > 0
                     self.dataStore.setDeep(capPath, currentCap)
-                    _LOGGER.warning(f"Updated capability '{cap}' after removing device {deviceToRemove.deviceName}")
+                    _LOGGER.warning(f"{self.room} - Updated capability '{cap}' after removing device {deviceToRemove.deviceName}")
 
         return True
 

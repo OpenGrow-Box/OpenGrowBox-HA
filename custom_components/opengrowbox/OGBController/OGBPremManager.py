@@ -25,8 +25,6 @@ class OGBPremManager:
         self.eventManager = eventManager
         self.growPlanManager = OGBGrowPlanManager(self.hass, self.dataStore, self.eventManager,self.room)
         
-        self.is_main_auth_room = False
-        
         self.ogb_login_email = None
         self.ogb_login_token = None
         
@@ -38,7 +36,7 @@ class OGBPremManager:
         self.is_logged_in = False
         self.is_premium = False
         self.has_control_prem = False
-        self.is_main_auth_room = False
+
         #User Data
         self.user_id = None
         self.subscription_data  = None
@@ -122,19 +120,19 @@ class OGBPremManager:
         _LOGGER.warning(f"✅ {self.room} Loading saved state {state_data}")
 
         # Restore Manager State
-        self.is_main_auth_room = state_data.get("is_logged_in", False)
         self.is_logged_in = state_data.get("is_logged_in", False)
         self.is_premium = state_data.get("is_premium", False)
         self.user_id = state_data.get("user_id",None)
         self.subscription_data = state_data.get("subscription_data", {})
-        self.lastTentMode = state_data.get("lastTentMode")
-        self.ogb_login_token = state_data.get("ogb_login_token")
-        self.ogb_login_email = state_data.get("ogb_login_email")
+        self.lastTentMode = state_data.get("lastTentMode",None)
+        self.ogb_login_token = state_data.get("ogb_login_token",None)
+        self.ogb_login_email = state_data.get("ogb_login_email",None)
+        self.is_premium_selected = state_data.get("is_premium_selected",False)
         
         # GrowPlan manager
-        self.growPlanManager.active_grow_plan = state_data.get("active_grow_plan",None)
-        if self.growPlanManager.activate_grow_plan != None:
-            await self.eventManager.emit("plan_activation",self.growPlanManager.active_grow_plan)
+        self.growPlanManager.managerActive = state_data.get("growmanager_state",None)
+        self.dataStore.set("growManagerActive",self.growPlanManager.managerActive)
+        self.growPlanManager.active_grow_plan_id = state_data.get("active_grow_plan_id",None)
 
         # Restore WebSocket state if present
         ws_data = state_data.get("ws_data")
@@ -156,7 +154,7 @@ class OGBPremManager:
                 self.ogb_ws._session_key = ws_data.get("session_key",None)
                 self.ogb_ws.ogb_sessions = ws_data.get("ogb_sessions",0)
                 self.ogb_ws.ogb_max_sessions = ws_data.get("ogb_max_sessions",0)
-        
+                self.dataStore.set("strainName",state_data.get("strain_name",None))
                 # Restore access token
                 access_token_b64 = ws_data.get("access_token")
                 if access_token_b64:
@@ -189,25 +187,27 @@ class OGBPremManager:
                     "is_premium": self.ogb_ws.is_premium,
                     "subscription_data": self.ogb_ws.subscription_data,
                     "room_name": self.ogb_ws.ws_room,
-                    "room_id": self.room_id
-                    
+                    "room_id": self.room_id 
                 })
 
                 # Attempt to restore session
-                
-                mainAuthRoom=state_data.get("main_auth_room", False)
-                
-                if not mainAuthRoom:
-                    return
-               
-                _LOGGER.warning(f"🔄 {self.room} Attempting to restore WebSocket session {self.ogb_ws._user_id} {self.ogb_ws._access_token}")
-                              
-                success = await self.ogb_ws._connect_websocket()        
 
+                _LOGGER.warning(f"🔄 {self.room} Attempting to restore WebSocket session {self.ogb_ws._user_id} {self.ogb_ws._access_token}")
+                
+                success = None
+                        
+                if self.is_premium_selected:                    
+                    success = await self.ogb_ws._connect_websocket()        
 
                 if success:
                     _LOGGER.warning(f"✅ {self.room} WebSocket session restored successfully")
+                    strain_name = state_data.get("strain_name",None)
+                    planRequestData = {"event_id":"starting_event","strain_name":strain_name}
+                    success = await self.ogb_ws.prem_event("get_grow_plans", planRequestData)
                     await self._send_auth_to_other_rooms()
+
+
+
                 else:
                     _LOGGER.warning(f"⚠️ {self.room} WebSocket session restore failed, will try new login with Token")
                     newLogin = await self.ogb_ws.login_and_connect(
@@ -220,7 +220,7 @@ class OGBPremManager:
                     )
                     if newLogin:
                         _LOGGER.warning(f"✅ {self.room} WebSocket session restored successfully")
-                        await self._send_auth_to_other_rooms()    
+                        await self._send_auth_to_other_rooms()
                     return newLogin
                 
                 return success
@@ -339,7 +339,6 @@ class OGBPremManager:
                 return
 
             # Set premium selected FIRST
-            self.is_main_auth_room = True
             self.is_premium_selected = True
             email = event.data.get("email")
             OGBToken = event.data.get("OGBToken")
@@ -363,8 +362,7 @@ class OGBPremManager:
                 self.is_logged_in = user_info["is_logged_in"]
                 self.ogb_login_token = OGBToken
                 self.ogb_login_email = email
-                self.is_main_auth_room = True
-                
+
                 # Update main control
                 await self._change_sensor_value("SET", "select.ogb_maincontrol", "Premium")
                 
@@ -372,7 +370,7 @@ class OGBPremManager:
                 await self._send_auth_to_other_rooms()
             
                 # Save state
-                await self._save_current_state()    
+                await self._save_request(True)    
         
             else:
                 # Reset premium selected on failure
@@ -390,7 +388,6 @@ class OGBPremManager:
 
             # Event-Daten holen
             event_id = event.data.get("event_id")
-            self.is_main_auth_room = False
             if self.is_logged_in:
                 await self.ogb_ws.prem_event("logout", {"user_id": self.user_id})
                 
@@ -432,10 +429,7 @@ class OGBPremManager:
                 return
             if self.room == event.data.get("AuthenticatedRoom"):
                 return
-
-            authenticated_room = event.data.get("AuthenticatedRoom")               
-
-            
+          
             # Extract data directly (these are already booleans from the event)
             user_id = event.data.get("user_id")
             access_token = event.data.get("access_token") 
@@ -713,7 +707,7 @@ class OGBPremManager:
             event_id = event.data.get("event_id")
             if event_id:
                 await self.ogb_ws.prem_event("grow_plan_activation", growPlan)
-               
+                await self._save_request(True)
 
 
         except Exception as e:
@@ -852,20 +846,23 @@ class OGBPremManager:
     async def _save_current_state(self):
         """Save current state securely"""
         TentMode = self.dataStore.get("tentMode")
+        StrainName = self.dataStore.get("strainName")
         try:
             # Get session backup data from WebSocket client
             ws_backup = self.ogb_ws.get_session_backup_data()
 
             state_data = {
-                "main_auth_room":self.is_main_auth_room,
                 "lastTentMode":TentMode,
                 "user_id": self.user_id,
                 "is_logged_in": self.is_logged_in,
                 "is_premium": self.is_premium,
+                "is_premium_selected":self.is_premium_selected,
                 "room_id": self.room_id,
                 "room_name":self.room,
                 "subscription_data": self.subscription_data,
-                "active_grow_plan":self.growPlanManager.active_grow_plan,
+                "strain_name":StrainName,
+                "growmanager_state":self.growPlanManager.managerActive,
+                #"active_grow_plan_id":self.growPlanManager.active_grow_plan_id,
                 "ogb_login_token":self.ogb_login_token,
                 "ogb_login_email":self.ogb_login_email,
                 "ws_data": {
@@ -886,9 +883,10 @@ class OGBPremManager:
                 },
                 "saved_at": datetime.now(timezone.utc).isoformat(),
             }
-            
+            _LOGGER.warning(f"💾 {self.room} Saving State {state_data}")      
             await _save_state_securely(self.hass, state_data, self.room)
             _LOGGER.warning(f"💾 {self.room} State saved securely")
+
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Error saving state: {e}")
@@ -1133,15 +1131,8 @@ class OGBPremManager:
             if self._check_if_premium_selected():
                 await self._change_sensor_value("SET","select.ogb_maincontrol","HomeAssistant")
         
-
             await self.ogb_ws.cleanup_prem(event_id)
-            
-            try:
-                if self.is_main_auth_room:
-                    await _remove_state_file(self.hass,self.room)
-            except Exception as e:
-                _LOGGER.error(f"Error removing token file: {e}")
-                
+            await _remove_state_file(self.hass,self.room)                          
             _LOGGER.warning(f"✅ {self.room} Authentication cleanup completed")
             
         except Exception as e:
