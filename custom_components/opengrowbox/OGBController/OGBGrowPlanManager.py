@@ -23,6 +23,8 @@ class OGBGrowPlanManager:
         self.dataStore = dataStore
         self.eventManager = eventManager
 
+        self.managerState = None
+
         # Aktuelles Datum
         self.currentDate = datetime.now(timezone.utc)
 
@@ -55,7 +57,26 @@ class OGBGrowPlanManager:
         """Setup Home Assistant event listeners."""
         self.eventManager.on("new_grow_plans", self._on_new_grow_plans)
         self.eventManager.on("plan_activation",self._on_plan_activation)
-       
+        self.hass.bus.async_listen("ogb_premium_growplan_pause", self._pause_manager)   
+        self.hass.bus.async_listen("ogb_premium_growplan_resume", self._resume_manager)   
+
+
+    async def _pause_manager(self,data):
+        if self.managerState == "Active":
+            self.managerState == "Inactive"
+            self.dataStore.set("growManagerActive",False)
+        
+        logging.warning(f"{self.room} Grow-Manager State:{self.managerState} got Resumed with {self.activate_grow_plan.plan_name} - {data}")        
+     
+
+    async def _resume_manager(self,data):
+
+        if self.managerState == "Inactive":
+            self.managerState == "Active"
+            self.dataStore.set("growManagerActive",True)
+        
+        logging.warning(f"{self.room} Grow-Manager State:{self.managerState} got Resumed with {self.activate_grow_plan.plan_name} - {data}")        
+            
     async def _load_saved_state(self):
         """Lade gespeicherten Zustand wenn vorhanden"""
         try:
@@ -189,6 +210,11 @@ class OGBGrowPlanManager:
             await self._update_current_week()
             
             _LOGGER.warning(f"Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}")
+            
+            _LOGGER.warning(f"Grow Plan Settings Adjustment Started for {plan_id},")
+            
+            self.managerState = "Active"
+            self.dataStore.set("growManagerActive",True)
             
             # Event senden
             self.hass.bus.async_fire("grow_plan_activated", {

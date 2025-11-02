@@ -24,6 +24,7 @@ class OGBConf:
     lightPlan: str = "auto"
     strainName: str = ""
     mainControl: str = ""
+    growManagerActive: bool = False
     growAreaM2: int = 0.0
     notifyControl: str = "Disabled"
     DeviceLabelIdent: bool = False
