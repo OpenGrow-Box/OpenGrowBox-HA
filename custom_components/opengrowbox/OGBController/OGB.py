@@ -251,18 +251,15 @@ class OpenGrowBox:
         actions = {
             # Basics
             f"ogb_vpd_determination_{self.room.lower()}": self._ogb_vpd_determination,
-            
             f"ogb_maincontrol_{self.room.lower()}": self._update_control_option,
             f"ogb_notifications_{self.room.lower()}": self._update_notify_option,
-            
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
-            f"ogb_light_plant_{self.room.lower()}": self._update_light_plan,
+            f"ogb_planttype_{self.room.lower()}": self._update_plant_type,
             f"ogb_tentmode_{self.room.lower()}": self._update_tent_mode, 
             f"ogb_leaftemp_offset_{self.room.lower()}": self._update_leafTemp_offset,
             f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_Target,                          
             f"ogb_vpd_devicedampening_{self.room.lower()}": self._update_vpd_DeviceDampening,                          
-
             
             # LightTimes
             f"ogb_lightontime_{self.room.lower()}": self._update_lightOn_time,
@@ -881,17 +878,15 @@ class OpenGrowBox:
             await self.eventManager.emit("PlantStageChange",value)
   
 
-    async def _update_light_plan(self, data):
+    async def _update_plant_type(self, data):
         """
         Update Plant Type.
         """
         value = data.newState[0]
-        current_light_plan = self.dataStore.get("lightPlan")
+        current_light_plan = self.dataStore.get("plantType")
         if current_light_plan != value:
-            self.dataStore.set("lightPlan",value)
+            self.dataStore.set("plantType",value)
             await self.eventManager.emit("LightPlanChange",value)
-            _LOGGER.warning(f"Light Plan changed to {value}")
-
 
     async def _update_tent_mode(self, data):
         """
