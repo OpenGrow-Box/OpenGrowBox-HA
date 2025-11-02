@@ -142,20 +142,30 @@ class OGBConf:
                 },
             },
             "auto": {
+                "Seedling": {
+                    "curve": [
+                        {"week": 1, "PPFDTarget": 200, "DLITarget": 12},
+                        {"week": 2, "PPFDTarget": 250, "DLITarget": 16},
+                    ],
+                },
                 "veg": {
                     "curve": [
-                        {"week": 1, "PPFDTarget": 200, "DLITarget": 15},
-                        {"week": 2, "PPFDTarget": 300, "DLITarget": 22},
-                        {"week": 3, "PPFDTarget": 400, "DLITarget": 28},
+                        {"week": 1, "PPFDTarget": 200, "DLITarget": 20},
+                        {"week": 2, "PPFDTarget": 300, "DLITarget": 30},
+                        {"week": 3, "PPFDTarget": 700, "DLITarget": 40},
+                        {"week": 4, "PPFDTarget": 800, "DLITarget": 45},
                     ],
                 },
                 "flower": {
                     "curve": [
-                        {"week": 4, "PPFDTarget": 500, "DLITarget": 32},
-                        {"week": 5, "PPFDTarget": 600, "DLITarget": 35},
-                        {"week": 6, "PPFDTarget": 700, "DLITarget": 38},
-                        {"week": 7, "PPFDTarget": 750, "DLITarget": 40},
-                        {"week": 8, "PPFDTarget": 800, "DLITarget": 42},
+                        {"week": 1, "PPFDTarget": 500, "DLITarget": 45},
+                    ],
+                },
+                "maturing": {
+                    "curve": [
+                        {"week": 1, "PPFDTarget": 700, "DLITarget": 40},
+                        {"week": 2, "PPFDTarget": 550, "DLITarget": 36},
+                        {"week": 3, "PPFDTarget": 400, "DLITarget": 32},
                     ],
                 },
             },
