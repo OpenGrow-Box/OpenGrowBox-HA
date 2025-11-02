@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 from ..utils.lightTimeHelpers import hours_between
-from ..utils.calcs import calc_light_to_ppfd_dli
+from ..utils.calcs import calc_light_to_ppfd_dli,calculate_orp
 from ..utils.sensorUpdater import _update_specific_sensor
 from ..OGBDataClasses.OGBPublications import OGBPPFDPublication,OGBDLIPublication,OGBWaterPublication
 from ..OGBParams.OGBTranslations import SENSOR_TRANSLATIONS
@@ -390,7 +390,7 @@ class Sensor():
                         numeric_value = float(new_state)
                         await self._updateSensorValue(sensor_config, numeric_value)
                         
-                        _LOGGER.warning(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Sensor {entity_id} aktualisiert auf {numeric_value} "
                             f"({sensor_config['sensor_type']} / {sensor_config['context']})"
                         )
@@ -460,7 +460,9 @@ class Sensor():
                             elif "_temp" in entity_id:
                                 self.dataStore.setDeep("Hydro.current_temp", numeric_value)
                                 updated = True
-                                               
+                            
+                            newOrp = None
+                            
                             if updated:
                                 ec_current = self.dataStore.getDeep("Hydro.ec_current")
                                 tds_current = self.dataStore.getDeep("Hydro.tds_current")
@@ -469,12 +471,16 @@ class Sensor():
                                 sal_current = self.dataStore.getDeep("Hydro.sal_current")
                                 temp_current = self.dataStore.getDeep("Hydro.current_temp")
 
+                                if temp_current and ph_current is not None:
+                                    newOrp = calculate_orp(ph_current, temp_current)
+                                    await _update_specific_sensor("ogb_waterorp_", self.room, newOrp, self.hass)                                             
+
                                 hydroPublication = OGBWaterPublication(
                                     Name="HydroUpdate",
                                     ecCurrent=ec_current,
                                     tdsCurrent=tds_current,
                                     phCurrent=ph_current,
-                                    oxiCurrent=oxi_current,
+                                    oxiCurrent=oxi_current if oxi_current not in (0, None) else newOrp,
                                     salCurrent=sal_current,
                                     waterTemp=temp_current
                                 )

@@ -120,6 +120,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSensor(f"OGB_ChopChopTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0, device_class="days"),
         CustomSensor(f"OGB_PlantFoodNextFeed_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0, device_class="Minutes"),
 
+        # Hydro ORP
+        CustomSensor(f"OGB_WaterORP_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=0, device_class="mV"),
+
+
     ]
 
     # Register the sensors globally in hass.data

@@ -255,8 +255,7 @@ class GrowMedium:
                     
         if entity_id not in self.registered_sensors[sensor_type]:
             self.registered_sensors[sensor_type].append(entity_id)
-            _LOGGER.warning(f"✓ Medium {self.name}: Sensor {entity_id} ({sensor_type}) registriert")
-        
+
         # Wert auf entsprechende Property schreiben (as float)
         if sensor_type == "ph":
             self.current_ph = numeric_value

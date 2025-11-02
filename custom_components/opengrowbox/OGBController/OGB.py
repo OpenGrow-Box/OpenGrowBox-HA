@@ -904,12 +904,12 @@ class OpenGrowBox:
         if isinstance(data, OGBInitData):
             self.dataStore.set("tentMode",value)
         elif isinstance(data, OGBEventPublication):
-            if value == "": return
             if current_mode != value:
                 tentModePublication = OGBModePublication(currentMode=value,previousMode=current_mode)
                 self.dataStore.set("tentMode",value)
                 ## Event to Mode Manager 
                 await self.eventManager.emit("selectActionMode",tentModePublication)
+              
         else:
             _LOGGER.error(f"Unkown Tent-Mode check your Select Options: {type(data)} - Data: {data}")      
 
@@ -1723,7 +1723,7 @@ class OpenGrowBox:
         """Update CropSteering Phase und Mode"""
         activeCSMode = self.dataStore.getDeep("CropSteering.ActiveMode")
         if activeCSMode != "Manual":
-            logging.error(f"{self.room} - Changing CS Phase Changes works only in Manual")
+            logging.debug(f"{self.room} - Changing CS Phase Changes works only in Manual")
             return
 
         value = data.newState[0]
