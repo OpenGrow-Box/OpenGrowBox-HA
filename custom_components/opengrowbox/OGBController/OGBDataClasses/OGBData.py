@@ -21,7 +21,7 @@ class OGBConf:
     vpdDetermination: str = ""
     tentMode: str = ""
     plantStage: str = ""
-    lightPlan: str = "auto"
+    plantType: str = ""
     strainName: str = ""
     mainControl: str = ""
     growManagerActive: bool = False
