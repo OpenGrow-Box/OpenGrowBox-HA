@@ -675,7 +675,7 @@ class Light(Device):
             _LOGGER.error(f"💡 {self.deviceName}: Device is not dimmable. DLI Light Control not possible.")
             return
         #get current DLI
-        selected_lightplan = self.dataStore.get("plantType")
+        selected_lightplan = self.dataStore.get("plantType").lower()
         if not selected_lightplan:
             _LOGGER.error(f"💡 {self.deviceName}: No light plan selected. DLI Light Control not possible.")
             return
