@@ -23,7 +23,7 @@ class OGBGrowPlanManager:
         self.dataStore = dataStore
         self.eventManager = eventManager
 
-        self.managerState = None
+        self.managerActive = None
 
         # Aktuelles Datum
         self.currentDate = datetime.now(timezone.utc)
@@ -60,22 +60,20 @@ class OGBGrowPlanManager:
         self.hass.bus.async_listen("ogb_premium_growplan_pause", self._pause_manager)   
         self.hass.bus.async_listen("ogb_premium_growplan_resume", self._resume_manager)   
 
-
     async def _pause_manager(self,data):
-        if self.managerState == "Active":
-            self.managerState == "Inactive"
+        if self.managerActive == True:
+            self.managerActive == False
             self.dataStore.set("growManagerActive",False)
-        
-        logging.warning(f"{self.room} Grow-Manager State:{self.managerState} got Resumed with {self.activate_grow_plan.plan_name} - {data}")        
-     
+            await self.eventManager.emit("SaveRequest",self.room)   
+        logging.warning(f"{self.room} Grow-Manager State:{self.managerActive} got Resumed with {self.activate_grow_plan.plan_name} - {data}")            
 
     async def _resume_manager(self,data):
 
-        if self.managerState == "Inactive":
-            self.managerState == "Active"
+        if self.managerActive == False:
+            self.managerActive == True
             self.dataStore.set("growManagerActive",True)
-        
-        logging.warning(f"{self.room} Grow-Manager State:{self.managerState} got Resumed with {self.activate_grow_plan.plan_name} - {data}")        
+            await self.eventManager.emit("SaveRequest",self.room)         
+        logging.warning(f"{self.room} Grow-Manager State:{self.managerActive} got Resumed with {self.activate_grow_plan.plan_name} - {data}")        
             
     async def _load_saved_state(self):
         """Lade gespeicherten Zustand wenn vorhanden"""
@@ -135,19 +133,76 @@ class OGBGrowPlanManager:
 
     def _on_new_grow_plans(self, data):
         """Handle neue Grow Plans."""
-        grow_plans = data.get("grow_plans", [])
-        public_plans = data.get("public_plans", [])
-        private_plans = data.get("private_plans", [])
-        active_plan = data.get("active_plan", [])
         try:
+            # Prüfen, ob die Datenstruktur bereits die Pläne direkt enthält
+            if "grow_plans" in data:
+                grow_plans = data["grow_plans"]
+            else:
+                grow_plans = data  # komplette Struktur ist bereits der GrowPlan-Container
+
             self.grow_plans = grow_plans
-            self.grow_plans_private = private_plans
-            self.grow_plans_public = public_plans
-            self.active_grow_plan = active_plan 
-            _LOGGER.info(f"Neue Grow Plans empfangen")
+            self.grow_plans_private = grow_plans.get("private_plans", [])
+            self.grow_plans_public = grow_plans.get("public_plans", [])
+            self.active_grow_plan = grow_plans.get("active_plan", {})
+
         except Exception as e:
             _LOGGER.exception(f"Fehler beim Verarbeiten neuer Grow Plans: {e}")
 
+    ## Workers
+    async def _eval_plan_settings(self, plan_data: Dict[str, Any]):
+        """
+        Prüft den aktiven Plan und triggert Events für relevante Parameter.
+        Wird beim Aktivieren eines Plans oder täglichen Update ausgeführt.
+        """
+        try:
+            current_week_data = plan_data.get("weeks", [])
+            if not current_week_data:
+                _LOGGER.warning(f"{self.room}: Kein Wochenplan in {plan_data.get('plan_name')}")
+                return
+
+            # Wähle aktuelle Woche aus
+            week = self.current_week or 1
+            week_settings = self.get_week_data_by_number(week)
+
+            if not week_settings:
+                _LOGGER.warning(f"{self.room}: Keine WeekData für Woche {week} gefunden")
+                return
+
+            _LOGGER.info(f"{self.room}: Evaluating Grow Plan Settings for Week {week}: {week_settings}")
+
+            # Jetzt einzelne Prüfungen durchführen
+            await self._emit_if_changed("light", week_settings, ["lightStart", "lightEnd", "lightIntensity"])
+            await self._emit_if_changed("climate", week_settings, ["temperature", "humidity", "vpd", "co2"])
+            await self._emit_if_changed("feed", week_settings, ["A", "B", "C", "EC", "PH"])
+            await self._emit_if_changed("mode", week_settings, ["FullAutomatic", "feedControl", "co2Control"])
+
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Fehler bei _eval_plan_settings: {e}")
+
+    async def _emit_if_changed(self, category: str, week_settings: Dict[str, Any], keys: list[str]):
+        """
+        Prüft bestimmte Werte und sendet Event/DataStore-Update nur, wenn sich etwas geändert hat.
+        """
+        try:
+            changes = {}
+            for key in keys:
+                new_value = week_settings.get(key)
+                old_value = self.dataStore.get(f"{category}_{key}")
+
+                # Nur aktualisieren, wenn es sich geändert hat oder noch nicht gesetzt ist
+                if new_value is not None and new_value != old_value:
+                    self.dataStore.set(f"{category}_{key}", new_value)
+                    changes[key] = new_value
+
+            # Nur senden, wenn sich Werte wirklich geändert haben
+            if changes:
+                event_name = f"growplan_update_{category}"
+                _LOGGER.info(f"{self.room}: Änderungen erkannt in {category} → {changes}")
+                await self.eventManager.emit(event_name, {"room": self.room, "changes": changes})
+
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Fehler bei _emit_if_changed ({category}): {e}")
+ 
     ## Helpers
     def get_grow_plan_name_by_id(self, plan_id: str) -> Optional[str]:
         """Gibt den Namen eines Grow Plans anhand seiner ID zurück."""
@@ -175,12 +230,17 @@ class OGBGrowPlanManager:
     def _on_plan_activation(self, growPlan):
         """Handle Plan Aktivierung"""
         try:
+            _LOGGER.error(f"ALL PLANS:{self.grow_plans.get("all_plans")}")
+
             plan_id = growPlan.get("id")
-            newGrowPlan = growPlan.get("growPlan")
-            self.grow_plans.append(newGrowPlan)
-            _LOGGER.error(f"ALL PLANS:{self.grow_plans}")
+
+            # Wenn der Plan schon in grow_plans steckt, nicht doppelt anhängen
+            if plan_id and not any(p.get("id") == plan_id for p in self.grow_plans.get("all_plans", [])):
+                self.grow_plans.setdefault("all_plans", []).append(growPlan)
+
             if plan_id:
                 asyncio.create_task(self.activate_grow_plan(plan_id))
+
         except Exception as e:
             _LOGGER.error(f"Fehler bei Plan-Aktivierung: {e}")
 
@@ -189,7 +249,7 @@ class OGBGrowPlanManager:
         try:
             # Finde den Plan
             plan = None
-            for p in self.grow_plans:
+            for p in self.grow_plans.get("all_plans"):
                 if p.get("id") == plan_id:
                     plan = p
                     break
@@ -198,13 +258,17 @@ class OGBGrowPlanManager:
                 _LOGGER.error(f"Grow Plan mit ID {plan_id} nicht gefunden")
                 return False
             
+            
+            isValid = await self._eval_plan_settings(plan)
+                       
+            
             # Aktiviere den Plan
             self.active_grow_plan = plan
             self.active_grow_plan_id = plan_id
             self.plan_start_date = datetime.now(timezone.utc)
             
             # Speichere Zustand
-            #await self._save_current_state()
+            await self.eventManager.emit("SaveRequest",self.room) 
             
             # Aktualisiere aktuelle Woche
             await self._update_current_week()
@@ -213,7 +277,7 @@ class OGBGrowPlanManager:
             
             _LOGGER.warning(f"Grow Plan Settings Adjustment Started for {plan_id},")
             
-            self.managerState = "Active"
+            self.managerActive = True
             self.dataStore.set("growManagerActive",True)
             
             # Event senden

@@ -510,9 +510,9 @@ class Device:
                     logging.warning("AC-INFINTY RUNNING OVER OWN CONTROLLER")
                     return
                 elif option_value in (None, "unknown", "Unbekannt", "unavailable"):
-                    raise ValueError(f"Invalid Entity state '{option_value}' for {self.deviceName}")
+                    raise ValueError(f"{self.inRoom} - Invalid Entity state '{option_value}' for {self.deviceName}")
                 else:
-                    raise ValueError(f"Invalid Entity state '{option_value}' for {self.deviceName}")   
+                    raise ValueError(f"{self.inRoom} - Invalid Entity state '{option_value}' for {self.deviceName}")   
         else:
             for switch in self.switches:
                 switch_value = switch.get("value")
@@ -523,9 +523,9 @@ class Device:
                     self.isRunning = False
                     return
                 elif switch_value in (None, "unknown", "Unbekannt", "unavailable"):
-                    raise ValueError(f"Invalid Entity state '{switch_value}' for {self.deviceName}")
+                    raise ValueError(f"{self.inRoom} - Invalid Entity state '{switch_value}' for {self.deviceName}")
                 else:
-                    raise ValueError(f"Invalid Entity state '{switch_value}' for {self.deviceName}")
+                    raise ValueError(f"{self.inRoom} - Invalid Entity state '{switch_value}' for {self.deviceName}")
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):

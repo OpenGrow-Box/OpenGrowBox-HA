@@ -149,8 +149,7 @@ class OGBWebSocketConManager:
                 # Success
                 if auth_callback:
                     await auth_callback(event_id, "success", "Login and connection successful")
-
-                logging.warning(f"✅ {self.ws_room} Login and connection successful")
+                    
                 return True
 
         except Exception as e:
@@ -170,8 +169,6 @@ class OGBWebSocketConManager:
                 "event_id": event_id,
                 "client_id": self.client_id,
             }
-
-            logging.warning(f"🔄 {self.ws_room} Attempting login for: {email}")
 
             timeout_config = aiohttp.ClientTimeout(total=15)
 
@@ -575,7 +572,7 @@ class OGBWebSocketConManager:
 
         @self.sio.event
         async def auth_success(data):
-            logging.warning(f"✅ Authentication successful: {data}")
+            logging.debug(f"✅ Authentication successful: {data}")
             self.authenticated = True
             self.ogb_max_sessions = data.get("ogb_max_sessions")
             self.ogb_sessions = data.get("ogb_sessions")
@@ -695,12 +692,9 @@ class OGBWebSocketConManager:
         async def growplan_ack_response(data):
             logging.warning(f"{self.ws_room}: Recieved Activation Response For  {data}")
             growPlan = data.get("growPlan")
+            event_id = data.get("event_id")
             await self.ogbevents.emit("plan_activation",growPlan)
-            
-            #await self._send_auth_response(event_id, "success", "Grow Plan Activated", {})
-
-            #await self._save_current_state()
-
+            await self._send_auth_response(event_id, "success", "Grow Plan Activated", {})
 
         # PREM UI CONTROLS
         @self.sio.event

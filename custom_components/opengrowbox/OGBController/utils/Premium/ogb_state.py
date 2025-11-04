@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import base64
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +70,42 @@ async def _remove_state_file(hass, room: str = None):
         _LOGGER.error(f"Error while deleting Premium file(s): {e}")
 
 async def _save_state_securely(hass, state_data: dict, room: str):
+    """Saves Premium data securely (encrypted)."""
+    try:
+        data_to_save = state_data.copy()
+
+        # Serialize datetime objects and handle bytes
+        for key, value in data_to_save.items():
+            if isinstance(value, datetime):
+                data_to_save[key] = value.isoformat()
+            elif isinstance(value, bytes):
+                # Convert bytes to base64 string for JSON serialization
+                data_to_save[key] = base64.b64encode(value).decode('utf-8')
+        
+        # Handle nested dictionaries (like ws_data)
+        if "ws_data" in data_to_save and isinstance(data_to_save["ws_data"], dict):
+            for key, value in data_to_save["ws_data"].items():
+                if isinstance(value, bytes):
+                    data_to_save["ws_data"][key] = base64.b64encode(value).decode('utf-8')
+        
+        data_to_save["saved_at"] = datetime.now().isoformat()
+        data_to_save["version"] = "1.0"
+        _LOGGER.warning(f"SAVED DATA: {data_to_save}")
+
+        key = await _load_or_create_key(hass)
+        fernet = Fernet(key)
+        encoded = json.dumps(data_to_save, indent=2).encode('utf-8')
+        encrypted = fernet.encrypt(encoded)
+
+        file_path = _get_secure_path(hass, f"ogb_premium_state_{room.lower()}.enc")
+        await hass.async_add_executor_job(_write_file, file_path, encrypted)
+        _LOGGER.debug(f"{room} - User session securely saved")
+
+    except Exception as e:
+        _LOGGER.error(f"Error while saving state: {e}")
+        raise
+
+async def _save_state_securely2(hass, state_data: dict, room: str):
     """Saves Premium data securely (encrypted)."""
     try:
         data_to_save = state_data.copy()
