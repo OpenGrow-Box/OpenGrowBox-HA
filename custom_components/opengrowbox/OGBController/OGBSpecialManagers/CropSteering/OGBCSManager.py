@@ -2,6 +2,7 @@ import logging
 import asyncio
 from datetime import datetime
 from enum import Enum
+from datetime import datetime, timedelta
 from ...OGBDataClasses.OGBPublications import OGBHydroAction
 
 _LOGGER = logging.getLogger(__name__)
@@ -468,83 +469,84 @@ class OGBCSManager:
             )
 
     async def _handle_phase_p1_auto(self, vwc, ec, preset):
-        """
-        P1: Saturation phase - Sättige Block schnell
-        MIT EIGENEM INTERVALL-TRACKING (nicht blockCheckIntervall!)
-        """
-        # Prüfe ob bereits kalibrierter Max-Wert existiert
-        calibrated_max = self.dataStore.getDeep(f"CropSteering.Calibration.p1.VWCMax")
-        target_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
+            """
+            P1: Saturation phase - Sättige Block schnell
+            MIT EIGENEM INTERVALL-TRACKING (nicht blockCheckIntervall!)
+            """
+            # Prüfe ob bereits kalibrierter Max-Wert existiert
+            calibrated_max = self.dataStore.getDeep(f"CropSteering.Calibration.p1.VWCMax")
+            target_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
 
-        # === P1 State Tracking ===
-        p1_start_vwc = self.dataStore.getDeep("CropSteering.p1_start_vwc")
-        p1_irrigation_count = self.dataStore.getDeep("CropSteering.p1_irrigation_count") or 0
-        p1_last_vwc = self.dataStore.getDeep("CropSteering.p1_last_vwc") or vwc
-        last_irrigation_time = self.dataStore.getDeep("CropSteering.p1_last_irrigation_time")
+            # === P1 State Tracking ===
+            p1_start_vwc = self.dataStore.getDeep("CropSteering.p1_start_vwc")
+            p1_irrigation_count = self.dataStore.getDeep("CropSteering.p1_irrigation_count") or 0
+            p1_last_vwc = self.dataStore.getDeep("CropSteering.p1_last_vwc") or vwc
+            last_irrigation_time = self.dataStore.getDeep("CropSteering.p1_last_irrigation_time")
 
-        now = datetime.now()
+            now = datetime.now()
 
-        # Initialisiere beim ersten Eintritt in P1
-        if p1_start_vwc is None:
-            self.dataStore.setDeep("CropSteering.p1_start_vwc", vwc)
-            self.dataStore.setDeep("CropSteering.p1_irrigation_count", 0)
-            self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
-            self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now)
-            p1_start_vwc = vwc
-            p1_last_vwc = vwc
-            last_irrigation_time = now
+            # Initialisiere beim ersten Eintritt in P1
+            if p1_start_vwc is None:
+                self.dataStore.setDeep("CropSteering.p1_start_vwc", vwc)
+                self.dataStore.setDeep("CropSteering.p1_irrigation_count", 0)
+                self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
+                # WICHTIG: Setze last_irrigation_time auf vor dem Intervall, damit erste Bewässerung sofort kommt
+                self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now - timedelta(seconds=preset.get("wait_between", 180)))
+                p1_start_vwc = vwc
+                p1_last_vwc = vwc
+                # Nutze den bereits-berechneten Wert (in der Vergangenheit liegend)
+                last_irrigation_time = now - timedelta(seconds=preset.get("wait_between", 180))
 
-        # === 1. Ziel erreicht? ===
-        if vwc >= target_max:
-            await self._complete_p1_saturation(vwc, target_max, success=True)
-            return
+            # === 1. Ziel erreicht? ===
+            if vwc >= target_max:
+                await self._complete_p1_saturation(vwc, target_max, success=True)
+                return
 
-        # === 2. Stagnation erkannt? ===
-        vwc_increase_since_last = vwc - p1_last_vwc
-        if p1_irrigation_count >= 3 and vwc_increase_since_last < 0.5:
-            await self.eventManager.emit("LogForClient", {
-                "Name": self.room, "Type": "CSLOG",
-                "Message": f"Block voll bei {vwc:.1f}% (kein Anstieg mehr)"
-            }, haEvent=True)
-            self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
-            await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
-            return
-
-        # === 3. Max Attempts? ===
-        max_attempts = preset.get("max_cycles", 10)
-        if p1_irrigation_count >= max_attempts:
-            self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
-            await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
-            return
-
-        # === 4. Intervall prüfen ===
-        wait_time = preset.get("wait_between", 180)
-        time_since_last = (now - last_irrigation_time).total_seconds() if last_irrigation_time else float('inf')
-
-        if time_since_last >= wait_time:
-            # Zeit für nächsten Shot!
-            await self._irrigate(duration=preset.get("irrigation_duration", 45))
-
-            # Update state
-            p1_irrigation_count += 1
-            self.dataStore.setDeep("CropSteering.p1_irrigation_count", p1_irrigation_count)
-            self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
-            self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now)
-
-            await self.eventManager.emit("LogForClient", {
-                "Name": self.room, "Type": "CSLOG",
-                "Message": f"P1 Shot {p1_irrigation_count}/{max_attempts} → VWC: {vwc:.1f}% (wait {wait_time}s)"
-            }, haEvent=True)
-        else:
-            # Noch nicht Zeit → warte still
-            remaining = int(wait_time - time_since_last)
-            if remaining % 60 == 0 or remaining <= 30:  # Log alle 60s oder letzte 30s
+            # === 2. Stagnation erkannt? ===
+            vwc_increase_since_last = vwc - p1_last_vwc
+            if p1_irrigation_count >= 3 and vwc_increase_since_last < 0.5:
                 await self.eventManager.emit("LogForClient", {
                     "Name": self.room, "Type": "CSLOG",
-                    "Message": f"P1 wartet... noch {remaining}s bis nächstem Shot"
+                    "Message": f"Block voll bei {vwc:.1f}% (kein Anstieg mehr)"
                 }, haEvent=True)
-                
-            
+                self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+                await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+                return
+
+            # === 3. Max Attempts? ===
+            max_attempts = preset.get("max_cycles", 10)
+            if p1_irrigation_count >= max_attempts:
+                self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+                await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+                return
+
+            # === 4. Intervall prüfen ===
+            wait_time = preset.get("wait_between", 180)
+            time_since_last = (now - last_irrigation_time).total_seconds() if last_irrigation_time else float('inf')
+
+            if time_since_last >= wait_time:
+                # Zeit für nächsten Shot!
+                await self._irrigate(duration=preset.get("irrigation_duration", 45))
+
+                # Update state
+                p1_irrigation_count += 1
+                self.dataStore.setDeep("CropSteering.p1_irrigation_count", p1_irrigation_count)
+                self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
+                self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now)
+
+                await self.eventManager.emit("LogForClient", {
+                    "Name": self.room, "Type": "CSLOG",
+                    "Message": f"P1 Shot {p1_irrigation_count}/{max_attempts} → VWC: {vwc:.1f}% (wait {wait_time}s)"
+                }, haEvent=True)
+            else:
+                # Noch nicht Zeit → warte still
+                remaining = int(wait_time - time_since_last)
+                if remaining % 60 == 0 or remaining <= 30:  # Log alle 60s oder letzte 30s
+                    await self.eventManager.emit("LogForClient", {
+                        "Name": self.room, "Type": "CSLOG",
+                        "Message": f"P1 wartet... noch {remaining}s bis nächstem Shot"
+                    }, haEvent=True)
+        
     async def _complete_p1_saturation(self, final_vwc, target_vwc, success=True, updated_max=False):
         """Helper: Schließe P1 ab und wechsle zu P2"""
         # Cleanup P1 State
