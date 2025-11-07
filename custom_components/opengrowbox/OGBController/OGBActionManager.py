@@ -808,20 +808,37 @@ class OGBActionManager:
         # Fallback: Erste verfügbare Aktion
         return actionMap[0] if actionMap else None
 
-
     # Action Helpers
     async def publicationActionHandler(self, actionMap):
         """
         Handhabt die Steuerungsaktionen basierend auf dem actionMap und den Fähigkeiten.
         """
         _LOGGER.debug(f"{self.room}: Validated-Actions-By-Limits: - {actionMap}")
+        
+        previousActions = self.dataStore.get("previousActions") or []
+        current_time = time.time()
+        
+        # Speichere nur die Infos, die du brauchst (als Dicts)
+        previousActions.append({
+            "capability": [a.capability for a in actionMap],
+            "action": [a.action for a in actionMap],
+            "message": [a.message for a in actionMap],
+            "time": current_time
+        })
 
+        # Ältere als 15 Minuten löschen
+        previousActions = [
+            a for a in previousActions if current_time - a["time"] < 900
+        ]
+
+        self.dataStore.set("previousActions", previousActions)
+            
         for action in actionMap:
             actionCap = action.capability
             actionType = action.action
             actionMesage = action.message
             _LOGGER.debug(f"{self.room}: {actionCap} - {actionType} - - {action} -- {actionMesage}")
-     
+    
             # Aktionen basierend auf den Fähigkeiten
             if actionCap == "canExhaust":
                 await self.eventManager.emit(f"{actionType} Exhaust", actionType)
@@ -854,8 +871,8 @@ class OGBActionManager:
                 await self.eventManager.emit(f"{actionType} Light", actionType)
                 _LOGGER.debug(f"{self.room}: {actionType} Light ausgeführt.")
 
-        await self.eventManager.emit("SaveState",True)   
-
+        await self.eventManager.emit("DataRelease", True)
+               
     # Action Utils
     async def NightHoldFallBack(self, actionMap):
         _LOGGER.debug(f"{self.room}: VPD Night Hold NOT ACTIVE IGNORING ACTIONS ")

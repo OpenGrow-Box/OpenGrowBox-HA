@@ -240,7 +240,41 @@ def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="f
 
 
 
-def calculate_orp(ph, temperature_c):
+def calculate_orp(ph, temperature_c, e0_calibration=591.6):
+    """
+    Berechnet den ORP (Oxidation-Reduction Potential) in mV
+    basierend auf pH und Temperatur des Wassers.
+    Kalibriert basierend auf echten Messdaten.
+    
+    Args:
+        ph (float): pH-Wert des Wassers (0-14)
+        temperature_c (float): Temperatur in Celsius
+        e0_calibration (float): Kalibrierter E0-Wert (Default: 591.6 mV für dein Wasser)
+    
+    Returns:
+        float: ORP in Millivolt (mV)
+    """
+    
+    # Kalibriertes Elektrodenpotential
+    E0_reference = e0_calibration
+    
+    # Temperaturkoeffizient
+    temp_coefficient = -0.73
+    
+    # Nernst-Konstante bei 25°C
+    nernst_constant = 59.16
+    
+    # Temperaturabhängige Nernst-Konstante anpassen
+    temp_factor = (temperature_c + 273.15) / 298.15
+    adjusted_nernst = nernst_constant * temp_factor
+    
+    # Temperaturkompensation für das Referenzpotential
+    temp_compensation = temp_coefficient * (temperature_c - 25)
+    
+    # ORP berechnen
+    orp = E0_reference + temp_compensation - (adjusted_nernst * ph)
+    
+    return round(orp, 2)
     """
     Berechnet den ORP (Oxidation-Reduction Potential) in mV
     basierend auf pH und Temperatur des Wassers.

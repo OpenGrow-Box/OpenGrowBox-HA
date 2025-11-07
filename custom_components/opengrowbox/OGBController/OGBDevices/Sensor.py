@@ -400,7 +400,9 @@ class Sensor():
                             await self.eventManager.emit("MediumSensorUpdate",sensor_config)
 
                         if sensor_config['sensor_type'] == "co2":
-                            pass
+                            self.dataStore.setDeep("tentData.co2Level", numeric_value)
+                            # Need to UPDATE CO2 Funciton here and rebuild co2 logic
+                            await self.eventManager.emit("CO2Check",numeric_value)
                          
                         if sensor_config['sensor_type'] == "light":
                             if "_lumen" in entity_id:
@@ -452,8 +454,20 @@ class Sensor():
                                 self.dataStore.setDeep("Hydro.ph_current", numeric_value)
                                 updated = True
                             elif "_oxi" in entity_id:
-                                self.dataStore.setDeep("Hydro.oxi_current", numeric_value)
-                                updated = True
+                                if numeric_value == 0:
+                                    ph_current = self.dataStore.getDeep("Hydro.ph_current")
+                                    temp_current = self.dataStore.getDeep("Hydro.current_temp")
+                                    
+                                    if temp_current and ph_current is not None:
+                                        newOrp = calculate_orp(ph_current, temp_current)
+                                        currentOrp = self.dataStore.getDepp("Hydro.oxi_current")
+                                        if currentOrp == 0:
+                                            self.dataStore.setDeep("Hydro.oxi_current",float(newOrp))
+                                        await _update_specific_sensor("ogb_waterorp_", self.room, newOrp, self.hass)                                             
+                                else:
+                                    self.dataStore.setDeep("Hydro.oxi_current", numeric_value)
+                                    updated = True
+                            
                             elif "_sal" in entity_id:
                                 self.dataStore.setDeep("Hydro.sal_current", numeric_value)
                                 updated = True
@@ -471,9 +485,6 @@ class Sensor():
                                 sal_current = self.dataStore.getDeep("Hydro.sal_current")
                                 temp_current = self.dataStore.getDeep("Hydro.current_temp")
 
-                                if temp_current and ph_current is not None:
-                                    newOrp = calculate_orp(ph_current, temp_current)
-                                    await _update_specific_sensor("ogb_waterorp_", self.room, newOrp, self.hass)                                             
 
                                 hydroPublication = OGBWaterPublication(
                                     Name="HydroUpdate",

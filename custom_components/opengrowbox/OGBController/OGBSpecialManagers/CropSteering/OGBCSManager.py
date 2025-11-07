@@ -178,7 +178,6 @@ class OGBCSManager:
         return base_preset
     
     # ==================== ENTRY POINT ====================
-    
     async def handle_mode_change(self, data):
         """SINGLE entry point for all mode changes"""
         _LOGGER.debug(f"CropSteering mode change: {data}")
@@ -228,7 +227,7 @@ class OGBCSManager:
             self._main_task = asyncio.create_task(
                 self._manual_cycle(phase)
             )
-
+        
     async def handle_stop(self, event=None):
         """Stop handler for external stop events"""
         await self.stop_all_operations()
@@ -426,6 +425,12 @@ class OGBCSManager:
             )
             
             while True:
+                # === KRITISCH: Sensordaten NEU auslesen! ===
+                sensor_data = await self._get_sensor_averages()
+                if sensor_data:
+                    self.dataStore.setDeep("CropSteering.vwc_current", sensor_data['vwc'])
+                    self.dataStore.setDeep("CropSteering.ec_current", sensor_data['ec'])
+                
                 current_phase = self.dataStore.getDeep("CropSteering.CropPhase")
                 
                 # Hole angepasste Presets basierend auf Wachstumsphase
@@ -457,114 +462,94 @@ class OGBCSManager:
         except Exception as e:
             _LOGGER.error(f"Automatic cycle error: {e}", exc_info=True)
             await self._emergency_stop()
-
+        
     async def _handle_phase_p0_auto(self, vwc, ec, preset):
         """P0: Monitoring phase - Warte auf Dryback Signal"""
+        # P0 ist einfach: Warte bis VWC unter Minimum fällt
         if vwc < preset["VWCMin"]:
+            _LOGGER.info(f"{self.room} - P0: VWC {vwc:.1f}% < Min {preset['VWCMin']:.1f}% → Switching to P1")
             self.dataStore.setDeep("CropSteering.CropPhase", "p1")
             self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change(
                 "p0", "p1", 
                 f"Dryback detected - VWC: {vwc:.1f}% < Min: {preset['VWCMin']:.1f}%"
             )
+        else:
+            # Debug: Zeige aktuelle VWC in P0
+            _LOGGER.debug(f"{self.room} - P0 monitoring: VWC {vwc:.1f}% (waiting for < {preset['VWCMin']:.1f}%)")
 
     async def _handle_phase_p1_auto(self, vwc, ec, preset):
-            """
-            P1: Saturation phase - Sättige Block schnell
-            MIT EIGENEM INTERVALL-TRACKING (nicht blockCheckIntervall!)
-            """
-            # Prüfe ob bereits kalibrierter Max-Wert existiert
-            calibrated_max = self.dataStore.getDeep(f"CropSteering.Calibration.p1.VWCMax")
-            target_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
+        """
+        P1: Saturation phase - Sättige Block schnell
+        MIT EIGENEM INTERVALL-TRACKING (nicht blockCheckIntervall!)
+        """
+        # Prüfe ob bereits kalibrierter Max-Wert existiert
+        calibrated_max = self.dataStore.getDeep(f"CropSteering.Calibration.p1.VWCMax")
+        target_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
 
-            # === P1 State Tracking ===
-            p1_start_vwc = self.dataStore.getDeep("CropSteering.p1_start_vwc")
-            p1_irrigation_count = self.dataStore.getDeep("CropSteering.p1_irrigation_count") or 0
-            p1_last_vwc = self.dataStore.getDeep("CropSteering.p1_last_vwc") or vwc
-            last_irrigation_time = self.dataStore.getDeep("CropSteering.p1_last_irrigation_time")
+        # === P1 State Tracking ===
+        p1_start_vwc = self.dataStore.getDeep("CropSteering.p1_start_vwc")
+        p1_irrigation_count = self.dataStore.getDeep("CropSteering.p1_irrigation_count") or 0
+        p1_last_vwc = self.dataStore.getDeep("CropSteering.p1_last_vwc") or vwc
+        last_irrigation_time = self.dataStore.getDeep("CropSteering.p1_last_irrigation_time")
 
-            now = datetime.now()
+        now = datetime.now()
 
-            # Initialisiere beim ersten Eintritt in P1
-            if p1_start_vwc is None:
-                self.dataStore.setDeep("CropSteering.p1_start_vwc", vwc)
-                self.dataStore.setDeep("CropSteering.p1_irrigation_count", 0)
-                self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
-                # WICHTIG: Setze last_irrigation_time auf vor dem Intervall, damit erste Bewässerung sofort kommt
-                self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now - timedelta(seconds=preset.get("wait_between", 180)))
-                p1_start_vwc = vwc
-                p1_last_vwc = vwc
-                # Nutze den bereits-berechneten Wert (in der Vergangenheit liegend)
-                last_irrigation_time = now - timedelta(seconds=preset.get("wait_between", 180))
+        # Initialisiere beim ersten Eintritt in P1
+        if p1_start_vwc is None:
+            self.dataStore.setDeep("CropSteering.p1_start_vwc", vwc)
+            self.dataStore.setDeep("CropSteering.p1_irrigation_count", 0)
+            self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
+            self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now - timedelta(seconds=preset.get("wait_between", 180)))
+            p1_start_vwc = vwc
+            p1_last_vwc = vwc
+            last_irrigation_time = now - timedelta(seconds=preset.get("wait_between", 180))
 
-            # === 1. Ziel erreicht? ===
-            if vwc >= target_max:
-                await self._complete_p1_saturation(vwc, target_max, success=True)
-                return
+        # === 1. Ziel erreicht? ===
+        if vwc >= target_max:
+            _LOGGER.info(f"{self.room} - P1: Target reached {vwc:.1f}% >= {target_max:.1f}%")
+            await self._complete_p1_saturation(vwc, target_max, success=True)
+            return
 
-            # === 2. Stagnation erkannt? ===
-            vwc_increase_since_last = vwc - p1_last_vwc
-            if p1_irrigation_count >= 3 and vwc_increase_since_last < 0.5:
-                await self.eventManager.emit("LogForClient", {
-                    "Name": self.room, "Type": "CSLOG",
-                    "Message": f"Block voll bei {vwc:.1f}% (kein Anstieg mehr)"
-                }, haEvent=True)
-                self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
-                await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
-                return
+        # === 2. Stagnation erkannt? ===
+        vwc_increase_since_last = vwc - p1_last_vwc
+        if p1_irrigation_count >= 3 and vwc_increase_since_last < 0.5:
+            _LOGGER.info(f"{self.room} - P1: Stagnation at {vwc:.1f}% (no increase since last shot)")
+            await self.eventManager.emit("LogForClient", {
+                "Name": self.room, "Type": "CSLOG",
+                "Message": f"Block voll bei {vwc:.1f}% (kein Anstieg mehr)"
+            }, haEvent=True)
+            self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+            await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+            return
 
-            # === 3. Max Attempts? ===
-            max_attempts = preset.get("max_cycles", 10)
-            if p1_irrigation_count >= max_attempts:
-                self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
-                await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
-                return
+        # === 3. Max Attempts? ===
+        max_attempts = preset.get("max_cycles", 10)
+        if p1_irrigation_count >= max_attempts:
+            _LOGGER.info(f"{self.room} - P1: Max attempts reached ({max_attempts})")
+            self.dataStore.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+            await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+            return
 
-            # === 4. Intervall prüfen ===
-            wait_time = preset.get("wait_between", 180)
-            time_since_last = (now - last_irrigation_time).total_seconds() if last_irrigation_time else float('inf')
+        # === 4. Intervall prüfen ===
+        wait_time = preset.get("wait_between", 180)
+        time_since_last = (now - last_irrigation_time).total_seconds() if last_irrigation_time else float('inf')
 
-            if time_since_last >= wait_time:
-                # Zeit für nächsten Shot!
-                await self._irrigate(duration=preset.get("irrigation_duration", 45))
+        if time_since_last >= wait_time:
+            # Zeit für nächsten Shot!
+            await self._irrigate(duration=preset.get("irrigation_duration", 45))
 
-                # Update state
-                p1_irrigation_count += 1
-                self.dataStore.setDeep("CropSteering.p1_irrigation_count", p1_irrigation_count)
-                self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
-                self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now)
+            # Update state
+            p1_irrigation_count += 1
+            self.dataStore.setDeep("CropSteering.p1_irrigation_count", p1_irrigation_count)
+            self.dataStore.setDeep("CropSteering.p1_last_vwc", vwc)
+            self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", now)
 
-                await self.eventManager.emit("LogForClient", {
-                    "Name": self.room, "Type": "CSLOG",
-                    "Message": f"P1 Shot {p1_irrigation_count}/{max_attempts} → VWC: {vwc:.1f}% (wait {wait_time}s)"
-                }, haEvent=True)
-            else:
-                # Noch nicht Zeit → warte still
-                remaining = int(wait_time - time_since_last)
-                if remaining % 60 == 0 or remaining <= 30:  # Log alle 60s oder letzte 30s
-                    await self.eventManager.emit("LogForClient", {
-                        "Name": self.room, "Type": "CSLOG",
-                        "Message": f"P1 wartet... noch {remaining}s bis nächstem Shot"
-                    }, haEvent=True)
-        
-    async def _complete_p1_saturation(self, final_vwc, target_vwc, success=True, updated_max=False):
-        """Helper: Schließe P1 ab und wechsle zu P2"""
-        # Cleanup P1 State
-        self.dataStore.setDeep("CropSteering.p1_start_vwc", None)
-        self.dataStore.setDeep("CropSteering.p1_irrigation_count", None)
-        self.dataStore.setDeep("CropSteering.p1_last_vwc", None)
-        self.dataStore.setDeep("CropSteering.p1_last_irrigation_time", None) 
-        
-        # Wechsel zu P2
-        self.dataStore.setDeep("CropSteering.CropPhase", "p2")
-        self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
-        self.dataStore.setDeep("CropSteering.vwc_current",final_vwc)
-        
-        msg = f"Saturation complete - VWC: {final_vwc:.1f}%"
-        if updated_max:
-            msg += f" (Max updated from {target_vwc:.1f}%)"
-        
-        await self._log_phase_change("p1", "p2", msg)
+            await self.eventManager.emit("LogForClient", {
+                "Name": self.room, "Type": "CSLOG",
+                "Message": f"P1 Shot {p1_irrigation_count}/{max_attempts} → VWC: {vwc:.1f}% (target: {target_max:.1f}%)"
+            }, haEvent=True)
+            _LOGGER.info(f"{self.room} - P1: Shot {p1_irrigation_count}/{max_attempts}, VWC now {vwc:.1f}%")
 
     async def _handle_phase_p2_auto(self, vwc, ec, is_light_on, preset):
         """
@@ -586,12 +571,17 @@ class OGBCSManager:
                     "LogForClient", {
                         "Name": self.room,
                         "Type": "CSLOG",
-                        "Message": f"Maintaining: VWC {vwc:.1f}% < Hold {hold_threshold:.1f}%"
+                        "Message": f"P2 Maintenance: VWC {vwc:.1f}% < Hold {hold_threshold:.1f}% → Irrigation"
                     },
                     haEvent=True
                 )
+                _LOGGER.info(f"{self.room} - P2: Irrigated (VWC {vwc:.1f}% < {hold_threshold:.1f}%)")
+            else:
+                # Debug: Zeige Status in P2
+                _LOGGER.debug(f"{self.room} - P2 maintenance: VWC {vwc:.1f}% (hold at {hold_threshold:.1f}%, OK)")
         else:
             # STAGE-CHECKER: Licht ist aus -> Wechsel zu P3
+            _LOGGER.info(f"{self.room} - P2: Light OFF → Switching to P3")
             self.dataStore.setDeep("CropSteering.CropPhase", "p3")
             self.dataStore.setDeep("CropSteering.phaseStartTime", datetime.now())
             self.dataStore.setDeep("CropSteering.startNightMoisture", vwc)
@@ -613,9 +603,12 @@ class OGBCSManager:
             if start_night is None or start_night == 0:
                 self.dataStore.setDeep("CropSteering.startNightMoisture", vwc)
                 start_night = vwc
+                _LOGGER.info(f"{self.room} - P3: Initialized startNightMoisture to {vwc:.1f}%")
             
             target_dryback = preset["target_dryback_percent"]
             current_dryback = ((start_night - vwc) / start_night) * 100 if start_night else 0
+            
+            _LOGGER.debug(f"{self.room} - P3: Dryback {current_dryback:.1f}% (target {target_dryback:.1f}%, start {start_night:.1f}%, current {vwc:.1f}%)")
             
             # EC-Anpassung basierend auf Dryback
             if current_dryback < preset.get("min_dryback_percent", 8.0):
@@ -629,10 +622,11 @@ class OGBCSManager:
                     "LogForClient", {
                         "Name": self.room,
                         "Type": "CSLOG",
-                        "Message": f"Low dryback {current_dryback:.1f}% < {target_dryback:.1f}% - Increasing EC"
+                        "Message": f"P3 Low dryback {current_dryback:.1f}% < {preset.get('min_dryback_percent', 8.0):.1f}% → Increasing EC"
                     },
                     haEvent=True
                 )
+                _LOGGER.info(f"{self.room} - P3: Low dryback, EC increased")
             
             elif current_dryback > preset.get("max_dryback_percent", 12.0):
                 # Zu viel Dryback -> EC senken (weniger Stress)
@@ -645,13 +639,15 @@ class OGBCSManager:
                     "LogForClient", {
                         "Name": self.room,
                         "Type": "CSLOG",
-                        "Message": f"High dryback {current_dryback:.1f}% > {target_dryback:.1f}% - Decreasing EC"
+                        "Message": f"P3 High dryback {current_dryback:.1f}% > {preset.get('max_dryback_percent', 12.0):.1f}% → Decreasing EC"
                     },
                     haEvent=True
                 )
+                _LOGGER.info(f"{self.room} - P3: High dryback, EC decreased")
+            else:
+                _LOGGER.debug(f"{self.room} - P3: Dryback optimal at {current_dryback:.1f}%")
             
             # Notfall-Bewässerung wenn zu trocken
-            # Verwende kalibrierten Max falls vorhanden
             calibrated_max = self.dataStore.getDeep(f"CropSteering.Calibration.p1.VWCMax")
             effective_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
             
@@ -662,15 +658,17 @@ class OGBCSManager:
                     "LogForClient", {
                         "Name": self.room,
                         "Type": "CSLOG",
-                        "Message": f"Emergency irrigation: VWC {vwc:.1f}% < {emergency_level:.1f}%"
+                        "Message": f"P3 Emergency irrigation: VWC {vwc:.1f}% < {emergency_level:.1f}%"
                     },
                     haEvent=True
                 )
+                _LOGGER.warning(f"{self.room} - P3: Emergency irrigation (VWC {vwc:.1f}% < {emergency_level:.1f}%)")
         else:
             # STAGE-CHECKER: Licht ist an -> Zurück zu P0
             start_night = self.dataStore.getDeep("CropSteering.startNightMoisture")
             current_dryback = ((start_night - vwc) / start_night) * 100 if start_night else 0
             
+            _LOGGER.info(f"{self.room} - P3: Light ON → Switching to P0 (Dryback was {current_dryback:.1f}%)")
             self.dataStore.setDeep("CropSteering.CropPhase", "p0")
             self.dataStore.setDeep("CropSteering.startNightMoisture", None)  # Reset für nächste Nacht
             
@@ -680,7 +678,6 @@ class OGBCSManager:
             )
 
     # ==================== MANUAL MODE ====================
-    
     async def _manual_cycle(self, phase):
         """Manual time-based cycle (verwendet USER Settings)"""
         _LOGGER.warning(f"{self.room} - CS - Manual {phase}: Started")
@@ -705,6 +702,12 @@ class OGBCSManager:
             _LOGGER.warning(f"{self.room} - Manual {phase}: {shot_count} shots every {shot_interval}min")
             
             while True:
+                # === KRITISCH: Sensordaten NEU auslesen! ===
+                sensor_data = await self._get_sensor_averages()
+                if sensor_data:
+                    self.dataStore.setDeep("CropSteering.vwc_current", sensor_data['vwc'])
+                    self.dataStore.setDeep("CropSteering.ec_current", sensor_data['ec'])
+                
                 vwc = float(self.dataStore.getDeep("CropSteering.vwc_current") or 0)
                 ec = float(self.dataStore.getDeep("CropSteering.ec_current") or 0)
                 shot_counter = int(float(self.dataStore.getDeep("CropSteering.shotCounter")))
@@ -772,7 +775,7 @@ class OGBCSManager:
         except Exception as e:
             _LOGGER.error(f"Manual cycle error: {e}", exc_info=True)
             await self._emergency_stop()
-
+                        
     # ==================== IRRIGATION ====================
     
     async def _irrigate(self, duration=30):

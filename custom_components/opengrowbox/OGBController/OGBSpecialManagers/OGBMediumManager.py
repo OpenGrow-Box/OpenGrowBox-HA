@@ -67,8 +67,6 @@ class OGBMediumManager:
             value = data.get("value")
             unit = data.get("unit")
             context = data.get("context")
-            fromDevice = data.get("device_name")
-            
             
             if not entity_id or not sensor_type or not medium_label:
                 _LOGGER.error("RegisterSensorToMedium: entity_id, sensor_type und medium_label erforderlich")
@@ -136,6 +134,46 @@ class OGBMediumManager:
 
     async def _on_medium_sensor_update(self, data):
         """
+        Verarbeitet Sensor-Updates für Medien - speichert SOFORT im Datastore.
+        Der Datastore ist die Single Source of Truth!
+        """
+        try:
+            _LOGGER.debug(f"{self.room} - Medium Manager Update Request: {data}")
+            
+            entity_id = data.get("entity_id")
+            
+            # Prüfe ob Sensor registriert ist
+            if entity_id not in self._entity_to_medium_index:
+                _LOGGER.error(f"Sensor {entity_id} ist keinem Medium zugeordnet")
+                return
+            
+            medium_index = self._entity_to_medium_index[entity_id]
+            
+            # Prüfe ob Medium noch existiert
+            if medium_index >= len(self.media):
+                _LOGGER.error(f"Medium Index {medium_index} existiert nicht mehr")
+                del self._entity_to_medium_index[entity_id]
+                return
+            
+            medium = self.media[medium_index]
+            
+            # 1️⃣ Medium im RAM aktualisieren
+            await medium.update_sensor_reading_async(data)
+            
+            # 2️⃣ SOFORT im Datastore speichern (NICHT mit Verzögerung!)
+            self._save_mediums_to_store()
+            
+            _LOGGER.debug(
+                f"✅ {self.room}/{medium.name}: {data.get('sensor_type')}={data.get('state')} "
+                f"→ Datastore aktualisiert"
+            )
+            
+        except Exception as e:
+            _LOGGER.error(f"Fehler beim Medium-Sensor-Update: {e}", exc_info=True)
+
+
+    async def _on_medium_sensor_update2(self, data):
+        """
         Verarbeitet Sensor-Updates für Medien.
         
         Expected data:
@@ -151,13 +189,12 @@ class OGBMediumManager:
         try:
             # Nur für diesen Room
 
-            
+            _LOGGER.error(f"{self.room} - Medium Manager Update Request: {data} ")            
             entity_id = data.get("entity_id")
             sensor_type = data.get("sensor_type")
             sensor_context = data.get("context")
             device_class = data.get("device_class")
             last_value = data.get("state")
-
             timestamp = data.get("timestamp")
             
             # Prüfe ob Sensor registriert ist
@@ -320,6 +357,15 @@ class OGBMediumManager:
         self._save_mediums_to_store()
 
     def _save_mediums_to_store(self):
+        """
+        Speichert SOFORT alle Mediums im Datastore.
+        Kein Debouncing - der Datastore ist IMMER aktuell!
+        """
+        mediums_as_dicts = [medium.to_dict() for medium in self.media]
+        self.dataStore.set("growMediums", mediums_as_dicts)
+        _LOGGER.warning(f"💾 {self.room}: Datastore aktualisiert mit aktuellen Medium-Werten {mediums_as_dicts}")
+
+    def _save_mediums_to_store2(self):
         """Save current mediums to dataStore"""
         mediums_as_dicts = [medium.to_dict() for medium in self.media]
         self.dataStore.set("growMediums", mediums_as_dicts)

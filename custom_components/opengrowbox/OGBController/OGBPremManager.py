@@ -517,7 +517,23 @@ class OGBPremManager:
     # =================================================================
     # GROW 
     # =================================================================
-   
+
+    async def _send_ai_learn_data(self, grow_data):
+        webhook_url = "https://brain.azzitech.io/webhook-test/ogb/ai-learning"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=grow_data, timeout=10) as resp:
+                    if resp.status == 200:
+                        _LOGGER.info("Grow data sent successfully to Webhook")
+                        return True
+                    else:
+                        _LOGGER.warning(f"Failed to send grow data to Webhook, status: {resp.status}")
+                        return False
+        except Exception as e:
+            _LOGGER.error(f"Exception sending grow data to Webhook: {e}")
+            return False
+
+
     async def _send_growdata_to_prem_api(self,event):
         
         if not self.is_premium and not self.is_logged_in:
@@ -531,8 +547,10 @@ class OGBPremManager:
         grow_data = {
 
             "tentMode": self.dataStore.get("tentMode"),
-            
+            "strainName":self.dataStore.get("strainName"),
             "plantStage": self.dataStore.get("plantStage"),
+            "planttype": self.dataStore.get("plantType"),
+            "cultivationArea":self.dataStore.get("growAreaM2"),
             "vpd": self.dataStore.get("vpd"),
             "tentData": self.dataStore.get("tentData"),
             "CropSteering": self.dataStore.get("CropSteering"),
@@ -552,6 +570,14 @@ class OGBPremManager:
             "plantStages": self.dataStore.get("plantStages"),
         }     
  
+        # Senden an Webhook
+        
+        aiLearningActive = self.dataStore.getDeep("controlOptions.aiLearning")
+        
+        if aiLearningActive == True:    
+            await self._send_ai_learn_data(grow_data)
+
+ 
         success = await self.ogb_ws.prem_event("grow-data", grow_data)
     
         if success:
@@ -560,7 +586,17 @@ class OGBPremManager:
             _LOGGER.debug("Failed to send grow data")
     
         return success       
-        
+
+    def _serialize_actions(self, actions):
+        """Konvertiere OGBActionPublication-Objekte zu Dicts"""
+        if actions is None:
+            return None
+        if isinstance(actions, list):
+            return [asdict(action) if isinstance(action, OGBActionPublication) else action 
+                    for action in actions]
+        return actions
+
+      
     # =================================================================
     # GROW PLANS
     # =================================================================
@@ -847,6 +883,7 @@ class OGBPremManager:
         """Save current state securely"""
         TentMode = self.dataStore.get("tentMode")
         StrainName = self.dataStore.get("strainName")
+        
         try:
             # Get session backup data from WebSocket client
             ws_backup = self.ogb_ws.get_session_backup_data()
@@ -895,72 +932,59 @@ class OGBPremManager:
         tent_control = f"select.ogb_tentmode_{self.room.lower()}"
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
-        ctrl_options = [ "PID Control", "MPC Control"]
+        ctrl_options = ["PID Control", "MPC Control","AI Control"]
         dry_options = []
 
         current_tent_mode = self.dataStore.get("tentMode")
-        invalid_modes = ["PID Control", "MPC Control"]
-
+        invalid_modes = ["PID Control", "MPC Control","AI Control"]
 
         logging.error(f"{self.room} PREM-MODE-CHECK: LAST:{self.lastTentMode} Current:{current_tent_mode}")
-        if self.lastTentMode == None:
-            return
 
+        # --- Wenn kein Premium aktiv ist ---
         if not self.is_premium and not self.is_logged_in:
-            for entity_id, options in [
-                (tent_control, ctrl_options),
-                (drying_modes, dry_options)
-            ]:
-                if current_tent_mode in invalid_modes:
-                    await self.hass.services.async_call(
-                        domain="select",
-                        service="select_option",
-                        service_data={
-                            "entity_id": tent_control,
-                            "option": "VPD Perfection"
-                        },
-                        blocking=True
-                    )
-                    await self.hass.services.async_call(
-                        domain="opengrowbox",
-                        service="remove_select_options",
-                        service_data={
-                            "entity_id": entity_id,
-                            "options": options
-                        },
-                        blocking=True
-                    )
-        else:
-
-            for entity_id, options in [
-                (tent_control, ctrl_options),
-                (drying_modes, dry_options)
-            ]:
+            # falls der aktuelle Modus ein Premiummodus ist -> zurücksetzen
+            if current_tent_mode in invalid_modes:
                 await self.hass.services.async_call(
-                    domain="opengrowbox",
-                    service="add_select_options",
-                    service_data={
-                        "entity_id": entity_id,
-                        "options": options
-                    },
+                    "select", "select_option",
+                    {"entity_id": tent_control, "option": "VPD Perfection"},
                     blocking=True
                 )
+            # Premium-Optionen entfernen
+            for entity_id, options in [(tent_control, ctrl_options), (drying_modes, dry_options)]:
+                await self.hass.services.async_call(
+                    "opengrowbox", "remove_select_options",
+                    {"entity_id": entity_id, "options": options},
+                    blocking=True
+                )
+            return
+
+        # --- Wenn Premium aktiv ist ---
+        for entity_id, options in [(tent_control, ctrl_options), (drying_modes, dry_options)]:
             await self.hass.services.async_call(
-                domain="select",
-                service="select_option",
-                service_data={
-                    "entity_id": tent_control,
-                    "option": self.lastTentMode,
-                },
+                "opengrowbox", "add_select_options",
+                {"entity_id": entity_id, "options": options},
                 blocking=True
             )
+
+        # Wenn vorher Disabled gesetzt wurde, aber ein alter Modus bekannt ist -> wiederherstellen
+        if current_tent_mode in [None, "Disabled", "VPD Perfection"] and self.lastTentMode in invalid_modes:
+            restore_mode = self.lastTentMode
+        else:
+            restore_mode = current_tent_mode or "VPD Perfection"
+
+        logging.warning(f"{self.room} RESTORE-MODE: {restore_mode}")
+        self.dataStore.set("tentMode",restore_mode)
+        await self.hass.services.async_call(
+            "select", "select_option",
+            {"entity_id": tent_control, "option": restore_mode},
+            blocking=True
+        )
 
     # =================================================================
     # UTILITYS
     # =================================================================
 
     async def _save_request(self,event):
-        logging.warning(f"{self.room} Saving New State!")
         await self._save_current_state()
    
     async def _get_or_create_room_id(self):
@@ -1063,6 +1087,9 @@ class OGBPremManager:
         """Handle Premium mode deactivation - Simplified"""
         try:
             _LOGGER.warning(f"Premium mode deactivated for {self.room}")
+            if self.is_premium_selected == False:
+                return
+            
             self.is_premium_selected = False
             
       

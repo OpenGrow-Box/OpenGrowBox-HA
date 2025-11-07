@@ -204,8 +204,9 @@ class OpenGrowBox:
 
                 await self.eventManager.emit("selectActionMode",runMode)
                 await self.eventManager.emit("LogForClient",vpdPub,haEvent=True)
-                await self.eventManager.emit("DataRelease",vpdPub)           
+               
 
+                
                 self._debugState()
                 return vpdPub
                
@@ -271,6 +272,7 @@ class OpenGrowBox:
             f"ogb_vpd_determination_{self.room.lower()}": self._ogb_vpd_determination,
             f"ogb_maincontrol_{self.room.lower()}": self._update_control_option,
             f"ogb_notifications_{self.room.lower()}": self._update_notify_option,
+            f"ogb_ai_learning_{self.room.lower()}": self._update_ai_learning,
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
             f"ogb_planttype_{self.room.lower()}": self._update_plant_type,
@@ -537,9 +539,11 @@ class OpenGrowBox:
                     await self.get_weather_data()
                     return
                 
-                await self.eventManager.emit("selectActionMode",runMode)
-                await self.eventManager.emit("DataRelease",vpdPub)           
+                await self.eventManager.emit("selectActionMode",runMode)   
                 await self.eventManager.emit("LogForClient",vpdPub,haEvent=True)
+
+                # GROW DATA
+                #await self.eventManager.emit("DataRelease",vpdPub)        
                
                 self._debugState()
                 return vpdPub
@@ -548,7 +552,7 @@ class OpenGrowBox:
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
                 _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
-
+                               
     async def get_weather_data(self):
         """Hole aktuelle Temperatur und Luftfeuchtigkeit über Open-Meteo API (kostenlos)."""
         try:
@@ -924,6 +928,10 @@ class OpenGrowBox:
                 self.dataStore.set("tentMode",value)
                 ## Event to Mode Manager 
                 await self.eventManager.emit("selectActionMode",tentModePublication)
+    
+            # Premium Mode Remapp on start
+            if self.premiumManager.is_logged_in and self.premiumManager.is_premium and self.premiumManager.is_premium_selected:
+                await self.eventManager.emit("SaveRequest",self.room)                
               
         else:
             _LOGGER.error(f"Unkown Tent-Mode check your Select Options: {type(data)} - Data: {data}")      
@@ -1806,6 +1814,15 @@ class OpenGrowBox:
         if current_value != value:
             self.dataStore.setDeep("controlOptions.multiMediumControl", self._stringToBool(value))
 
+    ## AI Learning Switch
+    async def _update_ai_learning(self,data):
+        """
+        Update OGB Ambient Control
+        """
+        value = data.newState[0]
+        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.aiLearning"))
+        if current_value != value:
+            self.dataStore.setDeep("controlOptions.aiLearning", self._stringToBool(value))
 
     ## Debug NOTES
     def _debugState(self):

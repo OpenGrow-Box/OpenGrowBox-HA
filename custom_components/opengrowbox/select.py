@@ -245,6 +245,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
         CustomSelect(f"OGB_Intake_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
 
+        # AI / KI 
+        CustomSelect(f"OGB_AI_Learning_{coordinator.room_name}", coordinator.room_name, coordinator,
+                    options=["YES","NO"], initial_value="YES"),
+
     ]
 
 

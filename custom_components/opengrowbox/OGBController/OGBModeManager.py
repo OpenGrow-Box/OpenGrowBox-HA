@@ -154,7 +154,9 @@ class OGBModeManager:
         if controllerType == "MPC":
             await self.eventManager.emit("MPCActions",data)
         if controllerType == "AI":
+            await self.eventManager.emit("DataRelease",True)
             await self.eventManager.emit("AIActions",data)
+                        
         return
 
     ## Drying Modes
