@@ -225,6 +225,7 @@ class OGBConf:
         "ownWeights": False,
         "ambientControl": False,
         "multiMediumControl":True,
+        "aiLearning":True,
     })
     controlOptionData: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "co2ppm": {"target": 0, "current":400, "minPPM": 400, "maxPPM": 1800},
@@ -241,14 +242,14 @@ class OGBConf:
         "generativeWeek":0,
     })
     plantStages: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
-        "Germination": {"vpdRange": [0.412, 0.70], "minTemp": 20, "maxTemp": 24, "minHumidity": 65, "maxHumidity": 80},
-        "Clones": {"vpdRange": [0.412, 0.65], "minTemp": 20, "maxTemp": 24, "minHumidity": 65, "maxHumidity": 80},
-        "EarlyVeg": {"vpdRange": [0.65, 0.80], "minTemp": 20, "maxTemp": 26, "minHumidity": 55, "maxHumidity": 70},
-        "MidVeg": {"vpdRange": [0.80, 1.0], "minTemp": 20, "maxTemp": 27, "minHumidity": 55, "maxHumidity": 65},
-        "LateVeg": {"vpdRange": [1.05, 1.1], "minTemp": 20, "maxTemp": 27, "minHumidity": 55, "maxHumidity": 65},
-        "EarlyFlower": {"vpdRange": [1.0, 1.25], "minTemp": 22, "maxTemp": 26, "minHumidity": 50, "maxHumidity": 65},
-        "MidFlower": {"vpdRange": [1.1, 1.35], "minTemp": 22, "maxTemp": 25, "minHumidity": 45, "maxHumidity": 60},
-        "LateFlower": {"vpdRange": [1.2, 1.65], "minTemp": 20, "maxTemp": 24, "minHumidity": 40, "maxHumidity": 55},
+        "Germination": {"vpdRange": [0.35, 0.70], "minTemp": 20, "maxTemp": 24, "minHumidity": 78, "maxHumidity": 85},
+        "Clones": {"vpdRange": [0.40, 0.85], "minTemp": 20, "maxTemp": 24, "minHumidity": 72, "maxHumidity": 80},
+        "EarlyVeg": {"vpdRange": [0.60, 1.20], "minTemp": 22, "maxTemp": 26, "minHumidity": 65, "maxHumidity": 75},
+        "MidVeg": {"vpdRange": [0.75, 1.45], "minTemp": 23, "maxTemp": 27, "minHumidity": 60, "maxHumidity": 72},
+        "LateVeg": {"vpdRange": [0.90, 1.65], "minTemp": 24, "maxTemp": 27, "minHumidity": 55, "maxHumidity": 68},
+        "EarlyFlower": {"vpdRange": [0.80, 1.55], "minTemp": 22, "maxTemp": 26, "minHumidity": 55, "maxHumidity": 68},
+        "MidFlower": {"vpdRange": [0.90, 1.70], "minTemp": 21, "maxTemp": 25, "minHumidity": 48, "maxHumidity": 62},
+        "LateFlower": {"vpdRange": [0.90, 1.85], "minTemp": 19, "maxTemp": 24, "minHumidity": 42, "maxHumidity": 58},
     })
     plantDates: Dict[str, Any] = field(default_factory=lambda: {
         "isGrowing": False,
