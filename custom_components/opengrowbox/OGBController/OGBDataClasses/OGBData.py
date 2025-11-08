@@ -225,7 +225,7 @@ class OGBConf:
         "ownWeights": False,
         "ambientControl": False,
         "multiMediumControl":True,
-        "aiLearning":True,
+        "aiLearning":False,
     })
     controlOptionData: Dict[str, Dict[str, Any]] = field(default_factory=lambda: {
         "co2ppm": {"target": 0, "current":400, "minPPM": 400, "maxPPM": 1800},
