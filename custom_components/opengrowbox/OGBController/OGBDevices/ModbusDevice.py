@@ -8,18 +8,34 @@ _LOGGER = logging.getLogger(__name__)
 class OGBModbusDevice(Device):
     """Modbus-Gerät als Wrapper für standardisierte Device-Kommunikation."""
     
-    def __init__(self, deviceName, deviceData, eventManager, dataStore, 
-                 deviceType, inRoom, hass=None, deviceLabel="EMPTY", 
+    def __init__(self, deviceName, deviceData, eventManager, dataStore,
+                 deviceType, inRoom, hass=None, deviceLabel="EMPTY",
                  allLabels=[], modbus_config=None):
-        
+
         self.modbus_client = None
         self.modbus_config = modbus_config or {}
         self.slave_id = self.modbus_config.get("slave_id", 1)
         self.registers = {}  # Register-Mapping
         self.isModbusDevice = True
-        
-        super().__init__(deviceName, deviceData, eventManager, dataStore, 
+
+        # Additional attributes to match Device class
+        self.isSpecialDevice = False
+        self.isDimmable = False
+        self.isAcInfinDev = False
+        self.switches = []
+        self.options = []
+        self.sensors = []
+        self.ogbsettings = []
+        self.initialization = False
+        self.inWorkMode = False
+        self.isInitialized = False
+
+        super().__init__(deviceName, deviceData, eventManager, dataStore,
                         deviceType, inRoom, hass, deviceLabel, allLabels)
+
+        # Register additional events to match Device
+        self.eventManager.on("WorkModeChange", self.WorkMode)
+        self.eventManager.on("SetMinMax", self.userSetMinMax)
     
     async def connect_modbus(self):
         """Stellt Modbus-Verbindung her."""
@@ -124,9 +140,9 @@ class OGBModbusDevice(Device):
         if value_address:
             # Skalierung anwenden falls nötig
             scaled_value = int(value * self.modbus_config.get("scale_factor", 1))
-            return await self.write_register(value_address, scaled_value)
-        
-        await super().set_value(value)
+            await self.write_register(value_address, scaled_value)
+        else:
+            await super().set_value(value)
     
     async def poll_sensors(self):
         """Liest Sensor-Daten über Modbus aus."""
@@ -149,3 +165,49 @@ class OGBModbusDevice(Device):
                     "newValue": actual_value,
                     "oldValue": None
                 })
+
+    # Additional methods to match Device class
+    @property
+    def option_count(self) -> int:
+        """Gibt die Anzahl aller Optionen zurück."""
+        return len(self.options)
+
+    @property
+    def switch_count(self) -> int:
+        """Gibt die Anzahl aller Switches zurück."""
+        return len(self.switches)
+
+    @property
+    def sensor_count(self) -> int:
+        """Gibt die Anzahl aller Sensoren zurück."""
+        return len(self.sensors)
+
+    def deviceInit(self, entitys):
+        """Initialize device with data, matching Device class."""
+        # Parse modbus_config from entitys if available
+        if "modbus" in entitys:
+            self.modbus_config.update(entitys["modbus"])
+        # Ensure IP is provided or detected
+        if not self.modbus_config.get("host"):
+            self.modbus_config["host"] = self.detect_modbus_ip()
+        super().deviceInit(entitys)
+
+    def detect_modbus_ip(self):
+        """Detect Modbus device IP (placeholder for auto-detection)."""
+        # TODO: Implement IP scanning logic
+        _LOGGER.info(f"Detecting IP for Modbus device {self.deviceName}")
+        return "192.168.1.100"  # Placeholder
+
+    async def deviceUpdate(self, updateData):
+        """Handle device state updates, matching Device class."""
+        # Custom handling for Modbus devices
+        pass
+
+    async def WorkMode(self, workmode):
+        """Handle work mode changes, matching Device class."""
+        self.inWorkMode = workmode.get("workMode", False)
+
+    async def userSetMinMax(self, data):
+        """Handle min/max settings, matching Device class."""
+        # Custom handling
+        pass

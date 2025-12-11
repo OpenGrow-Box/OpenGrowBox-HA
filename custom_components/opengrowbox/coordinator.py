@@ -25,7 +25,8 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
 
         
         self.OGB = OpenGrowBox(hass,config_entry.data["room_name"])
-        self.is_ready = False 
+        self.is_ready = False
+        self._started = False 
         
         # Entitäten nach Typ initialisieren
         self.entities = {
@@ -83,7 +84,11 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator):
         """
         Start the OpenGrowBox-Init.
         """
+        if self._started:
+            _LOGGER.debug("OGB already started, skipping duplicate start")
+            return
         _LOGGER.debug("Starting OpenGrowBox initialization.")
+        self._started = True
         self.is_ready = False 
         await asyncio.sleep(3)
         try:

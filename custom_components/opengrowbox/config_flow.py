@@ -16,7 +16,11 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required("room_name"): str,
+                    vol.Required("room_name"): vol.All(
+                        str,
+                        vol.Length(min=1, max=50),
+                        vol.Match(r'^[a-zA-Z0-9_-]+$', msg="Room name can only contain letters, numbers, hyphens, and underscores")
+                    ),
                 }
             ),
         )
