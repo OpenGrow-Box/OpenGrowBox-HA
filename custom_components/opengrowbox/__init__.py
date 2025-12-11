@@ -18,6 +18,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
+    # Check if this entry is already set up to prevent duplicate initialization
+    if config_entry.entry_id in hass.data[DOMAIN]:
+        _LOGGER.debug(f"Entry {config_entry.entry_id} already set up, skipping duplicate setup")
+        return True
+
     # Verify that the frontend integration is available
     try:
         frontend_integration = await async_get_integration(hass, "frontend")

@@ -372,11 +372,11 @@ class OGBWebSocketConManager:
                     "ogb-client-id": self.client_id,
                     "ogb-client-version":VERSION,
 
-                    "ogb-room-id": str(self.room_id),
-                    "ogb-room-name": str(self.ws_room),
+                    "ogb-room-uuid": str(self.room_id),
+                    "ogb-room": str(self.ws_room),
                     "ogb-session-id": str(self._session_id),
-                    
-                    "ogb-access-token": str(self._access_token),                
+
+                    "ogb-token": str(self._access_token),
                     "ogb-user-id": str(self._user_id),
 
                 }
@@ -749,6 +749,54 @@ class OGBWebSocketConManager:
         async def error(data):
             logging.error(f"❌ Socket error: {data}")
 
+        @self.sio.event
+        async def subscription_changed(data):
+            """Handle subscription changes from Stripe webhooks"""
+            try:
+                event_type = data.get('event_type', 'unknown')
+                new_plan = data.get('plan_name', 'free')
+
+                logging.info(f"📡 Subscription changed via {event_type}: {new_plan}")
+
+                # Update local premium status
+                old_status = self.is_premium
+                self.is_premium = new_plan.lower() != 'free'
+
+                # Premium status updated - HA integration will handle accordingly
+
+                # Log the change
+                if old_status != self.is_premium:
+                    logging.warning(f"🔄 Premium status changed: {old_status} → {self.is_premium}")
+
+            except Exception as e:
+                logging.error(f"❌ Subscription change handler error: {e}")
+
+        @self.sio.event
+        async def subscription_expiring_soon(data):
+            """Handle subscription expiration warnings"""
+            try:
+                expires_in = data.get('expires_in_seconds', 0)
+                logging.warning(f"⚠️ Subscription expires in {expires_in} seconds")
+
+                # Subscription expiring soon - HA integration should handle warnings
+
+            except Exception as e:
+                logging.error(f"❌ Subscription warning handler error: {e}")
+
+        @self.sio.event
+        async def subscription_expired(data):
+            """Handle immediate subscription expiration"""
+            try:
+                logging.warning(f"⏰ Subscription expired: {data.get('previous_plan')} → free")
+
+                # Immediately disable premium features
+                self.is_premium = False
+
+                # Premium features disabled - HA integration will handle accordingly
+
+            except Exception as e:
+                logging.error(f"❌ Subscription expiry handler error: {e}")
+
     # =================================================================
     # Reconnection Logic
     # =================================================================
@@ -805,81 +853,89 @@ class OGBWebSocketConManager:
 
     async def _unified_reconnect_loop(self):
         """Single unified reconnection loop with optimized timing"""
-        base_delay = 2  # Start with 2 seconds
-        max_delay = 60  # 1 minute max instead of 5 minutes
-        
-        while (self._should_reconnect and 
-            self.reconnect_attempts < self.max_reconnect_attempts and
-            not self.ws_connected):
-            
-            self.reconnect_attempts += 1
-            
-            # More conservative exponential backoff
-            if self.reconnect_attempts == 1:
-                delay = base_delay  # First attempt: 2s
-            elif self.reconnect_attempts <= 3:
-                delay = base_delay * (1.2 ** (self.reconnect_attempts - 1))  # Slower growth: 2s, 2.4s, 2.88s
-            else:
-                delay = min(base_delay * (1.5 ** (self.reconnect_attempts - 3)) * 2.88, max_delay)  # After 3rd: faster growth
-            
-            # Smaller jitter (5% instead of 10%)
-            jitter = delay * 0.05 * (secrets.randbelow(100) / 100)
-            total_delay = delay + jitter
-            
-            logging.warning(f"Reconnect attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} "
-                        f"for {self.ws_room} in {total_delay:.1f}s")
-            
-            await asyncio.sleep(total_delay)
-            
-            # Check if we should still reconnect
-            if not self._should_reconnect or self.ws_connected:
-                break
-                
-            try:
-                async with self._connection_lock:
-                    # Double check connection state
-                    if self.ws_connected:
-                        logging.warning(f"Already connected during reconnect attempt for {self.ws_room}")
-                        break
-                    
-                    # Ensure clean state
-                    if hasattr(self, 'sio') and self.sio.connected:
-                        try:
-                            await self.sio.disconnect()
-                            await asyncio.sleep(0.3)  # Reduced from 0.5s
-                        except:
-                            pass
-                    
+        # Check if already reconnecting to prevent race conditions
+        if self._reconnection_in_progress:
+            logging.debug(f"Reconnection already in progress for {self.ws_room}")
+            return
+
+        self._reconnection_in_progress = True
+
+        try:
+            base_delay = 2  # Start with 2 seconds
+            max_delay = 60  # 1 minute max instead of 5 minutes
+
+            while (self._should_reconnect and
+                self.reconnect_attempts < self.max_reconnect_attempts and
+                not self.ws_connected):
+
+                self.reconnect_attempts += 1
+
+                # More conservative exponential backoff
+                if self.reconnect_attempts == 1:
+                    delay = base_delay  # First attempt: 2s
+                elif self.reconnect_attempts <= 3:
+                    delay = base_delay * (1.2 ** (self.reconnect_attempts - 1))  # Slower growth: 2s, 2.4s, 2.88s
+                else:
+                    delay = min(base_delay * (1.5 ** (self.reconnect_attempts - 3)) * 2.88, max_delay)  # After 3rd: faster growth
+
+                # Smaller jitter (5% instead of 10%)
+                jitter = delay * 0.05 * (secrets.randbelow(100) / 100)
+                total_delay = delay + jitter
+
+                logging.warning(f"Reconnect attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} "
+                            f"for {self.ws_room} in {total_delay:.1f}s")
+
+                await asyncio.sleep(total_delay)
+
+                # Check if we should still reconnect
+                if not self._should_reconnect or self.ws_connected:
+                    break
+
+                try:
+                    async with self._connection_lock:
+                        # Double check connection state
+                        if self.ws_connected:
+                            logging.warning(f"Already connected during reconnect attempt for {self.ws_room}")
+                            break
+
+                        # Ensure clean state
+                        if hasattr(self, 'sio') and self.sio.connected:
+                            try:
+                                await self.sio.disconnect()
+                                await asyncio.sleep(0.3)  # Reduced from 0.5s
+                            except:
+                                pass
+
                     # Try to get fresh session if needed
                     if not self._session_key or not self._session_id:
                         logging.warning(f"Requesting new session for {self.ws_room} reconnect")
                         if not await self._request_session_key():
                             logging.error(f"Failed to get session key for {self.ws_room} reconnect")
                             continue
-                    
+
                     # Try to reconnect
                     if await self._connect_websocket():
                         logging.warning(f"Reconnect successful for {self.ws_room}")
-                        self._reconnection_in_progress = False
                         self.reconnect_attempts = 0  # Reset on success
                         await self._start_keepalive()
                         return
                     else:
                         logging.warning(f"Reconnection Error Try Session Restore for {self.ws_room}")
                         await self.session_restore()
-                    
-            except Exception as e:
-                logging.error(f"Reconnect attempt {self.reconnect_attempts} failed for {self.ws_room}: {e}")
 
-        logging.debug(f"{self.ws_room} Max reconnect attempts:{self.reconnect_attempts} Reached")
-        self._reconnection_in_progress = False
-        
-        if self.reconnect_attempts >= self.max_reconnect_attempts:
-            await self.ogbevents.emit(
-                "LogForClient",
-                f"Connection lost and max reconnect attempts reached for {self.ws_room}. Please try logging in again.",
-                haEvent=True
-            )
+                except Exception as e:
+                    logging.error(f"Reconnect attempt {self.reconnect_attempts} failed for {self.ws_room}: {e}")
+
+            logging.debug(f"{self.ws_room} Max reconnect attempts:{self.reconnect_attempts} Reached")
+
+            if self.reconnect_attempts >= self.max_reconnect_attempts:
+                await self.ogbevents.emit(
+                    "LogForClient",
+                    f"Connection lost and max reconnect attempts reached for {self.ws_room}. Please try logging in again.",
+                    haEvent=True
+                )
+        finally:
+            self._reconnection_in_progress = False
     # =================================================================
     # Keep-Alive System
     # =================================================================
@@ -1594,29 +1650,20 @@ class OGBWebSocketConManager:
             return False
 
     async def prem_event(self, message_type: str, data: dict) -> bool:
-        """Send message via WebSocket"""
+        """Send encrypted message via WebSocket"""
         try:
             if not (self.is_premium and self.sio and self.sio.connected and self.authenticated):
                 logging.warning(f"❌ {self.ws_room} Cannot send - not ready (premium: {self.is_premium}, connected: {self.sio.connected if self.sio else False}, auth: {self.authenticated})")
                 return False
-            
-            message_data = {
-                "type": message_type,
-                "event_id": data.get("event_id") or str(uuid.uuid4()),
-                "room_name": self.ws_room,
-                "room_id": self.room_id,
-                "user_id": self._user_id,
-                "session_id":self._session_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data": data,
-            }
-            
-            await self.sio.emit(message_type, message_data)
-            logging.debug(f"📤 {self.ws_room} Sent via WebSocket: {message_type}")
-            return True
-            
+
+            # Use encrypted communication for security
+            success = await self.send_encrypted_message(message_type, data)
+            if success:
+                logging.debug(f"🔐 {self.ws_room} Sent encrypted message: {message_type}")
+            return success
+
         except Exception as e:
-            logging.error(f"❌ {self.ws_room} WebSocket send failed: {e}")
+            logging.error(f"❌ {self.ws_room} Encrypted send failed: {e}")
             return False
      
     # =================================================================
@@ -1706,3 +1753,87 @@ class OGBWebSocketConManager:
             self.ogb_sessions -= 1
         logging.warning(f"{self.ws_room} - Active Sessions:{self.ogb_sessions} Max Sessions:{self.ogb_max_sessions}")
         
+
+
+
+    # =================================================================
+    # Session Monitoring for Frontend Updates
+    # =================================================================
+
+    async def start_session_monitoring(self):
+        """Start monitoring session changes for frontend updates"""
+        if hasattr(self, "_session_monitoring_active") and self._session_monitoring_active:
+            return
+
+        self._session_monitoring_active = True
+        self._last_session_data = None
+
+        logging.info(f"Starting session monitoring for {self.ws_room}")
+
+        while self._session_monitoring_active and self.is_connected():
+            try:
+                # Query current session status from API
+                session_data = await self.get_session_status()
+
+                # Broadcast to HA frontend if changed
+                if self._last_session_data != session_data:
+                    await self._broadcast_session_update_to_frontend(session_data)
+                    self._last_session_data = session_data
+
+                await asyncio.sleep(30)  # Update every 30 seconds
+
+            except Exception as e:
+                logging.error(f"Session monitoring error for {self.ws_room}: {e}")
+                await asyncio.sleep(60)  # Retry after error
+
+        self._session_monitoring_active = False
+        logging.info(f"Session monitoring stopped for {self.ws_room}")
+
+    async def stop_session_monitoring(self):
+        """Stop session monitoring"""
+        self._session_monitoring_active = False
+        logging.info(f"Session monitoring stop requested for {self.ws_room}")
+
+    async def get_session_status(self) -> dict:
+        """Get current session status from API"""
+        try:
+            if not self.authenticated:
+                return {
+                    "active_sessions": 0,
+                    "max_sessions": 1,
+                    "current_plan": "free",
+                    "active_rooms": [],
+                    "usage_percent": 0
+                }
+
+            # Send request to API for session data
+            response = await self.send_encrypted_message("get_session_status", {})
+
+            if response and "session_data" in response:
+                return response["session_data"]
+
+            return {
+                "active_sessions": 0,
+                "max_sessions": 1,
+                "current_plan": "free",
+                "active_rooms": [],
+                "usage_percent": 0
+            }
+        except Exception as e:
+            logging.error(f"Failed to get session status for {self.ws_room}: {e}")
+            return {
+                "active_sessions": 0,
+                "max_sessions": 1,
+                "current_plan": "free",
+                "active_rooms": [],
+                "usage_percent": 0,
+                "error": str(e)
+            }
+
+    async def _broadcast_session_update_to_frontend(self, session_data):
+        """Send session update to HA frontend"""
+        try:
+            await self.ogbevents.emit("session_update", session_data, haEvent=True)
+            logging.debug(f"Broadcasted session update to frontend: {session_data}")
+        except Exception as e:
+            logging.error(f"Failed to broadcast session update to frontend: {e}")
