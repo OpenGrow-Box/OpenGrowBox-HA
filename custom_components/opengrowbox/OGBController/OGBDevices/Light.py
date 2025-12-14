@@ -355,13 +355,8 @@ class Light(Device):
                 # Täglichen Reset überprüfen
                 self._check_should_reset_phases()
                 
-                plantStage = self.dataStore.get("plantStage")
-                self.currentPlantStage = plantStage
-                
-                if plantStage in self.PlantStageMinMax:
-                    percentRange = self.PlantStageMinMax[plantStage]
-                    self.minVoltage = percentRange["min"]
-                    self.maxVoltage = percentRange["max"]
+                # Set min/max voltage to plant stage or user min/max values
+                self.checkPlantStageLightValue()
                     
                 now = datetime.now().time()
                 
@@ -373,6 +368,8 @@ class Light(Device):
                 _LOGGER.debug(f"{self.deviceName}: SunSetDuration: {self.sunSetDuration} Sek ({self.sunSetDuration/60} Min)")
                 _LOGGER.debug(f"{self.deviceName}: Sunrise_phase_active: {self.sunrise_phase_active}, Sunset_phase_active: {self.sunset_phase_active}")
                 _LOGGER.debug(f"{self.deviceName}: SunPhasePaused: {self.sun_phase_paused}")
+                _LOGGER.debug(f"{self.deviceName}: minVoltage: {self.minVoltage}")
+                _LOGGER.debug(f"{self.deviceName}: maxVoltage: {self.maxVoltage}")
                 
                 # Prüfung für SunRise
                 if self.sunRiseDuration and not self.sun_phase_paused:
