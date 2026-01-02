@@ -1,11 +1,13 @@
-from cryptography.fernet import Fernet, InvalidToken
-from datetime import datetime
+import base64
 import json
 import logging
 import os
-import base64
+from datetime import datetime
+
+from cryptography.fernet import Fernet, InvalidToken
 
 _LOGGER = logging.getLogger(__name__)
+
 
 def _get_secure_path(hass, filename: str) -> str:
     """Returns a secure file path relative to the Home Assistant configuration."""
@@ -13,18 +15,19 @@ def _get_secure_path(hass, filename: str) -> str:
     os.makedirs(subdir, exist_ok=True)
     return os.path.join(subdir, filename)
 
+
 async def _load_or_create_key(hass):
     """Loads or creates an encryption key."""
-    key_path = _get_secure_path(hass, 'ogb_premium_secret.key')
+    key_path = _get_secure_path(hass, "ogb_premium_secret.key")
 
     def write_key(path):
         key = Fernet.generate_key()
-        with open(path, 'wb') as f:
+        with open(path, "wb") as f:
             f.write(key)
         return key
 
     def read_key(path):
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             return f.read()
 
     if not os.path.exists(key_path):
@@ -36,15 +39,18 @@ async def _load_or_create_key(hass):
 
     return key
 
+
 def _write_file(path, data: bytes):
     """Writes bytes to a file."""
-    with open(path, 'wb') as f:
+    with open(path, "wb") as f:
         f.write(data)
+
 
 def _read_file(path: str) -> bytes:
     """Reads bytes from a file."""
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         return f.read()
+
 
 async def _remove_state_file(hass, room: str = None):
     """Deletes the saved encrypted state file(s). If room is None, deletes all."""
@@ -69,32 +75,48 @@ async def _remove_state_file(hass, room: str = None):
     except Exception as e:
         _LOGGER.error(f"Error while deleting Premium file(s): {e}")
 
+
+def _make_json_serializable(obj):
+    """Recursively convert objects to JSON-serializable types."""
+    if obj is None:
+        return None
+    elif isinstance(obj, bytes):
+        return base64.b64encode(obj).decode("utf-8")
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: _make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    else:
+        # For any other type, try to convert to string
+        try:
+            return str(obj)
+        except:
+            return None
+
+
 async def _save_state_securely(hass, state_data: dict, room: str):
     """Saves Premium data securely (encrypted)."""
     try:
-        data_to_save = state_data.copy()
+        # Deep copy and make JSON serializable
+        data_to_save = _make_json_serializable(state_data)
+        
+        if not isinstance(data_to_save, dict):
+            data_to_save = {}
 
-        # Serialize datetime objects and handle bytes
-        for key, value in data_to_save.items():
-            if isinstance(value, datetime):
-                data_to_save[key] = value.isoformat()
-            elif isinstance(value, bytes):
-                # Convert bytes to base64 string for JSON serialization
-                data_to_save[key] = base64.b64encode(value).decode('utf-8')
-        
-        # Handle nested dictionaries (like ws_data)
-        if "ws_data" in data_to_save and isinstance(data_to_save["ws_data"], dict):
-            for key, value in data_to_save["ws_data"].items():
-                if isinstance(value, bytes):
-                    data_to_save["ws_data"][key] = base64.b64encode(value).decode('utf-8')
-        
         data_to_save["saved_at"] = datetime.now().isoformat()
         data_to_save["version"] = "1.0"
-        _LOGGER.warning(f"SAVED DATA: {data_to_save}")
+        _LOGGER.debug(f"{room} - Saving state data")
 
         key = await _load_or_create_key(hass)
         fernet = Fernet(key)
-        encoded = json.dumps(data_to_save, indent=2).encode('utf-8')
+        
+        # Serialize to JSON and encode
+        json_str = json.dumps(data_to_save, indent=2, default=str)
+        encoded = json_str.encode("utf-8")
         encrypted = fernet.encrypt(encoded)
 
         file_path = _get_secure_path(hass, f"ogb_premium_state_{room.lower()}.enc")
@@ -102,8 +124,9 @@ async def _save_state_securely(hass, state_data: dict, room: str):
         _LOGGER.debug(f"{room} - User session securely saved")
 
     except Exception as e:
-        _LOGGER.error(f"Error while saving state: {e}")
+        _LOGGER.error(f"Error while saving state for {room}: {e}")
         raise
+
 
 async def _save_state_securely2(hass, state_data: dict, room: str):
     """Saves Premium data securely (encrypted)."""
@@ -114,7 +137,7 @@ async def _save_state_securely2(hass, state_data: dict, room: str):
         for key, value in data_to_save.items():
             if isinstance(value, datetime):
                 data_to_save[key] = value.isoformat()
-        
+
         data_to_save["saved_at"] = datetime.now().isoformat()
         data_to_save["version"] = "1.0"
         _LOGGER.warning(f"SAVED DATA: {data_to_save}")
@@ -132,7 +155,8 @@ async def _save_state_securely2(hass, state_data: dict, room: str):
         _LOGGER.error(f"Error while saving state: {e}")
         raise
 
-async def _load_state_securely(hass, room:str):
+
+async def _load_state_securely(hass, room: str):
     """Loads and decrypts saved state data."""
     try:
         file_path = _get_secure_path(hass, f"ogb_premium_state_{room.lower()}.enc")
@@ -148,7 +172,7 @@ async def _load_state_securely(hass, room:str):
 
         # Parse datetime fields
         for key, value in state_data.items():
-            if isinstance(value, str) and key.endswith('_at'):
+            if isinstance(value, str) and key.endswith("_at"):
                 try:
                     state_data[key] = datetime.fromisoformat(value)
                 except ValueError:
@@ -160,7 +184,9 @@ async def _load_state_securely(hass, room:str):
         return state_data
 
     except InvalidToken:
-        _LOGGER.warning("Invalid encryption key or tampered state file – state will be reset")
+        _LOGGER.warning(
+            "Invalid encryption key or tampered state file – state will be reset"
+        )
         await _remove_state_file(hass)
         return None
 

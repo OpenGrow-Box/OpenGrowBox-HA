@@ -1,8 +1,10 @@
+import logging
+
+import voluptuous as vol
 from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.restore_state import RestoreEntity
-import logging
+
 from .const import DOMAIN
-import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,10 +69,11 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
         """Return device information for the Room Selector."""
         return {
             "identifiers": {(DOMAIN, self._unique_id)},
-            "name": "Room Selector",
+            "name": "OGB Rooms",
             "model": "Room Selector Device",
             "manufacturer": "OpenGrowBox",
         }
+
 
 class CustomSelect(SelectEntity, RestoreEntity):
     """Custom select entity with state restoration."""
@@ -80,7 +83,9 @@ class CustomSelect(SelectEntity, RestoreEntity):
         self._name = name
         self.room_name = room_name
         self._attr_options = options or []  # Home Assistant erwartet _attr_options
-        self._attr_current_option = initial_value if initial_value in self._attr_options else None
+        self._attr_current_option = (
+            initial_value if initial_value in self._attr_options else None
+        )
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
 
@@ -126,7 +131,9 @@ class CustomSelect(SelectEntity, RestoreEntity):
     def add_options(self, new_options):
         """Add new options to the select entity."""
         _LOGGER.info(f"Adding options to '{self._name}': {new_options}")
-        unique_new_options = [opt for opt in new_options if opt not in self._attr_options]
+        unique_new_options = [
+            opt for opt in new_options if opt not in self._attr_options
+        ]
         self._attr_options = list(set(self._attr_options + new_options))
         _LOGGER.info(f"Updated options for '{self._name}': {self._attr_options}")
         self.async_write_ha_state()
@@ -138,7 +145,7 @@ class CustomSelect(SelectEntity, RestoreEntity):
             "room_name": self.room_name,
             "options": self._attr_options,  # Hinzufügen der aktuellen Optionen
         }
-        
+
     @property
     def device_info(self):
         """Return device information to link this entity to a device."""
@@ -163,113 +170,321 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     # Create hub-specific selects
     selects = [
-        CustomSelect(f"OGB_PlantStage_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["Germination", "Clones", "EarlyVeg", "MidVeg", "LateVeg", "EarlyFlower", "MidFlower", "LateFlower"], initial_value="Germination"),
-
-        CustomSelect(f"OGB_PlantType_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["Photoperiodic", "Auto"], initial_value="Photoperiodic"),
-       
-       
-        CustomSelect(f"OGB_TentMode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["VPD Perfection","VPD Target","Drying","Disabled"], initial_value="Disabled"),
-        CustomSelect(f"OGB_HoldVpdNight_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="YES"),
-        CustomSelect(f"OGB_VPD_DeviceDampening_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="YES"),
-        CustomSelect(f"OGB_VPD_Determination_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["LIVE","15 Seconds", "30 Seconds","1 Minutes", "2.5 Minutes", "5 Minutes", "10 Minutes"], initial_value="LIVE"),
-        
+        CustomSelect(
+            f"OGB_PlantStage_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=[
+                "Germination",
+                "Clones",
+                "EarlyVeg",
+                "MidVeg",
+                "LateVeg",
+                "EarlyFlower",
+                "MidFlower",
+                "LateFlower",
+            ],
+            initial_value="Germination",
+        ),
+        CustomSelect(
+            f"OGB_PlantType_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Photoperiodic", "Auto"],
+            initial_value="Photoperiodic",
+        ),
+        CustomSelect(
+            f"OGB_TentMode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["VPD Perfection", "VPD Target", "Closed Environment", "Drying", "Disabled"],
+            initial_value="Disabled",
+        ),
+        CustomSelect(
+            f"OGB_HoldVpdNight_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
+        CustomSelect(
+            f"OGB_VPD_DeviceDampening_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
+        CustomSelect(
+            f"OGB_VPD_Determination_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=[
+                "LIVE",
+                "15 Seconds",
+                "30 Seconds",
+                "1 Minutes",
+                "2.5 Minutes",
+                "5 Minutes",
+                "10 Minutes",
+            ],
+            initial_value="LIVE",
+        ),
         # Ambient
-        CustomSelect(f"OGB_AmbientControl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-      
+        CustomSelect(
+            f"OGB_AmbientControl_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
         ##Notifications
-        CustomSelect(f"OGB_Notifications_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Enabled", "Disabled"], initial_value="Disabled"),
-        
-        #WorkMode
-        CustomSelect(f"OGB_WorkMode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="NO"),
-        
-        CustomSelect(f"OGB_OwnWeights_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_CO2_Control_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_MinMax_Control_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_LightControl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_VPDLightControl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_DryingModes_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["ElClassico", "DewBased","5DayDry","NO-Dry"],initial_value="NO-Dry"),
-        CustomSelect(f"OGB_MainControl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["HomeAssistant", "Node-RED","Self-Hosted","Premium"], initial_value="HomeAssistant"),
-        
+        CustomSelect(
+            f"OGB_Notifications_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Enabled", "Disabled"],
+            initial_value="Disabled",
+        ),
+        # WorkMode
+        CustomSelect(
+            f"OGB_WorkMode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_OwnWeights_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_CO2_Control_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_MinMax_Control_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_LightControl_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_VPDLightControl_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_DryingModes_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["ElClassico", "DewBased", "5DayDry", "NO-Dry"],
+            initial_value="NO-Dry",
+        ),
+        CustomSelect(
+            f"OGB_MainControl_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["HomeAssistant", "Node-RED", "Self-Hosted", "Premium"],
+            initial_value="HomeAssistant",
+        ),
         ## HYDRO
-        CustomSelect(f"OGB_Hydro_Mode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Hydro","Crop-Steering","Plant-Watering","Config","Disabled"], initial_value="Disabled"),
-        CustomSelect(f"OGB_Hydro_Cycle_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="NO"),
-        CustomSelect(f"OGB_Hydro_Retrive_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="NO"),
-
-        CustomSelect(f"OGB_Hydro_Plant_Watering_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Intervall","Sensor-Based","Config","Disabled"], initial_value="Disabled"),
-
+        CustomSelect(
+            f"OGB_Hydro_Mode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Hydro", "Crop-Steering", "Plant-Watering", "Config", "Disabled"],
+            initial_value="Disabled",
+        ),
+        CustomSelect(
+            f"OGB_Hydro_Cycle_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_Hydro_Retrive_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_Hydro_Plant_Watering_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Intervall", "Sensor-Based", "Config", "Disabled"],
+            initial_value="Disabled",
+        ),
         ## FEED
-        CustomSelect(f"OGB_Feed_Plan_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Own-Plan","Automatic","Config","Disabled"], initial_value="Disabled"),
-
+        CustomSelect(
+            f"OGB_Feed_Plan_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Own-Plan", "Automatic", "Config", "Disabled"],
+            initial_value="Disabled",
+        ),
         ##CROP_Steering
-        CustomSelect(f"OGB_CropSteering_Mode_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["Automatic","Manual","Config","Disabled"], initial_value="Disabled"),
-        CustomSelect(f"OGB_CropSteering_Phases_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["P0","P1","P2","P3",], initial_value="P0"),
-
-        # Multi Medium Control 
-        CustomSelect(f"OGB_Multi_Mediumctrl_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="YES"),
-
-        # LIGHT 
-        CustomSelect(f"OGB_Light_ControlType_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["DLI","Default"], initial_value="Default"),
-        CustomSelect(f"OGB_LightLedType_{coordinator.room_name}", coordinator.room_name, coordinator,
-                     options=["fullspektrum_grow", "quantum_board", "red_blue_grow", "high_end_grow", "cob_grow", "hps_equivalent", "burple", "white_led", "manual"], initial_value="fullspektrum_grow"),
-
+        CustomSelect(
+            f"OGB_CropSteering_Mode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Automatic", "Manual", "Config", "Disabled"],
+            initial_value="Disabled",
+        ),
+        CustomSelect(
+            f"OGB_CropSteering_Phases_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=[
+                "P0",
+                "P1",
+                "P2",
+                "P3",
+            ],
+            initial_value="P0",
+        ),
+        # Multi Medium Control
+        CustomSelect(
+            f"OGB_Multi_Mediumctrl_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
+        # Device Label Identification
+        CustomSelect(
+            f"OGB_Device_LabelIdent_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # LIGHT
+        CustomSelect(
+            f"OGB_Light_ControlType_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["DLI", "Default"],
+            initial_value="Default",
+        ),
+        CustomSelect(
+            f"OGB_LightLedType_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=[
+                "fullspektrum_grow",
+                "quantum_board",
+                "red_blue_grow",
+                "high_end_grow",
+                "cob_grow",
+                "hps_equivalent",
+                "burple",
+                "white_led",
+                "manual",
+            ],
+            initial_value="fullspektrum_grow",
+        ),
         ##DEVICES
-        CustomSelect(f"OGB_Device_LabelIdent_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-        
-        CustomSelect(f"OGB_Ventilation_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_Light_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_Exhaust_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-        CustomSelect(f"OGB_Intake_MinMax_{coordinator.room_name}", coordinator.room_name, coordinator, options=["YES", "NO"], initial_value="NO"),
-
-        # AI / KI 
-        CustomSelect(f"OGB_AI_Learning_{coordinator.room_name}", coordinator.room_name, coordinator,
-                    options=["YES","NO"], initial_value="NO"),
-
+        CustomSelect(
+            f"OGB_Ventilation_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_Light_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_Exhaust_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
+            f"OGB_Intake_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # AI / KI
+        CustomSelect(
+            f"OGB_AI_Learning_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # ============================================================
+        # SPECIAL LIGHTS - Enable/Disable Selects
+        # ============================================================
+        CustomSelect(
+            f"OGB_Light_FarRed_Enabled_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
+        CustomSelect(
+            f"OGB_Light_UV_Enabled_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
+        CustomSelect(
+            f"OGB_Light_Blue_Enabled_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
+        CustomSelect(
+            f"OGB_Light_Red_Enabled_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="YES",
+        ),
     ]
-
 
     if "selects" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["selects"] = []
 
     hass.data[DOMAIN]["selects"].extend(selects)
-    
 
     async_add_entities(selects)
 
-    
-    
     if not hass.services.has_service(DOMAIN, "add_select_options"):
+
         async def handle_add_options(call):
             """Handle the update sensor service."""
             entity_id = call.data.get("entity_id")
             options = call.data.get("options")
 
             _LOGGER.info(f"Adding options to '{entity_id}': {options}")
-
 
             for select in hass.data[DOMAIN]["selects"]:
                 if select.entity_id == entity_id:
@@ -280,18 +495,20 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             if not found:
                 _LOGGER.error(f"Select entity with id '{entity_id}' not found.")
 
-
         hass.services.async_register(
             DOMAIN,
             "add_select_options",
             handle_add_options,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-                vol.Required("options"): vol.All(list, [str]), 
-            }),
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                    vol.Required("options"): vol.All(list, [str]),
+                }
+            ),
         )
 
     if not hass.services.has_service(DOMAIN, "remove_select_options"):
+
         async def handle_remove_options(call):
             """Handle the remove options service."""
             entity_id = call.data.get("entity_id")
@@ -307,16 +524,24 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     found = True
 
                     # Entferne die angegebenen Optionen
-                    select._attr_options = [opt for opt in select._attr_options if opt not in options_to_remove]
+                    select._attr_options = [
+                        opt
+                        for opt in select._attr_options
+                        if opt not in options_to_remove
+                    ]
 
                     # Prüfe, ob aktuelle Option entfernt wurde oder ein ungültiger Modus ist
-                    if (select._attr_current_option in options_to_remove or
-                        select._attr_current_option in invalid_modes):
+                    if (
+                        select._attr_current_option in options_to_remove
+                        or select._attr_current_option in invalid_modes
+                    ):
 
                         # Fallback nur setzen, wenn es verfügbar ist
                         if fallback_option in select._attr_options:
                             select._attr_current_option = fallback_option
-                            _LOGGER.warning(f"Set '{select.name}' fallback to '{fallback_option}'")
+                            _LOGGER.warning(
+                                f"Set '{select.name}' fallback to '{fallback_option}'"
+                            )
                         else:
                             select._attr_current_option = None
                             _LOGGER.warning(
@@ -324,7 +549,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             )
 
                     select.async_write_ha_state()
-                    _LOGGER.warning(f"Updated options for '{select.name}': {select._attr_options}")
+                    _LOGGER.warning(
+                        f"Updated options for '{select.name}': {select._attr_options}"
+                    )
                     break
 
             if not found:
@@ -334,8 +561,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             DOMAIN,
             "remove_select_options",
             handle_remove_options,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-                vol.Required("options"): vol.All(list, [str]),
-            }),
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                    vol.Required("options"): vol.All(list, [str]),
+                }
+            ),
         )

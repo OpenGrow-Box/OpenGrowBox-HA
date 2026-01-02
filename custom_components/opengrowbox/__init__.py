@@ -1,17 +1,23 @@
 import logging
 import os
+
+import voluptuous as vol
+
+from homeassistant.components.frontend import (add_extra_js_url,
+                                               async_remove_panel)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.components.frontend import async_remove_panel, add_extra_js_url
-from homeassistant.loader import async_get_integration
 from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
+from homeassistant.loader import async_get_integration
+
 from .const import DOMAIN
 from .coordinator import OGBIntegrationCoordinator
 from .frontend import async_register_frontend
 
-
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "number", "select", "time", "switch", "date", "text"]
+
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up the OpenGrowBox integration via the UI."""
@@ -20,7 +26,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     # Check if this entry is already set up to prevent duplicate initialization
     if config_entry.entry_id in hass.data[DOMAIN]:
-        _LOGGER.debug(f"Entry {config_entry.entry_id} already set up, skipping duplicate setup")
+        _LOGGER.debug(
+            f"Entry {config_entry.entry_id} already set up, skipping duplicate setup"
+        )
         return True
 
     # Verify that the frontend integration is available
@@ -41,17 +49,46 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await coordinator.startOGB()
 
+    # Service registration happens in sensor.py to access sensor objects directly
+    _LOGGER.info(f"✅ Integration setup complete, waiting for sensor platform to register services")
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload the OpenGrowBox config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS)
+    _LOGGER.info(f"🛑 Unloading OpenGrowBox integration for entry {config_entry.entry_id}")
+    
+    # Get coordinator before unloading platforms
+    coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
+    
+    # CRITICAL: Shutdown coordinator and all its tasks FIRST
+    # This prevents orphaned tasks that can crash HA
+    if coordinator:
+        try:
+            _LOGGER.info(f"🛑 Shutting down coordinator for {coordinator.room_name}")
+            await coordinator.async_shutdown()
+            _LOGGER.info(f"✅ Coordinator shutdown complete for {coordinator.room_name}")
+        except Exception as e:
+            _LOGGER.error(f"❌ Error during coordinator shutdown: {e}", exc_info=True)
+    
+    # Now unload platforms
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        config_entry, PLATFORMS
+    )
+    
     if unload_ok:
-        hass.data[DOMAIN].pop(config_entry.entry_id)
+        hass.data[DOMAIN].pop(config_entry.entry_id, None)
 
         # Remove the panel from the frontend
-        async_remove_panel(hass, frontend_url_path="opengrowbox")
+        try:
+            async_remove_panel(hass, frontend_url_path="opengrowbox")
+        except Exception as e:
+            _LOGGER.debug(f"Panel already removed or not found: {e}")
+        
+        _LOGGER.info(f"✅ OpenGrowBox integration unloaded successfully")
+    else:
+        _LOGGER.warning(f"⚠️ Failed to unload some platforms")
 
     return unload_ok
 

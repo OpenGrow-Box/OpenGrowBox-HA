@@ -1,11 +1,14 @@
-from homeassistant.components.text import TextEntity
-from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.core import HomeAssistant
-from .const import DOMAIN
 import logging
+
 import voluptuous as vol
+from homeassistant.components.text import TextEntity
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.restore_state import RestoreEntity
+
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
     """Custom text entity for OpenGrowBox with state restoration."""
@@ -125,13 +128,12 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     if "texts" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["texts"] = []
 
-
     if "access_token_entity" not in hass.data[DOMAIN]:
         access_token_entity = OpenGrowBoxAccessToken(
             name="OGB_AccessToken",
             room_name="Ambient",
             coordinator=coordinator,
-            initial_value="AccessToken"
+            initial_value="AccessToken",
         )
         async_add_entities([access_token_entity])
         hass.data[DOMAIN]["texts"].append(access_token_entity)
@@ -142,15 +144,31 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
 
     # Räume-spezifische Texte hinzufügen
     texts = [
-        CustomText(f"OGB_Notes_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=""),
-        CustomText(f"OGB_StrainName_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=""),
-        CustomText(f"OGB_MediumType_{coordinator.room_name}", coordinator.room_name, coordinator, initial_value=""),
+        CustomText(
+            f"OGB_Notes_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value="",
+        ),
+        CustomText(
+            f"OGB_StrainName_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value="",
+        ),
+        CustomText(
+            f"OGB_MediumType_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value="",
+        ),
     ]
 
     hass.data[DOMAIN]["texts"].extend(texts)
     async_add_entities(texts)
 
     if not hass.services.has_service(DOMAIN, "update_text"):
+
         async def handle_update_text(call):
             entity_id = call.data.get("entity_id")
             new_value = call.data.get("text")
@@ -164,8 +182,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
             DOMAIN,
             "update_text",
             handle_update_text,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-                vol.Required("text"): str,
-            }),
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                    vol.Required("text"): str,
+                }
+            ),
         )

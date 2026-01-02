@@ -1,19 +1,24 @@
 import logging
-from datetime import datetime,timedelta
+from datetime import datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
-async def update_light_state(lightOnTime,lightOffTime,isLightNowON,room):
+
+async def update_light_state(lightOnTime, lightOffTime, isLightNowON, room):
     """
     Aktualisiere den Status von `lightOn`, basierend auf den Lichtzeiten.
     """
 
     try:
         if not lightOnTime or not lightOffTime:
-            _LOGGER.debug("Lichtzeiten fehlen. Bitte sicherstellen, dass 'lightOnTime' und 'lightOffTime' gesetzt sind.")
+            _LOGGER.debug(
+                "Lichtzeiten fehlen. Bitte sicherstellen, dass 'lightOnTime' und 'lightOffTime' gesetzt sind."
+            )
             return None
         if lightOnTime == "" or lightOffTime == "":
-            _LOGGER.debug("Lichtzeiten fehlen. Bitte sicherstellen, dass 'lightOnTime' und 'lightOffTime' gesetzt sind.")
+            _LOGGER.debug(
+                "Lichtzeiten fehlen. Bitte sicherstellen, dass 'lightOnTime' und 'lightOffTime' gesetzt sind."
+            )
             return None
 
         # Konvertiere Zeitstrings in `time`-Objekte
@@ -33,12 +38,14 @@ async def update_light_state(lightOnTime,lightOffTime,isLightNowON,room):
 
         # Aktualisiere den Status im DataStore
         current_status = isLightNowON
-        #_LOGGER.warn(f"Prüfung Licht Zeiten für {room} CurrentState:{current_status} NeededState:{is_light_on}") 
+        # _LOGGER.warn(f"Prüfung Licht Zeiten für {room} CurrentState:{current_status} NeededState:{is_light_on}")
         if current_status != is_light_on:
-            _LOGGER.warn(f"LightStateChagned in {room} From {current_status} To:{is_light_on}")    
+            _LOGGER.warn(
+                f"LightStateChagned in {room} From {current_status} To:{is_light_on}"
+            )
             return is_light_on
     except Exception as e:
-        _LOGGER.error(f"{room} Fehler beim Aktualisieren des Lichtstatus: {e}")       
+        _LOGGER.error(f"{room} Fehler beim Aktualisieren des Lichtstatus: {e}")
 
 
 def hours_between(start_str, stop_str):

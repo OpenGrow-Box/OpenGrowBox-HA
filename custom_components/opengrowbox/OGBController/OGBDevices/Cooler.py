@@ -1,21 +1,43 @@
-from .Device import Device
 import logging
+
+from .Device import Device
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class Cooler(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
+    def __init__(
+        self,
+        deviceName,
+        deviceData,
+        eventManager,
+        dataStore,
+        deviceType,
+        inRoom,
+        hass=None,
+        deviceLabel="EMPTY",
+        allLabels=[],
+    ):
+        super().__init__(
+            deviceName,
+            deviceData,
+            eventManager,
+            dataStore,
+            deviceType,
+            inRoom,
+            hass,
+            deviceLabel,
+            allLabels,
+        )
         ## Events Register
-        self.eventManager.on("Increase Cooler", self.increaseAction)
-        self.eventManager.on("Reduce Cooler", self.reduceAction)
+        self.event_manager.on("Increase Cooler", self.increaseAction)
+        self.event_manager.on("Reduce Cooler", self.reduceAction)
 
         if self.isAcInfinDev:
             self.dutyCycle = 0
-            self.steps = 10 
+            self.steps = 10
             self.maxDuty = 100
-            self.minDuty = 0   
-
+            self.minDuty = 0
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
@@ -24,7 +46,6 @@ class Cooler(Device):
         max_duty = float(self.maxDuty)
         duty_cycle = float(duty_cycle)
 
-
         clamped_value = max(min_duty, min(max_duty, duty_cycle))
 
         clamped_value = int(clamped_value)
@@ -32,19 +53,24 @@ class Cooler(Device):
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
         return clamped_value
 
-
     def change_duty_cycle(self, increase=True):
         """
         Ändert den Duty Cycle basierend auf dem Schrittwert.
         Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
         """
         if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist.")
+            _LOGGER.warning(
+                f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist."
+            )
             return self.dutyCycle
 
         # Berechne neuen Wert basierend auf Schrittweite
-        new_duty_cycle = int(self.dutyCycle) + int(self.steps) if increase else int(self.dutyCycle) - int(self.steps)
-        
+        new_duty_cycle = (
+            int(self.dutyCycle) + int(self.steps)
+            if increase
+            else int(self.dutyCycle) - int(self.steps)
+        )
+
         # Begrenze den neuen Duty Cycle auf erlaubte Werte
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
 
@@ -53,28 +79,28 @@ class Cooler(Device):
 
         _LOGGER.info(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
         return self.dutyCycle
-    
+
     async def increaseAction(self, data):
         """Schaltet Befeuchter an"""
         if self.isDimmable:
             if self.isAcInfinDev:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
-                await self.turn_on(percentage=newDuty)    
+                await self.turn_on(percentage=newDuty)
         else:
             if self.isRunning == True:
                 self.log_action("Allready in Desired State ")
             else:
                 self.log_action("TurnON ")
                 await self.turn_on()
-    
+
     async def reduceAction(self, data):
         """Schaltet Befeuchter aus"""
         if self.isDimmable:
             if self.isAcInfinDev:
                 newDuty = self.change_duty_cycle(increase=False)
                 self.log_action("ReduceAction")
-                await self.turn_on(percentage=newDuty)    
+                await self.turn_on(percentage=newDuty)
 
         else:
             if self.isRunning == True:

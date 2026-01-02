@@ -1,25 +1,31 @@
-import logging
 import asyncio
 import json
-from homeassistant.helpers.area_registry import async_get as async_get_area_registry
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
-from homeassistant.helpers.label_registry import async_get as async_get_label_registry
+import logging
 
-from .OGBDataClasses.OGBPublications import OGBEventPublication,OGBVPDPublication
+from homeassistant.helpers.area_registry import \
+    async_get as async_get_area_registry
+from homeassistant.helpers.device_registry import \
+    async_get as async_get_device_registry
+from homeassistant.helpers.entity_registry import \
+    async_get as async_get_entity_registry
+from homeassistant.helpers.label_registry import \
+    async_get as async_get_label_registry
 
+from .data.OGBDataClasses.OGBPublications import (OGBEventPublication,
+                                             OGBVPDPublication)
+from .data.OGBParams.OGBParams import (INVALID_VALUES, RELEVANT_KEYWORDS,
+                                  RELEVANT_PREFIXES, RELEVANT_TYPES)
 from .utils.lightTimeHelpers import update_light_state
-
-from .OGBParams.OGBParams import RELEVANT_PREFIXES, RELEVANT_KEYWORDS, RELEVANT_TYPES,INVALID_VALUES
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class OGBRegistryEvenListener:
-    def __init__(self, hass,dataStore,eventManager,room):
+    def __init__(self, hass, dataStore, eventManager, room):
         self.name = "OGB Registry Listener"
         self.hass = hass
-        self.dataStore = dataStore
-        self.eventManager = eventManager
+        self.data_store = dataStore
+        self.event_manager = eventManager
         self.room_name = room
 
     async def get_entities_by_room_async(self, room_name):
@@ -89,13 +95,25 @@ class OGBRegistryEvenListener:
             if entity.device_id in devices_in_room
         }
 
+        # CRITICAL: Include OGB configuration entities for this room
+        # These entities (select, text, number, etc.) control OGB settings
+        # and must be monitored even if their device isn't in the room area
+        room_lower = room_name.lower()
+        ogb_entities = {
+            entity.entity_id: entity
+            for entity in entity_registry.entities.values()
+            if f"ogb_" in entity.entity_id and f"_{room_lower}" in entity.entity_id
+        }
+
         # Kombiniere alle relevanten Entitäten
-        combined_entities = {**registered_entities, **device_entities}
+        combined_entities = {**registered_entities, **device_entities, **ogb_entities}
 
         # Rückgabe der `entity_id`s als Set
         return set(combined_entities.keys())
 
-    async def get_filtered_entities_with_value(self, room_name, max_retries=5, retry_interval=1):
+    async def get_filtered_entities_with_value(
+        self, room_name, max_retries=5, retry_interval=1
+    ):
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
         Gruppiere Entitäten basierend auf ihrem Präfix (device_name).
@@ -105,22 +123,54 @@ class OGBRegistryEvenListener:
         device_registry = async_get_device_registry(self.hass)
         label_registry = async_get_label_registry(self.hass)
 
-        # Geräte im Raum filtern
+        _LOGGER.info(f"RegistryListener: Looking for devices in room '{room_name}'")
+
+        # Log all areas and devices for debugging
+        all_areas = set()
+        all_devices = []
+        for device in device_registry.devices.values():
+            if device.area_id:
+                all_areas.add(device.area_id)
+            all_devices.append(f"{device.name} (area: {device.area_id})")
+
+        _LOGGER.info(f"RegistryListener: All areas found: {sorted(all_areas)}")
+        _LOGGER.info(f"RegistryListener: Total devices: {len(all_devices)}")
+        for device_info in all_devices[:10]:  # Log first 10 devices
+            _LOGGER.info(f"RegistryListener: Device: {device_info}")
+
+        # Geräte im Raum filtern - try exact match first
         devices_in_room = {
             device.id: device
             for device in device_registry.devices.values()
             if device.area_id == room_name
         }
 
+        # If no exact match, try case-insensitive match
+        if not devices_in_room:
+            devices_in_room = {
+                device.id: device
+                for device in device_registry.devices.values()
+                if device.area_id and device.area_id.lower() == room_name.lower()
+            }
+
+        _LOGGER.info(f"RegistryListener: Found {len(devices_in_room)} devices in room '{room_name}' (after case-insensitive match)")
+        for device_id, device in list(devices_in_room.items())[:3]:  # Log first 3 devices
+            _LOGGER.info(f"RegistryListener: Device {device_id} - name: {device.name}, area: {device.area_id}")
+
         grouped_entities_array = []
+        room_lower = room_name.lower()
 
         async def process_entity(entity):
             """Verarbeite eine einzelne Entität mit Retry-Logik."""
-            if entity.device_id not in devices_in_room:
+            is_ogb_room_entity = "ogb_" in entity.entity_id and f"_{room_lower}" in entity.entity_id
+            
+            if not is_ogb_room_entity and entity.device_id not in devices_in_room:
                 return None
 
-            if not (entity.entity_id.startswith(RELEVANT_PREFIXES) or
-                    any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)):
+            if not (
+                entity.entity_id.startswith(RELEVANT_PREFIXES)
+                or any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
+            ):
                 return None
 
             parts = entity.entity_id.split(".")
@@ -133,49 +183,61 @@ class OGBRegistryEvenListener:
                 state_value = entity_state.state if entity_state else None
                 if state_value not in INVALID_VALUES:
                     break
-                _LOGGER.debug(f"Value for {entity.entity_id} invalid ({state_value}), retry {attempt + 1}/{max_retries}")
+                _LOGGER.debug(
+                    f"Value for {entity.entity_id} invalid ({state_value}), retry {attempt + 1}/{max_retries}"
+                )
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
-                _LOGGER.debug(f"Skipping {entity.entity_id}, value invalid after retries ({state_value})")
+                _LOGGER.debug(
+                    f"Skipping {entity.entity_id}, value invalid after retries ({state_value})"
+                )
                 return None
 
-            platform = getattr(entity, 'platform', 'unknown')
+            platform = getattr(entity, "platform", "unknown")
 
             # Labels auslesen (Entity + Device)
             labels = []
 
             # Entity-Labels
-            if getattr(entity, 'labels', None):
+            if getattr(entity, "labels", None):
                 for label_id in entity.labels:
                     label_entry = label_registry.labels.get(label_id)
                     if label_entry:
-                        labels.append({
-                            "id": label_id,
-                            "name": label_entry.name,
-                            "icon": getattr(label_entry, 'icon', None),
-                            "color": getattr(label_entry, 'color', None)
-                        })
+                        labels.append(
+                            {
+                                "id": label_id,
+                                "name": label_entry.name,
+                                "icon": getattr(label_entry, "icon", None),
+                                "color": getattr(label_entry, "color", None),
+                            }
+                        )
 
             # Device-Labels (für Entity)
             device_info = devices_in_room.get(entity.device_id)
             device_labels = []  # Sammle Device-Labels separat
-            if device_info and getattr(device_info, 'labels', None):
+            if device_info and getattr(device_info, "labels", None):
                 for label_id in device_info.labels:
                     label_entry = label_registry.labels.get(label_id)
                     if label_entry:
                         device_label = {
                             "id": label_id,
                             "name": label_entry.name,
-                            "icon": getattr(label_entry, 'icon', None),
-                            "color": getattr(label_entry, 'color', None),
-                            "scope": "device"
+                            "icon": getattr(label_entry, "icon", None),
+                            "color": getattr(label_entry, "color", None),
+                            "scope": "device",
                         }
                         labels.append(device_label)
                         device_labels.append(device_label)
 
-            device_manufacturer = getattr(device_info, 'manufacturer', 'Unknown') if device_info else 'Unknown'
-            device_model = getattr(device_info, 'model', 'Unknown') if device_info else 'Unknown'
+            device_manufacturer = (
+                getattr(device_info, "manufacturer", "Unknown")
+                if device_info
+                else "Unknown"
+            )
+            device_model = (
+                getattr(device_info, "model", "Unknown") if device_info else "Unknown"
+            )
 
             return {
                 "device_name": device_name,
@@ -197,7 +259,9 @@ class OGBRegistryEvenListener:
         for result in filter(None, results):
             device_name = result["device_name"]
 
-            group = next((g for g in grouped_entities_array if g["name"] == device_name), None)
+            group = next(
+                (g for g in grouped_entities_array if g["name"] == device_name), None
+            )
             if not group:
                 group = {
                     "name": device_name,
@@ -205,39 +269,47 @@ class OGBRegistryEvenListener:
                     "platform": result["platform"],
                     "device_info": {
                         "manufacturer": result["device_manufacturer"],
-                        "model": result["device_model"]
+                        "model": result["device_model"],
                     },
-                    "labels": result["device_labels"]  # Device-Labels auf Gruppen-Ebene
+                    "labels": result[
+                        "device_labels"
+                    ],  # Device-Labels auf Gruppen-Ebene
                 }
                 grouped_entities_array.append(group)
 
-            group["entities"].append({
-                "entity_id": result["entity_id"],
-                "value": result["value"],
-                "platform": result["platform"],
-                "labels": result["labels"],
-            })
+            group["entities"].append(
+                {
+                    "entity_id": result["entity_id"],
+                    "value": result["value"],
+                    "platform": result["platform"],
+                    "labels": result["labels"],
+                }
+            )
 
-            #for key, message in RELEVANT_TYPES.items():
+            # for key, message in RELEVANT_TYPES.items():
             #    if key in result["entity_id"]:
             #        if "ogb_" in result["entity_id"]:
             #            _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
             #            continue
 
-            #        workdataStore = self.dataStore.getDeep(f"workData.{key}")
-                    #workdataStore.append({
-                    #    "entity_id": result["entity_id"],
-                    #    "value": result["value"],
-                    #    "platform": result["platform"],
-                    #    "labels": result["labels"],
-                    #})
-                    #_LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
-                    #self.dataStore.setDeep(f"workData.{key}", workdataStore)
+            #        workdataStore = self.data_store.getDeep(f"workData.{key}")
+            # workdataStore.append({
+            #    "entity_id": result["entity_id"],
+            #    "value": result["value"],
+            #    "platform": result["platform"],
+            #    "labels": result["labels"],
+            # })
+            # _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
+            # self.data_store.setDeep(f"workData.{key}", workdataStore)
 
-        _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
+        _LOGGER.debug(
+            f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}"
+        )
         return grouped_entities_array
 
-    async def get_filtered_entities_with_valueForDevice(self, room_name, max_retries=5, retry_interval=1):
+    async def get_filtered_entities_with_valueForDevice(
+        self, room_name, max_retries=5, retry_interval=1
+    ):
         """
         Hole die gefilterten Entitäten für einen Raum und deren Werte, gefiltert nach relevanten Typen.
         Gruppiere Entitäten basierend auf ihrem Präfix (device_name).
@@ -253,7 +325,7 @@ class OGBRegistryEvenListener:
             for device in device_registry.devices.values()
             if device.area_id == room_name
         }
-        
+
         grouped_entities_array = []
 
         async def process_entity(entity):
@@ -261,8 +333,10 @@ class OGBRegistryEvenListener:
             if entity.device_id not in devices_in_room:
                 return None
 
-            if not (entity.entity_id.startswith(RELEVANT_PREFIXES) or
-                    any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)):
+            if not (
+                entity.entity_id.startswith(RELEVANT_PREFIXES)
+                or any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
+            ):
                 return None
 
             # Extrahiere den Gerätenamen aus `entity_id`
@@ -276,50 +350,62 @@ class OGBRegistryEvenListener:
                 state_value = entity_state.state if entity_state else None
                 if state_value not in INVALID_VALUES:
                     break
-                _LOGGER.debug(f"Value for {entity.entity_id} is invalid ({state_value}). Retrying... ({attempt + 1}/{max_retries})")
+                _LOGGER.debug(
+                    f"Value for {entity.entity_id} is invalid ({state_value}). Retrying... ({attempt + 1}/{max_retries})"
+                )
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
-                _LOGGER.debug(f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping...")
+                _LOGGER.debug(
+                    f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping..."
+                )
                 return None
 
             # Platform-Information
-            platform = getattr(entity, 'platform', 'unknown')
+            platform = getattr(entity, "platform", "unknown")
 
             # Labels auslesen (Entity + Device)
             labels = []
 
             # Entity-Labels
-            if getattr(entity, 'labels', None):
+            if getattr(entity, "labels", None):
                 for label_id in entity.labels:
                     label_entry = label_registry.labels.get(label_id)
                     if label_entry:
-                        labels.append({
-                            "id": label_id,
-                            "name": label_entry.name,
-                            "icon": getattr(label_entry, 'icon', None),
-                            "color": getattr(label_entry, 'color', None)
-                        })
+                        labels.append(
+                            {
+                                "id": label_id,
+                                "name": label_entry.name,
+                                "icon": getattr(label_entry, "icon", None),
+                                "color": getattr(label_entry, "color", None),
+                            }
+                        )
 
             # Device-Labels (für Entity)
             device_info = devices_in_room.get(entity.device_id)
             device_labels = []  # Sammle Device-Labels separat
-            if device_info and getattr(device_info, 'labels', None):
+            if device_info and getattr(device_info, "labels", None):
                 for label_id in device_info.labels:
                     label_entry = label_registry.labels.get(label_id)
                     if label_entry:
                         device_label = {
                             "id": label_id,
                             "name": label_entry.name,
-                            "icon": getattr(label_entry, 'icon', None),
-                            "color": getattr(label_entry, 'color', None),
-                            "scope": "device"
+                            "icon": getattr(label_entry, "icon", None),
+                            "color": getattr(label_entry, "color", None),
+                            "scope": "device",
                         }
                         labels.append(device_label)
                         device_labels.append(device_label)
 
-            device_manufacturer = getattr(device_info, 'manufacturer', 'Unknown') if device_info else 'Unknown'
-            device_model = getattr(device_info, 'model', 'Unknown') if device_info else 'Unknown'
+            device_manufacturer = (
+                getattr(device_info, "manufacturer", "Unknown")
+                if device_info
+                else "Unknown"
+            )
+            device_model = (
+                getattr(device_info, "model", "Unknown") if device_info else "Unknown"
+            )
 
             # Erstelle die Gruppierung
             return {
@@ -343,7 +429,9 @@ class OGBRegistryEvenListener:
             device_name = result["device_name"]
 
             # Gruppiere nach Gerätename
-            group = next((g for g in grouped_entities_array if g["name"] == device_name), None)
+            group = next(
+                (g for g in grouped_entities_array if g["name"] == device_name), None
+            )
             if not group:
                 group = {
                     "name": device_name,
@@ -351,24 +439,30 @@ class OGBRegistryEvenListener:
                     "platform": result["platform"],
                     "device_info": {
                         "manufacturer": result["device_manufacturer"],
-                        "model": result["device_model"]
+                        "model": result["device_model"],
                     },
-                    "labels": result["device_labels"]  # Device-Labels auf Gruppen-Ebene
+                    "labels": result[
+                        "device_labels"
+                    ],  # Device-Labels auf Gruppen-Ebene
                 }
                 grouped_entities_array.append(group)
 
-            group["entities"].append({
-                "entity_id": result["entity_id"],
-                "value": result["value"],
-                "platform": result["platform"],
-                "labels": result["labels"],
-            })
+            group["entities"].append(
+                {
+                    "entity_id": result["entity_id"],
+                    "value": result["value"],
+                    "platform": result["platform"],
+                    "labels": result["labels"],
+                }
+            )
 
         # Debug-Ausgabe der gruppierten Ergebnisse
-        _LOGGER.debug(f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}")
+        _LOGGER.debug(
+            f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}"
+        )
         return grouped_entities_array
 
-    # LIVE Event Monitoring 
+    # LIVE Event Monitoring
     async def monitor_filtered_entities(self, room_name):
         """Überwache State-Changes nur für gefilterte Entitäten."""
         # Hole die gefilterten Entitäten
@@ -399,7 +493,7 @@ class OGBRegistryEvenListener:
                 eventData = OGBEventPublication(
                     Name=entity_id,
                     oldState=[old_state_value] if old_state_value is not None else [],
-                    newState=[new_state_value] if new_state_value is not None else []
+                    newState=[new_state_value] if new_state_value is not None else [],
                 )
 
                 _LOGGER.debug(
@@ -409,14 +503,12 @@ class OGBRegistryEvenListener:
 
                 # Gib das Event-Publication-Objekt weiter
 
-                await self.eventManager.emit("SensorUpdate", eventData)                
-                await self.eventManager.emit("RoomUpdate", eventData)
+                await self.event_manager.emit("SensorUpdate", eventData)
+                await self.event_manager.emit("RoomUpdate", eventData)
 
-                
                 # Light Shedule Check
-                #await self.eventManager.emit("LightSheduleUpdate",None)
-                
+                # await self.event_manager.emit("LightSheduleUpdate",None)
+
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", registryEventListener)
         _LOGGER.debug(f"State-Change Listener für Raum {room_name} registriert.")
-        

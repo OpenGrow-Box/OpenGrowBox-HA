@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from typing import TYPE_CHECKING
 
-from homeassistant.components.frontend import (
-    add_extra_js_url,
-    async_register_built_in_panel,
-)
+from homeassistant.components.frontend import (add_extra_js_url,
+                                               async_register_built_in_panel)
 
 from .const import DOMAIN, URL_BASE
 from .OGBController.utils.workarounds import async_register_static_path
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+
     from .base import HacsBase
 
 _LOGGER = logging.getLogger(__name__)
+
 
 async def async_register_frontend(hass: HomeAssistant) -> None:
     static_path = os.path.join(
@@ -44,7 +44,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
             config={
                 "_panel_custom": {
                     "name": "ogb-gui",
-                    "mode":"shadow-dom",
+                    "mode": "shadow-dom",
                     "embed_iframe": False,
                     "trust_external": False,
                     "js_url": f"{URL_BASE}/static/static/js/main.js",
@@ -55,6 +55,3 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.info("Custom panel registered successfully.")
     else:
         _LOGGER.debug("Custom panel already registered.")
-
-
-

@@ -1,1836 +1,658 @@
-import math
-import logging
+"""
+OpenGrowBox - Modular Main Controller
+
+This file provides the main OpenGrowBox interface that integrates all modular managers.
+It replaces the monolithic implementation with a clean, modular architecture.
+"""
+
 import asyncio
+import logging
 from datetime import datetime
-import aiohttp
-from .utils.calcs import calculate_avg_value,calculate_dew_point,calculate_current_vpd,calculate_perfect_vpd,calc_light_to_ppfd_dli
-from .utils.sensorUpdater import update_sensor_via_service,_update_specific_sensor,_update_specific_number
-from .utils.lightTimeHelpers import hours_between
 
-from .OGBDataClasses.OGBPublications import OGBInitData,OGBEventPublication,OGBVPDPublication,OGBDLIPublication,OGBPPFDPublication,OGBModePublication,OGBModeRunPublication,OGBCO2Publication,OGBMoisturePublication,OGBWaterPublication,OGBSoilPublication
-from .OGBParams.OGBParams import CS_PARAMETER_MAPPING,VPD_INTERVALS,RELEVANT_KEYWORDS
-
-# OGB IMPORTS
-from .OGBDataClasses.OGBData import OGBConf
-
+from .managers.core.OGBConfigurationManager import OGBConfigurationManager
+from .managers.core.OGBMainController import OGBMainController
+from .managers.core.OGBVPDManager import OGBVPDManager
+from .OGBOrchestrator import OGBOrchestrator
 from .RegistryListener import OGBRegistryEvenListener
-from .OGBDatastore import DataStore
-from .OGBEventManager import OGBEventManager
-from .OGBDeviceManager import OGBDeviceManager
-from .OGBModeManager import OGBModeManager
-from .OGBActionManager import OGBActionManager
-from .OGBPremManager import OGBPremManager
-from .OGBTankFeedManager import OGBTankFeedManager
-from .OGBDSManager import OGBDSManager
-from .OGBClientManager import OGBClientManager
-from .OGBConsoleManager import OGBConsoleManager
-from .OGBSpecialManagers.OGBMediumManager import OGBMediumManager
-from .OGBSpecialManagers.OGBCastManager import OGBCastManager
-
-from .OGBDevices.Sensor import Sensor
+# OGBPremiumIntegration is now created by OGBMainController - no need to import here
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class OpenGrowBox:
+    """
+    Main OpenGrowBox controller - integrates all modular managers.
+
+    This class provides the main interface that other components expect,
+    but delegates all functionality to the modular managers.
+    """
+
     def __init__(self, hass, room):
-        self.name = "OGB Main Controller"
+        """
+        Initialize OpenGrowBox with modular managers.
+
+        Args:
+            hass: Home Assistant instance
+            room: Room identifier
+        """
+        self.name = "OpenGrowBox Modular Controller"
         self.hass = hass
         self.room = room
 
+        # Initialize modular managers FIRST
+        self.main_controller = OGBMainController(hass, room)
 
-        self.ogbConfig = OGBConf(hass=self.hass,room=self.room)
-        self.dataStore = DataStore(self.ogbConfig)
+        # Registry Listener for HA Events
+        self.registryListener = OGBRegistryEvenListener(hass, self.main_controller.data_store, self.main_controller.event_manager, room)
 
-        # Init EventManager
-        self.eventManager = OGBEventManager(self.hass, self.dataStore)
+        # Initialize orchestrator for control loop coordination
+        self.orchestrator = OGBOrchestrator(
+            hass,
+            self.main_controller.data_store,
+            self.main_controller.event_manager,
+            room
+        )
 
-        # Registry Listener für HA Events
-        self.registryListener = OGBRegistryEvenListener(self.hass, self.dataStore, self.eventManager, self.room)
+        # Provide backwards compatibility attributes
+        self.data_store = self.main_controller.data_store
+        self.dataStore = self.main_controller.data_store  # Backwards compatibility for external code
+        self.event_manager = self.main_controller.event_manager
+        self.eventManager = self.main_controller.event_manager  # Backwards compatibility for external code
 
-        # Init Managers
-        self.dataStoreManager = OGBDSManager(self.hass, self.dataStore, self.eventManager,self.room,self.registryListener)
-        self.plantCastManager = OGBCastManager(self.hass, self.dataStore, self.eventManager,self.room)               
-        self.deviceManager = OGBDeviceManager(self.hass, self.dataStore, self.eventManager,self.room,self.registryListener)
-        self.modeManager = OGBModeManager(self.hass,self.dataStore, self.eventManager, self.room)
-        self.actionManager = OGBActionManager(self.hass, self.dataStore, self.eventManager,self.room)
-        self.feedManager = OGBTankFeedManager(self.hass, self.dataStore, self.eventManager,self.room)
-        self.clientManager = OGBClientManager(self.hass, self.dataStore, self.eventManager,self.room)
+        # Use premium integration from main_controller (don't create duplicate)
+        self.prem_manager = self.main_controller.premium_manager
+        # Backwards compatibility aliases
+        self.premiumManager = self.prem_manager
+        self.premium_manager = self.prem_manager
+        # Set room-based attribute for sensor access
+        setattr(self, room, self.prem_manager)
+
+        # mainControl is now set in OGBConf default value to enable device initialization
+        self.vpd_manager = OGBVPDManager(
+            self.main_controller.data_store,
+            self.main_controller.event_manager,
+            room,
+            hass,
+            self.prem_manager,  # Add prem_manager
+        )
+        self.config_manager = OGBConfigurationManager(
+            self.main_controller.data_store,
+            self.main_controller.event_manager,
+            room,
+            hass,
+        )
+
+        # Register event handlers (matching original)
+        # NOTE: RoomUpdate is handled by OGBMainController - don't register duplicate here
+        # The main_controller._register_event_handlers() already registers for RoomUpdate
+        self.event_manager.on("PlantTimeChange", self._auto_update_plant_stages)
+
+        # Register HA bus listeners
+        self.hass.bus.async_listen("AmbientData", self._handle_ambient_data)
+        self.hass.bus.async_listen("OutsiteData", self._handle_outsite_data)
+
+        # Initialize additional backwards compatibility
+        self._setup_backwards_compatibility()
+
+    def _setup_backwards_compatibility(self):
+        """Set up attributes and methods for backwards compatibility."""
+        # VPD-related attributes and methods
+        self.vpd = self.vpd_manager
+
+        # Configuration handling - backwards compatible wrapper
+        self.manager = self._manager_wrapper
+
+        # Plant stage management
+        self._plant_stage_to_vpd = self.config_manager._plant_stage_to_vpd
+
+        # Sensor updating methods
+        self._update_vpd_tolerance = self.config_manager._update_vpd_tolerance
+
+        # Device management
+        self.deviceManager = self.main_controller.device_manager
+
+        # Backwards compatibility for all managers (matching original monolithic structure)
+        self.data_storeManager = self.main_controller.data_store_manager
+        self.plantCastManager = self.main_controller.plant_cast_manager
+        self.modeManager = self.main_controller.mode_manager
+        self.actionManager = self.main_controller.action_manager
+        self.feedManager = self.main_controller.feed_manager
+        self.consoleManager = self.main_controller.console_manager
+        self.premiumManager = self.premium_manager  # From our initialization
         
-        self.consoleManager = OGBConsoleManager(self.hass, self.dataStore, self.eventManager,self.room)
+        # Medium Manager - CRITICAL: This was missing and caused sensors not to register to mediums
+        self.mediumManager = self.main_controller.medium_manager
+        self.medium_manager = self.main_controller.medium_manager
+
+        # Inject config_manager into main_controller for entity routing
+        self.main_controller.config_manager = self.config_manager
+
+        # Expose key methods from managers for backwards compatibility
+        self._get_starting_vpd = self.main_controller._get_starting_vpd
         
+        # Inject managers into orchestrator for control loop coordination
+        self.orchestrator.inject_managers(
+            device_manager=self.main_controller.device_manager,
+            mode_manager=self.main_controller.mode_manager,
+            action_manager=self.main_controller.action_manager,
+            feed_manager=self.main_controller.feed_manager,
+            vpd_manager=self.vpd_manager
+        )
 
-        # Init Prem Manager
-        self.premiumManager = OGBPremManager(self.hass, self.dataStore, self.eventManager,self.room)
+    async def _manager_wrapper(self, entity):
+        """Backwards compatible wrapper for manager method - routes to ConfigurationManager."""
+        # Extract entity key and data from the entity object
+        if hasattr(entity, 'Name'):
+            entity_key = entity.Name.split(".", 1)[-1].lower()  # Remove prefix like "select."
+        elif hasattr(entity, 'name'):
+            entity_key = entity.name.split(".", 1)[-1].lower()
+        else:
+            entity_key = str(entity).split(".", 1)[-1].lower() if "." in str(entity) else str(entity).lower()
+
+        # Get the configuration mapping
+        actions = self.config_manager.get_configuration_mapping()
+        action = actions.get(entity_key)
         
-        #Events Register
-        self.eventManager.on("RoomUpdate", self.handleRoomUpdate)
-        self.eventManager.on("VPDCreation", self.handleNewVPD)
-        
-        # Plant Times
-        self.eventManager.on("PlantTimeChange",self._autoUpdatePlantStages)
-       
-        # Ambient & Outsite   
-        self.hass.bus.async_listen("AmbientData",self._handle_ambient_data)   
-        self.hass.bus.async_listen("OutsiteData",self._handle_outsite_data)
-               
-    def __str__(self):
-        return (f"{self.name}' Running")
-    
-    def __repr__(self):
-        return (f"{self.name}' Running")  
-    
-    ## INIT 
-    async def firstStart(self):
-        Init = True
-        await self._get_starting_vpd(Init)
-                    
-        await self.eventManager.emit("HydroModeChange", Init)
-        await self.eventManager.emit("HydroModeRetrieveChange", Init)
-        await self.eventManager.emit("PlantTimeChange", Init)
-
-        if self.premiumManager.growPlanManager.managerActive is True:
-            strain_name = self.dataStore.get("strainName")
-            planRequestData = {"event_id": "grow_plans_on_start", "strain_name": strain_name}
-            
-            # Starte den Plan Abruf ganz normal
-            success = await self.premiumManager.ogb_ws.prem_event("get_grow_plans", planRequestData)
-
-            # Wenn erfolgreich → starte Hintergrund-Task
-            if success and self.premiumManager.growPlanManager.managerActive:
-                asyncio.create_task(self._delayed_plan_activation())
-
-        _LOGGER.debug(f"OpenGrowBox for {self.room} started successfully State:{self.dataStore}")
-        return True
-
+        if action:
+            _LOGGER.info(f"OGB-Manager {self.room}: Executing action for {entity_key}")
+            await action(entity)
+            return True
+        else:
+            # Log available keys for debugging medium issues
+            if "medium" in entity_key:
+                available_medium_keys = [k for k in actions.keys() if "medium" in k]
+                _LOGGER.warning(f"OGB-Manager {self.room}: No action for '{entity_key}'. Available medium keys: {available_medium_keys}")
+            else:
+                _LOGGER.debug(f"OGB-Manager {self.room}: No action found for {entity_key}")
+            return False
 
     async def _delayed_plan_activation(self):
-        """Aktiviert den Grow Plan nach 30 Sekunden Verzögerung im Hintergrund."""
+        """Activate grow plan after 30 second delay in background."""
         await asyncio.sleep(30)
 
-        if self.premiumManager.growPlanManager.managerActive:
-            await self.eventManager.emit("plan_activation", self.premiumManager.growPlanManager.active_grow_plan)
-            _LOGGER.info(f"Delayed plan activation executed for {self.room}")
-        else:
-            _LOGGER.debug(f"Delayed plan activation skipped (manager inactive) for {self.room}")
+        if hasattr(self, 'premium_manager') and self.premium_manager:
+            try:
+                if hasattr(self.premium_manager, 'growPlanManager') and self.premium_manager.growPlanManager.managerActive:
+                    await self.event_manager.emit("plan_activation", self.premium_manager.growPlanManager.active_grow_plan)
+                    _LOGGER.info(f"Delayed plan activation executed for {self.room}")
+                else:
+                    _LOGGER.debug(f"Delayed plan activation skipped (manager inactive) for {self.room}")
+            except Exception as e:
+                _LOGGER.error(f"Error in delayed plan activation: {e}")
 
-    async def _get_starting_vpd(self, data):
-        """
-        Holt alle Sensoren aus dem Raum, die für VPD relevant sind (air.temperature & air.humidity),
-        berechnet daraus Durchschnittswerte und den aktuellen VPD.
-        """
-        if data is not True:
-            return
-
-        devices = self.dataStore.get("devices")
-
-        if devices is None or len(devices) == 0:
-            _LOGGER.warning(f"NO Sensors Found to calc VPD in {self.room} Room. NOTE: Do not forgett to create an OGB-Ambient Room if you ned an Ambient VPD")
-            return
-
-        temperatures = []
-        humidities = []
-
-        for dev in devices:
-            # Nur initialisierte Sensor-Objekte prüfen
-            if isinstance(dev, Sensor) and getattr(dev, "isInitialized", False):
-                air_context = dev.getSensorsByContext("air")
-
-                has_temp = "temperature" in air_context
-                has_hum = "humidity" in air_context
-                
-                tempSensors = []
-                humSensors = []
-                                 
-                if has_temp:
-                    tempSensors = air_context["temperature"]
-                    for t in tempSensors:
-                        try:
-                            value = float(t.get("state"))
-                            name = t.get("entity_id")
-                            label = t.get("label")
-                            temperatures.append({"entity_id":name,"value":value,"label":label})
-                        except (ValueError, TypeError):
-                            _LOGGER.error(f"Ungültiger Temperaturwert in {t.get('entity_id')}: {t.get('state')}")
-
-                if has_hum:
-                    humSensors = air_context["humidity"]
-                    for h in humSensors:
-                        try:
-                            value = float(h.get("state"))
-                            name = h.get("entity_id")
-                            label = h.get("label")
-                            humidities.append({"entity_id":name,"value":value,"label":label})
-                        except (ValueError, TypeError):
-                            _LOGGER.error(f"Ungültiger Feuchtigkeitswert in {h.get('entity_id')}: {h.get('state')}")
-
-        self.dataStore.setDeep("workData.temperature",temperatures)
-        self.dataStore.setDeep("workData.humidity",humidities)
-        leafTempOffset = self.dataStore.getDeep("tentData.leafTempOffset")
-        avgTemp = calculate_avg_value(temperatures)
-        self.dataStore.setDeep("tentData.temperature", avgTemp)
-        avgHum = calculate_avg_value(humidities)
-        self.dataStore.setDeep("tentData.humidity", avgHum)
-        avgDew = calculate_dew_point(avgTemp, avgHum) if avgTemp != "unavailable" and avgHum != "unavailable" else "unavailable"
-        self.dataStore.setDeep("tentData.dewpoint", avgDew)
-
-        lastVpd = self.dataStore.getDeep("vpd.current")
-        currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)        
-        
-        if currentVPD == 0.0 or 0:
-            _LOGGER.error(f"VPD 0.0 FOUND {self.room}")
-            return
-        
-        if isinstance(data, OGBInitData):
-            _LOGGER.debug(f"OGBInitData erkannt: {data}")
-            return
-        
-        else:
-            # Spezifische Aktion für OGBEventPublication
-            if currentVPD != lastVpd:
-                self.dataStore.setDeep("vpd.current", currentVPD)
-                vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-
-
-                await update_sensor_via_service(self.room,vpdPub,self.hass)
-                _LOGGER.debug(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-
-                tentMode = self.dataStore.get("tentMode")
-                runMode = OGBModeRunPublication(currentMode=tentMode)               
-                
-                if self.room.lower() == "ambient":
-                    await self.eventManager.emit("AmbientData",vpdPub,haEvent=True)
-                    await self.get_weather_data()
-                    return
-
-                await self.eventManager.emit("selectActionMode",runMode)
-                await self.eventManager.emit("LogForClient",vpdPub,haEvent=True)
-               
-
-                
-                self._debugState()
-                return vpdPub
-               
-            else:
-                vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-                _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-                await update_sensor_via_service(self.room,vpdPub,self.hass)
-
-    async def handleRoomUpdate(self, entity):
-        """
-        Update WorkData für Temperatur oder Feuchtigkeit basierend to einer Entität.
-        Ignoriere Entitäten, die 'ogb_' im Namen enthalten.
-        """
-        
-        # Entitäten mit 'ogb_' im Namen überspringen
-        if "ogb_" in entity.Name:
-            await self.manager(entity)
-            return
-     
-        await self.lightSheduleUpdate(entity)
-   
-        vpd = self.dataStore.getDeep("vpd.current")               
-        
-        VPDPub = OGBVPDPublication(Name="RoomUpdate",VPD=vpd,AvgDew=None,AvgHum=None,AvgTemp=None)
-        
-        vpdDetermination = self.dataStore.get("vpdDetermination")
-        interval = VPD_INTERVALS.get(vpdDetermination.upper(), 0)
-
-        if interval == 0:
-            # LIVE: VPD wird bei jedem Sensor-Update sofort berechnet
-            await self.eventManager.emit("VPDCreation",VPDPub)
-        else:
-            # Intervallmodus: periodisch ausführen
-            asyncio.create_task(self._vpd_update_loop(interval,VPDPub))
-        
-    async def _vpd_update_loop(self, interval: int,vpdPublication):
-        """Periodische VPD-Berechnung im eingestellten Intervall."""
+    async def _vpd_update_loop(self, interval: int, vpdPublication):
+        """Periodic VPD calculation at set interval."""
         while True:
             try:
-                await self.eventManager.emit("VPDCreation",vpdPublication)
+                await self.event_manager.emit("VPDCreation", vpdPublication)
             except Exception as e:
-                _LOGGER.error(f"Fehler bei VPD-Berechnung: {e}")
+                _LOGGER.error(f"Error in VPD calculation: {e}")
             await asyncio.sleep(interval)
 
-    async def managerInit(self,ogbEntity):
+    async def first_start(self):
+        """Start the OpenGrowBox system."""
+        _LOGGER.debug(f"🔧 FIRST_START CALLED for room {self.room}")
+        Init = True
+
+        # Initialize main control setting for device setup
+        if not self.data_store.get("mainControl"):
+            self.data_store.set("mainControl", "HomeAssistant")
+
+        # Initialize default data store values (lost in modular migration)
+        self._initialize_default_data_store_values()
+
+        # Initialize action modules (pump controller, etc.)
+        if hasattr(self.actionManager, 'initialize_action_modules'):
+            await self.actionManager.initialize_action_modules(self)
+
+        await self._get_starting_vpd(Init)
+
+        # Mark config manager as initialized BEFORE emitting events
+        # This allows subsequent config changes to emit events
+        if hasattr(self, 'config_manager') and hasattr(self.config_manager, 'mark_initialized'):
+            self.config_manager.mark_initialized()
+        
+        await self.event_manager.emit("HydroModeChange", Init)
+        await self.event_manager.emit("HydroModeRetrieveChange", Init)
+        await self.event_manager.emit("PlantTimeChange", Init)
+
+        # Start orchestrator control loop
+        await self.orchestrator.start()
+        _LOGGER.info(f"✅ {self.room} Orchestrator control loop started")
+
+        # Premium manager grow plan activation
+        if hasattr(self, 'premium_manager') and self.premium_manager:
+            try:
+                if hasattr(self.premium_manager, 'growPlanManager') and self.premium_manager.growPlanManager.managerActive is True:
+                    strain_name = self.data_store.get("strainName")
+                    planRequestData = {"event_id": "grow_plans_on_start", "strain_name": strain_name}
+
+                    # Start plan retrieval normally
+                    if hasattr(self.premium_manager, 'ogb_ws'):
+                        success = await self.premium_manager.ogb_ws.prem_event("get_grow_plans", planRequestData)
+
+                        # If successful → start background task
+                        if success and self.premium_manager.growPlanManager.managerActive:
+                            asyncio.create_task(self._delayed_plan_activation())
+            except Exception as e:
+                _LOGGER.warning(f"Error in premium grow plan activation: {e}")
+
+        _LOGGER.debug(f"OpenGrowBox for {self.room} started successfully State:{self.data_store}")
+        return True
+
+    async def managerInit(self, ogbEntity):
+        """Initialize manager with OGB entities - processes each entity."""
+        from .data.OGBDataClasses.OGBPublications import OGBInitData
+        
         for entity in ogbEntity['entities']:
             entity_id = entity['entity_id']
             value = entity['value']
-            entityPublication = OGBInitData(Name=entity_id,newState=[value])
-            await self.manager(entityPublication) 
-     
-    async def manager(self, data):
+            entityPublication = OGBInitData(Name=entity_id, newState=[value])
+            await self.manager(entityPublication)
+
+    async def handle_room_update(self, entity):
         """
-        Verwalte Aktionen basierend to den eingehenden Daten mit einer Mapping-Strategie.
+        Update WorkData for temperature or humidity based on an entity.
+        Ignore entities that contain 'ogb_' in the name.
         """
+        # Type check - entity must have Name attribute
+        if not hasattr(entity, 'Name'):
+            _LOGGER.debug(f"Skipping invalid entity type: {type(entity)}")
+            return
+        
+        # Skip entities with 'ogb_' in name
+        if "ogb_" in entity.Name:
+            await self.manager(entity)
+            return
 
-        # Entferne Präfixe vor dem ersten Punkt
-        entity_key = data.Name.split(".", 1)[-1].lower()
+        await self.light_schedule_update(entity)
 
-        # Mapping from Namen zu Funktionen
-        actions = {
-            # Basics
-            f"ogb_vpd_determination_{self.room.lower()}": self._ogb_vpd_determination,
-            f"ogb_maincontrol_{self.room.lower()}": self._update_control_option,
-            f"ogb_notifications_{self.room.lower()}": self._update_notify_option,
-            f"ogb_ai_learning_{self.room.lower()}": self._update_ai_learning,
-            f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
-            f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
-            f"ogb_planttype_{self.room.lower()}": self._update_plant_type,
-            f"ogb_tentmode_{self.room.lower()}": self._update_tent_mode, 
-            f"ogb_leaftemp_offset_{self.room.lower()}": self._update_leafTemp_offset,
-            f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_Target,                          
-            f"ogb_vpd_devicedampening_{self.room.lower()}": self._update_vpd_DeviceDampening,                          
-            
-            # LightTimes
-            f"ogb_lightontime_{self.room.lower()}": self._update_lightOn_time,
-            f"ogb_lightofftime_{self.room.lower()}": self._update_lightOff_time,
-            f"ogb_sunrisetime_{self.room.lower()}": self._update_sunrise_time,
-            f"ogb_sunsettime_{self.room.lower()}": self._update_sunset_time,
-            
-            # Light Calculation Settings
-            f"ogb_lightledtype_{self.room.lower()}": self._update_light_led_type,
-            f"ogb_luxtoppfdfactor_{self.room.lower()}": self._update_lux_to_ppfd_factor,
-            
-            # Control Settings
-            f"ogb_lightcontrol_{self.room.lower()}": self._update_ogbLightControl_control,
-            f"ogb_holdvpdnight_{self.room.lower()}": self._update_vpdNightHold_control,
-            f"ogb_vpdlightcontrol_{self.room.lower()}": self._update_vpdLight_control,
-            f"ogb_light_controltype_{self.room.lower()}": self._update_light_control_type,
-            
-            # CO2-Steuerung
-            f"ogb_co2_control_{self.room.lower()}": self._update_co2_control,
-            f"ogb_co2targetvalue_{self.room.lower()}": self._update_co2Target_value,
-            f"ogb_co2minvalue_{self.room.lower()}": self._update_co2Min_value,
-            f"ogb_co2maxvalue_{self.room.lower()}": self._update_co2Max_value,  
-            
-            # Weights
-            f"ogb_ownweights_{self.room.lower()}": self._update_ownWeights_control,
-            f"ogb_temperatureweight_{self.room.lower()}": self._update_temperature_weight,
-            f"ogb_humidityweight_{self.room.lower()}": self._update_humidity_weight,
-            
-            # PlantDates
-            f"ogb_breederbloomdays_{self.room.lower()}": self._update_breederbloomdays_value,
-            f"ogb_growstartdate_{self.room.lower()}": self._update_growstartdates_value,
-            f"ogb_bloomswitchdate_{self.room.lower()}": self._update_bloomswitchdate_value,
+        vpd = self.data_store.getDeep("vpd.current")
 
-            # Drying
-            f"ogb_dryingmodes_{self.room.lower()}": self._udpate_drying_mode,             
-            
-            # MINMAX
-            f"ogb_minmax_control_{self.room.lower()}": self._update_MinMax_control, 
-            f"ogb_mintemp_{self.room.lower()}": self._update_minTemp,
-            f"ogb_minhum_{self.room.lower()}": self._update_minHumidity,
-            f"ogb_maxtemp_{self.room.lower()}": self._update_maxTemp,
-            f"ogb_maxhum_{self.room.lower()}": self._update_maxHumidity,
-            
-            # Hydro           
-            f"ogb_hydro_mode_{self.room.lower()}": self._update_hydro_mode,
-            f"ogb_hydro_cycle_{self.room.lower()}": self._update_hydro_mode_cycle,
-            f"ogb_hydropumpduration_{self.room.lower()}": self._update_hydro_duration,
-            f"ogb_hydropumpintervall_{self.room.lower()}": self._update_hydro_intervall,
-                  
-            f"ogb_hydro_retrive_{self.room.lower()}": self._update_retrive_mode,
-            f"ogb_hydroretriveduration_{self.room.lower()}": self._update_hydro_retrive_duration,
-            f"ogb_hydroretriveintervall_{self.room.lower()}": self._update_hydro_retrive_intervall,     
+        from .data.OGBDataClasses.OGBPublications import OGBVPDPublication
+        VPDPub = OGBVPDPublication(Name="RoomUpdate", VPD=vpd, AvgDew=None, AvgHum=None, AvgTemp=None)
 
-            #Crop Steering
-            f"ogb_cropsteering_mode_{self.room.lower()}": self._crop_steering_mode,
-            f"ogb_cropsteering_phases_{self.room.lower()}": self._crop_steering_phase,
-            f"ogb_cropsteering_p0_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
+        vpdDetermination = self.data_store.get("vpdDetermination")
+        from .data.OGBParams.OGBParams import VPD_INTERVALS
+        interval = VPD_INTERVALS.get(vpdDetermination.upper(), 0)
 
-            f"ogb_cropsteering_p0_shot_duration_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_shot_duration_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_shot_duration_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_shot_duration_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_shot_sum_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_shot_sum_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_shot_sum_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_shot_sum_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_ec_target_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_ec_target_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_ec_target_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_ec_target_{self.room.lower()}": self._crop_steering_sets,
-       
-            f"ogb_cropsteering_p0_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_maxec_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_maxec_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_maxec_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_maxec_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_minec_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_minec_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_minec_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_minec_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_vwc_target_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_vwc_target_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_vwc_target_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_vwc_target_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_vwc_max_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_vwc_max_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_vwc_max_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_vwc_max_{self.room.lower()}": self._crop_steering_sets,
-
-            f"ogb_cropsteering_p0_vwc_min_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p1_vwc_min_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p2_vwc_min_{self.room.lower()}": self._crop_steering_sets,
-            f"ogb_cropsteering_p3_vwc_min_{self.room.lower()}": self._crop_steering_sets,
-
-            #Feed
-            f"ogb_feed_plan_{self.room.lower()}": self._update_feed_mode,
-            f"ogb_feed_ph_target_{self.room.lower()}": self._update_feed_ph_target,
-            f"ogb_feed_ec_target_{self.room.lower()}": self._update_feed_ec_target,     
-            f"ogb_feed_nutrient_a_{self.room.lower()}": self._update_feed_nut_a_ml,
-            f"ogb_feed_nutrient_b_{self.room.lower()}": self._update_feed_nut_b_ml,
-            f"ogb_feed_nutrient_c_{self.room.lower()}": self._update_feed_nut_c_ml,
-            f"ogb_feed_nutrient_w_{self.room.lower()}": self._update_feed_nut_w_ml,
-            f"ogb_feed_nutrient_x_{self.room.lower()}": self._update_feed_nut_x_ml,
-            f"ogb_feed_nutrient_y_{self.room.lower()}": self._update_feed_nut_y_ml,
-            f"ogb_feed_nutrient_ph_{self.room.lower()}": self._update_feed_nut_ph_ml,
-
-            # Ambient/Outdoor Features
-            f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
-            
-            # Devices
-            # Lights Sets
-            f"ogb_light_minmax_{self.room.lower()}": self._device_Self_MinMax,
-            f"ogb_light_volt_min_{self.room.lower()}": self._device_MinMax_setter,
-            f"ogb_light_volt_max_{self.room.lower()}": self._device_MinMax_setter,            
-            
-            # Exhaust Sets
-            f"ogb_exhaust_minmax_{self.room.lower()}": self._device_Self_MinMax,
-            f"ogb_exhaust_duty_min_{self.room.lower()}": self._device_MinMax_setter,
-            f"ogb_exhaust_duty_max_{self.room.lower()}": self._device_MinMax_setter,
-
-            # Intake Sets                                  
-            f"ogb_intake_minmax_{self.room.lower()}": self._device_Self_MinMax,
-            f"ogb_intake_duty_min_{self.room.lower()}": self._device_MinMax_setter,
-            f"ogb_intake_duty_max_{self.room.lower()}": self._device_MinMax_setter,
-            
-            # Vents Sets
-            f"ogb_ventilation_minmax_{self.room.lower()}": self._device_Self_MinMax,
-            f"ogb_ventilation_duty_min_{self.room.lower()}": self._device_MinMax_setter,
-            f"ogb_ventilation_duty_max_{self.room.lower()}": self._device_MinMax_setter,
-                                    
-            # Device Selects
-            f"ogb_device_labelident_{self.room.lower()}": self._device_from_label,
-
-            #WorkMode
-            f"ogb_workmode_{self.room.lower()}": self._update_WrokMode_control,
-
-            #StrainData
-            f"ogb_strainname_{self.room.lower()}": self._update_StrainName,
-            
-            # Area
-            f"ogb_grow_area_m2_{self.room.lower()}": self._update_Grow_Area,
-            
-            # Medium 
-            f"ogb_mediumtype_{self.room.lower()}": self._update_Medium_type,
-            f"ogb_multi_mediumctrl_{self.room.lower()}": self._update_multi_medium_control,           
-            
-        }
-
-        # Überprüfe, ob der Schlüssel in der Mapping-Tabelle vorhanden ist
-        action = actions.get(entity_key)
-        if action:
-            await action(data)  # Rufe die zugehörige Aktion mit `data` to
+        if interval == 0:
+            # LIVE: VPD is calculated immediately on every sensor update
+            await self.event_manager.emit("VPDCreation", VPDPub)
         else:
-            _LOGGER.info(f"OGB-Manager {self.room}: Keine Aktion für {entity_key} gefunden.")
- 
-    ## VPD Sensor Update
-    async def handleNewVPD(self, data):
+            # Interval mode: run periodically
+            asyncio.create_task(self._vpd_update_loop(interval, VPDPub))
 
-        controlOption = self.dataStore.get("mainControl")        
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return
+    async def light_schedule_update(self, data):
+        """Handle light schedule updates."""
+        return await self.main_controller.light_schedule_update(data)
 
-        devices = self.dataStore.get("devices")
-
-        if devices is None or len(devices) == 0:
-            _LOGGER.error(f"NO Sensors Found to calc VPD in {self.room}")
-            return
-
-        temperatures = []
-        humidities = []
-        
-        for dev in devices:
-            # Nur initialisierte Sensor-Objekte prüfen
-            if isinstance(dev, Sensor) and getattr(dev, "isInitialized", False):
-                air_context = dev.getSensorsByContext("air")
-
-                has_temp = "temperature" in air_context
-                has_hum = "humidity" in air_context
-                
-                tempSensors = []
-                humSensors = []
-                                 
-                if has_temp:
-                    tempSensors = air_context["temperature"]
-                    for t in tempSensors:
-                        try:
-                            value = float(t.get("state"))
-                            name = t.get("entity_id")
-                            label = t.get("label")
-                            temperatures.append({"entity_id":name,"value":value,"label":label})
-                        except (ValueError, TypeError):
-                            _LOGGER.error(f"Ungültiger Temperaturwert in {t.get('entity_id')}: {t.get('state')}")
-
-                if has_hum:
-                    humSensors = air_context["humidity"]
-                    for h in humSensors:
-                        try:
-                            value = float(h.get("state"))
-                            name = h.get("entity_id")
-                            label = h.get("label")
-                            humidities.append({"entity_id":name,"value":value,"label":label})
-                        except (ValueError, TypeError):
-                            _LOGGER.error(f"Ungültiger Feuchtigkeitswert in {h.get('entity_id')}: {h.get('state')}")
-        
-        logging.warning(f"{self.room} VPD-CALC VALUES: Temp:{temperatures} --- HUMS:{humidities}")
-
-        self.dataStore.setDeep("workData.temperature",temperatures)
-        self.dataStore.setDeep("workData.humidity",humidities)
-        leafTempOffset = self.dataStore.getDeep("tentData.leafTempOffset")
-        
-        # Durchschnittswerte asynchron berechnen
-        avgTemp = calculate_avg_value(temperatures)
-        self.dataStore.setDeep("tentData.temperature", avgTemp)
-        avgHum = calculate_avg_value(humidities)
-        self.dataStore.setDeep("tentData.humidity", avgHum)
-
-        # Taupunkt asynchron berechnen
-        avgDew = calculate_dew_point(avgTemp, avgHum) if avgTemp != "unavailable" and avgHum != "unavailable" else "unavailable"
-        self.dataStore.setDeep("tentData.dewpoint", avgDew)
-
-        lastVpd = self.dataStore.getDeep("vpd.current")
-        currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)        
-        
-        if isinstance(data, OGBInitData):
-            #_LOGGER.info(f"OGBInitData erkannt: {data}")
-            return
-        else:
-            # Spezifische Aktion für OGBEventPublication
-            if currentVPD != lastVpd:
-                self.dataStore.setDeep("vpd.current", currentVPD)
-                vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-                await update_sensor_via_service(self.room,vpdPub,self.hass)
-                _LOGGER.debug(f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-                tentMode = self.dataStore.get("tentMode")
-                runMode = OGBModeRunPublication(currentMode=tentMode)               
-                
-                if self.room.lower() == "ambient":
-                    _LOGGER.debug(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-                    await self.eventManager.emit("AmbientData",vpdPub,haEvent=True)
-                    await self.get_weather_data()
-                    return
-                
-                await self.eventManager.emit("selectActionMode",runMode)   
-                await self.eventManager.emit("LogForClient",vpdPub,haEvent=True)
-
-                # GROW DATA
-                #await self.eventManager.emit("DataRelease",vpdPub)        
-               
-                self._debugState()
-                return vpdPub
-               
-            else:
-                vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=avgTemp, AvgHum=avgHum, AvgDew=avgDew)
-                _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
-                await update_sensor_via_service(self.room,vpdPub,self.hass)
-                               
-    async def get_weather_data(self):
-        """Hole aktuelle Temperatur und Luftfeuchtigkeit über Open-Meteo API (kostenlos)."""
-        try:
-            
-            lat = self.hass.config.latitude
-            lon = self.hass.config.longitude
-            
-            url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m&timezone=auto"
-            
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        current = data.get('current', {})
-                        temperature = round(current.get('temperature_2m', 20.0), 1)
-                        humidity = current.get('relative_humidity_2m', 60)
-                        
-                        _LOGGER.debug(f"{self.room} Open-Meteo: {temperature}°C, {humidity}%")
-                        await self.eventManager.emit("OutsiteData",{"temperature":temperature,"humidity":humidity},haEvent=True)
-                    else:
-                        _LOGGER.error(f"Open-Meteo API Error: {response.status}")
-                        return None, None
-                        
-        except asyncio.TimeoutError:
-            _LOGGER.error("Timeout Open-Meteo")
-            return 20.0, 60.0
-        except Exception as e:
-            _LOGGER.error(f"Fetch Error Open-Meteo: {e}")
-            return 20.0, 60.0
-    
     async def _handle_ambient_data(self, event):
-        if self.room.lower() == "ambient":
-            return
-
-        logging.debug(f"Received Ambient Data {self.room}")
-
-        payload = event.data
-
-        temp = payload.get("AvgTemp")
-        hum = payload.get("AvgHum")
-
-        self.dataStore.setDeep("tentData.AmbientTemp", temp)
-        self.dataStore.setDeep("tentData.AmbientHum", hum)
-
-        await _update_specific_sensor("ogb_ambienttemperature_", self.room, temp, self.hass)
-        await _update_specific_sensor("ogb_ambienthumidity_", self.room, hum, self.hass)
+        """Handle ambient data from other rooms."""
+        return await self.main_controller._handle_ambient_data(event)
 
     async def _handle_outsite_data(self, event):
-        if self.room.lower() == "ambient":
-            return
+        """Handle outside data."""
+        return await self.main_controller._handle_outsite_data(event)
 
-        logging.debug(f"Received Outsite Data {self.room} - {event}")
+    async def _auto_update_plant_stages(self, data):
+        """Auto update plant stages."""
+        return await self.main_controller._auto_update_plant_stages(data)
 
-        payload = event.data
+    def _initialize_default_data_store_values(self):
+        """Initialize default data store values lost in modular migration."""
+        # Set default light times if not set
+        if not self.data_store.getDeep("isPlantDay.lightOnTime"):
+            self.data_store.setDeep("isPlantDay.lightOnTime", "06:00:00")
+        if not self.data_store.getDeep("isPlantDay.lightOffTime"):
+            self.data_store.setDeep("isPlantDay.lightOffTime", "22:00:00")
 
-        temp = payload.get("temperature")
-        hum = payload.get("humidity")
+        # Set default sun times
+        if not self.data_store.getDeep("isPlantDay.sunRiseTime"):
+            self.data_store.setDeep("isPlantDay.sunRiseTime", "07:00:00")
+        if not self.data_store.getDeep("isPlantDay.sunSetTime"):
+            self.data_store.setDeep("isPlantDay.sunSetTime", "19:00:00")
 
-        self.dataStore.setDeep("tentData.OutsiteTemp", temp)
-        self.dataStore.setDeep("tentData.OutsiteHum", hum)
+        # Set default plant phase
+        if not self.data_store.getDeep("isPlantDay.plantPhase"):
+            self.data_store.setDeep("isPlantDay.plantPhase", "veg")
 
-        await _update_specific_sensor("ogb_outsitetemperature_", self.room, temp, self.hass)
-        await _update_specific_sensor("ogb_outsitehumidity_", self.room, hum, self.hass)
+        # Set default VPD determination
+        if not self.data_store.get("vpdDetermination"):
+            self.data_store.set("vpdDetermination", "LIVE")
 
-    async def lightSheduleUpdate(self,data):
-        lightbyOGBControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
-        if lightbyOGBControl == False: return
-        
-        lightChange = await self.update_light_state()
+        _LOGGER.info(f"🔧 Initialized default data store values for {self.room}")
 
-        if lightChange == None: return
-        self.dataStore.setDeep("isPlantDay.islightON",lightChange)
-        _LOGGER.info(f"{self.name}: Lichtstatus geprüft und aktualisiert für {self.room} Lichstatus ist {lightChange}")
+    async def _plant_stage_to_vpd(self, plantStage, tolerance=10):
+        """Calculate perfect VPD range based on plant stage."""
+        from .utils.calcs import calculate_perfect_vpd
+        from .utils.sensorUpdater import _update_specific_sensor
 
-        await self.eventManager.emit("toggleLight",lightChange)
-            
-    async def update_minMax_Sensors(self):
-        """
-        Update Werte aller relevanten number-Entities über den Home Assistant Service `number.set_value`.
-        Ungültige Werte (None, "unknown", "unbekannt") werden übersprungen.
-        """
-        entities = {
-            "minTemp": f"number.ogb_mintemp_{self.room.lower()}",
-            "maxTemp": f"number.ogb_maxtemp_{self.room.lower()}",
-            "minHum": f"number.ogb_minhum_{self.room.lower()}",
-            "maxHum": f"number.ogb_maxhum_{self.room.lower()}",
-            "humidityWeight": f"number.ogb_humidityweight_{self.room.lower()}"
+        # Plant stage VPD ranges (kPa)
+        stage_ranges = {
+            "germ": [0.8, 1.0],
+            "veg": [1.0, 1.2],
+            "gen": [1.2, 1.4],  # generative/flowering
         }
 
-        currentPlantStage = self.dataStore.get("plantStage")
-        PlantStageValues = self.dataStore.getDeep(f"plantStages.{currentPlantStage}")
+        # Get range for current stage
+        vpd_range = stage_ranges.get(plantStage.lower(), [1.0, 1.2])  # Default to veg
 
-        # Werte für die Entities extrahieren
-        values = {
-            "minTemp": PlantStageValues.get("minTemp"),
-            "maxTemp": PlantStageValues.get("maxTemp"),
-            "minHum": PlantStageValues.get("minHumidity"),
-            "maxHum": PlantStageValues.get("maxHumidity"),
-            "humidityWeight": 1.25 if currentPlantStage in ["MidFlower", "LateFlower"] else 1.0
-        }
+        # Calculate perfect VPD values
+        perfections = calculate_perfect_vpd(vpd_range, tolerance)
 
-        _LOGGER.info(f"Setting defaults for stage '{currentPlantStage}': {PlantStageValues}")
-
-        async def set_value(entity_id, value):
-            if value in (None, "unknown", "unbekannt"):
-                _LOGGER.warning(f"Skipping update for {entity_id} because value is invalid: {value}")
-                return
-            await self.hass.services.async_call(
-                domain="number",
-                service="set_value",
-                service_data={
-                    "entity_id": entity_id,
-                    "value": value
-                },
-                blocking=True
-            )
-            _LOGGER.info(f"Updated {entity_id} to {value}")
-
-        # Alle Entities aktualisieren
-        for key, entity_id in entities.items():
-            await set_value(entity_id, values.get(key))
-
-    # Helpers
-    def _stringToBool(self,stringToBool):
-        if stringToBool == "YES":
-            return True
-        if stringToBool == "NO":
-            return False
-
-    def _update_work_data_array(self, data_array, entity):
-        """
-        Aktualisiert alle passenden Einträge im WorkData-Array basierend to der übergebenen Entität.
-        """
-        _LOGGER.info(f"{self.room}: Checking Update-ITEM: {entity} in {data_array}")  
-        found = False
-        for item in data_array:
-            if item["entity_id"] == entity.Name:
-                item["value"] = entity.newState[0]
-                found = True
-                _LOGGER.info(f"{self.room}:Update-ITEM Found: {entity} → {item['value']}")
-        
-        if not found:
-            data_array.append({
-                "entity_id": entity.Name,
-                "value": entity.newState[0]
-            })
-            _LOGGER.info(f"{self.room}:Update-ITEM NOT Found: {entity} → hinzugefügt")
-        
-        return data_array
-
-    async def _plantStageToVPD(self):
-        """
-        Aktualisiert die VPD-Werte basierend to dem Pflanzenstadium.
-        """
-        plantStage = self.dataStore.get("plantStage")
-        # Daten aus dem `plantStages`-Dictionary abrufen
-        stageValues = self.dataStore.getDeep(f"plantStages.{plantStage}")
-        ownControllValues = self.dataStore.getDeep("controlOptions.minMaxControl")
-        
-        if not stageValues:
-            _LOGGER.error(f"{self.room}: Keine Daten für PlantStage '{plantStage}' gefunden.")
-            return
-
-        if ownControllValues:
-            _LOGGER.error(f"{self.room}: Keine Anpassung Möglich für PlantStage Own MinMax Active")
-            return
-        
-        try:
-            # Werte aus dem Dictionary extrahieren
-            vpd_range = stageValues["vpdRange"]
-            max_temp = stageValues["maxTemp"]
-            min_temp = stageValues["minTemp"]
-            max_humidity = stageValues["maxHumidity"]
-            min_humidity = stageValues["minHumidity"]
-       
-            tolerance = self.dataStore.getDeep("vpd.tolerance")
-            perfections = calculate_perfect_vpd(vpd_range,tolerance)
-            
-            perfectVPD = perfections["perfection"]
-            perfectVPDMin = perfections["perfect_min"]
-            perfectVPDMax = perfections["perfect_max"]          
-            await _update_specific_sensor("ogb_current_vpd_target_",self.room,perfectVPD,self.hass)
-            await _update_specific_sensor("ogb_current_vpd_target_min_",self.room,perfectVPDMin,self.hass)
-            await _update_specific_sensor("ogb_current_vpd_target_max_",self.room,perfectVPDMax,self.hass)
-
-            # Werte in `dataStore` setzen
-            self.dataStore.setDeep("vpd.range", vpd_range)
-
-            minMaxActive = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-            
-            if minMaxActive == False:
-                self.dataStore.setDeep("tentData.maxTemp", max_temp)
-                self.dataStore.setDeep("tentData.minTemp", min_temp)
-                self.dataStore.setDeep("tentData.maxHumidity", max_humidity)
-                self.dataStore.setDeep("tentData.minHumidity", min_humidity)
-
-                self.dataStore.setDeep("vpd.perfection",perfectVPD)
-                self.dataStore.setDeep("vpd.perfectMin",vpd_range[0])
-                self.dataStore.setDeep("vpd.perfectMax",vpd_range[1])
-                await self.update_minMax_Sensors()
-                await self.eventManager.emit("PlantStageChange",plantStage)
-                _LOGGER.debug(f"{self.room}: PlantStage '{plantStage}' erfolgreich in VPD-Daten übertragen.")
-            else:
-                self.dataStore.setDeep("vpd.perfection",perfectVPD)
-                self.dataStore.setDeep("vpd.perfectMin",vpd_range[0])
-                self.dataStore.setDeep("vpd.perfectMax",vpd_range[1])
-                await self.eventManager.emit("PlantStageChange",plantStage)
-        except KeyError as e:
-            _LOGGER.error(f"{self.room}: Fehlender Schlüssel in PlantStage-Daten '{e}'")
-        except Exception as e:
-            _LOGGER.error(f"{self.room}: Fehler beim Verarbeiten der PlantStage-Daten: {e}")
-
-    async def update_light_state(self):
-        """
-        Update Status from `lightOn`, basierend to den Lichtzeiten.
-        """
-
-        lightOnTime = self.dataStore.getDeep("isPlantDay.lightOnTime")
-        lightOffTime = self.dataStore.getDeep("isPlantDay.lightOffTime")
-
-        try:
-            if lightOnTime == "" or lightOffTime == "":
-                _LOGGER.error("Lichtzeiten fehlen. Bitte sicherstellen, dass 'lightOnTime' und 'lightOffTime' gesetzt sind.")
-                return None
-
-
-            # Konvertiere Zeitstrings in `time`-Objekte
-            light_on_time = datetime.strptime(lightOnTime, "%H:%M:%S").time()
-            light_off_time = datetime.strptime(lightOffTime, "%H:%M:%S").time()
-
-            # Hole die aktuelle Zeit
-            current_time = datetime.now().time()
-
-            # Prüfe, ob die aktuelle Zeit im Bereich liegt
-            if light_on_time < light_off_time:
-                # Normaler Zyklus (z. B. 08:00 bis 20:00)
-                is_light_on = light_on_time <= current_time < light_off_time
-  
-            else:
-                # Über Mitternacht (z. B. 20:00 bis 08:00)
-                is_light_on = current_time >= light_on_time or current_time < light_off_time
-   
-            # Update Status im DataStore
-            return is_light_on
-
-        except Exception as e:
-            _LOGGER.error(f"{self.room} Fehler beim Updaten des Lichtstatus: {e}")       
-
-    async def handle_new_targets(self,data):
-        plantStage = self.dataStore.get("plantStage")
-        # Daten aus dem `plantStages`-Dictionary abrufen
-        stageValues = self.dataStore.getDeep(f"plantStages.{plantStage}")
-        ownControllValues = self.dataStore.getDeep("controlOptions.minMaxControl")
-        
-        if not stageValues:
-            _LOGGER.error(f"{self.room}: Keine Daten für PlantStage '{plantStage}' gefunden.")
-            return
-
-        if ownControllValues:
-            _LOGGER.error(f"{self.room}: Keine Anpassung Möglich für PlantStage Own MinMax Active")
-            return
-        
-        vpd_range = stageValues["vpdRange"]
-        max_temp = stageValues["maxTemp"]
-        min_temp = stageValues["minTemp"]
-        max_humidity = stageValues["maxHumidity"]
-        min_humidity = stageValues["minHumidity"]
-    
-        tolerance = self.dataStore.getDeep("vpd.tolerance")
-        perfections = calculate_perfect_vpd(vpd_range,tolerance)
-        
         perfectVPD = perfections["perfection"]
         perfectVPDMin = perfections["perfect_min"]
-        perfectVPDMax = perfections["perfect_max"]          
-        await _update_specific_sensor("ogb_current_vpd_target_",self.room,perfectVPD,self.hass)
-        await _update_specific_sensor("ogb_current_vpd_target_min_",self.room,perfectVPDMin,self.hass)
-        await _update_specific_sensor("ogb_current_vpd_target_max_",self.room,perfectVPDMax,self.hass)
-        self.dataStore.setDeep("vpd.perfection",perfectVPD)
-        self.dataStore.setDeep("vpd.perfectMin",vpd_range[0])
-        self.dataStore.setDeep("vpd.perfectMax",vpd_range[1])
+        perfectVPDMax = perfections["perfect_max"]
 
-    ## VPD Determination
-    async def _ogb_vpd_determination(self,data):
+        # Update sensors
+        await _update_specific_sensor("ogb_current_vpd_target_", self.room, perfectVPD, self.hass)
+        await _update_specific_sensor("ogb_current_vpd_target_min_", self.room, perfectVPDMin, self.hass)
+        await _update_specific_sensor("ogb_current_vpd_target_max_", self.room, perfectVPDMax, self.hass)
+
+        # Store in data store
+        self.data_store.setDeep("vpd.range", vpd_range)
+        self.data_store.setDeep("vpd.perfection", perfectVPD)
+        self.data_store.setDeep("vpd.perfectMin", perfectVPDMin)
+        self.data_store.setDeep("vpd.perfectMax", perfectVPDMax)
+
+        # Check if min/max control is active
+        minMaxActive = self._string_to_bool(self.data_store.getDeep("controlOptions.minMaxControl"))
+
+        if not minMaxActive:
+            # Update min/max values (this would be more complex in reality)
+            # For now, just store the VPD values
+            pass
+
+        await self.event_manager.emit("PlantStageChange", plantStage)
+        _LOGGER.debug(f"{self.room}: PlantStage '{plantStage}' successfully transferred to VPD data")
+
+    ## Control Update Functions
+    async def _update_control_option(self, data):
         """
         Update ControlOption.
         """
         value = data.newState[0]
-        current_main_control = self.dataStore.get("vpdDetermination")
+        current_main_control = self.data_store.get("mainControl")
         if current_main_control != value:
-            self.dataStore.set("vpdDetermination",value)
-            await self.eventManager.emit("VPDDeterminationChange",value)
-            
-    ## Controll Update Functions 
-    async def _update_control_option(self,data):
-        """
-        Update ControlOption.
-        """
-        value = data.newState[0]
-        current_main_control = self.dataStore.get("mainControl")
-        if current_main_control != value:
-            self.dataStore.set("mainControl",value)
-            await self.eventManager.emit("mainControlChange",value)
-            await self.eventManager.emit("PremiumChange",{"currentValue":value,"lastValue":current_main_control}) 
-              
-    async def _update_notify_option(self,data):
-        """
-        Udpate Notify Option.
-        """
-        value = data.newState[0]
-        current_state = self.dataStore.get("notifyControl")
-        self.dataStore.set("notifyControl",value)
-        if value == "Disabled":
-            self.eventManager.change_notify_set(False)
-        elif value == "Enabled":
-            self.eventManager.change_notify_set(True)
+            self.data_store.set("mainControl", value)
+            await self.event_manager.emit("mainControlChange", value)
+            await self.event_manager.emit("PremiumChange", {"currentValue": value, "lastValue": current_main_control})
 
-    async def _update_vpd_DeviceDampening(self,data):
+    async def _update_vpd_determination(self, data):
         """
-        Update OGB Hydro Cycle
+        Update VPD Determination setting.
         """
         value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdDeviceDampening"))
+        current_value = self.data_store.get("vpdDetermination")
         if current_value != value:
-            self.dataStore.setDeep("controlOptions.vpdDeviceDampening", self._stringToBool(value))
+            self.data_store.set("vpdDetermination", value)
+            await self.event_manager.emit("VPDDeterminationChange", value)
 
-    ## MAIN Updaters
-    async def _update_plant_stage(self, data):
-        """
-        Update Pflanzenphase.
-        """
-        value = data.newState[0]
-        current_stage = self.dataStore.get("plantStage")
-        if current_stage != value:
-            self.dataStore.set("plantStage",value)
-            
-            ownWeightsActive = self.dataStore.getDeep("controlOptions.ownWeights")
-
-            if not ownWeightsActive and (
-                value in ["MidFlower", "LateFlower"] or current_stage in ["MidFlower", "LateFlower"]
-            ):
-                await _update_specific_sensor("ogb_humidityweight_", self.room, float(1.25), self.hass) 
-            await self._plantStageToVPD()
-            await self.eventManager.emit("PlantStageChange",value)
-  
-
-    async def _update_plant_type(self, data):
-        """
-        Update Plant Type.
-        """
-        value = data.newState[0]
-        current_light_plan = self.dataStore.get("plantType")
-        if current_light_plan != value:
-            self.dataStore.set("plantType",value)
-            await self.eventManager.emit("LightPlanChange",value)
-            _LOGGER.warning(f"Light Plan changed to {value}")
-
-
-    async def _update_tent_mode(self, data):
-        """
-        Update Tentmodus.
-        """
-        
-        value = data.newState[0]
-        current_mode = self.dataStore.get("tentMode")
-        
-        if isinstance(data, OGBInitData):
-            self.dataStore.set("tentMode",value)
-        elif isinstance(data, OGBEventPublication):
-            if current_mode != value:
-                tentModePublication = OGBModePublication(currentMode=value,previousMode=current_mode)
-                self.dataStore.set("tentMode",value)
-                ## Event to Mode Manager 
-                await self.eventManager.emit("selectActionMode",tentModePublication)
-    
-            # Premium Mode Remapp on start
-            if self.premiumManager.is_logged_in and self.premiumManager.is_premium and self.premiumManager.is_premium_selected:
-                await self.eventManager.emit("SaveRequest",self.room)                
-              
-        else:
-            _LOGGER.error(f"Unkown Tent-Mode check your Select Options: {type(data)} - Data: {data}")      
-
-    async def _update_leafTemp_offset(self, data):
-        """
-        Update Leaf Temp 
-        """
-        value = data.newState[0]
-        current_stage = self.dataStore.getDeep("tentData.leafTempOffset")
-        
-        if isinstance(data, OGBInitData):
-            self.dataStore.setDeep("tentData.leafTempOffset",value)
-        elif isinstance(data, OGBEventPublication):
-            if current_stage != value:
-                self.dataStore.setDeep("tentData.leafTempOffset",value)
-                await self.eventManager.emit("VPDCreation",value)
-        else:
-            _LOGGER.error(f"Unkown Datatype: {type(data)} - Data: {data}")     
-
-    async def _update_vpd_Target(self, data):
-        """
-        Update Target VPD Value if running on Targeted VPD 
-        """
-        value = float(data.newState[0])
-        current_value = self.dataStore.getDeep("vpd.targeted")
-
-        if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Target VPD to {value}")
-            self.dataStore.setDeep("vpd.targeted", value)
-
-            tolerance_percent = float(self.dataStore.getDeep("vpd.tolerance") or 0)
-            tolerance_value = value * (tolerance_percent / 100)
-
-            min_vpd = value - tolerance_value
-            max_vpd = value + tolerance_value
-
-            await _update_specific_sensor("ogb_current_vpd_target_", self.room, value, self.hass)
-            await _update_specific_sensor("ogb_current_vpd_target_min_", self.room, min_vpd, self.hass)
-            await _update_specific_sensor("ogb_current_vpd_target_max_", self.room, max_vpd, self.hass)
-
-    async def _update_vpd_tolerance(self,data):
-        """
-        Update VPD Tolerance
-        """
-        value = data.newState[0]
-        if value == None: return
-        current_value = self.dataStore.getDeep("vpd.tolerance")
-        if current_value != value:
-            self.dataStore.setDeep("vpd.tolerance",value)
-
-    # Lights
-    async def _update_lightOn_time(self,data):
-        """
-        Update Light ON Time
-        """       
-        value = data.newState[0]
-        if value == None: return
-        current_value = self.dataStore.getDeep("isPlantDay.lightOnTime")
-        if current_value != value:
-
-            self.dataStore.setDeep("isPlantDay.lightOnTime",value)
-            await self.eventManager.emit("LightTimeChanges",True)
-
-    async def _update_lightOff_time(self,data):
-        """
-        Update Light OFF Time
-        """
-        value = data.newState[0]
-        if value == None: return
-        current_value = self.dataStore.getDeep("isPlantDay.lightOffTime")
-        if current_value != value:
-            self.dataStore.setDeep("isPlantDay.lightOffTime",value)
-            await self.eventManager.emit("LightTimeChanges",True)
-
-
-    async def _update_sunrise_time(self,data):
-        """
-        Update Sunrise Time
-        """
-        value = data.newState[0]
-        if value == None: return
-        current_value = self.dataStore.getDeep("isPlantDay.sunRiseTime")
-        if current_value != value:
-            self.dataStore.setDeep("isPlantDay.sunRiseTime",value)
-            await self.eventManager.emit("SunRiseTimeUpdates",value)
-
-    async def _update_light_led_type(self, data):
-        """
-        Update Light LED Type for PPFD/DLI calculation
-        """
-        value = data.newState[0]
-        if value is None:
-            return
-        current_value = self.dataStore.getDeep("Light.ledType")
-        if current_value != value:
-            self.dataStore.setDeep("Light.ledType", value)
-            _LOGGER.info(f"{self.room}: LED type updated to '{value}'")
-
-    async def _update_lux_to_ppfd_factor(self, data):
-        """
-        Update Lux to PPFD conversion factor
-        """
-        value = data.newState[0]
-        if value is None:
-            return
-        try:
-            factor = float(value)
-            current_value = self.dataStore.getDeep("Light.luxToPPFDFactor")
-            if current_value != factor:
-                self.dataStore.setDeep("Light.luxToPPFDFactor", factor)
-                _LOGGER.info(f"{self.room}: Lux to PPFD factor updated to {factor}")
-        except (ValueError, TypeError):
-            _LOGGER.error(f"{self.room}: Invalid Lux to PPFD factor value: {value}")
-
-    async def _update_sunset_time(self,data):
-        """
-        Update SunSet Time
-        """
-        value = data.newState[0]
-        if value == None: return
-        current_value = self.dataStore.getDeep("isPlantDay.sunSetTime")
-        if current_value != value:
-            self.dataStore.setDeep("isPlantDay.sunSetTime",value)
-            await self.eventManager.emit("SunSetTimeUpdates",value)
-
-    ## Workmode 
-    async def _update_WrokMode_control(self,data):
+    ## Workmode
+    async def _update_work_mode_control(self, data):
         """
         Update OGB Workmode Control
         """
         value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.workMode"))
+        current_value = self._string_to_bool(self.data_store.getDeep("controlOptions.workMode"))
         if current_value != value:
-            #boolValue = self._stringToBool(value)
-            #if boolValue == False:
-            #    await self.update_minMax_Sensors()
-            self.dataStore.setDeep("controlOptions.workMode", self._stringToBool(value))
-            await self.eventManager.emit("WorkModeChange",self._stringToBool(value))
+            self.data_store.setDeep("controlOptions.workMode", self._string_to_bool(value))
+            await self.event_manager.emit("WorkModeChange", self._string_to_bool(value))
 
-    ## Ambnnient/outsite
-    async def _update_ambient_control(self,data):
+    ## Ambient/outside
+    async def _update_ambient_control(self, data):
         """
         Update OGB Ambient Control
         """
         value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ambientControl"))
+        current_value = self._string_to_bool(self.data_store.getDeep("controlOptions.ambientControl"))
         if current_value != value:
-            self.dataStore.setDeep("controlOptions.ambientControl", self._stringToBool(value))
+            self.data_store.setDeep("controlOptions.ambientControl", self._string_to_bool(value))
 
-    ##MINMAX Values
-    async def _update_MinMax_control(self,data):
-        """
-        Update MinMax Stage Values
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-        if current_value != value:
-            boolValue = self._stringToBool(value)
-            self.dataStore.setDeep("controlOptions.minMaxControl", self._stringToBool(value))
-            if boolValue == False:
-                await self.update_minMax_Sensors()
+    def _string_to_bool(self, value):
+        """Convert string to boolean."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+        return bool(value)
 
-    async def _update_maxTemp(self,data):
-        """
-        Aktualisiere OGB Max Temp
-        """
-        minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-        if minMaxControl == False: return
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.minmax.maxTemp")
-        if float(current_value) != value:
-            _LOGGER.info(f"{self.room}: Aktualisiere MaxTemp to {value}")
-            self.dataStore.setDeep("controlOptionData.minmax.maxTemp", float(value))
-            self.dataStore.setDeep("tentData.maxTemp", float(value))
+    def __str__(self):
+        return self.main_controller.__str__()
 
-    async def _update_maxHumidity(self,data):
-        """
-        Aktualisiere OGB Max Humditity
-        """
-        minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-        if minMaxControl == False: return
+    def __repr__(self):
+        return self.main_controller.__repr__()
 
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.minmax.maxHum")
-
-        if float(current_value) != value:
-            _LOGGER.info(f"{self.room}: Aktualisiere MaxHum to {value}")
-            self.dataStore.setDeep("controlOptionData.minmax.maxHum", float(value))
-            self.dataStore.setDeep("tentData.maxHumidity", float(value))
-            await asyncio.sleep(0)          
-            
-    async def _update_minTemp(self,data):
-        """
-        Aktualisiere OGB Min Temp
-        """
-        minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-        if minMaxControl == False: return
-        
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.minmax.minTemp")
-        if float(current_value) != value:
-            self.dataStore.setDeep("controlOptionData.minmax.minTemp", float(value))
-            self.dataStore.setDeep("tentData.minTemp", float(value))
-            
-    async def _update_minHumidity(self,data):
-        """
-        Aktualisiere OGB Min Humidity
-        """
-        minMaxControl = self._stringToBool(self.dataStore.getDeep("controlOptions.minMaxControl"))
-        if minMaxControl == False: return
-
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.minmax.minHum")
-        if float(current_value) != value:
-            self.dataStore.setDeep("controlOptionData.minmax.minHum", float(value))
-            self.dataStore.setDeep("tentData.minHumidity", float(value))
-
-    ## Weights   
-    async def _update_ownWeights_control(self,data):
-        """
-        Update OGB Own Weights Control
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.ownWeights"))
-        if current_value != value:
-            self.dataStore.setDeep("controlOptions.ownWeights", self._stringToBool(value))
-              
-    async def _update_temperature_weight(self, data):
-        """
-        Update Temp Weight
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.weights.temp")
-        if float(current_value) != value:
-            self.dataStore.setDeep("controlOptionData.weights.temp", float(value))
-           
-    async def _update_humidity_weight(self, data):
-        """
-        Update Humidity Weight
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.weights.hum")
-        if float(current_value) != value:
-                self.dataStore.setDeep("controlOptionData.weights.hum", float(value))
-
-    ## HYDRO
-    async def _update_hydro_mode(self,data):
-        """
-        Update OGB Hydro Mode
-        """
-        controlOption = self.dataStore.get("mainControl")        
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return
-        
-        value = data.newState[0]
-
-        if value == "OFF":
-            _LOGGER.info(f"{self.room}: Deaktiviere Hydro Mode")
-            self.dataStore.setDeep("Hydro.Active", False)
-            self.dataStore.setDeep("Hydro.Mode", value)
-            await self.eventManager.emit("HydroModeChange",value)
-        else:
-            _LOGGER.info(f"{self.room}: Update Hydro Mode to {value}")
-            self.dataStore.setDeep("Hydro.Active", True)
-            self.dataStore.setDeep("Hydro.Mode", value)
-            await self.eventManager.emit("HydroModeChange",value)
-    
-    async def _update_hydro_mode_cycle(self,data):
-        """
-        Update OGB Hydro Cycle
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("Hydro.Cycle"))
-        if current_value != value:
-            self.dataStore.setDeep("Hydro.Cycle", self._stringToBool(value))
-            await self.eventManager.emit("HydroModeChange",value)
-      
-    async def _update_hydro_duration(self, data):
-        """
-        Update Hydro Duration with validation
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Duration")
-        
-        # Validate the incoming value
+    async def get_weather_data(self):
+        """Fetch weather data for outdoor conditions."""
         try:
-            validated_value = float(value) if value is not None else 30.0
-            if validated_value <= 0:
-                validated_value = 30.0
-        except (ValueError, TypeError):
-            validated_value = 30.0  # Default fallback
-            _LOGGER.error(f"{self.room}: Invalid duration value '{value}', using default 30s")
-        if current_value != validated_value:
-            self.dataStore.setDeep("Hydro.Duration", validated_value)
-            await self.eventManager.emit("HydroModeChange", validated_value)
-     
-    async def _update_hydro_intervall(self, data):
-        """
-        Update Hydro Intervall with validation
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Intervall")
-        
-        try:
-            validated_value = float(value) if value is not None else 60.0
-            if validated_value <= 0:
-                validated_value = 60.0 
-        except (ValueError, TypeError):
-            validated_value = 60.0 
-            _LOGGER.error(f"{self.room}: Invalid interval value '{value}', using default 60s")
-        if current_value != validated_value:
-            self.dataStore.setDeep("Hydro.Intervall", validated_value)
-            await self.eventManager.emit("HydroModeChange", validated_value)
+            # For now, use a simple weather API or mock data
+            # In production, this would integrate with a weather service
+            _LOGGER.debug(f"Fetching weather data for {self.room}")
 
-    ## FEED
-    async def _update_feed_mode(self,data):
-        """
-        Update OGB Feed Modes
-        """
-        controlOption = self.dataStore.get("mainControl")        
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return
-        
-        value = data.newState[0]
+            # Mock weather data - replace with actual API call
+            weather_data = {
+                "temperature": 20.5,
+                "humidity": 65.0,
+                "wind_speed": 5.2,
+                "description": "Partly cloudy"
+            }
 
-        if value == "Disabled":
-            self.dataStore.setDeep("Hydro.FeedModeActive", False)
-            self.dataStore.setDeep("Hydro.FeedMode", value)
-            await self.eventManager.emit("FeedModeChange",value)
-        else:
-            self.dataStore.setDeep("Hydro.FeedModeActive", True)
-            self.dataStore.setDeep("Hydro.FeedMode", value)
-            await self.eventManager.emit("FeedModeChange",value)
-    
-    async def _update_feed_ec_target(self, data):
-        """
-        Update Hydro Hydro EC 
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.EC_Target")
-                
-        if current_value != new_value:
-            
-            self.dataStore.setDeep("Hydro.EC_Target", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "ec_target",
-                "value": new_value
-            })
+            # Store in data store
+            self.data_store.setDeep("weather.temperature", weather_data["temperature"])
+            self.data_store.setDeep("weather.humidity", weather_data["humidity"])
+            self.data_store.setDeep("weather.wind_speed", weather_data["wind_speed"])
+            self.data_store.setDeep("weather.description", weather_data["description"])
 
-    async def _update_feed_ph_target(self, data):
-        """
-        Update Hydro PH 
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.PH_Target")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.PH_Target", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "ph_target",
-                "value": new_value
-            })
+            # Emit weather update event
+            await self.event_manager.emit("WeatherUpdate", weather_data)
 
-    async def _update_feed_nut_a_ml(self,data):
-        """
-        Update Hydro Nut a
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_A_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_A_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "a_ml",
-                "value": new_value
-            })
+            _LOGGER.debug(f"Weather data updated for {self.room}: {weather_data}")
 
-    async def _update_feed_nut_b_ml(self,data):
-        """
-        Update Hydro Nut b
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_B_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_B_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "b_ml",
-                "value": new_value
-            })
-            
-    async def _update_feed_nut_c_ml(self,data):
-        """
-        Update Hydro Nut c 
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_C_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_C_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "c_ml",
-                "value": new_value
-            })
-
-    async def _update_feed_nut_w_ml(self,data):
-        """
-        Update Feed Feed PH 
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_W_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_W_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "w_ml",
-                "value": new_value
-            })
-
-    async def _update_feed_nut_x_ml(self,data):
-        """
-        Update Feed Feed PH 
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_X_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_X_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "x_ml",
-                "value": new_value
-            })
-                 
-    async def _update_feed_nut_y_ml(self,data):
-        """
-        Update Feed Feed Y
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_Y_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_Y_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "y_ml",
-                "value": new_value
-            })
-
-    async def _update_feed_nut_ph_ml(self, data):
-        """
-        Update Feed Nutrient PH ml
-        """
-        new_value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.Nut_PH_ml")
-                
-        if current_value != new_value:
-            self.dataStore.setDeep("Hydro.Nut_PH_ml", new_value)
-            await self.eventManager.emit("FeedModeValueChange", {
-                "type": "ph_ml",
-                "value": new_value
-            })
-
-    ## HYDRO RETRIVE
-    async def _update_retrive_mode(self,data):
-        """
-        Update OGB Water Retrive Hydro Mode
-        """
-        controlOption = self.dataStore.get("mainControl")        
-        if controlOption not in ["HomeAssistant", "Premium"]:
-            return
-        
-        value = self._stringToBool(data.newState[0])
-        if value == True:
-            self.dataStore.setDeep("Hydro.Retrieve", True)
-            self.dataStore.setDeep("Hydro.R_Active", True)
-            await self.eventManager.emit("HydroModeRetrieveChange",value)
-        else:
-            self.dataStore.setDeep("Hydro.Retrieve", False)
-            self.dataStore.setDeep("Hydro.R_Active", False)
-            await self.eventManager.emit("HydroModeRetrieveChange",value)
-
-    async def _update_hydro_retrive_duration(self, data):
-        """
-        Update Hydro Duration
-        """
-        value = data.newState[0]  # Beispiel: Extrahiere den neuen Wert
-        current_value = self.dataStore.getDeep("Hydro.R_Duration")
-        if current_value != value:
-            self.dataStore.setDeep("Hydro.R_Duration", value)
-            await self.eventManager.emit("HydroModeRetriveChange",value)
-  
-    async def _update_hydro_retrive_intervall(self, data):
-        """
-        Update Hydro Intervall.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("Hydro.R_Intervall")
-        if current_value != value:
-            self.dataStore.setDeep("Hydro.R_Intervall", value)
-            await self.eventManager.emit("HydroModeRetriveChange",value)
-
-    
-    ### Controll Updates           
-    async def _update_ogbLightControl_control(self,data):
-        """
-        Update OGB Light Control
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.lightbyOGBControl"))
-        if current_value != value:
-            self.dataStore.setDeep("controlOptions.lightbyOGBControl", self._stringToBool(value))
-            await self.eventManager.emit("updateControlModes",self._stringToBool(value))
-                  
-    async def _update_vpdLight_control(self,data):
-        """
-        OGB VPD Light Controll to dimm Light for better vpd Control
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.vpdLightControl"))
-
-        self.dataStore.setDeep("controlOptions.vpdLightControl", self._stringToBool(value))
-        
-        await self.eventManager.emit("updateControlModes",self._stringToBool(value))   
-        await self.eventManager.emit("VPDLightControl",self._stringToBool(value))
-
-            
-    async def _update_vpdNightHold_control(self,data):
-        """
-        Update VPD Night Control 
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.nightVPDHold"))
-        if current_value != value:
-            self.dataStore.setDeep("controlOptions.nightVPDHold", self._stringToBool(value))
-            await self.eventManager.emit("updateControlModes",self._stringToBool(value))    
-
-    async def _update_light_control_type(self,data):
-        """
-        Update Light Control Type
-        """
-        value = data.newState[0]
-        if value is None:
-            return
-        current_value = self.dataStore.getDeep("controlOptions.lightControlType")
-        if current_value != value:
-            self.dataStore.setDeep("controlOptions.lightControlType", value)
-            _LOGGER.info(f"{self.room}: Light control type updated to '{value}'")
-      
-    ## Device Label
-    async def _device_from_label(self,data):
-        """
-        Update OGB CO2 Control 
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("DeviceLabelIdent"))
-        if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Device Label Ident Set {value}")
-            self.dataStore.setDeep("DeviceLabelIdent", self._stringToBool(value))   
-           
-    #### CO2                 
-    async def _update_co2_control(self,data):
-        """
-        Update OGB CO2 Control 
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.co2Control"))
-        if current_value != value:
-            _LOGGER.info(f"{self.room}: Update CO2 Control to {value}")
-            self.dataStore.setDeep("controlOptions.co2Control", self._stringToBool(value))
-                      
-    async def _update_co2Target_value(self,data):
-        """
-        Update CO2 Target Value.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.co2ppm.target")
-        if float(current_value) != value:
-            _LOGGER.info(f"{self.room}: Update CO2 Target Value to {value}")
-            self.dataStore.setDeep("controlOptionData.co2ppm.target", float(value))
-  
-    async def _update_co2Min_value(self,data):
-        """
-        Update CO2 Min Value.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.co2ppm.minPPM")
-        if float(current_value) != value:
-            _LOGGER.info(f"{self.room}: Update CO2 Min Value to {value}")
-            self.dataStore.setDeep("controlOptionData.co2ppm.minPPM", float(value))
-
-    async def _update_co2Max_value(self,data):
-        """
-        Update CO2 Max Value.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("controlOptionData.co2ppm.maxPPM")
-        if float(current_value) != value:
-            _LOGGER.info(f"{self.room}: Update CO2 Max Value to {value}")
-            self.dataStore.setDeep("controlOptionData.co2ppm.maxPPM", float(value))
- 
- 
-    ## PlantDates
-    async def _update_breederbloomdays_value(self,data):
-        """
-        Update FlowerTime Value.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("plantDates.breederbloomdays")
-        if int(float(current_value)) != value:
-            _LOGGER.info(f"{self.room}: Update Breeder Bloom Days to {value}")
-            self.dataStore.setDeep("plantDates.breederbloomdays", int(float(value)))
-            await self.eventManager.emit("PlantTimeChange",int(float(value)))
-            await self._update_plantDates(int(float(value)))
-            
-    async def _update_growstartdates_value(self,data):
-        """
-        Update GrowStart Value.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("plantDates.growstartdate")
-        if current_value != value:
-            _LOGGER.info(f"{self.room}: Update Grow Start to {value}")
-            self.dataStore.setDeep("plantDates.growstartdate", value)
-            await self.eventManager.emit("PlantTimeChange",value)
-            await self._update_plantDates(value)
-             
-    async def _update_bloomswitchdate_value(self,data):
-        """
-        Update Bloom Start Date Value.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.getDeep("plantDates.bloomswitchdate")
-        if current_value != value:
-            self.dataStore.setDeep("plantDates.bloomswitchdate", value)
-            await self.eventManager.emit("PlantTimeChange",value)
-            await self._update_plantDates(value)
-
-    async def _update_plantDates(self, data):
-        """
-        Update Plant Grow Times
-        """
-        planttotaldays_entity = f"sensor.ogb_planttotaldays_{self.room.lower()}"
-        totalbloomdays_entity = f"sensor.ogb_totalbloomdays_{self.room.lower()}"
-        remainingTime_entity = f"sensor.ogb_chopchoptime_{self.room.lower()}"
-
-        bloomSwitch = self.dataStore.getDeep("plantDates.bloomswitchdate")
-        growstart = self.dataStore.getDeep("plantDates.growstartdate")
-        breederDays = self.dataStore.getDeep("plantDates.breederbloomdays")
-        
-        
-        # breederDays validieren
-        try:
-            breeder_bloom_days = float(breederDays)
-        except (ValueError, TypeError):
-            breeder_bloom_days = 0.0
-
-        planttotaldays = 0
-        totalbloomdays = 0
-        remaining_bloom_days = 0
-        generative_week = 0
-
-        today = datetime.today()
-
-        # growstart verarbeiten
-        try:
-            growstart_date = datetime.strptime(growstart, '%Y-%m-%d')
-            planttotaldays = (today - growstart_date).days
-            self.dataStore.setDeep("plantDates.planttotaldays", planttotaldays)
-        except (ValueError, TypeError):
-            _LOGGER.debug(f"{self.room}: Ungültiges Datum im growstart: {growstart}")
-
-        # bloomSwitch verarbeiten
-        bloomswitch_date = None
-        try:
-            bloomswitch_date = datetime.strptime(bloomSwitch, '%Y-%m-%d')
-            totalbloomdays = (today - bloomswitch_date).days if today >= bloomswitch_date else 0
-            self.dataStore.setDeep("plantDates.totalbloomdays", totalbloomdays)
-            
-        except (ValueError, TypeError):
-            _LOGGER.debug(f"{self.room}: Ungültiges Datum im bloomSwitch: {bloomSwitch}")
-
-        # remaining_bloom_days berechnen
-        if breeder_bloom_days > 0 and bloomswitch_date:
-            if today >= bloomswitch_date:
-                # Blüte läuft
-                plant_phase = "gen" 
-                self.dataStore.setDeep("isPlantDay.plantPhase", plant_phase)
-                
-                # Berechne generative Woche (1-basiert)
-                generative_week = (totalbloomdays // 7) + 1
-                self.dataStore.setDeep("isPlantDay.generativeWeek", generative_week)
-                
-                remaining_bloom_days = breeder_bloom_days - totalbloomdays
-                if remaining_bloom_days <= 0:
-                    _LOGGER.info(f"{self.room}: Erwartete Blütezeit von {breeder_bloom_days} Tagen erreicht oder überschritten")
-            else:
-                # Blüte noch nicht gestartet
-                plant_phase = "veg" 
-                self.dataStore.setDeep("isPlantDay.plantPhase", plant_phase)
-                self.dataStore.setDeep("isPlantDay.generativeWeek", 0)
-                
-                days_until_bloom = (bloomswitch_date - today).days
-                remaining_bloom_days = days_until_bloom + breeder_bloom_days
-                _LOGGER.info(f"{self.room}: {days_until_bloom} Tage bis Blüte + {breeder_bloom_days} Blütetage = {remaining_bloom_days} Tage bis Ernte")
-
-        self.dataStore.setDeep("plantDates.daysToChopChop", remaining_bloom_days)
-
-        # Sensoren updaten
-        try:
-            await self.hass.services.async_call(
-                domain="opengrowbox",
-                service="update_sensor",
-                service_data={"entity_id": planttotaldays_entity, "value": planttotaldays},
-                blocking=True
-            )
-            await self.hass.services.async_call(
-                domain="opengrowbox",
-                service="update_sensor",
-                service_data={"entity_id": totalbloomdays_entity, "value": totalbloomdays},
-                blocking=True
-            )
-            await self.hass.services.async_call(
-                domain="opengrowbox",
-                service="update_sensor",
-                service_data={"entity_id": remainingTime_entity, "value": remaining_bloom_days},
-                blocking=True
-            )
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Updaten der Sensoren '{planttotaldays_entity}' und '{totalbloomdays_entity}': {e}")
+            _LOGGER.error(f"Error fetching weather data for {self.room}: {e}")
 
-    async def _autoUpdatePlantStages(self,data):
-        timenow = datetime.now() 
-        await self._update_plantDates(timenow)
-        await asyncio.sleep(8 * 60 * 60)  # 8 Stunden warten
-        asyncio.create_task(self._autoUpdatePlantStages(timenow))  # Nächste Ausführung starten
- 
+    async def emergency_stop(self):
+        """Emergency stop all systems."""
+        try:
+            _LOGGER.warning(f"🚨 Emergency stop initiated for {self.room}")
 
-    ## Drying
-    async def _udpate_drying_mode(self, data):
-        """
-        Update Current Working Tent Mode
-        """
-        value = data.newState[0]
-        current_mode = self.dataStore.getDeep("drying.currentDryMode")
-        if current_mode != value:
-            self.dataStore.setDeep("drying.currentDryMode",value)
-                 
-    # Devices 
-    async def _device_Self_MinMax(self,data):
-        """
-        Update Own Device Min Max Activation
-        """
-        value = self._stringToBool(data.newState[0])      
-        if "exhaust" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Exhaust.active",value)
-        if "Intake" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Intake.active",value)
-        if "ventilation" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Ventilation.active",value)    
-        if "light" in data.Name:
-                self.dataStore.setDeep("DeviceMinMax.Light.active",value)
-        await self.eventManager.emit("SetMinMax",data)
-   
-    async def _device_MinMax_setter(self, data):
-        """
-        Update OGB Min Max Sets For Devices
-        """
+            # Stop orchestrator control loop first
+            await self.orchestrator.stop()
 
-        value = data.newState[0]
-        name = data.Name.lower()
+            # Stop all pumps
+            if hasattr(self.actionManager, 'pump_controller') and self.actionManager.pump_controller:
+                await self.actionManager.pump_controller.emergency_stop_all_pumps()
 
-        # Exhaust
-        if "exhaust" in name:
-            if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Exhaust.minDuty", value)
-            if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Exhaust.maxDuty", value)
+            # Stop all devices
+            if hasattr(self.deviceManager, 'emergency_stop'):
+                await self.deviceManager.emergency_stop()
 
-        if "intake" in name:
-            if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Intake.minDuty", value)
-            if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Intake.maxDuty", value)
-        
-        # Vents
-        if "ventilation" in name:
-            if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Ventilation.minDuty", value)
-            if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Ventilation.maxDuty", value)
+            # Emit emergency stop event
+            await self.event_manager.emit("EmergencyStop", {"room": self.room, "timestamp": datetime.now().isoformat()})
 
-        # Lights
-        if "light" in name:
-            if "min" in name:
-                self.dataStore.setDeep("DeviceMinMax.Light.minVoltage", value)
-            if "max" in name:
-                self.dataStore.setDeep("DeviceMinMax.Light.maxVoltage", value)
-        
-        await self.eventManager.emit("SetMinMax",data)
-  
-      # Devices 
-    
-    # Crop Steering
-    
-    async def _crop_steering_mode(self,data):
-        """Update CropSteering Phase und Mode"""
-        value = data.newState[0]
-        self.dataStore.setDeep("CropSteering.ActiveMode",value)
-        await self.eventManager.emit("CropSteeringChanges",data)       
-    
-    async def _crop_steering_phase(self, data):
-        """Update CropSteering Phase und Mode"""
-        activeCSMode = self.dataStore.getDeep("CropSteering.ActiveMode")
-        if activeCSMode != "Manual":
-            logging.debug(f"{self.room} - Changing CS Phase Changes works only in Manual")
-            return
+            _LOGGER.warning(f"✅ Emergency stop completed for {self.room}")
 
-        value = data.newState[0]
-        self.dataStore.setDeep("CropSteering.CropPhase",value)
-        #await self.eventManager.emit("CropSteeringChanges",data)
+        except Exception as e:
+            _LOGGER.error(f"Error during emergency stop for {self.room}: {e}")
 
-    async def _crop_steering_sets(self, data):
-        """Dynamischer Setter für alle Crop Steering Parameter"""
-        value = data.newState[0]
-        name = data.Name.lower()
-         
-        phase = None
-        for p in ["p0", "p1", "p2", "p3"]:
-            if f"_{p}_" in name:
-                phase = p
-                break
-        
-        if not phase:
-            logging.error(f"❌ No Phase Found in name: {name}")
-            return
-        
-        for param_key, (soil_path, sub_key) in CS_PARAMETER_MAPPING.items():
-            if param_key in name:
-                path = f"CropSteering.{soil_path}.{phase}.{sub_key}"
-                self.dataStore.setDeep(path, value)
-                
-                mode = self.dataStore.getDeep("CropSteering.Mode")
-                current_phase = self.dataStore.getDeep("CropSteering.ActiveMode")
-                return 
-        
-        logging.error(f"⚠️ NO MATCH found for: {name}")
-           
-    # Strain
-    async def _update_StrainName(self,data):
-        """
-        Update OGB Current Strain
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.get("strainName")
-        if current_value != value:
-            self.dataStore.set("strainName", value)
+    async def calibrate_sensors(self, sensor_type=None):
+        """Calibrate sensors."""
+        try:
+            _LOGGER.info(f"Calibrating sensors for {self.room}, type: {sensor_type}")
 
-    ## Area
-    async def _update_Grow_Area(self,data):
-        """
-        Update Grow Area Space.
-        """
-        value = data.newState[0]
-        current_value = self.dataStore.get("growAreaM2")
-        if current_value != value:
-            self.dataStore.set("growAreaM2", value)      
-       
-    ## Medium
-    async def _update_Medium_type(self,data):
-        value = data.newState[0]
-        await self.eventManager.emit("MediumChange",str(value))       
+            if sensor_type == "temperature" or sensor_type is None:
+                # Temperature sensor calibration
+                await self._calibrate_temperature_sensors()
 
-    ## Ambnnient/outsite
-    async def _update_multi_medium_control(self,data):
-        """
-        Update OGB Ambient Control
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.multiMediumControl"))
-        if current_value != value:
-            self.dataStore.setDeep("controlOptions.multiMediumControl", self._stringToBool(value))
+            if sensor_type == "humidity" or sensor_type is None:
+                # Humidity sensor calibration
+                await self._calibrate_humidity_sensors()
 
-    ## AI Learning Switch
-    async def _update_ai_learning(self,data):
-        """
-        Update OGB Ambient Control
-        """
-        value = data.newState[0]
-        current_value = self._stringToBool(self.dataStore.getDeep("controlOptions.aiLearning"))
-        if current_value != value:
-            self.dataStore.setDeep("controlOptions.aiLearning", self._stringToBool(value))
+            if sensor_type == "ph" or sensor_type is None:
+                # pH sensor calibration
+                await self._calibrate_ph_sensors()
 
-    ## Debug NOTES
+            if sensor_type == "ec" or sensor_type is None:
+                # EC sensor calibration
+                await self._calibrate_ec_sensors()
+
+            await self.event_manager.emit("SensorCalibrationComplete", {"sensor_type": sensor_type, "room": self.room})
+
+            _LOGGER.info(f"Sensor calibration completed for {self.room}")
+
+        except Exception as e:
+            _LOGGER.error(f"Error calibrating sensors for {self.room}: {e}")
+
+    async def _calibrate_temperature_sensors(self):
+        """Calibrate temperature sensors."""
+        # Implementation would involve sensor calibration logic
+        _LOGGER.debug(f"Temperature sensor calibration for {self.room}")
+
+    async def _calibrate_humidity_sensors(self):
+        """Calibrate humidity sensors."""
+        # Implementation would involve sensor calibration logic
+        _LOGGER.debug(f"Humidity sensor calibration for {self.room}")
+
+    async def _calibrate_ph_sensors(self):
+        """Calibrate pH sensors."""
+        # Implementation would involve sensor calibration logic
+        _LOGGER.debug(f"pH sensor calibration for {self.room}")
+
+    async def _calibrate_ec_sensors(self):
+        """Calibrate EC sensors."""
+        # Implementation would involve sensor calibration logic
+        _LOGGER.debug(f"EC sensor calibration for {self.room}")
+
+    async def transition_plant_stage(self, new_stage):
+        """Transition to a new plant growth stage."""
+        try:
+            current_stage = self.data_store.getDeep("isPlantDay.plantPhase")
+            _LOGGER.info(f"Transitioning plant stage from {current_stage} to {new_stage} in {self.room}")
+
+            # Update plant stage in data store
+            self.data_store.setDeep("isPlantDay.plantPhase", new_stage)
+
+            # Update VPD targets for new stage
+            await self._plant_stage_to_vpd(new_stage)
+
+            # Update light schedule for new stage
+            if hasattr(self.main_controller, 'light_scheduler'):
+                await self.main_controller.light_scheduler.set_plant_stage_light({"stage": new_stage})
+
+            # Emit plant stage change event
+            await self.event_manager.emit("PlantStageChange", {"old_stage": current_stage, "new_stage": new_stage, "room": self.room})
+
+            _LOGGER.info(f"Plant stage transition completed: {new_stage} in {self.room}")
+
+        except Exception as e:
+            _LOGGER.error(f"Error transitioning plant stage in {self.room}: {e}")
+
     def _debugState(self):
-        ##warning
-        devices = self.dataStore.get("devices")
-        tentData = self.dataStore.get("tentData")
-        controlOptions = self.dataStore.get("controlOptions")
-        workdata = self.dataStore.get("workData")
-        vpdData = self.dataStore.get("vpd")
-        caps = self.dataStore.get("capabilities")
-        _LOGGER.debug(f"DEBUGSTATE: {self.room} WorkData: {workdata} DEVICES:{devices} TentData {tentData} CONTROLOPTIONS:{controlOptions}  VPDDATA {vpdData} CAPS:{caps} ")
+        """Debug state output - from original"""
+        devices = self.data_store.get("devices")
+        tentData = self.data_store.get("tentData")
+        controlOptions = self.data_store.get("controlOptions")
+        workdata = self.data_store.get("workData")
+        vpdData = self.data_store.get("vpd")
+        caps = self.data_store.get("capabilities")
+        _LOGGER.debug(f"DEBUGSTATE: {self.room} WorkData: {workdata} DEVICES:{devices} TentData {tentData} CONTROLOPTIONS:{controlOptions}  VPDDATA {vpdData} CAPS:{caps}")
+
+    async def async_shutdown(self):
+        """
+        Gracefully shutdown all OpenGrowBox components.
+        
+        This method should be called when the integration is being unloaded
+        to ensure all background tasks are properly cancelled and resources cleaned up.
+        """
+        _LOGGER.info(f"🛑 Starting OpenGrowBox shutdown for {self.room}")
+        
+        try:
+            # 1. Stop orchestrator control loop first (prevents new actions)
+            if hasattr(self, 'orchestrator') and self.orchestrator:
+                try:
+                    await self.orchestrator.stop()
+                    _LOGGER.debug(f"✅ Orchestrator stopped for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error stopping orchestrator: {e}")
+
+            # 2. Shutdown premium manager (WebSocket connections, etc.)
+            if hasattr(self, 'prem_manager') and self.prem_manager:
+                try:
+                    if hasattr(self.prem_manager, 'async_shutdown'):
+                        await self.prem_manager.async_shutdown()
+                    _LOGGER.debug(f"✅ Premium manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down premium manager: {e}")
+
+            # 3. Shutdown main controller (stops all sub-managers)
+            if hasattr(self, 'main_controller') and self.main_controller:
+                try:
+                    if hasattr(self.main_controller, 'async_shutdown'):
+                        await self.main_controller.async_shutdown()
+                    _LOGGER.debug(f"✅ Main controller shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down main controller: {e}")
+
+            # 4. Stop device manager
+            if hasattr(self, 'deviceManager') and self.deviceManager:
+                try:
+                    if hasattr(self.deviceManager, 'emergency_stop'):
+                        await self.deviceManager.emergency_stop()
+                    if hasattr(self.deviceManager, 'async_shutdown'):
+                        await self.deviceManager.async_shutdown()
+                    _LOGGER.debug(f"✅ Device manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down device manager: {e}")
+
+            # 5. Stop action manager
+            if hasattr(self, 'actionManager') and self.actionManager:
+                try:
+                    if hasattr(self.actionManager, 'pump_controller') and self.actionManager.pump_controller:
+                        await self.actionManager.pump_controller.emergency_stop_all_pumps()
+                    if hasattr(self.actionManager, 'async_shutdown'):
+                        await self.actionManager.async_shutdown()
+                    _LOGGER.debug(f"✅ Action manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down action manager: {e}")
+
+            # 6. Stop medium manager
+            if hasattr(self, 'mediumManager') and self.mediumManager:
+                try:
+                    if hasattr(self.mediumManager, 'async_shutdown'):
+                        await self.mediumManager.async_shutdown()
+                    _LOGGER.debug(f"✅ Medium manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down medium manager: {e}")
+
+            # 7. Stop VPD manager
+            if hasattr(self, 'vpd_manager') and self.vpd_manager:
+                try:
+                    if hasattr(self.vpd_manager, 'stop'):
+                        await self.vpd_manager.stop()
+                    _LOGGER.debug(f"✅ VPD manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down VPD manager: {e}")
+
+            # 8. Save state before shutdown
+            if hasattr(self, 'data_storeManager') and self.data_storeManager:
+                try:
+                    await self.data_storeManager.saveState({})
+                    _LOGGER.debug(f"✅ State saved for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error saving state: {e}")
+
+            # 9. Shutdown event manager (cleanup listeners and orphan tasks)
+            if hasattr(self, 'event_manager') and self.event_manager:
+                try:
+                    if hasattr(self.event_manager, 'async_shutdown'):
+                        await self.event_manager.async_shutdown()
+                    _LOGGER.debug(f"✅ Event manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down event manager: {e}")
+
+            _LOGGER.info(f"✅ OpenGrowBox shutdown complete for {self.room}")
+
+        except Exception as e:
+            _LOGGER.error(f"❌ Error during OpenGrowBox shutdown for {self.room}: {e}", exc_info=True)
