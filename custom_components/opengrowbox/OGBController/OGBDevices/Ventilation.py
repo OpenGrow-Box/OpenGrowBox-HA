@@ -1,37 +1,62 @@
-from .Device import Device
 import logging
+
+from .Device import Device
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class Ventilation(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
-        self.dutyCycle = 0  
-        self.minDuty = 10    
+    def __init__(
+        self,
+        deviceName,
+        deviceData,
+        eventManager,
+        dataStore,
+        deviceType,
+        inRoom,
+        hass=None,
+        deviceLabel="EMPTY",
+        allLabels=[],
+    ):
+        super().__init__(
+            deviceName,
+            deviceData,
+            eventManager,
+            dataStore,
+            deviceType,
+            inRoom,
+            hass,
+            deviceLabel,
+            allLabels,
+        )
+        self.dutyCycle = 0
+        self.minDuty = 10
         self.maxDuty = 100
-        self.steps = 5      
+        self.steps = 5
         self.isInitialized = False
 
         self.init()
 
         # Events registrieren
-        self.eventManager.on("Increase Ventilation", self.increaseAction)
-        self.eventManager.on("Reduce Ventilation", self.reduceAction)
+        self.event_manager.on("Increase Ventilation", self.increaseAction)
+        self.event_manager.on("Reduce Ventilation", self.reduceAction)
 
     def __repr__(self):
-        return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
-                f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
-                f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' isSpecialDevice:'{self.isSpecialDevice}'")
+        return (
+            f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
+            f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
+            f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' isSpecialDevice:'{self.isSpecialDevice}'"
+        )
 
     def init(self):
         """Initialisiert die Ventilation."""
         if not self.isInitialized:
-            self.checkMinMax(False)
+            self.checkMinMax(False)  # Enable min/max loading from datastore
             self.checkForControlValue()
-            
+
             if not self.dutyCycle or self.dutyCycle == 0:
                 self.initialize_duty_cycle()
-            
+
             self.isInitialized = True
 
     def clamp_duty_cycle(self, duty_cycle):
@@ -40,7 +65,6 @@ class Ventilation(Device):
         min_duty = float(self.minDuty)
         max_duty = float(self.maxDuty)
         duty_cycle = float(duty_cycle)
-
 
         clamped_value = max(min_duty, min(max_duty, duty_cycle))
 
@@ -55,15 +79,19 @@ class Ventilation(Device):
         Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
         """
         if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Gerät nicht dimmbar ist.")
-            return float(self.dutyCycle) 
+            _LOGGER.warning(
+                f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Gerät nicht dimmbar ist."
+            )
+            return float(self.dutyCycle)
 
         # Konvertiere dutyCycle zu float für Berechnungen
         current_duty = float(self.dutyCycle)
-        
+
         # Berechne neuen Wert basierend auf Schrittweite
-        new_duty_cycle = current_duty + self.steps if increase else current_duty - self.steps
-        
+        new_duty_cycle = (
+            current_duty + self.steps if increase else current_duty - self.steps
+        )
+
         # Begrenze den neuen Duty Cycle auf erlaubte Werte
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
 
@@ -71,17 +99,17 @@ class Ventilation(Device):
         self.dutyCycle = clamped_duty_cycle
 
         _LOGGER.info(f"{self.deviceName}: Duty Cycle auf {self.dutyCycle}% geändert.")
-        return float(self.dutyCycle) 
+        return float(self.dutyCycle)
 
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""
         if self.isDimmable:
-            
+
             if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
-                await self.turn_on(brightness_pct=newDuty)    
-            else:    
+                await self.turn_on(brightness_pct=newDuty)
+            else:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(percentage=newDuty)
@@ -108,5 +136,3 @@ class Ventilation(Device):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
         _LOGGER.warning(f"{action_name}: {log_message}")
-
-

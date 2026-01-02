@@ -1,18 +1,40 @@
-from .Device import Device
 import logging
+
+from .Device import Device
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class Climate(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
+    def __init__(
+        self,
+        deviceName,
+        deviceData,
+        eventManager,
+        dataStore,
+        deviceType,
+        inRoom,
+        hass=None,
+        deviceLabel="EMPTY",
+        allLabels=[],
+    ):
+        super().__init__(
+            deviceName,
+            deviceData,
+            eventManager,
+            dataStore,
+            deviceType,
+            inRoom,
+            hass,
+            deviceLabel,
+            allLabels,
+        )
         self.currentHAVOC = "off"
         self.havocs = {
-            "dry": "dry",    # Entfeuchten
+            "dry": "dry",  # Entfeuchten
             "cool": "cool",  # Kühlen
             "heat": "heat",  # Heizen (optional, falls du es nutzen willst)
-            "off": "off",    # Aus
+            "off": "off",  # Aus
         }
         self.isRunning = False
 
@@ -22,13 +44,13 @@ class Climate(Device):
         self.Cool = False
 
         # Event Listener registrieren
-        self.eventManager.on("Increase Climate", self.increaseAction)
-        self.eventManager.on("Reduce Climate", self.reduceAction)
-        self.eventManager.on("Eval Climate", self.evalAction)
-        self.eventManager.on("Disable Climate Mode", self.disableMode)
+        self.event_manager.on("Increase Climate", self.increaseAction)
+        self.event_manager.on("Reduce Climate", self.reduceAction)
+        self.event_manager.on("Eval Climate", self.evalAction)
+        self.event_manager.on("Disable Climate Mode", self.disableMode)
 
     def getRoomCaps(self):
-        self.roomCaps = self.dataStore.get("capabilities")
+        self.roomCaps = self.data_store.get("capabilities")
 
     def decideClimateMode(self, action: str, capabilities: dict) -> str | None:
         """
@@ -52,7 +74,7 @@ class Climate(Device):
         Evaluates and selects the necessary mode based on action and capabilities.
         """
         action = data.get("action", "unknown")
-        roomCapabilities = self.dataStore.get("capabilities")
+        roomCapabilities = self.data_store.get("capabilities")
 
         self.log_action(f"Eval Action '{action}'")
 
@@ -61,7 +83,9 @@ class Climate(Device):
         if new_mode and self.currentHAVOC != new_mode:
             self.activateMode(new_mode)
         else:
-            _LOGGER.warning(f"{self.deviceName}: No suitable mode for '{action}' or already active.")
+            _LOGGER.warning(
+                f"{self.deviceName}: No suitable mode for '{action}' or already active."
+            )
 
     async def increaseAction(self, data):
         """Handles Increase action."""
@@ -87,10 +111,14 @@ class Climate(Device):
         Example data: {"mode": "canHeat"}
         """
         mode_key = data.get("mode")
-        if mode_key in self.capabilities:
-            self.capabilities[mode_key]["state"] = False
-            self.capabilities[mode_key]["devEntities"] = []
-            _LOGGER.warning(f"{self.deviceName}: Mode '{mode_key}' permanently disabled.")
+        capabilities = self.data_store.get("capabilities") or {}
+        if mode_key in capabilities:
+            capabilities[mode_key]["state"] = False
+            capabilities[mode_key]["devEntities"] = []
+            self.data_store.set("capabilities", capabilities)
+            _LOGGER.warning(
+                f"{self.deviceName}: Mode '{mode_key}' permanently disabled."
+            )
         else:
             _LOGGER.error(f"{self.deviceName}: Unknown mode '{mode_key}' to disable.")
 

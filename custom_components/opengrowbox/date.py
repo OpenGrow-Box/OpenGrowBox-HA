@@ -1,8 +1,10 @@
-from datetime import datetime, date
+import logging
+from datetime import date, datetime
+
+import voluptuous as vol
 from homeassistant.components.date import DateEntity
 from homeassistant.helpers.restore_state import RestoreEntity
-import logging
-import voluptuous as vol
+
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -10,6 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 ###############################################
 # CustomDate – Speichert nur das Datum
 ###############################################
+
 
 class CustomDate(DateEntity, RestoreEntity):
     """Custom date entity for storing only the date portion."""
@@ -28,7 +31,11 @@ class CustomDate(DateEntity, RestoreEntity):
 
     @staticmethod
     def _parse_date(date_input) -> date:
-        if isinstance(date_input, str) and date_input.lower() in ("unknown", "unavailable", ""):
+        if isinstance(date_input, str) and date_input.lower() in (
+            "unknown",
+            "unavailable",
+            "",
+        ):
             _LOGGER.debug(f"DateInput was '{date_input}', using default today.")
             return date.today()
 
@@ -39,7 +46,9 @@ class CustomDate(DateEntity, RestoreEntity):
                 return datetime.strptime(date_input, "%Y-%m-%d").date()
             raise ValueError("Unsupported date input type")
         except Exception as e:
-            _LOGGER.error(f"Invalid date input: {date_input}. Defaulting to today. Error: {e}")
+            _LOGGER.error(
+                f"Invalid date input: {date_input}. Defaulting to today. Error: {e}"
+            )
             return date.today()
 
     @property
@@ -71,7 +80,11 @@ class CustomDate(DateEntity, RestoreEntity):
     async def async_set_value(self, value):
         """Set a new date value."""
         try:
-            if isinstance(value, str) and value.lower() in ("unknown", "unavailable", ""):
+            if isinstance(value, str) and value.lower() in (
+                "unknown",
+                "unavailable",
+                "",
+            ):
                 new_date = date.today()
             else:
                 new_date = self._parse_date(value)
@@ -85,25 +98,43 @@ class CustomDate(DateEntity, RestoreEntity):
         """Restore state when the entity is added to Home Assistant."""
         await super().async_added_to_hass()
         state = await self.async_get_last_state()
-        if state and state.state and state.state.lower() not in ("unknown", "unavailable", ""):
+        if (
+            state
+            and state.state
+            and state.state.lower() not in ("unknown", "unavailable", "")
+        ):
             try:
                 restored_date = self._parse_date(state.state)
                 self._date = restored_date
                 _LOGGER.info(f"Restored date for '{self._name}': {restored_date}")
             except ValueError:
-                _LOGGER.warning(f"Failed to restore date for '{self._name}', using default.")
+                _LOGGER.warning(
+                    f"Failed to restore date for '{self._name}', using default."
+                )
+
 
 ###############################################
 # async_setup_entry – Registriert die Entitäten und den Service
 ###############################################
 
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up CustomDate entities and register update services."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
-    
+
     dates = [
-        CustomDate(f"OGB_GrowStartDate_{coordinator.room_name}", coordinator.room_name, coordinator, initial_date=""),
-        CustomDate(f"OGB_BloomSwitchDate_{coordinator.room_name}", coordinator.room_name, coordinator, initial_date=""),
+        CustomDate(
+            f"OGB_GrowStartDate_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_date="",
+        ),
+        CustomDate(
+            f"OGB_BloomSwitchDate_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_date="",
+        ),
     ]
     if "dates" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["dates"] = []
@@ -112,6 +143,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities(dates)
 
     if not hass.services.has_service(DOMAIN, "update_date"):
+
         async def handle_update_date(call):
             entity_id = call.data.get("entity_id")
             new_date = call.data.get("date")
@@ -122,12 +154,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     _LOGGER.info(f"Updated date for {entity_id} to {new_date}")
                     return
             _LOGGER.error(f"Date entity with id {entity_id} not found")
+
         hass.services.async_register(
             DOMAIN,
             "update_date",
             handle_update_date,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-                vol.Required("date"): str,
-            }),
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                    vol.Required("date"): str,
+                }
+            ),
         )

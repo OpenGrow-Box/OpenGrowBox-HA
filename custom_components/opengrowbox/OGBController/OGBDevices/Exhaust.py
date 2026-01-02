@@ -1,41 +1,64 @@
-from .Device import Device
 import logging
+
+from .Device import Device
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class Exhaust(Device):
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
-        super().__init__(deviceName,deviceData,eventManager,dataStore,deviceType,inRoom,hass,deviceLabel,allLabels)
+    def __init__(
+        self,
+        deviceName,
+        deviceData,
+        eventManager,
+        dataStore,
+        deviceType,
+        inRoom,
+        hass=None,
+        deviceLabel="EMPTY",
+        allLabels=[],
+    ):
+        super().__init__(
+            deviceName,
+            deviceData,
+            eventManager,
+            dataStore,
+            deviceType,
+            inRoom,
+            hass,
+            deviceLabel,
+            allLabels,
+        )
         self.dutyCycle = 0  # Initialer Duty Cycle
-        self.minDuty = 10    # Minimaler Duty Cycle
-        self.maxDuty = 100    # Maximaler Duty Cycle
-        self.steps = 5        # DutyCycle Steps
+        self.minDuty = 10  # Minimaler Duty Cycle
+        self.maxDuty = 100  # Maximaler Duty Cycle
+        self.steps = 5  # DutyCycle Steps
         self.isInitialized = False
-        
+
         self.init()
         ## Events Register
-        self.eventManager.on("Increase Exhaust", self.increaseAction)
-        self.eventManager.on("Reduce Exhaust", self.reduceAction)
+        self.event_manager.on("Increase Exhaust", self.increaseAction)
+        self.event_manager.on("Reduce Exhaust", self.reduceAction)
 
-    #Actions Helpers
-    
+    # Actions Helpers
 
     def init(self):
         """Initialisiert die Ventilation."""
         if not self.isInitialized:
             self.checkMinMax(False)
             self.checkForControlValue()
-            
+
             if not self.dutyCycle or self.dutyCycle == 0:
                 self.initialize_duty_cycle()
-            
+
             self.isInitialized = True
 
     def __repr__(self):
-        return (f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
-                f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
-                f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' ")
-
+        return (
+            f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
+            f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
+            f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' "
+        )
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
@@ -43,7 +66,6 @@ class Exhaust(Device):
         min_duty = float(self.minDuty)
         max_duty = float(self.maxDuty)
         duty_cycle = float(duty_cycle)
-
 
         clamped_value = max(min_duty, min(max_duty, duty_cycle))
 
@@ -58,12 +80,18 @@ class Exhaust(Device):
         Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
         """
         if not self.isDimmable:
-            _LOGGER.warning(f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist.")
+            _LOGGER.warning(
+                f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist."
+            )
             return self.dutyCycle
 
         # Berechne neuen Wert basierend auf Schrittweite
-        new_duty_cycle = int(self.dutyCycle) + int(self.steps) if increase else int(self.dutyCycle) - int(self.steps)
-        
+        new_duty_cycle = (
+            int(self.dutyCycle) + int(self.steps)
+            if increase
+            else int(self.dutyCycle) - int(self.steps)
+        )
+
         # Begrenze den neuen Duty Cycle auf erlaubte Werte
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
 
@@ -80,15 +108,15 @@ class Exhaust(Device):
             if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
-                await self.turn_on(brightness_pct=newDuty)   
-            else:          
+                await self.turn_on(brightness_pct=newDuty)
+            else:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(percentage=newDuty)
         else:
             self.log_action("TurnOn")
             await self.turn_on()
-       
+
     async def reduceAction(self, data):
         """Reduziert den Duty Cycle."""
         if self.isDimmable:

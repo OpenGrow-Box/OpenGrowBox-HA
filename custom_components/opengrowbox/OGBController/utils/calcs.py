@@ -1,8 +1,9 @@
-import math
-import logging
 import asyncio
+import logging
+import math
 
 _LOGGER = logging.getLogger(__name__)
+
 
 # Berechne Durchschnittswert aus einer Liste (asynchron)
 def calculate_avg_value(data=[]):
@@ -37,6 +38,7 @@ def calculate_avg_value(data=[]):
     avg_value = total / count
     return round(avg_value, 2)
 
+
 # Berechne aktuellen VPD (asynchron)
 def calculate_current_vpd(temp, humidity, leaf_offset):
     try:
@@ -57,6 +59,7 @@ def calculate_current_vpd(temp, humidity, leaf_offset):
     _LOGGER.debug(f"VPD-Calculation got {round(vpd, 2)}")
     return round(vpd, 2)
 
+
 # Berechne perfekten VPD (asynchron)
 def calculate_perfect_vpd(vpd_range, tolerance_percent):
 
@@ -72,12 +75,13 @@ def calculate_perfect_vpd(vpd_range, tolerance_percent):
 
     average_vpd = (vpd_min + vpd_max) / 2
     tolerance = (tolerance_percent / 100) * average_vpd
-    
+
     return {
         "perfection": round(average_vpd, 3),
         "perfect_min": round(average_vpd - tolerance, 3),
         "perfect_max": round(average_vpd + tolerance, 3),
     }
+
 
 # Berechne Taupunkt (asynchron)
 def calculate_dew_point(temp, humidity):
@@ -94,6 +98,7 @@ def calculate_dew_point(temp, humidity):
     dew_point = (b * gamma) / (a - gamma)
 
     return round(dew_point, 2)
+
 
 # Berechne DewPointVPD (asynchron)
 async def calc_dew_vpd(air_temp, dew_point):
@@ -120,6 +125,7 @@ async def calc_dew_vpd(air_temp, dew_point):
         "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
     }
 
+
 # Berechne DewPointVPD (Based on Dewpoint/TEMP)
 def calc_dew_vpd(air_temp, dew_point):
     try:
@@ -145,6 +151,7 @@ def calc_dew_vpd(air_temp, dew_point):
         "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
     }
 
+
 # Berechne Dry5Days VPD (Based on TEMP/HUM/VPD)
 def calc_Dry5Days_vpd(temp, humidity, leaf_offset=0):
     try:
@@ -161,10 +168,19 @@ def calc_Dry5Days_vpd(temp, humidity, leaf_offset=0):
 
     return round(vpd, 2)
 
-def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="fullspektrum_grow", factor=15, default_value=10000):
+
+def calc_light_to_ppfd_dli(
+    value,
+    unit="lux",
+    hours=18,
+    area_m2=1.0,
+    led_type="fullspektrum_grow",
+    factor=15,
+    default_value=10000,
+):
     """
     Convert Lux or Lumen to PPFD (µmol/m²/s) and DLI (mol/m²/d) for Grow LEDs.
-    
+
     Optimized for cannabis and vegetable growing with realistic conversion factors.
 
     :param value: Light measurement (Lux or Lumen)
@@ -173,7 +189,7 @@ def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="f
     :param area_m2: Area in m² if unit is lumen (default 1.0)
     :param led_type: LED type - affects conversion factor
     :return: (ppfd, dli) - PPFD in µmol/m²/s, DLI in mol/m²/d
-    
+
     Available led_types:
     - "fullspektrum_grow": Vollspektrum Grow LEDs (factor 15) - RECOMMENDED
     - "quantum_board": Samsung LM301B/H Quantum Boards (factor 16)
@@ -239,41 +255,40 @@ def calc_light_to_ppfd_dli(value, unit="lux", hours=18, area_m2=1.0, led_type="f
     return round(ppfd), round(dli, 1)
 
 
-
 def calculate_orp(ph, temperature_c, e0_calibration=591.6):
     """
     Berechnet den ORP (Oxidation-Reduction Potential) in mV
     basierend auf pH und Temperatur des Wassers.
     Kalibriert basierend auf echten Messdaten.
-    
+
     Args:
         ph (float): pH-Wert des Wassers (0-14)
         temperature_c (float): Temperatur in Celsius
         e0_calibration (float): Kalibrierter E0-Wert (Default: 591.6 mV für dein Wasser)
-    
+
     Returns:
         float: ORP in Millivolt (mV)
     """
-    
+
     # Kalibriertes Elektrodenpotential
     E0_reference = e0_calibration
-    
+
     # Temperaturkoeffizient
     temp_coefficient = -0.73
-    
+
     # Nernst-Konstante bei 25°C
     nernst_constant = 59.16
-    
+
     # Temperaturabhängige Nernst-Konstante anpassen
     temp_factor = (temperature_c + 273.15) / 298.15
     adjusted_nernst = nernst_constant * temp_factor
-    
+
     # Temperaturkompensation für das Referenzpotential
     temp_compensation = temp_coefficient * (temperature_c - 25)
-    
+
     # ORP berechnen
     orp = E0_reference + temp_compensation - (adjusted_nernst * ph)
-    
+
     return round(orp, 2)
     """
     Berechnet den ORP (Oxidation-Reduction Potential) in mV
@@ -286,25 +301,25 @@ def calculate_orp(ph, temperature_c, e0_calibration=591.6):
     Returns:
         float: ORP in Millivolt (mV)
     """
-    
+
     # Standard Elektrodenpotential bei 25°C
     E0_reference = 800  # mV (Standard für Wasser bei 25°C)
-    
+
     # Temperaturkoeffizient (typisch -0.73 mV/°C für pH-Elektroden)
     temp_coefficient = -0.73
-    
+
     # Nernst-Konstante bei 25°C: 59.16 mV
     nernst_constant = 59.16
-    
+
     # Temperaturabhängige Nernst-Konstante anpassen
     # Faktor = (T + 273.15) / 298.15 (wobei 298.15 K = 25°C)
     temp_factor = (temperature_c + 273.15) / 298.15
     adjusted_nernst = nernst_constant * temp_factor
-    
+
     # Temperaturkompensation für das Referenzpotential
     temp_compensation = temp_coefficient * (temperature_c - 25)
-    
+
     # ORP berechnen
     orp = E0_reference + temp_compensation - (adjusted_nernst * ph)
-    
+
     return round(orp, 2)

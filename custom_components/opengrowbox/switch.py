@@ -1,10 +1,13 @@
+import logging
+
+import voluptuous as vol
 from homeassistant.helpers.entity import ToggleEntity
 from homeassistant.helpers.restore_state import RestoreEntity
-import logging
+
 from .const import DOMAIN
-import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class CustomSwitch(ToggleEntity, RestoreEntity):
     """Custom switch for multiple hubs with state restoration."""
@@ -59,7 +62,9 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
         """Toggle the state of the switch."""
         self._state = not self._state
         self.async_write_ha_state()
-        _LOGGER.info(f"Switch '{self._name}' toggled to: {'ON' if self._state else 'OFF'}.")
+        _LOGGER.info(
+            f"Switch '{self._name}' toggled to: {'ON' if self._state else 'OFF'}."
+        )
 
     async def async_added_to_hass(self):
         """Restore state when the entity is added to Home Assistant."""
@@ -67,7 +72,10 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
         state = await self.async_get_last_state()
         if state and state.state is not None:
             self._state = state.state == "on"
-            _LOGGER.info(f"Restored state for '{self._name}': {'ON' if self._state else 'OFF'}.")
+            _LOGGER.info(
+                f"Restored state for '{self._name}': {'ON' if self._state else 'OFF'}."
+            )
+
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up switch entities."""
@@ -75,8 +83,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     # Create switches with placeholders for customization
     switches = [
-        #TemplateSwitch
-        CustomSwitch(f"OGB_TemplateSwitch_{coordinator.room_name}", coordinator.room_name, coordinator, initial_state=False),
+        # TemplateSwitch
+        CustomSwitch(
+            f"OGB_TemplateSwitch_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_state=False,
+        ),
     ]
 
     # Register the switches globally in hass.data
@@ -90,27 +103,30 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     # Register a global service for toggling switch states if not already registered
     if not hass.services.has_service(DOMAIN, "toggle_switch"):
+
         async def handle_toggle_switch(call):
             """Handle the toggle switch service."""
             entity_id = call.data.get("entity_id")
 
             _LOGGER.info(f"Received request to toggle switch '{entity_id}'")
 
-
             for switch in hass.data[DOMAIN]["switches"]:
                 if switch.entity_id == entity_id:
                     await switch.async_toggle()
-                    _LOGGER.info(f"Toggled switch '{switch.name}' to state: {'ON' if switch.is_on else 'OFF'}")
+                    _LOGGER.info(
+                        f"Toggled switch '{switch.name}' to state: {'ON' if switch.is_on else 'OFF'}"
+                    )
                     return
 
             _LOGGER.warning(f"Switch with entity_id '{entity_id}' not found.")
-
 
         hass.services.async_register(
             DOMAIN,
             "toggle_switch",
             handle_toggle_switch,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-            }),
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                }
+            ),
         )

@@ -1,11 +1,14 @@
+import logging
 from datetime import time
+
+import voluptuous as vol
 from homeassistant.components.time import TimeEntity
 from homeassistant.helpers.restore_state import RestoreEntity
-import logging
-import voluptuous as vol
+
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class CustomTime(TimeEntity, RestoreEntity):
     """Custom time entity for multiple hubs with state restoration."""
@@ -41,7 +44,9 @@ class CustomTime(TimeEntity, RestoreEntity):
             else:
                 raise ValueError("Unsupported time input type")
         except (ValueError, AttributeError) as e:
-            _LOGGER.error(f"Invalid time input: {time_input}. Defaulting to 00:00. Error: {e}")
+            _LOGGER.error(
+                f"Invalid time input: {time_input}. Defaulting to 00:00. Error: {e}"
+            )
             return time(0, 0)
 
     @property
@@ -90,18 +95,40 @@ class CustomTime(TimeEntity, RestoreEntity):
                 self._time = restored_time
                 _LOGGER.info(f"Restored time for '{self._name}': {restored_time}")
             except ValueError:
-                _LOGGER.warning(f"Failed to restore time for '{self._name}', using default.")
+                _LOGGER.warning(
+                    f"Failed to restore time for '{self._name}', using default."
+                )
+
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up time entities and register update service."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-
     times = [
-        CustomTime(f"OGB_LightOnTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_time="08:00:00"),
-        CustomTime(f"OGB_LightOffTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_time="20:00:00"),
-        CustomTime(f"OGB_SunRiseTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_time="00:00:00"),
-        CustomTime(f"OGB_SunSetTime_{coordinator.room_name}", coordinator.room_name, coordinator, initial_time="00:00:00"),
+        CustomTime(
+            f"OGB_LightOnTime_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_time="08:00:00",
+        ),
+        CustomTime(
+            f"OGB_LightOffTime_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_time="20:00:00",
+        ),
+        CustomTime(
+            f"OGB_SunRiseTime_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_time="00:00:00",
+        ),
+        CustomTime(
+            f"OGB_SunSetTime_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_time="00:00:00",
+        ),
     ]
 
     if "times" not in hass.data[DOMAIN]:
@@ -110,8 +137,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     hass.data[DOMAIN]["times"].extend(times)
     async_add_entities(times)
 
-
     if not hass.services.has_service(DOMAIN, "update_time"):
+
         async def handle_update_time(call):
             """Handle the update_time service call."""
             entity_id = call.data.get("entity_id")
@@ -129,8 +156,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             DOMAIN,
             "update_time",
             handle_update_time,
-            schema=vol.Schema({
-                vol.Required("entity_id"): str,
-                vol.Required("time"): str,
-            }),
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                    vol.Required("time"): str,
+                }
+            ),
         )

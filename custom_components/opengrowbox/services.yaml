@@ -11,6 +11,66 @@ update_sensor:
       description: Der neue Wert, der gesetzt werden soll.
       example: 50
 
+request_medium_plants_data:
+  name: Request Medium Plants Data
+  description: Request plant data for all mediums in a room. Backend will emit MediumPlantsUpdate event.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name to request plant data for.
+      required: true
+      example: FlowerTent
+
+update_medium_plant_dates:
+  name: Update Medium Plant Dates
+  description: Update plant information for a specific medium (name, strain, dates, stage).
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: FlowerTent
+    medium_index:
+      name: Medium Index
+      description: Index of the medium in the mediums array (0-based)
+      required: true
+      example: 0
+    plant_name:
+      name: Plant Name
+      description: Name/identifier for this plant
+      required: false
+      example: Northern Lights #1
+    plant_strain:
+      name: Plant Strain
+      description: Strain name of the plant
+      required: false
+      example: Northern Lights
+    plant_type:
+      name: Plant Type
+      description: Type of plant (photoperiodic or autoflowering)
+      required: false
+      example: photoperiodic
+    grow_start:
+      name: Grow Start Date
+      description: Date when grow started (YYYY-MM-DD format)
+      required: false
+      example: "2024-01-15"
+    bloom_switch:
+      name: Bloom Switch Date
+      description: Date when switched to bloom/flowering (YYYY-MM-DD format)
+      required: false
+      example: "2024-03-01"
+    breeder_bloom_days:
+      name: Breeder Bloom Days
+      description: Number of bloom days specified by breeder
+      required: false
+      example: 60
+    plant_stage:
+      name: Plant Stage
+      description: Current stage (Seedling, Veg, EarlyFlower, MidFlower, LateFlower, Harvest, Drying)
+      required: false
+      example: MidFlower
+
 add_select_options:
   name: Add Select Options
   description: Aktualisiert den Wert eines Sensors.
@@ -86,3 +146,365 @@ remove_select_options:
       example:
         - Lampe A
         - Lampe B
+
+# Premium Analytics Services (Requires Basic Plan)
+get_yield_prediction:
+  name: Get Yield Prediction (Premium)
+  description: Get AI-powered yield prediction for a grow plan. Requires Basic plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    grow_plan_id:
+      name: Grow Plan ID
+      description: The grow plan to analyze
+      required: true
+      example: "gp_abc123"
+
+get_environmental_insights:
+  name: Get Environmental Insights (Premium)
+  description: Get environmental performance insights and recommendations. Requires Basic plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    timeframe:
+      name: Timeframe
+      description: Analysis timeframe (7d, 30d, 90d)
+      required: false
+      example: "7d"
+
+detect_anomalies:
+  name: Detect Anomalies (Premium)
+  description: Detect environmental anomalies using machine learning. Requires Basic plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+# Premium Compliance Services (Requires Professional Plan)
+validate_compliance:
+  name: Validate Compliance (Premium)
+  description: Validate grow plan against regulatory compliance rules. Requires Professional plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    grow_plan_id:
+      name: Grow Plan ID
+      description: The grow plan to validate
+      required: true
+      example: "gp_abc123"
+    industry:
+      name: Industry
+      description: Industry to validate against (cannabis, healthcare, agriculture)
+      required: false
+      example: "cannabis"
+
+get_audit_trail:
+  name: Get Audit Trail (Premium)
+  description: Get compliance audit trail. Requires Professional plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    start_date:
+      name: Start Date
+      description: Start date (ISO format)
+      required: false
+      example: "2024-01-01"
+    end_date:
+      name: End Date
+      description: End date (ISO format)
+      required: false
+      example: "2024-12-31"
+    limit:
+      name: Limit
+      description: Maximum number of entries
+      required: false
+      example: 100
+
+# Premium Research Services (Requires Professional Plan)
+create_research_dataset:
+  name: Create Research Dataset (Premium)
+  description: Create a new research dataset for scientific analysis. Requires Professional plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    name:
+      name: Dataset Name
+      description: Name for the research dataset
+      required: true
+      example: "LED Spectrum Study 2024"
+    description:
+      name: Description
+      description: Dataset description
+      required: true
+      example: "Analyzing effects of different LED spectrums"
+    grow_plan_ids:
+      name: Grow Plan IDs
+      description: List of grow plan IDs to include
+      required: true
+      example:
+        - "gp_abc123"
+        - "gp_def456"
+
+export_research_data:
+  name: Export Research Data (Premium)
+  description: Export research dataset in specified format. Requires Professional plan or higher.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    dataset_id:
+      name: Dataset ID
+      description: The dataset to export
+      required: true
+      example: "ds_xyz789"
+    format:
+      name: Export Format
+      description: Export format (csv, json, parquet, hdf5)
+      required: false
+      example: "csv"
+
+# Cache Management (Available to all users)
+clear_cache:
+  name: Clear Cache
+  description: Clear cached premium data to force refresh from API. Available to all users for troubleshooting.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    cache_type:
+      name: Cache Type
+      description: Type of cache to clear (all, analytics, compliance, research)
+      required: false
+      example: "all"
+      selector:
+        select:
+          options:
+            - "all"
+            - "analytics"
+            - "compliance"
+            - "research"
+
+# Subscription Tier Management (Admin only)
+get_user_subscription:
+  name: Get User Subscription
+  description: Get current subscription details for a user. Admin only.
+  fields:
+    user_id:
+      name: User ID
+      description: The user ID to check subscription for
+      required: true
+      example: "user123"
+
+update_user_subscription:
+  name: Update User Subscription
+  description: Update user's subscription tier. Admin only.
+  fields:
+    user_id:
+      name: User ID
+      description: The user ID to update
+      required: true
+      example: "user123"
+    tier_name:
+      name: Tier Name
+      description: New subscription tier
+      required: true
+      example: "professional"
+      selector:
+        select:
+          options:
+            - "free"
+            - "starter"
+            - "grower"
+            - "professional"
+            - "enterprise"
+    room_count:
+      name: Room Count
+      description: Current number of rooms user has
+      required: false
+      example: 3
+
+get_all_tiers:
+  name: Get All Tiers
+  description: Get all available subscription tiers and their features. Available to all users.
+
+increment_user_rooms:
+  name: Increment User Rooms
+  description: Increment room count for user (when creating new room). System use only.
+  fields:
+    user_id:
+      name: User ID
+      description: The user ID to increment rooms for
+      required: true
+      example: "user123"
+
+# Feature Management Services (For frontend API compatibility)
+get_available_features:
+  name: Get Available Features
+  description: Get list of available features for the current subscription tier.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+check_feature_access:
+  name: Check Feature Access
+  description: Check if user has access to a specific feature.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    feature_id:
+      name: Feature ID
+      description: The feature ID to check access for
+      required: true
+      example: "advanced_analytics"
+
+get_feature_definitions:
+  name: Get Feature Definitions
+  description: Get all feature definitions with metadata (icons, descriptions, categories).
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+get_subscription_summary:
+  name: Get Subscription Summary
+  description: Get summary of current subscription tier and enabled features.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+# Premium Limits Management
+get_room_limits:
+  name: Get Room Limits
+  description: Get room limit information for current subscription.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+check_can_create_room:
+  name: Check Can Create Room
+  description: Check if user can create a new room based on subscription limits.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    current_room_count:
+      name: Current Room Count
+      description: Current number of rooms
+      required: true
+      example: 3
+
+# Feature Flag Control Services (API Integration)
+refresh_feature_flags:
+  name: Refresh Feature Flags
+  description: Refresh feature flags from the Premium API. Forces a refresh of feature flag overrides and global configs from the server.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+get_feature_flag_status:
+  name: Get Feature Flag Status
+  description: Get detailed status of a specific feature flag including source (subscription, override, or kill switch).
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    feature_key:
+      name: Feature Key
+      description: The feature to check (e.g., advanced_analytics, compliance, research_data)
+      required: true
+      example: "advanced_analytics"
+      selector:
+        select:
+          options:
+            - "basic_monitoring"
+            - "ai_controllers"
+            - "mobile_app"
+            - "advanced_analytics"
+            - "notifications"
+            - "data_export"
+            - "compliance"
+            - "advanced_compliance"
+            - "research_data"
+            - "api_access"
+            - "webhooks"
+            - "multi_tenant"
+            - "priority_support"
+            - "custom_integrations"
+            - "sla"
+
+get_all_feature_flags:
+  name: Get All Feature Flags
+  description: Get status of all feature flags including enabled status, override sources, and tier requirements.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+
+check_feature_enabled:
+  name: Check Feature Enabled
+  description: Simple check if a feature is enabled for the current subscription and overrides.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"
+    feature_key:
+      name: Feature Key
+      description: The feature to check
+      required: true
+      example: "advanced_analytics"
+
+get_feature_overrides:
+  name: Get Feature Overrides
+  description: Get all active feature overrides set by admin for the current tenant.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: "Tent1"

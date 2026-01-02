@@ -1,11 +1,13 @@
-from .Sensor import Sensor
-from .ModbusDevice import ModbusDevice
 import asyncio
 import logging
 
+from .ModbusDevice import OGBModbusDevice
+from .Sensor import Sensor
+
 _LOGGER = logging.getLogger(__name__)
 
-class ModbusSensor(Sensor, ModbusDevice):
+
+class ModbusSensor(Sensor, OGBModbusDevice):
     """Kombination aus Sensor und Modbus-Funktionalität."""
 
     def __init__(self, *args, modbus_config=None, **kwargs):
@@ -13,12 +15,7 @@ class ModbusSensor(Sensor, ModbusDevice):
         self.modbus_config = modbus_config
 
         # Additional attributes to match Sensor class
-        self.sensorReadings = {
-            "air": {},
-            "water": {},
-            "soil": {},
-            "light": {}
-        }
+        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}}
         self._entity_to_config = {}
         self.isRunning = None
         self._alert_active = False
@@ -54,11 +51,16 @@ class ModbusSensor(Sensor, ModbusDevice):
                     self.sensorReadings[context][sensor_name] = actual_value
 
                 # Emit Sensor-Update Event
-                await self.eventManager.emit("DeviceStateUpdate", {
-                    "entity_id": f"sensor.{self.deviceName}_{sensor_name}",
-                    "newValue": actual_value,
-                    "oldValue": self.sensorReadings[context].get(sensor_name)
-                })
+                await self.event_manager.emit(
+                    "DeviceStateUpdate",
+                    {
+                        "entity_id": f"sensor.{self.deviceName}_{sensor_name}",
+                        "newValue": actual_value,
+                        "oldValue": self.sensorReadings[context].get(sensor_name),
+                    },
+                )
 
                 # Update entity_to_config if needed
-                self._entity_to_config[f"sensor.{self.deviceName}_{sensor_name}"] = register_info
+                self._entity_to_config[f"sensor.{self.deviceName}_{sensor_name}"] = (
+                    register_info
+                )
