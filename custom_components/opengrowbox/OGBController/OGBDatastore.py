@@ -199,7 +199,12 @@ class DataStore(SimpleEventEmitter):
         return filtered
 
     def _make_serializable(self, obj, visited=None):
-        """Konvertiert Objekte in JSON-serialisierbare Formate mit Schutz vor zirkulären Referenzen."""
+        """Konvertiert Objekte in JSON-serialisierbare Formate mit Schutz vor zirkulären Referenzen.
+        
+        CRITICAL: Tuples are converted to lists to prevent corruption on reload.
+        Python's tuple() on a string converts each CHARACTER to an element,
+        causing exponential data growth on save/load cycles.
+        """
         if visited is None:
             visited = set()
 
@@ -212,6 +217,18 @@ class DataStore(SimpleEventEmitter):
             return None
         elif isinstance(obj, (str, int, float, bool)):
             return obj
+        elif isinstance(obj, tuple):
+            # CRITICAL: Convert tuples to lists to prevent corruption
+            # Tuples like (5.5, 6.5) must be saved as [5.5, 6.5]
+            # Otherwise str(tuple) creates "(5.5, 6.5)" and tuple(str) corrupts data
+            visited.add(obj_id)
+            try:
+                result = [self._make_serializable(item, visited) for item in obj]
+                visited.discard(obj_id)
+                return result
+            except:
+                visited.discard(obj_id)
+                return list(obj)
         elif isinstance(obj, list):
             visited.add(obj_id)
             try:

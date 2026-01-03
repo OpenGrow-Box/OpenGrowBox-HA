@@ -347,31 +347,79 @@ class OGBCSManager:
 
     # ==================== ENTRY POINT ====================
     async def handle_mode_change(self, data):
-        """SINGLE entry point for all mode changes"""
-        _LOGGER.debug(f"CropSteering mode change: {data}")
+        """SINGLE entry point for all mode changes.
+        
+        Called from:
+        1. CropSteeringChanges event (when user changes CS sub-selector)
+        2. CastManager.HydroModeChange() (when user selects Crop-Steering hydro mode)
+        """
+        _LOGGER.warning(f"{self.room} - CropSteering handle_mode_change called with: {data}")
+
+        # Check if CropSteering should be active
+        # It's active if either:
+        # 1. Hydro.Mode == "Crop-Steering" (user selected CS from Hydro mode dropdown)
+        # 2. CropSteering.Active == True (CS was activated)
+        # 3. CropSteering.ActiveMode is set to something other than Disabled (user changed sub-selector)
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        cs_active = self.data_store.getDeep("CropSteering.Active")
+        cs_mode = self.data_store.getDeep("CropSteering.ActiveMode")
+        
+        _LOGGER.warning(f"{self.room} - CropSteering state: Hydro.Mode={hydro_mode}, Active={cs_active}, ActiveMode={cs_mode}")
+        
+        # If user is changing CS sub-selector while CS is not the active Hydro mode,
+        # we should still respect their choice (they might be pre-configuring)
+        # BUT we only START the cycle if CS is actually active
+        is_cs_hydro_mode = hydro_mode == "Crop-Steering"
+        
+        if not is_cs_hydro_mode and not cs_active:
+            # CS is not active, but user might be configuring - just log and return
+            if cs_mode and cs_mode not in ("Disabled", "Config"):
+                _LOGGER.warning(f"{self.room} - CropSteering configured to {cs_mode} but Hydro mode is {hydro_mode}. Will start when Crop-Steering is selected.")
+            return
 
         # Stop any existing operation first
         await self.stop_all_operations()
 
-        # Parse mode
+        # Parse mode - multiMediumControl check is now optional (True or None both work)
         multimediumCtrl = self.data_store.getDeep("controlOptions.multiMediumControl")
+        _LOGGER.warning(f"{self.room} - CropSteering multiMediumControl: {multimediumCtrl}")
 
-        if multimediumCtrl == False:
+        if multimediumCtrl is False:  # Explicit False check, None is OK
             _LOGGER.error(
-                f"{self.room} - CropSteering Single Medium Control No working Switch the button only multi control working right now"
+                f"{self.room} - CropSteering requires multiMediumControl=True. Current: {multimediumCtrl}"
             )
             return
 
         cropMode = self.data_store.getDeep("CropSteering.ActiveMode")
+        _LOGGER.warning(f"{self.room} - CropSteering ActiveMode from dataStore: {cropMode}")
+        
+        if not cropMode:
+            # Default to Automatic if not set
+            cropMode = "Automatic"
+            self.data_store.setDeep("CropSteering.ActiveMode", cropMode)
+            _LOGGER.warning(f"{self.room} - CropSteering.ActiveMode was not set, defaulting to: {cropMode}")
+            
         mode = self._parse_mode(cropMode)
+        _LOGGER.warning(f"{self.room} - CropSteering parsed mode: {mode}")
 
-        if mode == CSMode.DISABLED or mode == CSMode.CONFIG:
-            _LOGGER.debug(f"{self.room} - CropSteering {mode.value}")
+        if mode == CSMode.DISABLED:
+            _LOGGER.warning(f"{self.room} - CropSteering is DISABLED, stopping all operations")
+            await self.stop_all_operations()
             return
+            
+        if mode == CSMode.CONFIG:
+            _LOGGER.warning(f"{self.room} - CropSteering in CONFIG mode, waiting for configuration")
+            return
+
+        # Sync medium type before getting sensor data
+        if not self.isInitialized:
+            await self._sync_medium_type()
+            self.isInitialized = True
 
         # Get sensor data
         sensor_data = await self._get_sensor_averages()
         if not sensor_data:
+            _LOGGER.warning(f"{self.room} - CropSteering: No sensor data available! Check workData.moisture and workData.ec")
             await self._log_missing_sensors()
             return
 
@@ -402,6 +450,8 @@ class OGBCSManager:
 
     def _parse_mode(self, cropMode: str) -> CSMode:
         """Parse mode string to enum"""
+        if not cropMode:
+            return CSMode.DISABLED
         if "Automatic" in cropMode:
             return CSMode.AUTOMATIC
         elif "Disabled" in cropMode:

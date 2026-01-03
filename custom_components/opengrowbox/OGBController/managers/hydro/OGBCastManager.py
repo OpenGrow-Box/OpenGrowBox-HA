@@ -228,7 +228,9 @@ class OGBCastManager:
             intervall = None
             duration = None
 
-        if intervall is None or duration is None or intervall <= 0 or duration <= 0:
+        # Note: Crop-Steering and Plant-Watering have their own timing, so don't require intervall/duration
+        hydro_timing_required = mode in ("Hydro", "OFF")
+        if hydro_timing_required and (intervall is None or duration is None or intervall <= 0 or duration <= 0):
             _LOGGER.error(f"❌ {self.room} HYDRO NOT CONFIGURED: Intervall={intervall_raw}, Duration={duration_raw}")
             _LOGGER.error(f"💡 {self.room} Set values via: number.ogb_hydropumpintervall_{self.room.lower()} and number.ogb_hydropumpduration_{self.room.lower()}")
             return
