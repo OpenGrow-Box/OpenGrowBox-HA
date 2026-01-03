@@ -456,14 +456,20 @@ class OGBCSManager:
                 _LOGGER.debug(f"{self.room} - VWC conversion error: {e}")
                 continue
 
-        # EC sensors
+        # EC sensors - with automatic µS/cm to mS/cm conversion
         ecs = self.data_store.getDeep("workData.ec") or []
         for item in ecs:
             raw = item.get("value")
             if raw is None:
                 continue
             try:
-                bulk_ec_values.append(float(raw))
+                ec_val = float(raw)
+                # Auto-detect unit: values > 20 are likely in µS/cm, convert to mS/cm
+                # Typical EC range: 0.5 - 4.0 mS/cm (500 - 4000 µS/cm)
+                if ec_val > 20:
+                    ec_val = ec_val / 1000  # Convert µS/cm to mS/cm
+                    _LOGGER.debug(f"{self.room} - EC auto-converted from µS to mS: {raw} -> {ec_val}")
+                bulk_ec_values.append(ec_val)
             except (ValueError, TypeError):
                 continue
 
