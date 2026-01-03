@@ -383,6 +383,17 @@ class OGBConf:
         }
     )
 
+    # Premium subscription data (from API login)
+    # Contains: plan_name, features, limits, usage
+    subscriptionData: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "plan_name": "free",
+            "features": {},
+            "limits": {},
+            "usage": {},
+        }
+    )
+
     weather: Dict[str, Any] = field(
         default_factory=lambda: {
             "temperature": None,

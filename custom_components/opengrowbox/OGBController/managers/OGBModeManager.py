@@ -224,15 +224,63 @@ class OGBModeManager:
 
     ## Premium Handle
     async def handle_premium_modes(self, data):
-
+        """
+        Handle premium controller modes (PID, MPC, AI).
+        
+        Checks feature flags from subscription_data before executing.
+        Feature access is determined by:
+        1. Kill switch (global disable)
+        2. Tenant override (admin dashboard)
+        3. Subscription plan features (from API)
+        """
         if data == False:
             return
+            
         controllerType = data.get("controllerType")
+        if not controllerType:
+            return
+            
+        # Get subscription data to check feature access
+        # subscription_data is stored in datastore after login
+        subscription_data = self.data_store.get("subscriptionData") or {}
+        features = subscription_data.get("features", {})
+        
+        # Map controller types to their feature keys (API uses camelCase)
+        controller_feature_map = {
+            "PID": "pidControllers",
+            "MPC": "mcpControllers",
+            "AI": "aiControllers",
+        }
+        
+        feature_key = controller_feature_map.get(controllerType)
+        if not feature_key:
+            _LOGGER.warning(f"{self.room}: Unknown controller type: {controllerType}")
+            return
+        
+        # Check if feature is enabled in subscription
+        feature_enabled = features.get(feature_key, False)
+        
+        if not feature_enabled:
+            _LOGGER.warning(
+                f"{self.room}: {controllerType} controller requested but feature '{feature_key}' "
+                f"is not enabled in subscription (plan features: {list(features.keys())})"
+            )
+            # Emit event for UI notification
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Warning": f"{controllerType} controller not available in your subscription",
+                "Feature": feature_key,
+                "Enabled": False
+            }, haEvent=True)
+            return
+        
+        _LOGGER.info(f"{self.room}: Executing {controllerType} controller (feature '{feature_key}' enabled)")
+        
         if controllerType == "PID":
             await self.event_manager.emit("PIDActions", data)
-        if controllerType == "MPC":
+        elif controllerType == "MPC":
             await self.event_manager.emit("MPCActions", data)
-        if controllerType == "AI":
+        elif controllerType == "AI":
             # Only emit DataRelease for Premium users
             mainControl = self.data_store.get("mainControl")
             if mainControl == "Premium":

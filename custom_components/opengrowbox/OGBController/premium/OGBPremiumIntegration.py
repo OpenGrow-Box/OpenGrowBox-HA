@@ -31,6 +31,7 @@ from ..utils.Premium.SecureWebSocketClient import OGBWebSocketConManager
 from .analytics.OGBPremAnalytics import OGBPremAnalytics
 from .analytics.OGBPremCompliance import OGBPremCompliance
 from .analytics.OGBPremResearch import OGBPremResearch
+from .features.OGBPremFeatureManager import OGBFeatureManager
 from .growplans.OGBGrowPlanManager import OGBGrowPlanManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +87,9 @@ class OGBPremiumIntegration:
 
         # Premium sensors registry
         self._premium_sensors = {}
+
+        # Feature manager for subscription-based feature access control
+        self.feature_manager: Optional[OGBFeatureManager] = None
 
         # Initialize WebSocket client - use shared client if available
         self.ogb_ws = None
@@ -300,6 +304,18 @@ class OGBPremiumIntegration:
             if self.ogb_ws:
                 self.ogb_ws.subscription_data = self.subscription_data
 
+            # Update datastore for feature checks by other managers (ModeManager, etc.)
+            self.data_store.set("subscriptionData", self.subscription_data)
+            
+            # Update feature manager with new feature flag
+            if self.feature_manager:
+                self.feature_manager.update_override(feature_key, enabled)
+            else:
+                self._update_feature_manager()
+            
+            # Refresh premium controls (add/remove modes based on new features)
+            await self._managePremiumControls()
+
             # Fire HA event for UI notification
             self.hass.bus.async_fire("ogb_premium_feature_updated", {
                 "room": self.room,
@@ -326,9 +342,18 @@ class OGBPremiumIntegration:
             if self.subscription_data and "features" in self.subscription_data:
                 self.subscription_data["features"][feature_key] = False
 
+            # Update datastore for feature checks by other managers
+            self.data_store.set("subscriptionData", self.subscription_data)
+
             # Update WebSocket client
             if self.ogb_ws:
                 self.ogb_ws.subscription_data = self.subscription_data
+            
+            # Update feature manager with kill switch
+            if self.feature_manager:
+                self.feature_manager.update_override(feature_key, False)
+            else:
+                self._update_feature_manager()
 
             # Fire HA alert event
             self.hass.bus.async_fire("ogb_premium_alert", {
@@ -345,12 +370,15 @@ class OGBPremiumIntegration:
             if feature_key == "ai_controllers" and current_mode == "AI Control":
                 _LOGGER.warning(f"⚠️ {self.room} Switching from AI Control to VPD Perfection (kill switch)")
                 await self._change_ctrl_values(tentmode="VPD Perfection")
-            elif feature_key == "pid_control" and current_mode == "PID Control":
+            elif feature_key == "pid_controllers" and current_mode == "PID Control":
                 _LOGGER.warning(f"⚠️ {self.room} Switching from PID Control to VPD Perfection (kill switch)")
                 await self._change_ctrl_values(tentmode="VPD Perfection")
-            elif feature_key == "mpc_optimization" and current_mode == "MPC Control":
+            elif feature_key == "mpc_controllers" and current_mode == "MPC Control":
                 _LOGGER.warning(f"⚠️ {self.room} Switching from MPC Control to VPD Perfection (kill switch)")
                 await self._change_ctrl_values(tentmode="VPD Perfection")
+            
+            # Refresh premium controls to remove disabled mode from UI
+            await self._managePremiumControls()
 
             # Save state
             await self._save_request(True)
@@ -389,6 +417,9 @@ class OGBPremiumIntegration:
 
             # Update local premium status
             self.is_premium = new_plan not in ["free", "trial"]
+            
+            # Update feature manager with new subscription data
+            self._update_feature_manager()
 
             # Fire HA event
             self.hass.bus.async_fire("ogb_premium_subscription_changed", {
@@ -400,7 +431,7 @@ class OGBPremiumIntegration:
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
-            # Update UI controls based on new plan
+            # Update UI controls based on new plan features
             await self._managePremiumControls()
 
             # Save state
@@ -567,6 +598,10 @@ class OGBPremiumIntegration:
         self.ogb_login_email = state_data.get("ogb_login_email", None)
         self.is_premium_selected = state_data.get("is_premium_selected", False)
         self.is_primary_auth_room = is_primary_auth_room
+
+        # Initialize feature manager with restored subscription data
+        if self.subscription_data:
+            self._update_feature_manager()
 
         # GrowPlan manager
         if self.growPlanManager:
@@ -961,6 +996,13 @@ class OGBPremiumIntegration:
                 # CRITICAL: Add full subscription_data to auth_data for frontend
                 auth_data['subscription_data'] = self.subscription_data
                 auth_data['is_premium'] = self.is_premium
+                
+                # Store subscription_data in datastore for feature checks by other managers
+                self.data_store.set("subscriptionData", self.subscription_data)
+                _LOGGER.debug(f"📦 {self.room} Stored subscription_data in datastore for feature checks")
+                
+                # Initialize/update feature manager with subscription data
+                self._update_feature_manager()
                 
                 sub_keys = list(self.subscription_data.keys()) if self.subscription_data else []
                 _LOGGER.info(f"📤 {self.room} Sending LoginSuccess with subscription data: {sub_keys}")
@@ -1863,45 +1905,172 @@ class OGBPremiumIntegration:
             import traceback
             _LOGGER.error(f"❌ {self.room} Error saving state: {e}\n{traceback.format_exc()}")
 
+    def _update_feature_manager(self):
+        """Initialize or update the feature manager with current subscription data."""
+        if self.subscription_data:
+            if self.feature_manager is None:
+                self.feature_manager = OGBFeatureManager(
+                    subscription_data=self.subscription_data,
+                    tenant_id=self.tenant_id,
+                    user_id=self.user_id,
+                    room=self.room,
+                    hass=self.hass,
+                    event_manager=self.event_manager,
+                )
+                _LOGGER.info(
+                    f"🔧 {self.room} Feature manager initialized "
+                    f"(plan: {self.feature_manager.plan_name})"
+                )
+            else:
+                self.feature_manager.update_subscription(self.subscription_data)
+                _LOGGER.debug(
+                    f"🔄 {self.room} Feature manager updated "
+                    f"(plan: {self.feature_manager.plan_name})"
+                )
+        else:
+            _LOGGER.debug(f"{self.room} No subscription data available for feature manager")
+
+    def _get_available_premium_modes(self) -> list:
+        """
+        Get list of premium tent modes available based on subscription features.
+        
+        Uses feature flags from subscription_data.features to determine which
+        premium control modes should be available to this user.
+        
+        Returns:
+            List of available premium mode names (e.g., ["PID Control", "MPC Control"])
+        """
+        available_modes = []
+        
+        # Ensure feature manager is up to date
+        self._update_feature_manager()
+        
+        if not self.feature_manager:
+            _LOGGER.debug(f"{self.room} No feature manager - no premium modes available")
+            return available_modes
+        
+        # Map feature keys to tent mode names
+        # API sends camelCase: pidControllers, mcpControllers, aiControllers
+        feature_to_mode = {
+            "pid_controllers": "PID Control",
+            "mpc_controllers": "MPC Control", 
+            "ai_controllers": "AI Control",
+        }
+        
+        for feature_key, mode_name in feature_to_mode.items():
+            if self.feature_manager.has_feature(feature_key):
+                available_modes.append(mode_name)
+                _LOGGER.debug(f"{self.room} Feature '{feature_key}' enabled -> mode '{mode_name}' available")
+            else:
+                _LOGGER.debug(f"{self.room} Feature '{feature_key}' disabled -> mode '{mode_name}' NOT available")
+        
+        _LOGGER.info(
+            f"🎮 {self.room} Available premium modes based on features: {available_modes} "
+            f"(plan: {self.feature_manager.plan_name})"
+        )
+        
+        return available_modes
+
     async def _managePremiumControls(self):
-        """Manage premium control options."""
+        """
+        Manage premium control options based on subscription feature flags.
+        
+        This method:
+        1. Gets available premium modes from feature flags (not hardcoded)
+        2. Adds/removes tent mode options based on user's subscription
+        3. Handles mode restoration after login
+        4. Falls back to safe mode if current mode becomes unavailable
+        """
         tent_control = f"select.ogb_tentmode_{self.room.lower()}"
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
-        ctrl_options = ["PID Control", "MPC Control", "AI Control"]
-        dry_options = []
+        # All possible premium modes (for removal when logged out)
+        all_premium_modes = ["PID Control", "MPC Control", "AI Control"]
+        
+        # Get available modes based on feature flags
+        available_modes = self._get_available_premium_modes()
+        
+        # Modes to remove (premium modes user doesn't have access to)
+        modes_to_remove = [m for m in all_premium_modes if m not in available_modes]
+        
+        dry_options = []  # Drying modes expansion (future use)
 
         current_tent_mode = self.data_store.get("tentMode")
-        invalid_modes = ["PID Control", "MPC Control", "AI Control"]
 
-        _LOGGER.debug(f"{self.room} PREM-MODE-CHECK: LAST:{self.lastTentMode} Current:{current_tent_mode}")
+        _LOGGER.debug(
+            f"{self.room} PREM-MODE-CHECK: "
+            f"LAST:{self.lastTentMode} Current:{current_tent_mode} "
+            f"Available:{available_modes} ToRemove:{modes_to_remove}"
+        )
 
+        # If not logged in, remove ALL premium modes
         if not self.is_logged_in:
-            if current_tent_mode in invalid_modes:
+            if current_tent_mode in all_premium_modes:
+                _LOGGER.info(f"{self.room} Not logged in, switching from '{current_tent_mode}' to 'VPD Perfection'")
                 await self.hass.services.async_call(
                     "select", "select_option",
                     {"entity_id": tent_control, "option": "VPD Perfection"},
                     blocking=True
                 )
-            for entity_id, options in [(tent_control, ctrl_options), (drying_modes, dry_options)]:
-                await self.hass.services.async_call(
-                    "opengrowbox", "remove_select_options",
-                    {"entity_id": entity_id, "options": options},
-                    blocking=True
-                )
+            # Remove all premium options
+            for entity_id, options in [(tent_control, all_premium_modes), (drying_modes, dry_options)]:
+                if options:
+                    await self.hass.services.async_call(
+                        "opengrowbox", "remove_select_options",
+                        {"entity_id": entity_id, "options": options},
+                        blocking=True
+                    )
             return
 
-        for entity_id, options in [(tent_control, ctrl_options), (drying_modes, dry_options)]:
+        # User is logged in - add available modes, remove unavailable ones
+        
+        # First, remove modes the user doesn't have access to
+        if modes_to_remove:
+            # If current mode is being removed, switch to safe mode first
+            if current_tent_mode in modes_to_remove:
+                _LOGGER.warning(
+                    f"{self.room} Current mode '{current_tent_mode}' not available in subscription, "
+                    f"switching to 'VPD Perfection'"
+                )
+                await self.hass.services.async_call(
+                    "select", "select_option",
+                    {"entity_id": tent_control, "option": "VPD Perfection"},
+                    blocking=True
+                )
+                current_tent_mode = "VPD Perfection"
+            
+            await self.hass.services.async_call(
+                "opengrowbox", "remove_select_options",
+                {"entity_id": tent_control, "options": modes_to_remove},
+                blocking=True
+            )
+        
+        # Then, add modes the user has access to
+        if available_modes:
             await self.hass.services.async_call(
                 "opengrowbox", "add_select_options",
-                {"entity_id": entity_id, "options": options},
+                {"entity_id": tent_control, "options": available_modes},
                 blocking=True
             )
 
-        if current_tent_mode in [None, "Disabled", "VPD Perfection"] and self.lastTentMode in invalid_modes:
+        # Handle drying modes (if any)
+        if dry_options:
+            await self.hass.services.async_call(
+                "opengrowbox", "add_select_options",
+                {"entity_id": drying_modes, "options": dry_options},
+                blocking=True
+            )
+
+        # Restore previous mode if applicable
+        if current_tent_mode in [None, "Disabled", "VPD Perfection"] and self.lastTentMode in available_modes:
+            # Only restore if the last mode is still available
             restore_mode = self.lastTentMode
-        else:
+        elif current_tent_mode in available_modes or current_tent_mode not in all_premium_modes:
+            # Keep current mode if it's available or not a premium mode
             restore_mode = current_tent_mode or "VPD Perfection"
+        else:
+            # Current mode is a premium mode that's no longer available
+            restore_mode = "VPD Perfection"
 
         _LOGGER.debug(f"{self.room} RESTORE-MODE: {restore_mode}")
         self.data_store.set("tentMode", restore_mode)
