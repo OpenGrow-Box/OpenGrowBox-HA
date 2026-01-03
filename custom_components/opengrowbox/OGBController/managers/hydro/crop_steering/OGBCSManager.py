@@ -56,7 +56,16 @@ class OGBCSManager:
         )
 
         # Default values for missing attributes (normally set by modular managers)
-        self._medium_adjustments = {}
+        # Medium-specific preset adjustments for CropSteering
+        self._medium_adjustments = {
+            "rockwool": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
+            "coco": {"vwc_offset": 3, "ec_offset": -0.1, "drainage_factor": 0.9},
+            "soil": {"vwc_offset": -5, "ec_offset": 0.2, "drainage_factor": 0.7},
+            "perlite": {"vwc_offset": -8, "ec_offset": 0.1, "drainage_factor": 1.2},
+            "aero": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
+            "water": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
+            "custom": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
+        }
         self.blockCheckIntervall = 300  # 5 minutes
         self.max_irrigation_attempts = 5
         self.stability_tolerance = 0.1
@@ -211,9 +220,10 @@ class OGBCSManager:
         """
         base_presets = self._get_base_presets()
 
-        # Get medium-specific adjustments
+        # Get medium-specific adjustments with safe fallback
+        default_adjustments = {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0}
         adjustments = self._medium_adjustments.get(
-            self.medium_type, self._medium_adjustments["rockwool"]
+            self.medium_type, self._medium_adjustments.get("rockwool", default_adjustments)
         )
 
         vwc_offset = adjustments["vwc_offset"]
