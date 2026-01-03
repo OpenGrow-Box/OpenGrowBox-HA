@@ -5,7 +5,13 @@ Spectrum lights allow control of individual color channels:
 - Blue light: Promotes vegetative growth, compact plants
 - Red light: Promotes flowering, stretching
 
-Timing behavior based on plant stage and time of day:
+Mode options:
+- Schedule: Time-based intensity profiles (morning/midday/evening)
+- Always On: ON at configured intensity whenever main lights are ON
+- Always Off: Disabled, never turns on automatically
+- Manual: Only responds to manual commands, no automatic control
+
+Timing behavior (Schedule mode only):
 - Morning: Higher blue ratio (wake up, photosynthesis)
 - Midday: Balanced spectrum
 - Evening: Higher red ratio (prepare for night, flowering signal)
@@ -24,8 +30,16 @@ from ..data.OGBDataClasses.OGBPublications import OGBLightAction
 _LOGGER = logging.getLogger(__name__)
 
 
+# Valid modes for Spectrum light control
+class SpectrumMode:
+    SCHEDULE = "Schedule"      # Time-based intensity profiles
+    ALWAYS_ON = "Always On"    # ON when main lights are ON
+    ALWAYS_OFF = "Always Off"  # Never on automatically
+    MANUAL = "Manual"          # Only manual control
+
+
 class LightSpectrum(Device):
-    """Spectrum light device (Blue or Red channel) with time-based intensity profiles."""
+    """Spectrum light device (Blue or Red channel) with configurable operation modes."""
 
     # Spectrum type constants
     SPECTRUM_BLUE = "blue"
@@ -58,6 +72,9 @@ class LightSpectrum(Device):
         # Determine spectrum type from device type
         self.spectrum_type = self._determine_spectrum_type(deviceType, deviceLabel)
         
+        # Mode setting
+        self.mode = SpectrumMode.SCHEDULE  # Default to schedule-based operation
+        
         # Intensity profiles (percent) - morning/midday/evening
         # These define the intensity at different parts of the light cycle
         if self.spectrum_type == self.SPECTRUM_BLUE:
@@ -71,10 +88,13 @@ class LightSpectrum(Device):
             self.midday_intensity = 60
             self.evening_intensity = 80
         
+        # Always On mode intensity
+        self.always_on_intensity = 100
+        
         # Current state
         self.current_intensity = 0
         self.is_spectrum_active = False
-        self.current_phase = None  # 'morning', 'midday', 'evening'
+        self.current_phase: Optional[str] = None  # 'morning', 'midday', 'evening', 'always_on'
         
         # Light schedule reference
         self.lightOnTime = None
@@ -123,6 +143,7 @@ class LightSpectrum(Device):
     def __repr__(self):
         return (
             f"LightSpectrum[{self.spectrum_type.upper()}]('{self.deviceName}' in {self.inRoom}) "
+            f"Mode:{self.mode} "
             f"Morning:{self.morning_intensity}% Midday:{self.midday_intensity}% Evening:{self.evening_intensity}% "
             f"CurrentPhase:{self.current_phase} CurrentIntensity:{self.current_intensity}% "
             f"Active:{self.is_spectrum_active} Running:{self.isRunning}"
@@ -145,16 +166,20 @@ class LightSpectrum(Device):
             # Get spectrum-specific settings
             spectrum_settings = self.data_store.getDeep(f"specialLights.spectrum.{self.spectrum_type}") or {}
             
+            self.mode = spectrum_settings.get("mode", SpectrumMode.SCHEDULE)
             self.morning_intensity = spectrum_settings.get("morningIntensity", self.morning_intensity)
             self.midday_intensity = spectrum_settings.get("middayIntensity", self.midday_intensity)
             self.evening_intensity = spectrum_settings.get("eveningIntensity", self.evening_intensity)
+            self.always_on_intensity = spectrum_settings.get("alwaysOnIntensity", 100)
             self.smooth_transitions = spectrum_settings.get("smoothTransitions", True)
             
-            # Adjust based on plant stage
-            self._adjust_for_plant_stage()
+            # Adjust based on plant stage (only in Schedule mode)
+            if self.mode == SpectrumMode.SCHEDULE:
+                self._adjust_for_plant_stage()
             
             _LOGGER.info(
                 f"{self.deviceName}: {self.spectrum_type.upper()} spectrum settings loaded - "
+                f"Mode: {self.mode}, "
                 f"Morning: {self.morning_intensity}%, Midday: {self.midday_intensity}%, "
                 f"Evening: {self.evening_intensity}%"
             )
@@ -163,7 +188,7 @@ class LightSpectrum(Device):
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
 
     def _adjust_for_plant_stage(self):
-        """Adjust intensity profiles based on current plant stage."""
+        """Adjust intensity profiles based on current plant stage (Schedule mode only)."""
         plant_stage = self.data_store.get("plantStage") or ""
         plant_stage_lower = plant_stage.lower()
         
@@ -198,17 +223,49 @@ class LightSpectrum(Device):
         """Main scheduling loop - checks and adjusts intensity."""
         while True:
             try:
-                await self._update_intensity()
+                await self._check_activation_conditions()
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Schedule loop error: {e}")
                 import traceback
                 _LOGGER.error(traceback.format_exc())
             
-            # Check more frequently for smoother transitions
-            await asyncio.sleep(60 if self.smooth_transitions else 300)
+            # Check more frequently for smoother transitions in Schedule mode
+            if self.mode == SpectrumMode.SCHEDULE and self.smooth_transitions:
+                await asyncio.sleep(60)
+            else:
+                await asyncio.sleep(30)
 
-    async def _update_intensity(self):
-        """Update spectrum intensity based on current time within light cycle."""
+    async def _check_activation_conditions(self):
+        """Check if spectrum should be ON or OFF based on current mode."""
+        
+        # Mode: Always Off - never activate automatically
+        if self.mode == SpectrumMode.ALWAYS_OFF:
+            if self.is_spectrum_active:
+                await self._deactivate_spectrum("Always Off mode")
+            return
+        
+        # Mode: Manual - don't do anything automatic
+        if self.mode == SpectrumMode.MANUAL:
+            return
+        
+        # Mode: Always On - ON at fixed intensity whenever main lights are ON
+        if self.mode == SpectrumMode.ALWAYS_ON:
+            if self.islightON:
+                if not self.is_spectrum_active:
+                    await self._activate_spectrum(self.always_on_intensity, 'always_on')
+                elif self.current_intensity != self.always_on_intensity:
+                    await self._adjust_intensity(self.always_on_intensity, 'always_on')
+            else:
+                if self.is_spectrum_active:
+                    await self._deactivate_spectrum("Main lights off")
+            return
+        
+        # Mode: Schedule - time-based intensity profiles
+        if self.mode == SpectrumMode.SCHEDULE:
+            await self._update_schedule_intensity()
+
+    async def _update_schedule_intensity(self):
+        """Update spectrum intensity based on current time within light cycle (Schedule mode)."""
         if not self.lightOnTime or not self.lightOffTime:
             return
             
@@ -251,7 +308,7 @@ class LightSpectrum(Device):
         elif self.current_intensity != target_intensity or self.current_phase != phase:
             await self._adjust_intensity(target_intensity, phase)
 
-    def _calculate_target_intensity(self, cycle_position: float) -> tuple[int, str]:
+    def _calculate_target_intensity(self, cycle_position: float) -> tuple:
         """
         Calculate target intensity based on position in light cycle.
         
@@ -307,13 +364,15 @@ class LightSpectrum(Device):
         self.current_intensity = intensity
         self.current_phase = phase
         
-        _LOGGER.info(
-            f"{self.deviceName}: Activating {self.spectrum_type.upper()} spectrum - "
-            f"Phase: {phase}, Intensity: {intensity}%"
-        )
+        # Create descriptive message based on phase
+        if phase == 'always_on':
+            message = f"{self.spectrum_type.upper()} spectrum activated (Always On mode, {intensity}%)"
+        else:
+            message = f"{self.spectrum_type.upper()} spectrum activated ({phase} phase, {intensity}%)"
+        
+        _LOGGER.info(f"{self.deviceName}: {message}")
         
         # Create action log
-        message = f"{self.spectrum_type.upper()} spectrum activated ({phase} phase, {intensity}%)"
         lightAction = OGBLightAction(
             Name=self.inRoom,
             Device=self.deviceName,
@@ -353,6 +412,7 @@ class LightSpectrum(Device):
         if not self.is_spectrum_active:
             return
             
+        previous_phase = self.current_phase
         self.is_spectrum_active = False
         self.current_intensity = 0
         self.current_phase = None
@@ -386,35 +446,86 @@ class LightSpectrum(Device):
         """Handle main light toggle events."""
         self.islightON = lightState
         
-        if not lightState and self.is_spectrum_active:
-            await self._deactivate_spectrum("Main lights off")
+        if not lightState:
+            # Main lights going off - deactivate if active
+            if self.is_spectrum_active:
+                await self._deactivate_spectrum("Main lights off")
+        elif self.mode == SpectrumMode.ALWAYS_ON:
+            # Main lights coming on and we're in Always On mode - activate
+            if not self.is_spectrum_active:
+                await self._activate_spectrum(self.always_on_intensity, 'always_on')
         
         _LOGGER.debug(f"{self.deviceName}: Main light toggled to {lightState}")
 
     async def _on_plant_stage_change(self, data):
-        """Handle plant stage changes - adjust spectrum profile."""
-        _LOGGER.info(f"{self.deviceName}: Plant stage changed, adjusting spectrum profile")
-        self._load_settings()
+        """Handle plant stage changes - adjust spectrum profile (Schedule mode only)."""
+        if self.mode == SpectrumMode.SCHEDULE:
+            _LOGGER.info(f"{self.deviceName}: Plant stage changed, adjusting spectrum profile")
+            self._load_settings()
 
     async def _on_settings_update(self, data):
-        """Handle spectrum settings updates."""
-        if data.get("spectrum") != self.spectrum_type and data.get("device") != self.deviceName:
+        """Handle spectrum settings updates from UI."""
+        # Check if this update is for our spectrum type
+        spectrum_data = data.get(self.spectrum_type, data)
+        if data.get("spectrum") and data.get("spectrum") != self.spectrum_type:
+            return
+        if data.get("device") and data.get("device") != self.deviceName:
             return
             
-        if "morningIntensity" in data:
-            self.morning_intensity = data["morningIntensity"]
-        if "middayIntensity" in data:
-            self.midday_intensity = data["middayIntensity"]
-        if "eveningIntensity" in data:
-            self.evening_intensity = data["eveningIntensity"]
-        if "smoothTransitions" in data:
-            self.smooth_transitions = data["smoothTransitions"]
+        settings_changed = False
+        
+        # Update mode
+        if "mode" in spectrum_data:
+            old_mode = self.mode
+            self.mode = spectrum_data["mode"]
+            if old_mode != self.mode:
+                settings_changed = True
+                _LOGGER.info(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
                 
-        _LOGGER.info(
-            f"{self.deviceName}: Settings updated - "
-            f"Morning: {self.morning_intensity}%, Midday: {self.midday_intensity}%, "
-            f"Evening: {self.evening_intensity}%"
-        )
+                # Handle mode transitions
+                if self.mode == SpectrumMode.ALWAYS_OFF:
+                    # Switching to Always Off - deactivate immediately
+                    if self.is_spectrum_active:
+                        await self._deactivate_spectrum("Mode changed to Always Off")
+                elif self.mode == SpectrumMode.ALWAYS_ON and self.islightON:
+                    # Switching to Always On while lights are on - activate
+                    await self._activate_spectrum(self.always_on_intensity, 'always_on')
+                elif self.mode == SpectrumMode.SCHEDULE and self.islightON:
+                    # Switching to Schedule - update intensity immediately
+                    await self._update_schedule_intensity()
+        
+        # Update enabled state
+        if "enabled" in spectrum_data:
+            enabled = spectrum_data["enabled"]
+            if not enabled:
+                # Disabled - deactivate if active
+                if self.is_spectrum_active:
+                    await self._deactivate_spectrum("Disabled")
+        
+        # Update intensity settings
+        if "morningIntensity" in spectrum_data or "morningBoostPercent" in spectrum_data:
+            self.morning_intensity = spectrum_data.get("morningIntensity", spectrum_data.get("morningBoostPercent", self.morning_intensity))
+            settings_changed = True
+        if "middayIntensity" in spectrum_data:
+            self.midday_intensity = spectrum_data["middayIntensity"]
+            settings_changed = True
+        if "eveningIntensity" in spectrum_data or "eveningReducePercent" in spectrum_data or "eveningBoostPercent" in spectrum_data:
+            self.evening_intensity = spectrum_data.get("eveningIntensity", spectrum_data.get("eveningReducePercent", spectrum_data.get("eveningBoostPercent", self.evening_intensity)))
+            settings_changed = True
+        if "alwaysOnIntensity" in spectrum_data:
+            self.always_on_intensity = spectrum_data["alwaysOnIntensity"]
+            settings_changed = True
+        if "smoothTransitions" in spectrum_data:
+            self.smooth_transitions = spectrum_data["smoothTransitions"]
+            settings_changed = True
+                
+        if settings_changed:
+            _LOGGER.info(
+                f"{self.deviceName}: Settings updated - "
+                f"Mode: {self.mode}, "
+                f"Morning: {self.morning_intensity}%, Midday: {self.midday_intensity}%, "
+                f"Evening: {self.evening_intensity}%, AlwaysOn: {self.always_on_intensity}%"
+            )
 
     def get_status(self) -> dict:
         """Get current spectrum light status."""
@@ -422,6 +533,7 @@ class LightSpectrum(Device):
             "device_name": self.deviceName,
             "device_type": f"Light{self.spectrum_type.capitalize()}",
             "spectrum_type": self.spectrum_type,
+            "mode": self.mode,
             "is_active": self.is_spectrum_active,
             "is_running": self.isRunning,
             "current_intensity": self.current_intensity,
@@ -429,6 +541,7 @@ class LightSpectrum(Device):
             "morning_intensity": self.morning_intensity,
             "midday_intensity": self.midday_intensity,
             "evening_intensity": self.evening_intensity,
+            "always_on_intensity": self.always_on_intensity,
             "smooth_transitions": self.smooth_transitions,
             "light_on_time": str(self.lightOnTime) if self.lightOnTime else None,
             "light_off_time": str(self.lightOffTime) if self.lightOffTime else None,

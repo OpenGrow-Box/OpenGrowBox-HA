@@ -168,12 +168,14 @@ class OGBConfigurationManager:
             
             # Special Lights - Far Red
             f"ogb_light_farred_enabled_{self.room.lower()}": self._update_farred_enabled,
+            f"ogb_light_farred_mode_{self.room.lower()}": self._update_farred_mode,
             f"ogb_light_farred_start_duration_{self.room.lower()}": self._update_farred_start_duration,
             f"ogb_light_farred_end_duration_{self.room.lower()}": self._update_farred_end_duration,
             f"ogb_light_farred_intensity_{self.room.lower()}": self._update_farred_intensity,
             
             # Special Lights - UV
             f"ogb_light_uv_enabled_{self.room.lower()}": self._update_uv_enabled,
+            f"ogb_light_uv_mode_{self.room.lower()}": self._update_uv_mode,
             f"ogb_light_uv_delay_start_{self.room.lower()}": self._update_uv_delay_start,
             f"ogb_light_uv_stop_before_end_{self.room.lower()}": self._update_uv_stop_before_end,
             f"ogb_light_uv_max_duration_{self.room.lower()}": self._update_uv_max_duration,
@@ -181,12 +183,14 @@ class OGBConfigurationManager:
             
             # Special Lights - Spectrum (Blue)
             f"ogb_light_blue_enabled_{self.room.lower()}": self._update_blue_enabled,
+            f"ogb_light_blue_mode_{self.room.lower()}": self._update_blue_mode,
             f"ogb_light_blue_morning_boost_{self.room.lower()}": self._update_blue_morning_boost,
             f"ogb_light_blue_evening_reduce_{self.room.lower()}": self._update_blue_evening_reduce,
             f"ogb_light_blue_transition_{self.room.lower()}": self._update_blue_transition,
             
             # Special Lights - Spectrum (Red)
             f"ogb_light_red_enabled_{self.room.lower()}": self._update_red_enabled,
+            f"ogb_light_red_mode_{self.room.lower()}": self._update_red_mode,
             f"ogb_light_red_morning_reduce_{self.room.lower()}": self._update_red_morning_reduce,
             f"ogb_light_red_evening_boost_{self.room.lower()}": self._update_red_evening_boost,
             f"ogb_light_red_transition_{self.room.lower()}": self._update_red_transition,
@@ -1268,6 +1272,19 @@ class OGBConfigurationManager:
             await self.event_manager.emit("FarRedSettingsUpdate", {"enabled": value})
             _LOGGER.info(f"{self.room}: Far Red enabled = {value}")
 
+    async def _update_farred_mode(self, data):
+        """Update Far Red light mode (Schedule, Always On, Always Off, Manual)."""
+        value = data.newState[0]
+        valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
+        if value not in valid_modes:
+            _LOGGER.warning(f"{self.room}: Invalid Far Red mode '{value}', ignoring")
+            return
+        current = self.data_store.getDeep("specialLights.farRed.mode")
+        if current != value:
+            self.data_store.setDeep("specialLights.farRed.mode", value)
+            await self.event_manager.emit("FarRedSettingsUpdate", {"mode": value})
+            _LOGGER.info(f"{self.room}: Far Red mode = {value}")
+
     async def _update_farred_start_duration(self, data):
         """Update Far Red start duration (minutes at start of light cycle)."""
         value = int(float(data.newState[0]))
@@ -1305,6 +1322,19 @@ class OGBConfigurationManager:
             self.data_store.setDeep("specialLights.uv.enabled", value)
             await self.event_manager.emit("UVSettingsUpdate", {"enabled": value})
             _LOGGER.info(f"{self.room}: UV enabled = {value}")
+
+    async def _update_uv_mode(self, data):
+        """Update UV light mode (Schedule, Always On, Always Off, Manual)."""
+        value = data.newState[0]
+        valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
+        if value not in valid_modes:
+            _LOGGER.warning(f"{self.room}: Invalid UV mode '{value}', ignoring")
+            return
+        current = self.data_store.getDeep("specialLights.uv.mode")
+        if current != value:
+            self.data_store.setDeep("specialLights.uv.mode", value)
+            await self.event_manager.emit("UVSettingsUpdate", {"mode": value})
+            _LOGGER.info(f"{self.room}: UV mode = {value}")
 
     async def _update_uv_delay_start(self, data):
         """Update UV delay after light start (minutes)."""
