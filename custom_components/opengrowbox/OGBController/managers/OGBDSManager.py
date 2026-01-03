@@ -102,14 +102,28 @@ class OGBDSManager:
         """Speichert den vollständigen aktuellen State."""
         try:
             state = self.data_store.getFullState()
-            _LOGGER.debug(
-                f"✅ DataStore TO BE saved with Data {type(state)} items: {len(str(state))}"
-            )
+            
+            # Log key sizes for debugging unbounded growth
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                for key, value in state.items():
+                    try:
+                        key_size = len(json.dumps(value, default=str))
+                        if key_size > 5000:  # Log keys larger than 5KB
+                            _LOGGER.debug(f"[{self.room}] State key '{key}' size: {key_size} bytes")
+                    except:
+                        pass
 
             # Teste JSON-Serialisierung vor dem Speichern
             try:
                 json_string = json.dumps(state, indent=2, default=str)
-                _LOGGER.debug(f"JSON serialization test successful")
+                json_size_kb = len(json_string) / 1024
+                
+                # Warn if state file is getting large (> 50KB)
+                if json_size_kb > 50:
+                    _LOGGER.warning(f"[{self.room}] ⚠️ State file size: {json_size_kb:.1f}KB - consider cleanup")
+                else:
+                    _LOGGER.debug(f"[{self.room}] State file size: {json_size_kb:.1f}KB")
+                    
             except Exception as json_error:
                 _LOGGER.error(f"❌ JSON serialization failed: {json_error}")
                 simplified_state = self._create_simplified_state(state)
