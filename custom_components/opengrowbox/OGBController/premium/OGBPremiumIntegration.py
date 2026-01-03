@@ -276,6 +276,9 @@ class OGBPremiumIntegration:
         # API Usage updates from WebSocket - CRITICAL for browser refresh to show current values
         self.event_manager.on("api_usage_update", self._on_api_usage_update)
 
+        # Grow completion events - send harvest data to Premium API
+        self.event_manager.on("GrowCompleted", self._on_grow_completed)
+
         # Cross-room authentication
         self.hass.bus.async_listen("isAuthenticated", self._handle_authenticated)
 
@@ -476,6 +479,95 @@ class OGBPremiumIntegration:
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} API usage update error: {e}")
+
+    async def _on_grow_completed(self, data):
+        """
+        Handle grow completion events from MediumManager.
+        
+        Sends harvest/completion data to Premium API for:
+        - Harvest history tracking
+        - Analytics and insights
+        - Compliance records (if enabled)
+        
+        Args:
+            data: Dict containing harvest data:
+                - room: Room name
+                - medium_index: Index of the medium
+                - medium_name: Name of the medium
+                - plant_name: Name of the plant
+                - breeder_name: Strain/breeder name
+                - grow_start_date: ISO date string
+                - bloom_switch_date: ISO date string  
+                - harvest_date: ISO date string
+                - total_days: Total grow days
+                - bloom_days: Days in bloom
+                - final_readings: Final sensor values
+                - notes: Optional harvest notes
+        """
+        try:
+            # Only process for this room
+            if data.get("room") != self.room:
+                return
+            
+            _LOGGER.info(f"🏁 {self.room} Grow completed event received")
+            
+            # Only send to API if logged in and premium
+            if not self.is_logged_in or not self.ogb_ws:
+                _LOGGER.debug(f"📊 {self.room} Not logged in to Premium, skipping API submission")
+                return
+            
+            # Prepare harvest data for API
+            harvest_payload = {
+                "event_type": "grow_completed",
+                "room_id": self.room_id,
+                "room_name": self.room,
+                "tenant_id": self.tenant_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                # Grow details
+                "medium_index": data.get("medium_index"),
+                "medium_name": data.get("medium_name"),
+                "medium_type": data.get("medium_type"),
+                # Plant details
+                "plant_name": data.get("plant_name"),
+                "breeder_name": data.get("breeder_name"),
+                "plant_type": data.get("plant_type"),
+                # Dates
+                "grow_start_date": data.get("grow_start_date"),
+                "bloom_switch_date": data.get("bloom_switch_date"),
+                "harvest_date": data.get("harvest_date"),
+                # Duration
+                "total_days": data.get("total_days"),
+                "bloom_days": data.get("bloom_days"),
+                "breeder_bloom_days": data.get("breeder_bloom_days"),
+                # Final readings
+                "final_readings": data.get("final_readings"),
+                # Notes
+                "notes": data.get("notes"),
+            }
+            
+            _LOGGER.info(f"📤 {self.room} Sending grow completion to Premium API: {harvest_payload.get('plant_name')}")
+            
+            # Send to Premium API via WebSocket
+            try:
+                success = await self.ogb_ws.send_encrypted_message("grow-completed", harvest_payload)
+                if success:
+                    _LOGGER.info(f"✅ {self.room} Grow completion data sent to Premium API")
+                else:
+                    _LOGGER.warning(f"⚠️ {self.room} Failed to send grow completion to Premium API")
+            except Exception as ws_error:
+                _LOGGER.error(f"❌ {self.room} WebSocket error sending grow completion: {ws_error}")
+            
+            # Fire HA event for UI notification
+            self.hass.bus.async_fire("ogb_grow_completed", {
+                "room": self.room,
+                "plant_name": data.get("plant_name"),
+                "total_days": data.get("total_days"),
+                "bloom_days": data.get("bloom_days"),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Error handling grow completion: {e}", exc_info=True)
 
     async def _on_new_grow_plans(self, data):
         """Handle new grow plans received from Premium API."""
