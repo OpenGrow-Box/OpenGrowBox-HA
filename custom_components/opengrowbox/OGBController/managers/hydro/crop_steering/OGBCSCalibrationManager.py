@@ -56,19 +56,21 @@ class OGBCSCalibrationManager:
         Handle incoming VWC calibration commands.
 
         Args:
-            command_data: Calibration command data
+            command_data: Calibration command data with 'action' or 'command' key
         """
-        command = command_data.get("command", "").lower()
+        # Support both 'action' and 'command' keys for flexibility
+        action = command_data.get("action") or command_data.get("command", "")
+        action = action.lower() if action else ""
         phase = command_data.get("phase", "p1")
 
-        if command == "start_max":
+        if action == "start_max":
             await self.start_vwc_max_calibration(phase)
-        elif command == "start_min":
+        elif action == "start_min":
             await self.start_vwc_min_calibration(phase)
-        elif command == "stop":
+        elif action == "stop":
             await self.stop_vwc_calibration()
         else:
-            _LOGGER.warning(f"{self.room} - Unknown calibration command: {command}")
+            _LOGGER.warning(f"{self.room} - Unknown calibration action: {action}")
 
     async def start_vwc_max_calibration(self, phase: str = "p1"):
         """
@@ -155,6 +157,13 @@ class OGBCSCalibrationManager:
                 self.data_store.setDeep(
                     f"CropSteering.Calibration.{phase}.VWCMax", max_vwc
                 )
+                self.data_store.setDeep(
+                    f"CropSteering.Calibration.{phase}.timestamp",
+                    datetime.now().isoformat()
+                )
+                
+                # Persist calibration to disk
+                await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
 
                 await self.event_manager.emit(
                     "LogForClient",
@@ -245,6 +254,13 @@ class OGBCSCalibrationManager:
                 self.data_store.setDeep(
                     f"CropSteering.Calibration.{phase}.VWCMin", min_vwc
                 )
+                self.data_store.setDeep(
+                    f"CropSteering.Calibration.{phase}.timestamp",
+                    datetime.now().isoformat()
+                )
+                
+                # Persist calibration to disk
+                await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
 
                 await self.event_manager.emit(
                     "LogForClient",

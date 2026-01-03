@@ -191,6 +191,104 @@ VPD (Vapor Pressure Deficit) calibration requires accurate temperature and humid
        base_sensor_accuracy_verified: true
    ```
 
+### VWC (Volumetric Water Content) Sensor Calibration
+
+VWC sensors are used by the CropSteering system for precision irrigation. Proper calibration ensures accurate watering.
+
+#### VWC Calibration Types
+
+| Calibration | Purpose | When to Use |
+|-------------|---------|-------------|
+| **VWC Max** | Find saturation point | New medium, changed medium type |
+| **VWC Min** | Find safe minimum | After VWC Max, or for dryback tuning |
+
+#### Console Commands for VWC Calibration
+
+```bash
+# Check current calibration status
+cs_status
+
+# Start VWC Maximum calibration (saturation point)
+cs_calibrate max
+cs_calibrate max p1    # For specific phase
+
+# Start VWC Minimum calibration (dryback monitoring)
+cs_calibrate min
+cs_calibrate min p2    # For specific phase
+
+# Stop running calibration
+cs_calibrate stop
+```
+
+#### VWC Max Calibration Procedure
+
+The system automatically calibrates VWCMax through progressive saturation:
+
+1. **Start Calibration**: Run `cs_calibrate max`
+2. **Progressive Irrigation**: System irrigates in cycles
+3. **Stabilization Check**: Waits for VWC to stabilize after each irrigation
+4. **Stagnation Detection**: When VWC stops increasing → saturation reached
+5. **Store Result**: VWCMax saved and persisted to disk
+
+```python
+# Calibration result stored in:
+CropSteering.Calibration.p1.VWCMax = 68.5    # Saturation point
+CropSteering.Calibration.p1.timestamp = "2026-01-03T14:30:00"
+```
+
+#### VWC Min Calibration Procedure
+
+VWCMin calibration monitors natural dryback:
+
+1. **Start Calibration**: Run `cs_calibrate min`
+2. **Dryback Monitoring**: System monitors VWC decrease over ~2 hours
+3. **Minimum Detection**: Tracks lowest VWC observed
+4. **Safety Buffer**: Applies 10% safety buffer above observed minimum
+5. **Store Result**: VWCMin saved and persisted to disk
+
+```python
+# Calibration result stored in:
+CropSteering.Calibration.p1.VWCMin = 32.1    # Safe minimum with buffer
+CropSteering.Calibration.p1.timestamp = "2026-01-03T16:30:00"
+```
+
+#### Auto-Calibration During P1 Phase
+
+The CropSteering system also performs automatic VWCMax calibration during the P1 (Saturation) phase. This happens when:
+- VWC stops increasing after irrigation (stagnation)
+- Maximum irrigation attempts reached
+
+This "passive" calibration updates VWCMax as part of normal operation.
+
+#### VWC Calibration Data Persistence
+
+**Important**: VWC calibration values are now persisted across HA restarts:
+
+```python
+# Storage structure
+CropSteering: {
+    "Calibration": {
+        "p1": {"VWCMax": 68.5, "VWCMin": 32.1, "timestamp": "..."},
+        "p2": {"VWCMax": null, "VWCMin": null, "timestamp": null},
+        "p3": {"VWCMax": null, "VWCMin": null, "timestamp": null},
+        "LastRun": "2026-01-03T14:30:00"
+    }
+}
+```
+
+#### Medium-Specific VWC Calibration
+
+Different growing mediums have different VWC characteristics:
+
+| Medium | Typical VWCMax | Typical VWCMin | Notes |
+|--------|----------------|----------------|-------|
+| Rockwool | 65-75% | 30-40% | Fast drainage |
+| Coco | 70-80% | 35-45% | Good retention |
+| Soil | 55-70% | 25-35% | Slow drainage |
+| Perlite | 50-65% | 20-30% | Very fast drainage |
+
+**Always calibrate for your specific medium** - these are just guidelines.
+
 ### CO2 Sensor Calibration
 
 CO2 sensors require periodic recalibration, especially in grow environments.
