@@ -1383,6 +1383,19 @@ class OGBConfigurationManager:
             await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"enabled": value}})
             _LOGGER.info(f"{self.room}: Blue spectrum enabled = {value}")
 
+    async def _update_blue_mode(self, data):
+        """Update Blue spectrum light mode (Schedule, Always On, Always Off, Manual)."""
+        value = data.newState[0]
+        valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
+        if value not in valid_modes:
+            _LOGGER.warning(f"{self.room}: Invalid Blue mode '{value}', ignoring")
+            return
+        current = self.data_store.getDeep("specialLights.spectrum.blue.mode")
+        if current != value:
+            self.data_store.setDeep("specialLights.spectrum.blue.mode", value)
+            await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"mode": value}})
+            _LOGGER.info(f"{self.room}: Blue spectrum mode = {value}")
+
     async def _update_blue_morning_boost(self, data):
         """Update Blue morning boost percentage."""
         value = int(float(data.newState[0]))
@@ -1421,6 +1434,19 @@ class OGBConfigurationManager:
             self.data_store.setDeep("specialLights.spectrum.red.enabled", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"enabled": value}})
             _LOGGER.info(f"{self.room}: Red spectrum enabled = {value}")
+
+    async def _update_red_mode(self, data):
+        """Update Red spectrum light mode (Schedule, Always On, Always Off, Manual)."""
+        value = data.newState[0]
+        valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
+        if value not in valid_modes:
+            _LOGGER.warning(f"{self.room}: Invalid Red mode '{value}', ignoring")
+            return
+        current = self.data_store.getDeep("specialLights.spectrum.red.mode")
+        if current != value:
+            self.data_store.setDeep("specialLights.spectrum.red.mode", value)
+            await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"mode": value}})
+            _LOGGER.info(f"{self.room}: Red spectrum mode = {value}")
 
     async def _update_red_morning_reduce(self, data):
         """Update Red morning reduce percentage."""
