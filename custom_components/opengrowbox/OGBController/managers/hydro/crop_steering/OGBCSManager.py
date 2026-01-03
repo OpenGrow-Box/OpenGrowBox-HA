@@ -84,21 +84,43 @@ class OGBCSManager:
     # ==================== MEDIUM SYNC ====================
 
     async def _sync_medium_type(self):
-        """Sync medium type from medium manager or dataStore"""
+        """Sync medium type from medium manager or dataStore.
+        
+        Priority:
+        1. GrowMedium objects from growMediums list (authoritative source)
+        2. CropSteering.MediumType in dataStore (user override)
+        3. Default to rockwool
+        """
         try:
-            # Try to get from growMediums in dataStore
+            medium_found = False
+            
+            # Priority 1: Get from actual GrowMedium objects
             grow_mediums = self.data_store.get("growMediums") or []
             if grow_mediums and len(grow_mediums) > 0:
                 first_medium = grow_mediums[0]
                 if hasattr(first_medium, "medium_type"):
+                    # GrowMedium object - medium_type is MediumType enum
                     self.medium_type = first_medium.medium_type.value
+                    medium_found = True
+                    _LOGGER.info(f"{self.room} - Got medium type from GrowMedium: {self.medium_type}")
                 elif isinstance(first_medium, dict) and "type" in first_medium:
-                    self.medium_type = first_medium["type"]
+                    # Dict format (from persistence)
+                    self.medium_type = first_medium["type"].lower()
+                    medium_found = True
+                    _LOGGER.info(f"{self.room} - Got medium type from dict: {self.medium_type}")
 
-            # Fallback to dataStore CropSteering settings
-            stored_medium = self.data_store.getDeep("CropSteering.MediumType")
-            if stored_medium:
-                self.medium_type = stored_medium.lower()
+            # Priority 2: Fallback to dataStore CropSteering settings (only if no medium found)
+            if not medium_found:
+                stored_medium = self.data_store.getDeep("CropSteering.MediumType")
+                if stored_medium:
+                    self.medium_type = stored_medium.lower()
+                    medium_found = True
+                    _LOGGER.info(f"{self.room} - Got medium type from CropSteering.MediumType: {self.medium_type}")
+
+            # Priority 3: Default fallback
+            if not medium_found:
+                self.medium_type = "rockwool"
+                _LOGGER.warning(f"{self.room} - No medium found, defaulting to: {self.medium_type}")
 
         except Exception as e:
             _LOGGER.warning(f"{self.room} - Could not sync medium type: {e}")
@@ -628,6 +650,11 @@ class OGBCSManager:
     async def _automatic_cycle(self):
         """Automatic sensor-based cycle mit festen Presets"""
         try:
+            # IMPORTANT: Sync medium type FIRST before any preset calculations
+            if not self.isInitialized:
+                await self._sync_medium_type()
+                self.isInitialized = True
+            
             plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
             generative_week = self.data_store.getDeep("isPlantDay.generativeWeek")
 
