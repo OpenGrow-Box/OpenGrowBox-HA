@@ -236,6 +236,9 @@ class OGBWebSocketConManager:
 
                 # Step 4: Start keep-alive
                 await self._start_keepalive()
+                
+                # Step 5: Start health monitor (5-minute fallback for reconnection)
+                await self._start_health_monitor()
 
                 # DON'T call auth callback here - wait for V1 authentication success
                 # The V1 auth success handlers will call the stored callback
@@ -825,7 +828,7 @@ class OGBWebSocketConManager:
                             logging.error(
                                 f"❌ Health check permanently failed for {self.ws_room} - triggering reconnection"
                             )
-                            await self._attempt_reconnect()
+                            asyncio.create_task(self._trigger_reconnect_with_lock("keepalive_failure"))
                             break
                     else:
                         # Reset consecutive failures on successful pong
@@ -847,7 +850,7 @@ class OGBWebSocketConManager:
                         logging.error(
                             f"❌ Keep-alive permanently failed for {self.ws_room} - triggering reconnection"
                         )
-                        await self._attempt_reconnect()
+                        asyncio.create_task(self._trigger_reconnect_with_lock("keepalive_exception"))
                         break
 
         except asyncio.CancelledError:
@@ -902,6 +905,11 @@ class OGBWebSocketConManager:
             logging.warning(f"❌ {self.ws_room} WebSocket disconnected from V1 namespace")
             self.ws_connected = False
             self.authenticated = False
+            
+            # Trigger automatic reconnection if enabled and not already in progress
+            if self._should_reconnect and not self._reconnection_in_progress and not self._connection_closing:
+                logging.info(f"🔄 {self.ws_room} Scheduling automatic reconnection after disconnect...")
+                asyncio.create_task(self._trigger_reconnect_with_lock("disconnect_event"))
 
         @self.sio.on('auth_success', namespace=ns)
         async def on_auth_success(data):
@@ -1579,6 +1587,9 @@ class OGBWebSocketConManager:
 
         # Stop keep-alive
         await self._stop_keepalive()
+        
+        # Stop health monitor
+        await self._stop_health_monitor()
 
         # Cancel reconnect tasks
         if self.reconnect_task and not self.reconnect_task.done():
@@ -2334,6 +2345,147 @@ class OGBWebSocketConManager:
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Reconnection attempt failed: {e}")
             return False
+
+    async def _trigger_reconnect_with_lock(self, reason: str):
+        """
+        Trigger reconnection with proper locking to prevent duplicate attempts.
+        
+        This is the main entry point for automatic reconnection from:
+        - Disconnect events
+        - Keep-alive failures
+        - Health monitor detection
+        
+        Args:
+            reason: Why reconnection is being triggered (for logging)
+        """
+        # Use lock to prevent multiple simultaneous reconnection attempts
+        async with self._reconnection_lock:
+            if self._reconnection_in_progress:
+                logging.debug(f"⏭️ {self.ws_room} Reconnection already in progress, skipping ({reason})")
+                return
+            
+            if not self._should_reconnect:
+                logging.debug(f"⏭️ {self.ws_room} Reconnection disabled, skipping ({reason})")
+                return
+            
+            if self._connection_closing:
+                logging.debug(f"⏭️ {self.ws_room} Connection closing, skipping reconnection ({reason})")
+                return
+            
+            self._reconnection_in_progress = True
+            logging.info(f"🔄 {self.ws_room} Starting reconnection sequence (reason: {reason})")
+        
+        try:
+            success = await self._attempt_reconnect()
+            
+            if success:
+                logging.info(f"✅ {self.ws_room} Reconnection successful after {reason}")
+                # Restart keep-alive after successful reconnection
+                await self._start_keepalive()
+                # Restart health monitor
+                await self._start_health_monitor()
+            else:
+                logging.warning(f"⚠️ {self.ws_room} Reconnection failed after {reason}")
+                
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Reconnection error ({reason}): {e}")
+        finally:
+            self._reconnection_in_progress = False
+
+    # =================================================================
+    # Connection Health Monitor (5-minute fallback)
+    # =================================================================
+
+    async def _start_health_monitor(self):
+        """Start the 5-minute connection health monitor as a fallback safety net."""
+        # Stop any existing monitor first
+        await self._stop_health_monitor()
+        
+        if self._connection_closing:
+            return
+        
+        self._health_monitor_task = asyncio.create_task(self._health_monitor_loop())
+        logging.info(f"🏥 {self.ws_room} Health monitor started (5-minute interval)")
+
+    async def _stop_health_monitor(self):
+        """Stop the health monitor."""
+        if self._health_monitor_task and not self._health_monitor_task.done():
+            self._health_monitor_task.cancel()
+            try:
+                await self._health_monitor_task
+            except asyncio.CancelledError:
+                pass
+        self._health_monitor_task = None
+        logging.debug(f"🏥 {self.ws_room} Health monitor stopped")
+
+    async def _health_monitor_loop(self):
+        """
+        5-minute interval health monitor as a fallback safety net.
+        
+        This runs independently from the keep-alive system and ensures
+        reconnection even if disconnect events are missed or keep-alive fails silently.
+        
+        Checks every 5 minutes:
+        1. If WebSocket should be connected but isn't
+        2. If authenticated but no pong received for extended period
+        3. Triggers reconnection if issues detected
+        """
+        HEALTH_CHECK_INTERVAL = 300  # 5 minutes
+        MAX_PONG_AGE = 180  # 3 minutes - if no pong for this long, connection is dead
+        
+        try:
+            while not self._connection_closing:
+                await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+                
+                # Skip if connection is intentionally closing
+                if self._connection_closing:
+                    break
+                
+                # Skip if reconnection is already in progress
+                if self._reconnection_in_progress:
+                    logging.debug(f"🏥 {self.ws_room} Health check: reconnection already in progress")
+                    continue
+                
+                # Skip if reconnection is disabled
+                if not self._should_reconnect:
+                    logging.debug(f"🏥 {self.ws_room} Health check: reconnection disabled")
+                    continue
+                
+                # Check 1: Should be connected but isn't
+                if self.is_logged_in and not self.ws_connected:
+                    logging.warning(f"🏥 {self.ws_room} Health check FAILED: logged in but WebSocket not connected")
+                    asyncio.create_task(self._trigger_reconnect_with_lock("health_monitor_disconnected"))
+                    continue
+                
+                # Check 2: Connected but not authenticated (stuck state)
+                if self.ws_connected and not self.authenticated and self.is_logged_in:
+                    logging.warning(f"🏥 {self.ws_room} Health check FAILED: connected but not authenticated")
+                    asyncio.create_task(self._trigger_reconnect_with_lock("health_monitor_auth_stuck"))
+                    continue
+                
+                # Check 3: No pong received for too long (connection is dead but not detected)
+                if self.authenticated and self._last_pong_time:
+                    pong_age = time.time() - self._last_pong_time
+                    if pong_age > MAX_PONG_AGE:
+                        logging.warning(
+                            f"🏥 {self.ws_room} Health check FAILED: no pong for {pong_age:.0f}s "
+                            f"(max: {MAX_PONG_AGE}s)"
+                        )
+                        asyncio.create_task(self._trigger_reconnect_with_lock("health_monitor_stale_pong"))
+                        continue
+                
+                # All checks passed
+                logging.debug(
+                    f"🏥 {self.ws_room} Health check OK: "
+                    f"ws_connected={self.ws_connected}, "
+                    f"authenticated={self.authenticated}, "
+                    f"last_pong_age={time.time() - self._last_pong_time:.0f}s"
+                )
+                
+        except asyncio.CancelledError:
+            logging.debug(f"🏥 {self.ws_room} Health monitor cancelled")
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Health monitor error: {e}")
 
     # =================================================================
     # Helper Methods

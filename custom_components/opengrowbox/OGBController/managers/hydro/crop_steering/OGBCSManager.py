@@ -8,7 +8,7 @@ from ....data.OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPubl
 
 from .OGBAdvancedSensor import OGBAdvancedSensor
 from .OGBCSCalibrationManager import OGBCSCalibrationManager
-from .OGBCSConfigurationManager import CSMode, OGBCSConfigurationManager
+from .OGBCSConfigurationManager import CSMode  # Only need the enum
 from .OGBCSIrrigationManager import OGBCSIrrigationManager
 from .OGBCSPhaseManager import OGBCSPhaseManager
 
@@ -29,11 +29,6 @@ class OGBCSManager:
         self.medium_type = "rockwool"  # Default, will be synced from medium manager
 
         # Initialize specialized managers
-        self.config_manager = OGBCSConfigurationManager(
-            data_store=dataStore,
-            room=room
-        )
-        
         self.phase_manager = OGBCSPhaseManager(
             data_store=dataStore,
             room=room,
@@ -170,70 +165,127 @@ class OGBCSManager:
     def _get_base_presets(self) -> Dict[str, Dict[str, Any]]:
         """
         Base presets for automatic mode (rockwool defaults).
-        These are adjusted based on medium type.
+        User settings from DataStore are merged on top of defaults.
+        
+        User settings loaded from:
+        - CropSteering.ShotDuration.{phase}.value → irrigation_duration
+        - CropSteering.VWCTarget.{phase}.value → VWCTarget
+        - CropSteering.VWCMin.{phase}.value → VWCMin
+        - etc.
         """
-        return {
-             "p0": {
-                 # P0: Monitoring - Wait for Dryback Signal
-                 "description": "Initial Monitoring Phase",
-                 "VWCTarget": 58.0,
-                 "VWCMin": 55.0,
-                 "VWCMax": 65.0,
-                 "ECTarget": 2.0,
-                 "MinEC": 1.8,
-                 "MaxEC": 2.2,
-                 "trigger_condition": "vwc_below_min",
-             },
-             "p1": {
-                 # P1: Saturation - Rapid saturation of the block
-                 "description": "Saturation Phase",
-                 "VWCTarget": 70.0,
-                 "VWCMax": 68.0,
-                 "VWCMin": 55.0,
-                 "ECTarget": 1.8,
-                 "MinEC": 1.6,
-                 "MaxEC": 2.0,
-                 "irrigation_duration": 45,
-                 "max_cycles": 10,
-                 "wait_between": 180,
-                 "trigger_condition": "vwc_above_target",
-             },
-             "p2": {
-                 # P2: Maintenance - Maintain level during light phase
-                 "description": "Day Maintenance Phase",
-                 "VWCTarget": 65.0,
-                 "VWCMax": 68.0,
-                 "VWCMin": 62.0,
-                 "hold_percentage": 0.95,
-                 "ECTarget": 2.0,
-                 "MinEC": 1.8,
-                 "MaxEC": 2.2,
-                 "irrigation_duration": 20,
-                 "irrigation_interval": 1800,  # 30 min between maintenance shots
-                 "check_light": True,
-                 "trigger_condition": "light_off",
-             },
-             "p3": {
-                 # P3: Night Dryback - Controlled nightly dryback
-                 "description": "Night Dryback Phase",
-                 "VWCTarget": 60.0,
-                 "VWCMax": 68.0,
-                 "VWCMin": 52.0,  # Lower for night dryback
-                 "target_dryback_percent": 10.0,
-                 "min_dryback_percent": 8.0,
-                 "max_dryback_percent": 12.0,
-                 "emergency_threshold": 0.85,  # 85% of VWCMin = emergency
-                 "ECTarget": 2.2,
-                 "MinEC": 2.0,
-                 "MaxEC": 2.5,
-                 "ec_increase_step": 0.1,
-                 "ec_decrease_step": 0.1,
-                 "irrigation_duration": 15,
-                 "irrigation_interval": 3600,  # 1 hour between P3 emergency shots
-                 "max_emergency_shots": 2,  # Max 2 emergency irrigations per night
-                 "trigger_condition": "light_on",
-             },
+        # Default presets
+        presets = {
+            "p0": {
+                "description": "Initial Monitoring Phase",
+                "VWCTarget": 58.0,
+                "VWCMin": 55.0,
+                "VWCMax": 65.0,
+                "ECTarget": 2.0,
+                "MinEC": 1.8,
+                "MaxEC": 2.2,
+                "trigger_condition": "vwc_below_min",
+            },
+            "p1": {
+                "description": "Saturation Phase",
+                "VWCTarget": 70.0,
+                "VWCMax": 68.0,
+                "VWCMin": 55.0,
+                "ECTarget": 1.8,
+                "MinEC": 1.6,
+                "MaxEC": 2.0,
+                "irrigation_duration": 45,
+                "max_cycles": 10,
+                "wait_between": 180,
+                "trigger_condition": "vwc_above_target",
+            },
+            "p2": {
+                "description": "Day Maintenance Phase",
+                "VWCTarget": 65.0,
+                "VWCMax": 68.0,
+                "VWCMin": 62.0,
+                "hold_percentage": 0.95,
+                "ECTarget": 2.0,
+                "MinEC": 1.8,
+                "MaxEC": 2.2,
+                "irrigation_duration": 20,
+                "irrigation_interval": 1800,
+                "check_light": True,
+                "trigger_condition": "light_off",
+            },
+            "p3": {
+                "description": "Night Dryback Phase",
+                "VWCTarget": 60.0,
+                "VWCMax": 68.0,
+                "VWCMin": 52.0,
+                "target_dryback_percent": 10.0,
+                "min_dryback_percent": 8.0,
+                "max_dryback_percent": 12.0,
+                "emergency_threshold": 0.85,
+                "ECTarget": 2.2,
+                "MinEC": 2.0,
+                "MaxEC": 2.5,
+                "ec_increase_step": 0.1,
+                "ec_decrease_step": 0.1,
+                "irrigation_duration": 15,
+                "irrigation_interval": 3600,
+                "max_emergency_shots": 2,
+                "trigger_condition": "light_on",
+            },
         }
+        
+        # Merge user settings from DataStore on top of defaults
+        self._apply_user_settings(presets)
+        
+        return presets
+
+    def _apply_user_settings(self, presets: Dict[str, Dict[str, Any]]):
+        """
+        Apply user settings from DataStore to presets.
+        User settings override defaults.
+        """
+        for phase in ["p0", "p1", "p2", "p3"]:
+            # Shot Duration -> irrigation_duration
+            shot_duration = self.data_store.getDeep(f"CropSteering.ShotDuration.{phase}")
+            if shot_duration is not None:
+                val = shot_duration.get("value") if isinstance(shot_duration, dict) else shot_duration
+                if val is not None:
+                    presets[phase]["irrigation_duration"] = int(float(val))
+                    _LOGGER.debug(f"{self.room} - User irrigation_duration for {phase}: {val}s")
+            
+            # VWC settings
+            for key, store_key in [
+                ("VWCTarget", "VWCTarget"),
+                ("VWCMin", "VWCMin"),
+                ("VWCMax", "VWCMax"),
+            ]:
+                user_val = self.data_store.getDeep(f"CropSteering.{store_key}.{phase}")
+                if user_val is not None:
+                    val = user_val.get("value") if isinstance(user_val, dict) else user_val
+                    if val is not None:
+                        presets[phase][key] = float(val)
+            
+            # EC settings
+            for key, store_key in [
+                ("ECTarget", "ECTarget"),
+                ("MinEC", "MinEC"),
+                ("MaxEC", "MaxEC"),
+            ]:
+                user_val = self.data_store.getDeep(f"CropSteering.{store_key}.{phase}")
+                if user_val is not None:
+                    val = user_val.get("value") if isinstance(user_val, dict) else user_val
+                    if val is not None:
+                        presets[phase][key] = float(val)
+            
+            # Shot Interval -> wait_between (for P1) or irrigation_interval (for P2/P3)
+            shot_interval = self.data_store.getDeep(f"CropSteering.ShotIntervall.{phase}")
+            if shot_interval is not None:
+                val = shot_interval.get("value") if isinstance(shot_interval, dict) else shot_interval
+                if val is not None:
+                    interval_sec = int(float(val) * 60)  # Convert minutes to seconds
+                    if phase == "p1":
+                        presets[phase]["wait_between"] = interval_sec
+                    else:
+                        presets[phase]["irrigation_interval"] = interval_sec
 
     def _get_automatic_presets(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -242,10 +294,9 @@ class OGBCSManager:
         """
         base_presets = self._get_base_presets()
 
-        # Get medium-specific adjustments with safe fallback
-        default_adjustments = {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0}
+        # Get medium-specific adjustments
         adjustments = self._medium_adjustments.get(
-            self.medium_type, self._medium_adjustments.get("rockwool", default_adjustments)
+            self.medium_type, self._medium_adjustments.get("rockwool", {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0})
         )
 
         vwc_offset = adjustments["vwc_offset"]
@@ -266,7 +317,8 @@ class OGBCSManager:
                 if key in preset:
                     adjusted_presets[phase][key] = preset[key] + ec_offset
 
-            # Adjust irrigation timing based on drainage
+            # Adjust irrigation timing based on drainage factor
+            # Note: User settings already applied, drainage_factor scales them
             if "irrigation_duration" in preset:
                 adjusted_presets[phase]["irrigation_duration"] = int(
                     preset["irrigation_duration"] * drainage_factor
@@ -284,62 +336,56 @@ class OGBCSManager:
 
     def _get_phase_growth_adjustments(self, plant_phase, generative_week):
         """
-        Growth phase-specific adjustments
-
-        Vegetative: More moisture, less dryback (generative)
-        Generative: Less moisture, more dryback (vegetative)
+        Growth phase-specific adjustments.
+        
+        Vegetative: More moisture, less dryback
+        Generative: Less moisture, more dryback (stress for flowering)
         """
         adjustments = {"vwc_modifier": 0.0, "dryback_modifier": 0.0, "ec_modifier": 0.0}
 
         if plant_phase == "veg":
-            # Vegetative Phase: Promote growth
-            adjustments["vwc_modifier"] = 2.0  # +2% moisture
-            adjustments["dryback_modifier"] = -2.0  # -2% dryback (less stress)
-            adjustments["ec_modifier"] = -0.1  # Slightly lower EC
-
+            adjustments["vwc_modifier"] = 2.0
+            adjustments["dryback_modifier"] = -2.0
+            adjustments["ec_modifier"] = -0.1
         elif plant_phase == "gen":
-            # Flowering Phase: Promote flowering
             if generative_week <= 3:
-                # Early Flower: Transition
                 adjustments["vwc_modifier"] = 1.0
                 adjustments["dryback_modifier"] = -1.0
                 adjustments["ec_modifier"] = 0.05
             elif generative_week <= 5:
-                # Mid Flower: Enhanced generative
-                adjustments["vwc_modifier"] = -2.0  # -2% moisture
-                adjustments["dryback_modifier"] = 2.0  # +2% dryback (more stress)
-                adjustments["ec_modifier"] = 0.2  # Higher EC
+                adjustments["vwc_modifier"] = -2.0
+                adjustments["dryback_modifier"] = 2.0
+                adjustments["ec_modifier"] = 0.2
             elif generative_week <= 7:
-                # Mid Flower: Enhanced generative
-                adjustments["vwc_modifier"] = 2.0  # -2% moisture
-                adjustments["dryback_modifier"] = -2.0  # +2% dryback (more stress)
-                adjustments["ec_modifier"] = 0.1  # Higher EC
+                adjustments["vwc_modifier"] = 2.0
+                adjustments["dryback_modifier"] = -2.0
+                adjustments["ec_modifier"] = 0.1
             else:
-                # Late Flower: Maximum generative
-                adjustments["vwc_modifier"] = -3.0  # -3% moisture
-                adjustments["dryback_modifier"] = 3.0  # +3% dryback
-                adjustments["ec_modifier"] = 0.3  # Even higher EC
+                adjustments["vwc_modifier"] = -3.0
+                adjustments["dryback_modifier"] = 3.0
+                adjustments["ec_modifier"] = 0.3
 
         return adjustments
 
     def _get_adjusted_preset(self, phase, plant_phase, generative_week):
         """
-        Get preset and apply growth phase adjustments
+        Get preset with all adjustments applied:
+        1. User settings from DataStore
+        2. Medium adjustments
+        3. Growth phase adjustments
         """
         base_preset = self._get_automatic_presets()[phase].copy()
         adjustments = self._get_phase_growth_adjustments(plant_phase, generative_week)
 
-        # Wende Anpassungen an
+        # Apply growth phase adjustments
         if "VWCTarget" in base_preset:
             base_preset["VWCTarget"] += adjustments["vwc_modifier"]
         if "VWCMax" in base_preset:
             base_preset["VWCMax"] += adjustments["vwc_modifier"]
         if "VWCMin" in base_preset:
             base_preset["VWCMin"] += adjustments["vwc_modifier"]
-
         if "target_dryback_percent" in base_preset:
             base_preset["target_dryback_percent"] += adjustments["dryback_modifier"]
-
         if "ECTarget" in base_preset:
             base_preset["ECTarget"] += adjustments["ec_modifier"]
 
