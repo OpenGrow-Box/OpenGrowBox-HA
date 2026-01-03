@@ -30,72 +30,103 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class OGBFeatureManager:
-    """Feature flag manager for subscription-based access control"""
+    """Feature flag manager for subscription-based access control.
+    
+    Feature Access Priority (highest to lowest):
+    1. Kill switch (feature disabled globally via admin)
+    2. Tenant-specific override (from feature_overrides table via admin)
+    3. Subscription plan features (from subscription_plans.features)
+    4. Global feature flags (from feature_flags_config with rollout)
+    5. Default deny
+    
+    The API returns features in camelCase (e.g., 'aiControllers'), 
+    this manager accepts both camelCase and snake_case.
+    """
 
-    # Feature definitions with tier requirements
+    # Mapping from API camelCase to internal snake_case
+    # API sends: aiControllers, pidControllers, mcpControllers, etc.
+    API_TO_INTERNAL = {
+        # Controller features
+        "aiControllers": "ai_controllers",
+        "pidControllers": "pid_controllers",
+        "mcpControllers": "mpc_controllers",
+        # Analytics features
+        "basicAnalytics": "basic_analytics",
+        "advancedAnalytics": "advanced_analytics",
+        # Compliance features  
+        "basicCompliance": "basic_compliance",
+        "advancedCompliance": "advanced_compliance",
+        # Access features
+        "WebAppAccess": "web_app_access",
+        "emailSupport": "email_support",
+        "prioritySupport": "priority_support",
+        # Integration features
+        "customIntegrations": "custom_integrations",
+        "whiteLabel": "white_label",
+    }
+    
+    # Reverse mapping for lookups
+    INTERNAL_TO_API = {v: k for k, v in API_TO_INTERNAL.items()}
+
+    # Feature definitions with descriptions (for UI/documentation)
     FEATURES = {
-        # Free tier (all users)
-        "basic_monitoring": {
-            "required_tier": "free",
-            "description": "Basic sensor monitoring",
-        },
+        # Controller features (from API)
         "ai_controllers": {
-            "required_tier": "free",
             "description": "AI environmental control",
+            "api_key": "aiControllers",
         },
-        "mobile_app": {"required_tier": "free", "description": "Mobile app access"},
-        # Basic tier
+        "pid_controllers": {
+            "description": "PID controller for precise environmental control",
+            "api_key": "pidControllers",
+        },
+        "mpc_controllers": {
+            "description": "Model Predictive Control for advanced optimization",
+            "api_key": "mcpControllers",
+        },
+        # Analytics features
+        "basic_analytics": {
+            "description": "Basic analytics and monitoring",
+            "api_key": "basicAnalytics",
+        },
         "advanced_analytics": {
-            "required_tier": "basic",
             "description": "Advanced analytics and insights",
+            "api_key": "advancedAnalytics",
         },
-        "notifications": {
-            "required_tier": "basic",
-            "description": "Push notifications and alerts",
-        },
-        "data_export": {
-            "required_tier": "basic",
-            "description": "Data export (CSV, JSON)",
-        },
-        # Professional tier
-        "compliance": {
-            "required_tier": "professional",
-            "description": "Compliance tracking",
+        # Compliance features
+        "basic_compliance": {
+            "description": "Basic compliance tracking",
+            "api_key": "basicCompliance",
         },
         "advanced_compliance": {
-            "required_tier": "professional",
-            "description": "Full compliance suite",
+            "description": "Full compliance suite with audit logs",
+            "api_key": "advancedCompliance",
         },
-        "research_data": {
-            "required_tier": "professional",
-            "description": "Research-grade data",
+        # Access features
+        "web_app_access": {
+            "description": "Web application access",
+            "api_key": "WebAppAccess",
         },
-        "api_access": {
-            "required_tier": "professional",
-            "description": "REST API access",
-        },
-        "webhooks": {
-            "required_tier": "professional",
-            "description": "Webhook integrations",
-        },
-        # Enterprise tier
-        "multi_tenant": {
-            "required_tier": "enterprise",
-            "description": "Multi-tenant management",
+        "email_support": {
+            "description": "Email support access",
+            "api_key": "emailSupport",
         },
         "priority_support": {
-            "required_tier": "enterprise",
-            "description": "Priority support",
+            "description": "Priority support response",
+            "api_key": "prioritySupport",
         },
+        # Integration features
         "custom_integrations": {
-            "required_tier": "enterprise",
-            "description": "Custom integrations",
+            "description": "Custom API integrations",
+            "api_key": "customIntegrations",
         },
-        "sla": {"required_tier": "enterprise", "description": "99.9% uptime SLA"},
+        "white_label": {
+            "description": "White label branding",
+            "api_key": "whiteLabel",
+        },
     }
 
-    # Tier hierarchy (higher index = higher tier)
-    TIER_HIERARCHY = ["free", "basic", "professional", "enterprise"]
+    # Tier hierarchy
+    TIER_HIERARCHY = ["free", "basic", "grower", "professional", "enterprise"]
 
     def __init__(
         self,
@@ -283,6 +314,28 @@ class OGBFeatureManager:
         self._cache_timestamp = datetime.now()
         _LOGGER.info(f"Feature override updated: {feature_key}={enabled}")
 
+    def _normalize_feature_key(self, feature_name: str) -> tuple:
+        """
+        Normalize feature key to handle both camelCase (API) and snake_case.
+        
+        Returns:
+            Tuple of (internal_key, api_key) for lookups
+        """
+        # If it's a camelCase API key, convert to internal
+        if feature_name in self.API_TO_INTERNAL:
+            internal_key = self.API_TO_INTERNAL[feature_name]
+            api_key = feature_name
+        # If it's already internal snake_case
+        elif feature_name in self.INTERNAL_TO_API:
+            internal_key = feature_name
+            api_key = self.INTERNAL_TO_API[feature_name]
+        else:
+            # Unknown key - use as-is for both
+            internal_key = feature_name
+            api_key = feature_name
+        
+        return internal_key, api_key
+
     def has_feature(
         self, feature_name: str, record_access: bool = True
     ) -> bool:
@@ -290,65 +343,108 @@ class OGBFeatureManager:
         Check if user has access to a feature.
 
         Feature access priority:
-        1. Database override (tenant-specific from admin dashboard)
-        2. Global config (rollout percentage, kill switch)
-        3. Subscription features (from auth response)
-        4. Tier hierarchy (plan-based)
+        1. Kill switch (global disable)
+        2. Database override (tenant-specific from admin dashboard)
+        3. Subscription features (from subscription_plans.features via auth)
+        4. Global feature flags (from feature_flags_config)
         5. Default deny
 
+        Accepts both camelCase (API format) and snake_case feature names.
+
         Args:
-            feature_name: Feature to check (e.g., 'advanced_analytics')
+            feature_name: Feature to check (e.g., 'ai_controllers' or 'aiControllers')
             record_access: Whether to record this access attempt (for analytics)
 
         Returns:
             True if feature is enabled, False otherwise
         """
+        internal_key, api_key = self._normalize_feature_key(feature_name)
+        
         has_access = False
         denial_reason = None
 
-        # 1. Check database override (highest priority - admin dashboard control)
-        if feature_name in self.db_overrides:
-            has_access = bool(self.db_overrides[feature_name])
-            if not has_access:
-                denial_reason = "admin_override"
-        
-        # 2. Check global config (kill switch, rollout)
-        elif feature_name in self.global_config:
-            config = self.global_config[feature_name]
+        # 1. Check kill switch in global config (highest priority)
+        if api_key in self.global_config:
+            config = self.global_config[api_key]
             if not config.get("enabled_globally", True):
+                _LOGGER.debug(f"Feature {feature_name} blocked by kill switch")
                 has_access = False
                 denial_reason = "kill_switch"
-            # TODO: Add rollout percentage logic if needed
+                # Skip other checks - kill switch is absolute
+                return self._record_and_return(feature_name, has_access, denial_reason, record_access)
+        
+        # Also check internal key in global config
+        if internal_key in self.global_config:
+            config = self.global_config[internal_key]
+            if not config.get("enabled_globally", True):
+                _LOGGER.debug(f"Feature {feature_name} blocked by kill switch")
+                has_access = False
+                denial_reason = "kill_switch"
+                return self._record_and_return(feature_name, has_access, denial_reason, record_access)
 
-        # 3. Check subscription features (from auth response)
-        elif feature_name in self.features:
-            has_access = bool(self.features[feature_name])
-            if not has_access:
-                denial_reason = "subscription_tier"
+        # 2. Check database override (tenant-specific from admin dashboard)
+        if api_key in self.db_overrides:
+            has_access = bool(self.db_overrides[api_key])
+            denial_reason = None if has_access else "admin_override"
+            return self._record_and_return(feature_name, has_access, denial_reason, record_access)
+        
+        if internal_key in self.db_overrides:
+            has_access = bool(self.db_overrides[internal_key])
+            denial_reason = None if has_access else "admin_override"
+            return self._record_and_return(feature_name, has_access, denial_reason, record_access)
 
-        # 4. Fallback: Check tier hierarchy
-        elif feature_name in self.FEATURES:
-            required_tier = self.FEATURES[feature_name]["required_tier"]
-            has_access = self._has_tier_or_higher(required_tier)
-            if not has_access:
-                denial_reason = f"requires_{required_tier}_tier"
+        # 3. Check subscription features (from auth response - uses API camelCase keys)
+        # The API sends features like: {"aiControllers": false, "pidControllers": false, ...}
+        if api_key in self.features:
+            has_access = bool(self.features[api_key])
+            denial_reason = None if has_access else "subscription_plan"
+            return self._record_and_return(feature_name, has_access, denial_reason, record_access)
+        
+        # Also check internal key in features (fallback)
+        if internal_key in self.features:
+            has_access = bool(self.features[internal_key])
+            denial_reason = None if has_access else "subscription_plan"
+            return self._record_and_return(feature_name, has_access, denial_reason, record_access)
 
-        # 5. Unknown feature - deny by default
-        else:
-            _LOGGER.warning(f"Unknown feature requested: {feature_name}")
-            has_access = False
-            denial_reason = "unknown_feature"
+        # 4. Check global feature flags (from feature_flags_config)
+        # These would come from global_config with rollout settings
+        if api_key in self.global_config:
+            config = self.global_config[api_key]
+            has_access = config.get("enabled_globally", False)
+            denial_reason = None if has_access else "global_feature_disabled"
+            return self._record_and_return(feature_name, has_access, denial_reason, record_access)
 
+        # 5. Default deny - feature not found in any source
+        _LOGGER.debug(f"Feature {feature_name} not found in any source, denying access")
+        has_access = False
+        denial_reason = "feature_not_configured"
+
+        return self._record_and_return(feature_name, has_access, denial_reason, record_access)
+
+    def _record_and_return(
+        self, feature_name: str, has_access: bool, denial_reason: Optional[str], record_access: bool
+    ) -> bool:
+        """
+        Record access attempt and return result.
+        
+        Args:
+            feature_name: Feature that was checked
+            has_access: Whether access was granted
+            denial_reason: Reason for denial (if any)
+            record_access: Whether to record this access attempt
+            
+        Returns:
+            has_access value
+        """
         # Record access attempt for analytics (if analytics module is integrated)
-        if record_access and hasattr(self, "usage_metrics"):
+        if record_access and self.usage_metrics is not None:
             self.usage_metrics.record_feature_access(
                 feature_name, has_access, denial_reason
             )
             
             # Show upgrade prompt if access denied and user should see it
-            if not has_access and hasattr(self, "upgrade_prompts"):
+            if not has_access and self.upgrade_prompts is not None:
                 if self.usage_metrics.should_show_upgrade_prompt():
-                    # Import here to avoid circular dependency
                     import asyncio
                     asyncio.create_task(
                         self.upgrade_prompts.show_upgrade_prompt(feature_name)
