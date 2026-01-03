@@ -257,6 +257,14 @@ class OGBCastManager:
             self.data_store.setDeep("CropSteering.Mode", mode)
             self.data_store.setDeep("Hydro.Mode", mode)
             self.data_store.setDeep("Hydro.Active", False)
+            
+            # IMPORTANT: Set ActiveMode to "Automatic" if not already set
+            # This ensures handle_mode_change() has a valid mode to work with
+            current_active_mode = self.data_store.getDeep("CropSteering.ActiveMode")
+            if not current_active_mode or current_active_mode in ("Disabled", "Config", None):
+                self.data_store.setDeep("CropSteering.ActiveMode", "Automatic")
+                _LOGGER.info(f"{self.room} - CropSteering ActiveMode set to Automatic (was: {current_active_mode})")
+            
             await self.CropSteeringManager.handle_mode_change(pumpAction)
             # Start retrieve system alongside crop-steering
             await self._ensure_retrieve_system("crop_steering")
