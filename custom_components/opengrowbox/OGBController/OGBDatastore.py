@@ -48,20 +48,25 @@ class DataStore(SimpleEventEmitter):
         # GrowMedium runtime data (not persisted)
         "sensor_history",
         "sensor_readings",
-        "devices",  # DeviceBinding objects
         "sensor_type_map",
         # Lists that grow unbounded
         "readings",
         "histories",
         "media",
-        # Device lists (reconstructed at startup)
-        "ownDeviceList",
+        # Device lists (reconstructed at startup) - these are BIG!
+        "devices",       # Top-level device list (~25KB)
+        "ownDeviceList", # Own device list
+        "Devices",       # workData.Devices (~8KB)
         # Callback functions
         "callback",
         "callbacks",
         # Private attributes
         "_background_tasks",
         "_shutdown_event",
+        # Task objects (not serializable)
+        "sunrise_task",
+        "sunset_task",
+        "pause_event",
     }
 
     def __init__(self, initial_state):
@@ -217,22 +222,23 @@ class DataStore(SimpleEventEmitter):
         """Gibt den vollständigen State als JSON-serialisierbares dict zurück."""
         try:
             if dataclasses.is_dataclass(self.state):
-                # Erstelle eine Kopie des State-Objekts ohne das hass-Attribut
+                # Erstelle eine Kopie des State-Objekts ohne excluded fields
                 state_dict = {}
                 for field in dataclasses.fields(self.state):
-                    if (
-                        field.name != "hass"
-                    ):  # Schließe hass vom Serialisierungsprozess aus
-                        try:
-                            value = getattr(self.state, field.name)
-                            state_dict[field.name] = self._make_serializable(value)
-                        except Exception as e:
-                            _LOGGER.warning(
-                                f"⚠️ Failed to serialize field '{field.name}': {e}"
-                            )
-                            state_dict[field.name] = str(
-                                getattr(self.state, field.name, "N/A")
-                            )
+                    # Use centralized exclusion check
+                    if self._should_exclude_key(field.name):
+                        continue
+                        
+                    try:
+                        value = getattr(self.state, field.name)
+                        state_dict[field.name] = self._make_serializable(value)
+                    except Exception as e:
+                        _LOGGER.warning(
+                            f"⚠️ Failed to serialize field '{field.name}': {e}"
+                        )
+                        state_dict[field.name] = str(
+                            getattr(self.state, field.name, "N/A")
+                        )
                 return state_dict
             else:
                 return self._make_serializable(self.state)
