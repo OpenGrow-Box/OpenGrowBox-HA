@@ -237,23 +237,53 @@ class Light(Device):
                     )
             self.isInitialized = True
 
+    def _has_user_defined_minmax(self) -> bool:
+        """
+        Check if user has defined custom min/max values for this device.
+        Returns True if user settings exist AND are active, meaning we should NOT use plant stage defaults.
+        """
+        minMaxSets = self.data_store.getDeep(f"DeviceMinMax.{self.deviceType}")
+        if not minMaxSets:
+            return False
+        # User has settings - check if they're active
+        return minMaxSets.get("active", False) is True
+
+    def _apply_plant_stage_minmax(self, plantStage: str) -> bool:
+        """
+        Apply plant stage min/max values if no user-defined values exist.
+        Returns True if values were applied, False otherwise.
+        """
+        if self._has_user_defined_minmax():
+            _LOGGER.debug(
+                f"{self.deviceName}: User-defined min/max active, skipping plant stage defaults"
+            )
+            return False
+
+        if plantStage in self.PlantStageMinMax:
+            percentRange = self.PlantStageMinMax[plantStage]
+            self.minVoltage = percentRange["min"]
+            self.maxVoltage = percentRange["max"]
+            _LOGGER.debug(
+                f"{self.deviceName}: Applied plant stage '{plantStage}' defaults: min={self.minVoltage}%, max={self.maxVoltage}%"
+            )
+            return True
+        return False
+
     def checkPlantStageLightValue(self):
         if not self.isDimmable:
             return None
 
-        minMaxSets = self.data_store.getDeep(f"DeviceMinMax.{self.deviceType}")
-        if minMaxSets or minMaxSets.get("active", True):
-            return  # Nichts aktiv → nichts tun
+        # Check if user has custom min/max settings - if so, respect them
+        if self._has_user_defined_minmax():
+            _LOGGER.debug(
+                f"{self.deviceName}: User-defined min/max is active, not applying plant stage defaults"
+            )
+            return
 
         plantStage = self.data_store.get("plantStage")
         self.currentPlantStage = plantStage
 
-        if plantStage in self.PlantStageMinMax:
-            percentRange = self.PlantStageMinMax[plantStage]
-
-            # Rechne Prozentangaben in Spannungswerte um
-            self.minVoltage = percentRange["min"]
-            self.maxVoltage = percentRange["max"]
+        self._apply_plant_stage_minmax(plantStage)
 
     def initialize_voltage(self):
         """Initialisiert den Voltage auf MinVoltage."""
@@ -338,13 +368,8 @@ class Light(Device):
         plantStage = self.data_store.get("plantStage")
         self.currentPlantStage = plantStage
 
-        if plantStage in self.PlantStageMinMax:
-            percentRange = self.PlantStageMinMax[plantStage]
-
-            # Rechne Prozentangaben in Spannungswerte um
-            self.minVoltage = percentRange["min"]
-            self.maxVoltage = percentRange["max"]
-
+        # Only apply plant stage defaults if user hasn't set custom min/max
+        if self._apply_plant_stage_minmax(plantStage):
             if self.islightON:
                 if self.sunPhaseActive:
                     return
@@ -353,7 +378,7 @@ class Light(Device):
             _LOGGER.info(
                 f"{self.deviceName}: Setze Spannung für Phase '{plantStage}' auf {self.initVoltage}V–{self.maxVoltage}V-CURRENT:{self.voltage}V."
             )
-        else:
+        elif plantStage not in self.PlantStageMinMax and not self._has_user_defined_minmax():
             _LOGGER.error(
                 f"{self.deviceName}: Unbekannte Pflanzenphase '{plantStage}'. Standardwerte werden verwendet."
             )
@@ -468,10 +493,8 @@ class Light(Device):
                 plantStage = self.data_store.get("plantStage")
                 self.currentPlantStage = plantStage
 
-                if plantStage in self.PlantStageMinMax:
-                    percentRange = self.PlantStageMinMax[plantStage]
-                    self.minVoltage = percentRange["min"]
-                    self.maxVoltage = percentRange["max"]
+                # Only apply plant stage defaults if user hasn't set custom min/max
+                self._apply_plant_stage_minmax(plantStage)
 
                 now = datetime.now().time()
 
@@ -1118,4 +1141,3 @@ class Light(Device):
             log_message = f"{self.deviceName} Voltage: Not Set"
         _LOGGER.debug(f"{self.deviceName} - {action_name}: {log_message}")
 
-    # endregion
