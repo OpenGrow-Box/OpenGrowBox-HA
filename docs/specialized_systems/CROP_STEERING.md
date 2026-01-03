@@ -119,34 +119,136 @@ VWC measures the percentage of water volume in the soil:
 
 ### Sensor Calibration
 
-#### Automatic VWC Calibration
+#### VWC Calibration Overview
+
+The CropSteering system requires calibration to understand the VWC (Volumetric Water Content) range of your specific growing medium. There are two types of calibration:
+
+| Type | Purpose | Trigger |
+|------|---------|---------|
+| **VWC Max** | Find saturation point | `cs_calibrate max` or auto during P1 |
+| **VWC Min** | Find safe minimum | `cs_calibrate min` |
+
+#### Console Commands for Calibration
+
+```bash
+# Show current calibration status
+cs_status
+
+# Start VWC Maximum calibration (saturation point)
+cs_calibrate max
+cs_calibrate max p1    # Specific phase
+
+# Start VWC Minimum calibration (dryback monitoring)
+cs_calibrate min
+cs_calibrate min p2    # Specific phase
+
+# Stop running calibration
+cs_calibrate stop
+```
+
+#### Example Console Output
+
+```
+$ cs_status
+
+🌱 CropSteering Status:
+==================================================
+
+📊 Mode: Automatic
+   Active Mode: Automatic-Generative
+   Active: Yes
+   Current Phase: p2
+
+📈 Current Readings:
+   VWC: 45.2%
+   EC: 2.35 mS/cm
+
+🔧 Calibration Values:
+   P1:
+      VWC Max: 68.5%
+      VWC Min: 32.1%
+      Last Cal: 2026-01-03T14:30
+   P2: Not calibrated
+   P3: Not calibrated
+
+==================================================
+💡 Use 'cs_calibrate max' or 'cs_calibrate min' to calibrate
+```
+
+#### Calibration Manager Architecture
 
 ```python
 class OGBCSCalibrationManager:
-    """Manages VWC sensor calibration for accuracy."""
+    """
+    Dedicated calibration manager for VWC sensors.
+    
+    Handles all calibration procedures with:
+    - Sensor stabilization monitoring
+    - Multiple reading averaging
+    - Timeout handling
+    - Persistent storage of calibrated values
+    """
 
     async def start_vwc_max_calibration(self, phase: str = "p1"):
-        """Start VWC maximum calibration procedure."""
-        # Progressive saturation until no more increase
-        # Finds actual maximum VWC for medium
+        """
+        Start VWC maximum calibration procedure.
+        
+        Process:
+        1. Irrigate medium progressively
+        2. Wait for VWC stabilization after each irrigation
+        3. Detect when VWC stops increasing (saturation)
+        4. Store calibrated VWCMax value
+        5. Persist to disk via SaveState
+        """
 
     async def start_vwc_min_calibration(self, phase: str = "p1"):
-        """Start VWC minimum calibration through dryback."""
-        # Monitors natural dryback to find minimum
-        # Applies safety buffer for plant health
-
-    async def _vwc_max_calibration_cycle(self, phase):
-        """Main calibration cycle with stabilization monitoring."""
-        # Multiple irrigation cycles
-        # Wait for stabilization between cycles
-        # Detect when medium is fully saturated
+        """
+        Start VWC minimum calibration through dryback.
+        
+        Process:
+        1. Monitor natural dryback over time
+        2. Track minimum VWC observed
+        3. Apply 10% safety buffer
+        4. Store calibrated VWCMin value
+        5. Persist to disk via SaveState
+        """
 
     async def _wait_for_vwc_stabilization(self, timeout=300):
-        """Wait until VWC reading stabilizes."""
-        # Collect readings over time
-        # Calculate moving average
-        # Check stability tolerance
+        """
+        Wait until VWC reading stabilizes.
+        
+        Uses moving average of last 3 readings
+        and checks if deviation is within tolerance.
+        """
 ```
+
+#### Calibration Data Persistence
+
+Calibration values are stored in the DataStore and persisted to disk:
+
+```python
+# Storage structure in CropSteering.Calibration
+{
+    "p1": {
+        "VWCMax": 68.5,      # Maximum VWC (saturation point)
+        "VWCMin": 32.1,      # Minimum VWC (safe dryback)
+        "timestamp": "2026-01-03T14:30:00"
+    },
+    "p2": { ... },
+    "p3": { ... },
+    "LastRun": "2026-01-03T14:30:00"
+}
+```
+
+**Important**: Calibration values are now persisted across HA restarts.
+
+#### Auto-Calibration During P1 Phase
+
+During the P1 (Saturation) phase, the system automatically calibrates VWCMax when:
+- VWC stops increasing after irrigation (stagnation detected)
+- Maximum irrigation attempts reached
+
+This is a "passive" calibration that happens as part of normal operation.
 
 #### Advanced Sensor Processing
 
@@ -691,16 +793,52 @@ def _calculate_system_performance(self):
 
 ---
 
+## Console Commands
+
+The CropSteering system provides console commands for monitoring and calibration:
+
+### Available Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `cs_status` | Show current CS status and calibration values | `cs_status` |
+| `cs_calibrate max` | Start VWC max calibration | `cs_calibrate max p1` |
+| `cs_calibrate min` | Start VWC min calibration | `cs_calibrate min p2` |
+| `cs_calibrate stop` | Stop running calibration | `cs_calibrate stop` |
+
+### Usage Examples
+
+```bash
+# Check current status
+$ cs_status
+
+# Start max calibration for P1 phase
+$ cs_calibrate max
+
+# Start min calibration for P2 phase  
+$ cs_calibrate min p2
+
+# Stop any running calibration
+$ cs_calibrate stop
+
+# Get help
+$ cs_calibrate -h
+```
+
+---
+
 ## Implementation Status
 
 ### Core Components ✅ **IMPLEMENTED**
 
-- **OGBCSManager**: Main controller (1839 lines) - ✅ Production Ready
-- **OGBCSConfigurationManager**: Settings & presets (317 lines) - ✅ Production Ready
-- **OGBCSIrrigationManager**: Water delivery logic - ✅ Production Ready
-- **OGBCSPhaseManager**: Phase transitions & timing - ✅ Production Ready
-- **OGBCSCalibrationManager**: VWC calibration procedures - ✅ Production Ready
-- **OGBAdvancedSensor**: TDR polynomial calibrations - ✅ Production Ready
+| Component | Lines | Status | Description |
+|-----------|-------|--------|-------------|
+| **OGBCSManager** | ~1450 | ✅ Ready | Main controller, coordinates all subsystems |
+| **OGBCSConfigurationManager** | ~320 | ✅ Ready | Settings, presets, medium adjustments |
+| **OGBCSIrrigationManager** | ~200 | ✅ Ready | Water delivery, dripper control |
+| **OGBCSPhaseManager** | ~150 | ✅ Ready | Phase transitions, timing logic |
+| **OGBCSCalibrationManager** | ~400 | ✅ Ready | VWC max/min calibration procedures |
+| **OGBAdvancedSensor** | ~300 | ✅ Ready | TDR polynomial calculations |
 
 ### Key Features ✅ **FULLY IMPLEMENTED**
 
@@ -708,12 +846,14 @@ def _calculate_system_performance(self):
 - **Manual Mode**: User-configurable timing per phase
 - **Medium-Specific Adjustments**: Rockwool, coco, soil, perlite, aero, water
 - **Growth Phase Optimization**: Vegetative vs generative watering strategies
-- **VWC Calibration**: Automatic max/min calibration cycles
+- **VWC Calibration**: Dedicated CalibrationManager with persistence
+- **Console Commands**: `cs_status`, `cs_calibrate` for user interaction
 - **Advanced Sensor Processing**: TDR-style polynomial calculations
 - **EC Management**: Pore water EC with temperature normalization
 - **Irrigation Validation**: Effectiveness monitoring and anomaly detection
 - **Emergency Systems**: Safety irrigation and dryback protection
 - **AI Learning Integration**: Sensor data collection for analytics
+- **Calibration Persistence**: Values survive HA restarts
 
 ### Integration Points ✅ **CONNECTED**
 
@@ -722,9 +862,11 @@ def _calculate_system_performance(self):
 - **Medium Manager**: Syncs growing medium type
 - **HA Entities**: Controls pumps, valves, sensors
 - **Event System**: Emits irrigation events for monitoring
+- **Console Manager**: Exposes `cs_calibrate` and `cs_status` commands
+- **DataStore**: Persistent calibration storage
 
 ---
 
-**Last Updated**: January 15, 2025
-**Version**: 3.0 (Full Implementation)
+**Last Updated**: January 3, 2026
+**Version**: 3.1 (CalibrationManager Refactored)
 **Status**: ✅ **PRODUCTION READY** - All managers implemented and integrated

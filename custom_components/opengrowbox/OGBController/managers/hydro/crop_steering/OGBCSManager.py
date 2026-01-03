@@ -24,16 +24,36 @@ class OGBCSManager:
         self.event_manager = eventManager
         self.isInitialized = False
 
-        # Initialize specialized managers
-        # Temporarily disabled to fix startup issues - will re-enable after fixing constructors
-        self.config_manager = None
-        self.phase_manager = None
-        self.irrigation_manager = None
-        self.calibration_manager = None
-
         # Advanced sensor processing for TDR/VWC/EC calculations
         self.advanced_sensor = OGBAdvancedSensor()
         self.medium_type = "rockwool"  # Default, will be synced from medium manager
+
+        # Initialize specialized managers
+        self.config_manager = OGBCSConfigurationManager(
+            data_store=dataStore,
+            room=room
+        )
+        
+        self.phase_manager = OGBCSPhaseManager(
+            data_store=dataStore,
+            room=room,
+            event_manager=eventManager
+        )
+        
+        self.irrigation_manager = OGBCSIrrigationManager(
+            room=room,
+            data_store=dataStore,
+            event_manager=eventManager,
+            hass=hass
+        )
+        
+        # Calibration Manager - handles VWC max/min calibration
+        self.calibration_manager = OGBCSCalibrationManager(
+            room=room,
+            data_store=dataStore,
+            event_manager=eventManager,
+            advanced_sensor=self.advanced_sensor
+        )
 
         # Default values for missing attributes (normally set by modular managers)
         self._medium_adjustments = {}
@@ -768,6 +788,8 @@ class OGBCSManager:
                 haEvent=True,
             )
             self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+            self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
+            await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
             await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
             return
 
@@ -776,6 +798,8 @@ class OGBCSManager:
         if p1_irrigation_count >= max_attempts:
             _LOGGER.info(f"{self.room} - P1: Max attempts reached ({max_attempts})")
             self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+            self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
+            await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
             await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
             return
 
@@ -1404,7 +1428,7 @@ class OGBCSManager:
 
     async def handle_vwc_calibration_command(self, command_data):
         """
-        Handle VWC calibration commands
+        Handle VWC calibration commands - delegates to CalibrationManager
         Calibration only runs in Automatic Mode
 
         Expected:
@@ -1415,7 +1439,7 @@ class OGBCSManager:
         """
 
         # Prüfe ob Automatic Mode aktiv
-        current_mode = self.data_store.getDeep("CropSteering.ActiveMode")
+        current_mode = self.data_store.getDeep("CropSteering.ActiveMode") or ""
         if "Automatic" not in current_mode:
             await self.event_manager.emit(
                 "LogForClient",
@@ -1428,411 +1452,12 @@ class OGBCSManager:
             )
             return
 
-        action = command_data.get("action")
-        phase = command_data.get("phase", "p1")
-
-        if action == "start_max":
-            await self.start_vwc_max_calibration(phase=phase)
-        elif action == "start_min":
-            await self.start_vwc_min_calibration(phase=phase)
-        elif action == "stop":
-            await self.stop_vwc_calibration()
+        # Delegate to CalibrationManager
+        if self.calibration_manager:
+            await self.calibration_manager.handle_vwc_calibration_command(command_data)
         else:
-            await self.event_manager.emit(
-                "LogForClient",
-                f"VWC Calibration: Unknown action '{action}'",
-                haEvent=True,
-            )
+            _LOGGER.error(f"{self.room} - CalibrationManager not initialized")
 
-    async def start_vwc_max_calibration(self, phase="p1"):
-        """
-        Start VWC max calibration
-        Finds the maximum VWC through gradual saturation
-        """
-
-        if self._calibration_task is not None:
-            await self.stop_vwc_calibration()
-
-        self._calibration_task = asyncio.create_task(
-            self._vwc_max_calibration_cycle(phase)
-        )
-
-        await self.event_manager.emit(
-            "LogForClient",
-            {
-                "Name": self.room,
-                "Type": "CSLOG",
-                "Message": f"VWC Max Calibration started for {phase}",
-            },
-            haEvent=True,
-        )
-
-    async def _vwc_max_calibration_cycle(self, phase):
-        """Main VWC max calibration cycle"""
-
-        try:
-            calibration_complete = False
-            irrigation_count = 0
-            previous_vwc = 0
-            stable_readings = []
-
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": "Starting VWC Max auto-calibration",
-                },
-                haEvent=True,
-            )
-
-            while (
-                not calibration_complete
-                and irrigation_count < self.max_irrigation_attempts
-            ):
-                irrigation_count += 1
-
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": f"Irrigation cycle {irrigation_count}/{self.max_irrigation_attempts}",
-                    },
-                    haEvent=True,
-                )
-
-                # Irrigate
-                await self._irrigate(duration=45)
-
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": "Waiting for VWC stabilization...",
-                    },
-                    haEvent=True,
-                )
-
-                # Wait for stabilization
-                stable_vwc = await self._wait_for_vwc_stabilization(timeout=300)
-
-                if stable_vwc is None:
-                    await self.event_manager.emit(
-                        "LogForClient",
-                        {
-                            "Name": self.room,
-                            "Type": "CSLOG",
-                            "Message": "Timeout waiting for stabilization",
-                        },
-                        haEvent=True,
-                    )
-                    break
-
-                stable_readings.append(stable_vwc)
-
-                # Prüfe Zunahme
-                vwc_increase = stable_vwc - previous_vwc
-                vwc_increase_percent = (
-                    (vwc_increase / previous_vwc * 100) if previous_vwc > 0 else 100
-                )
-
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": f"VWC={stable_vwc:.1f}%, Increase={vwc_increase_percent:.1f}%",
-                    },
-                    haEvent=True,
-                )
-
-                # Prüfe ob Maximum erreicht (keine signifikante Zunahme mehr)
-                if len(stable_readings) >= 2:
-                    last_increase = stable_readings[-1] - stable_readings[-2]
-                    last_increase_percent = (
-                        (last_increase / stable_readings[-2] * 100)
-                        if stable_readings[-2] > 0
-                        else 0
-                    )
-
-                    if abs(last_increase_percent) < self.stability_tolerance:
-                        calibration_complete = True
-                        max_vwc = stable_vwc
-
-                        await self.event_manager.emit(
-                            "LogForClient",
-                            {
-                                "Name": self.room,
-                                "Type": "CSLOG",
-                                "Message": f"✓ COMPLETE! VWCMax={max_vwc:.1f}%",
-                            },
-                            haEvent=True,
-                        )
-
-                        # Aktualisiere Preset-Werte
-                        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
-                        gen_week = self.data_store.getDeep("isPlantDay.generativeWeek")
-
-                        # Speichere kalibrierte Werte
-                        self.data_store.setDeep(
-                            f"CropSteering.Calibration.{phase}.VWCMax", max_vwc
-                        )
-                        self.data_store.setDeep(
-                            f"CropSteering.Calibration.{phase}.timestamp",
-                            datetime.now().isoformat(),
-                        )
-
-                        calibration_result = {
-                            "phase": phase,
-                            "vwc_max": max_vwc,
-                            "irrigation_attempts": irrigation_count,
-                            "readings": stable_readings,
-                            "plant_phase": plant_phase,
-                            "generative_week": gen_week,
-                        }
-
-                        await self.event_manager.emit(
-                            "VWCCalibrationComplete", calibration_result, haEvent=True
-                        )
-
-                        break
-
-                previous_vwc = stable_vwc
-                await asyncio.sleep(60)
-
-            if not calibration_complete and stable_readings:
-                max_vwc = max(stable_readings)
-                self.data_store.setDeep(
-                    f"CropSteering.Calibration.{phase}.VWCMax", max_vwc
-                )
-
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": f"Estimated VWCMax={max_vwc:.1f}% (max attempts reached)",
-                    },
-                    haEvent=True,
-                )
-
-        except asyncio.CancelledError:
-            await self._turn_off_all_drippers()
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": "Calibration cancelled",
-                },
-                haEvent=True,
-            )
-            raise
-        except Exception as e:
-            await self._turn_off_all_drippers()
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": f"Calibration error: {str(e)}",
-                },
-                haEvent=True,
-            )
-
-    async def _wait_for_vwc_stabilization(self, timeout=300, check_interval=10):
-        """Wait until VWC reading stabilizes"""
-
-        start_time = datetime.now()
-        readings = []
-        min_readings = 3
-
-        while (datetime.now() - start_time).total_seconds() < timeout:
-            current_vwc = self.data_store.getDeep("CropSteering.vwc_current")
-
-            if current_vwc is None or current_vwc == 0:
-                await asyncio.sleep(check_interval)
-                continue
-
-            readings.append(float(current_vwc))
-
-            if len(readings) > min_readings:
-                readings.pop(0)
-
-            if len(readings) >= min_readings:
-                avg_vwc = sum(readings) / len(readings)
-                max_deviation = max(abs(r - avg_vwc) for r in readings)
-                deviation_percent = (
-                    (max_deviation / avg_vwc * 100) if avg_vwc > 0 else 100
-                )
-
-                if deviation_percent < self.stability_tolerance:
-                    await self.event_manager.emit(
-                        "LogForClient",
-                        {
-                            "Name": self.room,
-                            "Type": "CSLOG",
-                            "Message": f"Stable at {avg_vwc:.1f}%",
-                        },
-                        haEvent=True,
-                    )
-                    return avg_vwc
-
-            await asyncio.sleep(check_interval)
-
-        return None
-
-    async def start_vwc_min_calibration(self, phase="p1"):
-        """
-        Calibrate VWC minimum by monitoring dry-back
-        Finds the minimum VWC through monitored dryback
-        """
-
-        if self._calibration_task is not None:
-            await self.stop_vwc_calibration()
-
-        # Use preset for dryback duration
-        preset = self._get_automatic_presets()[phase]
-        dry_back_duration = 3600  # 1 hour standard
-
-        self._calibration_task = asyncio.create_task(
-            self._vwc_min_calibration_cycle(phase, dry_back_duration)
-        )
-
-        await self.event_manager.emit(
-            "LogForClient",
-            {
-                "Name": self.room,
-                "Type": "CSLOG",
-                "Message": f"VWC Min Calibration started for {phase} ({dry_back_duration}s)",
-            },
-            haEvent=True,
-        )
-
-    async def _vwc_min_calibration_cycle(self, phase, dry_back_duration):
-        """Monitor dry-back to find VWC minimum"""
-
-        start_time = datetime.now()
-        start_vwc = self.data_store.getDeep("CropSteering.vwc_current")
-        min_vwc_observed = float("inf")
-        readings = []
-
-        try:
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": f"Monitoring dryback from {start_vwc:.1f}% for {dry_back_duration/60:.0f} minutes",
-                },
-                haEvent=True,
-            )
-
-            while (datetime.now() - start_time).total_seconds() < dry_back_duration:
-                current_vwc = self.data_store.getDeep("CropSteering.vwc_current")
-
-                if current_vwc is not None and current_vwc > 0:
-                    readings.append(float(current_vwc))
-                    min_vwc_observed = min(min_vwc_observed, float(current_vwc))
-
-                    # Periodisches Update
-                    elapsed = (datetime.now() - start_time).total_seconds()
-                    if elapsed % 300 == 0:  # Alle 5 Minuten
-                        dryback_percent = (
-                            ((start_vwc - current_vwc) / start_vwc * 100)
-                            if start_vwc
-                            else 0
-                        )
-                        await self.event_manager.emit(
-                            "LogForClient",
-                            {
-                                "Name": self.room,
-                                "Type": "CSLOG",
-                                "Message": f"Current: {current_vwc:.1f}%, Dryback: {dryback_percent:.1f}%",
-                            },
-                            haEvent=True,
-                        )
-
-                await asyncio.sleep(30)
-
-            if min_vwc_observed < float("inf"):
-                # Safety buffer: 10% above observed minimum
-                safe_min_vwc = min_vwc_observed * 1.1
-
-                self.data_store.setDeep(
-                    f"CropSteering.Calibration.{phase}.VWCMin", safe_min_vwc
-                )
-                self.data_store.setDeep(
-                    f"CropSteering.Calibration.{phase}.timestamp",
-                    datetime.now().isoformat(),
-                )
-
-                final_dryback = (
-                    ((start_vwc - min_vwc_observed) / start_vwc * 100)
-                    if start_vwc
-                    else 0
-                )
-
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": f"✓ COMPLETE! VWCMin={safe_min_vwc:.1f}% (observed: {min_vwc_observed:.1f}%, dryback: {final_dryback:.1f}%)",
-                    },
-                    haEvent=True,
-                )
-
-                result = {
-                    "phase": phase,
-                    "vwc_min": safe_min_vwc,
-                    "vwc_min_observed": min_vwc_observed,
-                    "start_vwc": start_vwc,
-                    "final_dryback_percent": final_dryback,
-                    "readings_count": len(readings),
-                }
-
-                await self.event_manager.emit(
-                    "VWCMinCalibrationComplete", result, haEvent=True
-                )
-            else:
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": "VWC Min Calibration: No valid readings",
-                    },
-                    haEvent=True,
-                )
-
-        except asyncio.CancelledError:
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": "Min Calibration cancelled",
-                },
-                haEvent=True,
-            )
-            raise
-
-    async def stop_vwc_calibration(self):
-        """Stop VWC calibration"""
-
-        if self._calibration_task is not None:
-            self._calibration_task.cancel()
-            try:
-                await self._calibration_task
-            except asyncio.CancelledError:
-                pass
-            self._calibration_task = None
-
-            await self.event_manager.emit(
-                "LogForClient",
-                {"Name": self.room, "Type": "CSLOG", "Message": "Calibration stopped"},
-                haEvent=True,
-            )
+    # NOTE: VWC calibration methods (start_vwc_max_calibration, start_vwc_min_calibration, 
+    # stop_vwc_calibration, etc.) are now handled by OGBCSCalibrationManager
+    # See handle_vwc_calibration_command() which delegates to self.calibration_manager

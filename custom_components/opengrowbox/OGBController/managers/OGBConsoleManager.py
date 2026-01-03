@@ -86,6 +86,23 @@ class OGBConsoleManager:
             [],
         )
 
+        # CropSteering Calibration Commands
+        self.register_command(
+            "cs_calibrate",
+            self.cmd_cs_calibrate,
+            "Startet VWC Kalibrierung für CropSteering",
+            "cs_calibrate <max|min|stop> [phase]",
+            ["cs_calibrate max", "cs_calibrate max p1", "cs_calibrate min p2", "cs_calibrate stop"],
+        )
+
+        self.register_command(
+            "cs_status",
+            self.cmd_cs_status,
+            "Zeigt CropSteering Status und Kalibrierungswerte",
+            "cs_status",
+            ["cs_status"],
+        )
+
     def register_command(
         self,
         name: str,
@@ -338,6 +355,116 @@ class OGBConsoleManager:
             response += "\n"
 
         response += "=" * 60
+        await self._send_response(response)
+
+    # =========================
+    # CROP STEERING COMMANDS
+    # =========================
+
+    async def cmd_cs_calibrate(self, params: List[str]):
+        """
+        Startet oder stoppt VWC Kalibrierung.
+        Usage: cs_calibrate <max|min|stop> [phase]
+        """
+        if not params:
+            await self._send_response(
+                "⚠️ Missing action.\n"
+                "Usage: cs_calibrate <max|min|stop> [phase]\n"
+                "Actions:\n"
+                "  max  - Kalibriert VWC Maximum (Sättigung)\n"
+                "  min  - Kalibriert VWC Minimum (Dryback)\n"
+                "  stop - Stoppt laufende Kalibrierung\n"
+                "Phases: p1, p2, p3 (default: p1)"
+            )
+            return
+
+        action = params[0].lower()
+        phase = params[1].lower() if len(params) > 1 else "p1"
+
+        # Validate action
+        if action not in ["max", "min", "stop"]:
+            await self._send_response(
+                f"⚠️ Unknown action: '{action}'\n"
+                "Valid actions: max, min, stop"
+            )
+            return
+
+        # Validate phase
+        if phase not in ["p1", "p2", "p3"]:
+            await self._send_response(
+                f"⚠️ Invalid phase: '{phase}'\n"
+                "Valid phases: p1, p2, p3"
+            )
+            return
+
+        # Check if CropSteering is in Automatic mode
+        current_mode = self.data_store.getDeep("CropSteering.ActiveMode") or ""
+        if "Automatic" not in current_mode and action != "stop":
+            await self._send_response(
+                "⚠️ VWC Calibration only available in Automatic Mode.\n"
+                f"Current mode: {current_mode or 'Not set'}"
+            )
+            return
+
+        # Build command data
+        if action == "stop":
+            command_data = {"action": "stop"}
+            await self._send_response("🛑 Stopping VWC calibration...")
+        else:
+            command_data = {"action": f"start_{action}", "phase": phase}
+            cal_type = "Maximum (Sättigung)" if action == "max" else "Minimum (Dryback)"
+            await self._send_response(
+                f"🔄 Starting VWC {cal_type} calibration for phase {phase.upper()}...\n"
+                "This may take several minutes. Watch the logs for progress."
+            )
+
+        # Emit calibration command
+        await self.event_manager.emit("VWCCalibrationCommand", command_data)
+
+    async def cmd_cs_status(self, params: List[str]):
+        """Zeigt CropSteering Status und Kalibrierungswerte"""
+        response = "🌱 CropSteering Status:\n" + "=" * 50 + "\n"
+
+        # Mode info
+        mode = self.data_store.getDeep("CropSteering.Mode") or "Not set"
+        active_mode = self.data_store.getDeep("CropSteering.ActiveMode") or "Not set"
+        active = self.data_store.getDeep("CropSteering.Active") or False
+        current_phase = self.data_store.getDeep("CropSteering.currentPhase") or "Unknown"
+
+        response += f"\n📊 Mode: {mode}\n"
+        response += f"   Active Mode: {active_mode}\n"
+        response += f"   Active: {'Yes' if active else 'No'}\n"
+        response += f"   Current Phase: {current_phase}\n"
+
+        # Current sensor values
+        vwc = self.data_store.getDeep("CropSteering.vwc_current")
+        ec = self.data_store.getDeep("CropSteering.ec_current")
+        
+        response += f"\n📈 Current Readings:\n"
+        response += f"   VWC: {vwc:.1f}%\n" if vwc else "   VWC: N/A\n"
+        response += f"   EC: {ec:.2f} mS/cm\n" if ec else "   EC: N/A\n"
+
+        # Calibration values
+        response += f"\n🔧 Calibration Values:\n"
+        for phase in ["p1", "p2", "p3"]:
+            vwc_max = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMax")
+            vwc_min = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMin")
+            timestamp = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.timestamp")
+            
+            if vwc_max or vwc_min:
+                response += f"   {phase.upper()}:\n"
+                if vwc_max:
+                    response += f"      VWC Max: {vwc_max:.1f}%\n"
+                if vwc_min:
+                    response += f"      VWC Min: {vwc_min:.1f}%\n"
+                if timestamp:
+                    response += f"      Last Cal: {timestamp[:16]}\n"
+            else:
+                response += f"   {phase.upper()}: Not calibrated\n"
+
+        response += "\n" + "=" * 50
+        response += "\n💡 Use 'cs_calibrate max' or 'cs_calibrate min' to calibrate"
+        
         await self._send_response(response)
 
     # =========================

@@ -85,6 +85,13 @@ class OGBConf:
             "weight_min": 0,
             "max_moisture": 0,
             "min_moisture": 0,
+            # Calibration data - persisted across restarts
+            "Calibration": {
+                "p1": {"VWCMax": None, "VWCMin": None, "timestamp": None},
+                "p2": {"VWCMax": None, "VWCMin": None, "timestamp": None},
+                "p3": {"VWCMax": None, "VWCMin": None, "timestamp": None},
+                "LastRun": None,
+            },
             # Phase-spezifische Werte für p0–p3
             **{
                 key: {phase: {"value": 0} for phase in ["p0", "p1", "p2", "p3"]}
@@ -99,7 +106,7 @@ class OGBConf:
                     "MinWeight",
                     "MaxEC",
                     "MinEC",
-                    "VWCTarget" "VWCMax",
+                    "VWCTarget", "VWCMax",
                     "VWCMin",
                 ]
             },
