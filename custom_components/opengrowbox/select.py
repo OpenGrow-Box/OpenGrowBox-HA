@@ -468,6 +468,37 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             options=["YES", "NO"],
             initial_value="YES",
         ),
+        # ============================================================
+        # SPECIAL LIGHTS - Mode Selects (Schedule, Always On, Always Off, Manual)
+        # ============================================================
+        CustomSelect(
+            f"OGB_Light_FarRed_Mode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Schedule", "Always On", "Always Off", "Manual"],
+            initial_value="Always Off",
+        ),
+        CustomSelect(
+            f"OGB_Light_UV_Mode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Schedule", "Always On", "Always Off", "Manual"],
+            initial_value="Always Off",
+        ),
+        CustomSelect(
+            f"OGB_Light_Blue_Mode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Schedule", "Always On", "Always Off", "Manual"],
+            initial_value="Always Off",
+        ),
+        CustomSelect(
+            f"OGB_Light_Red_Mode_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["Schedule", "Always On", "Always Off", "Manual"],
+            initial_value="Always Off",
+        ),
     ]
 
     if "selects" not in hass.data[DOMAIN]:
