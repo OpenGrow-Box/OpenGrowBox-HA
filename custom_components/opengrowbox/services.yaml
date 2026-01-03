@@ -71,6 +71,51 @@ update_medium_plant_dates:
       required: false
       example: MidFlower
 
+finish_grow:
+  name: Finish Grow
+  description: Complete the current grow cycle for a medium. Archives grow data and resets the medium for a new grow.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name
+      required: true
+      example: FlowerTent
+    medium_index:
+      name: Medium Index
+      description: Index of the medium in the mediums array (0-based)
+      required: true
+      example: 0
+    medium_name:
+      name: Medium Name
+      description: Name of the medium (e.g., coco_1, soil_2)
+      required: false
+      example: coco_1
+    plant_name:
+      name: Plant Name
+      description: Name of the plant being harvested
+      required: false
+      example: Northern Lights #1
+    breeder_name:
+      name: Breeder Name
+      description: Breeder/strain name of the plant
+      required: false
+      example: Sensi Seeds
+    total_days:
+      name: Total Days
+      description: Total number of days from seed/clone to harvest
+      required: false
+      example: 90
+    bloom_days:
+      name: Bloom Days
+      description: Number of days in flowering/bloom phase
+      required: false
+      example: 60
+    notes:
+      name: Harvest Notes
+      description: Optional notes about the harvest (yield, quality, etc.)
+      required: false
+      example: "Great yield, dense buds"
+
 add_select_options:
   name: Add Select Options
   description: Aktualisiert den Wert eines Sensors.

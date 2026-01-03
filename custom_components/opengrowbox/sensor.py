@@ -533,3 +533,52 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             }, extra=vol.ALLOW_EXTRA),
         )
         _LOGGER.info(f"✅ Registered {DOMAIN}.update_medium_plant_dates service")
+    
+    # Register finish_grow service
+    if not hass.services.has_service(DOMAIN, "finish_grow"):
+        async def handle_finish_grow(call):
+            """Handle finish grow service - completes grow cycle for a medium."""
+            room = call.data.get("room")
+            medium_index = call.data.get("medium_index")
+            
+            _LOGGER.warning(f"🏁 SERVICE CALL: finish_grow for room '{room}', medium {medium_index}")
+            _LOGGER.warning(f"🏁 Full call data: {dict(call.data)}")
+            
+            # Get coordinator for this room
+            coordinator = None
+            for entry_id, coord in hass.data[DOMAIN].items():
+                if entry_id != "sensors" and hasattr(coord, 'room_name'):
+                    if coord.room_name == room:
+                        coordinator = coord
+                        _LOGGER.warning(f"✅ Found coordinator for room: {room}")
+                        break
+            
+            if not coordinator:
+                _LOGGER.error(f"❌ No coordinator found for room: {room}")
+                _LOGGER.error(f"❌ Available entries: {[k for k in hass.data[DOMAIN].keys()]}")
+                return
+            
+            # Emit FinishGrow event - MediumManager will handle the logic
+            try:
+                _LOGGER.warning(f"📤 Emitting FinishGrow event with data: {dict(call.data)}")
+                await coordinator.OGB.eventManager.emit("FinishGrow", dict(call.data), haEvent=True)
+                _LOGGER.warning(f"✅ Emitted FinishGrow event for room: {room}, medium: {medium_index}")
+            except Exception as e:
+                _LOGGER.error(f"❌ Failed to emit FinishGrow event: {e}", exc_info=True)
+        
+        hass.services.async_register(
+            DOMAIN,
+            "finish_grow",
+            handle_finish_grow,
+            schema=vol.Schema({
+                vol.Required("room"): str,
+                vol.Required("medium_index"): int,
+                vol.Optional("medium_name"): str,
+                vol.Optional("plant_name"): str,
+                vol.Optional("breeder_name"): str,
+                vol.Optional("total_days"): vol.Any(int, float),
+                vol.Optional("bloom_days"): vol.Any(int, float),
+                vol.Optional("notes"): str,
+            }, extra=vol.ALLOW_EXTRA),
+        )
+        _LOGGER.info(f"✅ Registered {DOMAIN}.finish_grow service")
