@@ -160,9 +160,10 @@ class OGBConfigurationManager:
             # Medium
             f"ogb_mediumtype_{self.room.lower()}": self._update_medium_type,
             f"ogb_multi_mediumctrl_{self.room.lower()}": self._update_multi_medium_control,
-            # Crop Steering
-            f"ogb_crop_steering_mode_{self.room.lower()}": self._crop_steering_mode,
-            f"ogb_crop_steering_phase_{self.room.lower()}": self._crop_steering_phase,
+            # Crop Steering - note: entity names are lowercase with underscores
+            # OGB_CropSteering_Mode becomes ogb_cropsteering_mode (no underscore between crop/steering)
+            f"ogb_cropsteering_mode_{self.room.lower()}": self._crop_steering_mode,
+            f"ogb_cropsteering_phases_{self.room.lower()}": self._crop_steering_phase,
             # Crop steering parameter sets handled dynamically by _crop_steering_sets
             # This will match: ogb_cs_p0_shot_ec, ogb_cs_p1_dryback_target, etc.
             
@@ -197,14 +198,33 @@ class OGBConfigurationManager:
         }
 
     def handle_configuration_update(self, entity_key, data):
-        """Handle configuration updates by routing to appropriate handlers."""
+        """Handle configuration updates by routing to appropriate handlers.
+        
+        Entity keys come in with domain prefix (e.g., 'select.ogb_cropsteering_mode_veggitent')
+        but the mapping uses bare keys (e.g., 'ogb_cropsteering_mode_veggitent').
+        We strip the domain prefix before lookup.
+        """
         actions = self.get_configuration_mapping()
+        
+        # Strip domain prefix (select., number., switch., text., time., date., etc.)
+        # Entity keys from HA come as "domain.entity_id" but our mapping uses just "entity_id"
+        original_key = entity_key
+        if "." in entity_key:
+            entity_key = entity_key.split(".", 1)[1]
+        
         action = actions.get(entity_key)
+        
+        # Debug: Log all incoming entity keys for troubleshooting
+        if "crop" in entity_key.lower() or "steering" in entity_key.lower():
+            _LOGGER.warning(f"OGB-Manager {self.room}: CropSteering entity update: {original_key} -> {entity_key}")
+            _LOGGER.warning(f"OGB-Manager {self.room}: Action found: {action is not None}")
+        
         if action:
+            _LOGGER.debug(f"OGB-Manager {self.room}: Routing {entity_key} to handler")
             asyncio.create_task(action(data))
             return True
         else:
-            _LOGGER.info(f"OGB-Manager {self.room}: No action found for {entity_key}.")
+            _LOGGER.info(f"OGB-Manager {self.room}: No action found for {entity_key} (original: {original_key}).")
             return False
 
     # Core control methods
@@ -1178,9 +1198,19 @@ class OGBConfigurationManager:
     async def _crop_steering_mode(self, data):
         """Update CropSteering active mode."""
         value = data.newState[0]
+        _LOGGER.warning(f"{self.room}: _crop_steering_mode called with value: {value}")
+        
         self.data_store.setDeep("CropSteering.ActiveMode", value)
+        _LOGGER.warning(f"{self.room}: CropSteering.ActiveMode set to: {value}")
+        
+        # Also set CropSteering.Active based on mode
+        if value in ("Automatic", "Manual"):
+            self.data_store.setDeep("CropSteering.Active", True)
+        elif value in ("Disabled", "Config"):
+            self.data_store.setDeep("CropSteering.Active", False)
+        
         await self.event_manager.emit("CropSteeringChanges", data)
-        _LOGGER.info(f"{self.room}: Crop Steering mode changed to {value}")
+        _LOGGER.warning(f"{self.room}: CropSteeringChanges event emitted for mode: {value}")
 
     async def _crop_steering_phase(self, data):
         """Update CropSteering phase (Manual mode only)."""

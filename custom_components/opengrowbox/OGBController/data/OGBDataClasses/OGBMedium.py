@@ -964,7 +964,12 @@ class GrowMedium:
         }
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert medium to dictionary for persistence"""
+        """Convert medium to dictionary for persistence.
+        
+        CRITICAL: Tuples must be serialized as lists to prevent corruption.
+        Python's JSON serializer converts tuples to lists anyway, but explicit
+        conversion prevents issues with other serializers and makes the intent clear.
+        """
         return {
             "name": self.name,
             "type": self.medium_type.value,
@@ -973,8 +978,9 @@ class GrowMedium:
             "properties": {
                 "water_retention": self.properties.water_retention,
                 "air_porosity": self.properties.air_porosity,
-                "ph_range": self.properties.ph_range,
-                "ec_range": self.properties.ec_range,
+                # CRITICAL: Serialize tuples as lists to prevent corruption on reload
+                "ph_range": list(self.properties.ph_range) if isinstance(self.properties.ph_range, tuple) else self.properties.ph_range,
+                "ec_range": list(self.properties.ec_range) if isinstance(self.properties.ec_range, tuple) else self.properties.ec_range,
                 "watering_frequency": self.properties.watering_frequency,
                 "drainage_speed": self.properties.drainage_speed,
                 "nutrient_storage": self.properties.nutrient_storage,
@@ -1063,13 +1069,31 @@ class GrowMedium:
             medium.breeder_bloom_days = data["breeder_bloom_days"]
             _LOGGER.warning(f"[{room}] Restored breeder_bloom_days: {medium.breeder_bloom_days}")
 
-        # Properties
+        # Properties - with safe tuple parsing
         props = data.get("properties", {})
+        
+        def safe_tuple_parse(value, default):
+            """Safely parse a tuple from various formats."""
+            if value is None:
+                return default
+            if isinstance(value, tuple):
+                return value
+            if isinstance(value, list) and len(value) == 2:
+                try:
+                    return (float(value[0]), float(value[1]))
+                except (ValueError, TypeError):
+                    return default
+            # If it's a corrupted string, return default
+            if isinstance(value, str):
+                _LOGGER.warning(f"Corrupted tuple value detected, using default: {default}")
+                return default
+            return default
+        
         medium.properties = MediumProperties(
             water_retention=props.get("water_retention", 50.0),
             air_porosity=props.get("air_porosity", 50.0),
-            ph_range=tuple(props.get("ph_range", (5.5, 7.0))),
-            ec_range=tuple(props.get("ec_range", (1.0, 2.5))),
+            ph_range=safe_tuple_parse(props.get("ph_range"), (5.5, 7.0)),
+            ec_range=safe_tuple_parse(props.get("ec_range"), (1.0, 2.5)),
             watering_frequency=props.get("watering_frequency", 24.0),
             drainage_speed=props.get("drainage_speed", "medium"),
             nutrient_storage=props.get("nutrient_storage", 50.0),
