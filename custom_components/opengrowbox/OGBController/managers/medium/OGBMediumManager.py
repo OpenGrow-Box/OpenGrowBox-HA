@@ -132,8 +132,10 @@ class OGBMediumManager:
         self.event_manager.on("RequestMediumPlantsData", self._on_request_plants_data)
         # Global plantStage changes - sync all mediums
         self.event_manager.on("PlantStageChange", self._on_global_plant_stage_change)
+        # Finish grow event - complete a grow cycle
+        self.event_manager.on("FinishGrow", self._on_finish_grow)
 
-        _LOGGER.warning(f"[{self.room}] Medium Manager: Event listeners registered for MediumChange, RegisterSensorToMedium, MediumSensorUpdate, UpdateMediumPlantDates, RequestMediumPlantsData, PlantStageChange")
+        _LOGGER.warning(f"[{self.room}] Medium Manager: Event listeners registered for MediumChange, RegisterSensorToMedium, MediumSensorUpdate, UpdateMediumPlantDates, RequestMediumPlantsData, PlantStageChange, FinishGrow")
 
     async def _on_update_plant_dates(self, data: Dict[str, Any]):
         """
@@ -212,6 +214,49 @@ class OGBMediumManager:
         if data.get("room") != self.room:
             return
         await self.emit_all_plants_update()
+
+    async def _on_finish_grow(self, data: Dict[str, Any]):
+        """
+        Handle finish grow event from UI.
+        Archives the current grow data and resets the medium for a new grow.
+        
+        Expected data from frontend (GrowDayCounter.jsx):
+        {
+            "room": "room_name",
+            "medium_index": 0,
+            "medium_name": "coco_1",
+            "plant_name": "Northern Lights #1",
+            "breeder_name": "Sensi Seeds",
+            "total_days": 90,
+            "bloom_days": 60,
+            "notes": "optional harvest notes"
+        }
+        """
+        _LOGGER.warning(f"[{self.room}] 🏁 FinishGrow EVENT RECEIVED: {data}")
+        
+        if data.get("room") != self.room:
+            _LOGGER.debug(f"[{self.room}] Ignoring FinishGrow event for room: {data.get('room')}")
+            return
+        
+        medium_index = data.get("medium_index")
+        if medium_index is None:
+            _LOGGER.error(f"[{self.room}] FinishGrow: No medium_index provided")
+            return
+        
+        # Call the finish method
+        success = await self.finish_medium_grow(
+            medium_index=medium_index,
+            plant_name=data.get("plant_name"),
+            breeder_name=data.get("breeder_name"),
+            total_days=data.get("total_days"),
+            bloom_days=data.get("bloom_days"),
+            notes=data.get("notes"),
+        )
+        
+        if success:
+            _LOGGER.warning(f"[{self.room}] ✅ FinishGrow completed for medium index {medium_index}")
+        else:
+            _LOGGER.error(f"[{self.room}] ❌ FinishGrow failed for medium index {medium_index}")
 
     async def _on_register_sensor(self, data):
         """
@@ -948,6 +993,120 @@ class OGBMediumManager:
         await self.emit_all_plants_update()
         
         _LOGGER.warning(f"[{self.room}] ✅ Plant dates updated for {medium.name}: name={medium.plant_name}, breeder={medium.breeder_name}")
+        return True
+
+    async def finish_medium_grow(
+        self,
+        medium_index: int,
+        plant_name: Optional[str] = None,
+        breeder_name: Optional[str] = None,
+        total_days: Optional[int] = None,
+        bloom_days: Optional[int] = None,
+        notes: Optional[str] = None,
+    ) -> bool:
+        """
+        Complete the grow cycle for a specific medium.
+        
+        This method:
+        1. Archives the current grow data (emits GrowCompleted event)
+        2. Resets the medium for a new grow
+        3. Emits updates to UI
+        
+        Returns True if successful, False otherwise.
+        """
+        _LOGGER.warning(f"[{self.room}] 🏁 finish_medium_grow called: "
+                       f"index={medium_index}, plant={plant_name}, breeder={breeder_name}, "
+                       f"total_days={total_days}, bloom_days={bloom_days}")
+        
+        if medium_index < 0 or medium_index >= len(self.media):
+            _LOGGER.error(f"[{self.room}] Invalid medium index: {medium_index}, available: {len(self.media)}")
+            return False
+        
+        medium = self.media[medium_index]
+        
+        # Gather current grow data for archiving
+        harvest_data = {
+            "room": self.room,
+            "medium_index": medium_index,
+            "medium_name": medium.name,
+            "medium_type": medium.medium_type.value if medium.medium_type else None,
+            # Plant info
+            "plant_name": plant_name or medium.plant_name,
+            "breeder_name": breeder_name or medium.breeder_name,
+            "plant_type": medium.plant_type,
+            "plant_stage": medium.plant_stage,
+            # Dates
+            "grow_start_date": medium.grow_start_date.isoformat() if medium.grow_start_date else None,
+            "bloom_switch_date": medium.bloom_switch_date.isoformat() if medium.bloom_switch_date else None,
+            "harvest_date": datetime.now().isoformat(),
+            # Duration
+            "total_days": total_days or medium.total_grow_days,
+            "bloom_days": bloom_days or medium.bloom_days,
+            "breeder_bloom_days": medium.breeder_bloom_days,
+            # Final sensor readings
+            "final_readings": medium.get_all_medium_values(),
+            # Optional notes
+            "notes": notes,
+            # Timestamp
+            "completed_at": datetime.now().isoformat(),
+        }
+        
+        _LOGGER.warning(f"[{self.room}] 📦 Archiving grow data: {harvest_data}")
+        
+        # Emit GrowCompleted event for archiving/logging
+        # This can be used by premium features to store harvest history
+        try:
+            await self.event_manager.emit("GrowCompleted", harvest_data, haEvent=True)
+            _LOGGER.warning(f"[{self.room}] ✅ Emitted GrowCompleted event")
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Failed to emit GrowCompleted: {e}")
+        
+        # Reset the medium for a new grow
+        _LOGGER.warning(f"[{self.room}] 🔄 Resetting medium {medium.name} for new grow")
+        
+        # Clear plant-specific data but keep medium type and name
+        medium.plant_name = None
+        medium.breeder_name = None
+        medium.plant_type = None
+        medium.grow_start_date = None
+        medium.bloom_switch_date = None
+        medium.breeder_bloom_days = None
+        
+        # Reset plant stage to initial state
+        # Check if there's a global plantStage to use, otherwise default to Seedling
+        global_plant_stage = self.data_store.get("plantStage")
+        if global_plant_stage:
+            await medium.set_plant_stage(global_plant_stage)
+        else:
+            await medium.set_plant_stage("Seedling")
+        
+        # Keep sensor registrations intact - just clear readings for a fresh start
+        # This allows sensors to continue working for the next grow
+        if hasattr(medium, 'sensor_readings'):
+            medium.sensor_readings.clear()
+        
+        # Save changes
+        self._save_mediums_to_store()
+        
+        # Emit plants update for UI refresh
+        await self.emit_all_plants_update()
+        
+        # Also emit a specific event for UI notification
+        notification_data = {
+            "room": self.room,
+            "medium_index": medium_index,
+            "medium_name": medium.name,
+            "message": f"Grow cycle completed for {harvest_data['plant_name'] or medium.name}!",
+            "total_days": harvest_data["total_days"],
+            "bloom_days": harvest_data["bloom_days"],
+        }
+        
+        try:
+            await self.event_manager.emit("GrowFinishNotification", notification_data, haEvent=True)
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Failed to emit GrowFinishNotification: {e}")
+        
+        _LOGGER.warning(f"[{self.room}] ✅ Medium {medium.name} reset and ready for new grow")
         return True
 
     # ============================================================

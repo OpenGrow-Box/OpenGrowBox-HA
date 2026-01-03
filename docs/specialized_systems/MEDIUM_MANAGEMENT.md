@@ -306,6 +306,169 @@ def assess_medium_health(self, medium_id: str) -> Dict[str, Any]:
 
 ## Medium Lifecycle Management
 
+### Grow Cycle Completion (Finish Grow)
+
+The finish grow cycle is triggered from the GrowBook UI when a user completes a harvest. This archives grow data and resets the medium for a new grow.
+
+#### Frontend Trigger (GrowDayCounter.jsx)
+
+```javascript
+// Called when user clicks "Finish Grow Cycle" button
+const handleGrowFinish = async () => {
+  await connection.sendMessagePromise({
+    type: 'call_service',
+    domain: 'opengrowbox',
+    service: 'finish_grow',
+    service_data: {
+      room: currentRoom,
+      medium_index: currentMediumIndex,
+      medium_name: currentMedium.medium_name,
+      plant_name: currentMedium.plant_name,
+      breeder_name: currentMedium.breeder_name,
+      total_days: currentMedium.dates?.planttotaldays || 0,
+      bloom_days: currentMedium.dates?.bloomdays || 0,
+    }
+  });
+};
+```
+
+#### Backend Service (sensor.py)
+
+```python
+# Service: opengrowbox.finish_grow
+# Emits FinishGrow event to MediumManager
+await coordinator.OGB.eventManager.emit("FinishGrow", {
+    "room": room,
+    "medium_index": medium_index,
+    "medium_name": medium_name,
+    "plant_name": plant_name,
+    "breeder_name": breeder_name,
+    "total_days": total_days,
+    "bloom_days": bloom_days,
+    "notes": notes,  # Optional harvest notes
+})
+```
+
+#### MediumManager Handler (OGBMediumManager.py)
+
+```python
+async def finish_medium_grow(self, medium_index: int, ...):
+    """
+    Complete the grow cycle for a specific medium.
+    
+    1. Archives current grow data (emits GrowCompleted event)
+    2. Resets medium for new grow (clears plant info, dates)
+    3. Emits UI updates
+    """
+```
+
+#### Events Emitted
+
+| Event | Purpose | Data |
+|-------|---------|------|
+| `GrowCompleted` | Archives harvest data for Premium API | Full harvest payload (see below) |
+| `MediumPlantsUpdate` | Refreshes UI with reset medium | Array of plant data |
+| `GrowFinishNotification` | UI notification | room, medium_name, message, days |
+
+#### GrowCompleted Payload (Premium API)
+
+```json
+{
+  "event_type": "grow_completed",
+  "room_id": "uuid",
+  "room_name": "FlowerTent",
+  "tenant_id": "uuid",
+  "timestamp": "2024-12-24T12:00:00Z",
+  
+  "medium_index": 0,
+  "medium_name": "coco_1",
+  "medium_type": "COCO",
+  
+  "plant_name": "Northern Lights #1",
+  "breeder_name": "Sensi Seeds",
+  "plant_type": "photoperiodic",
+  
+  "grow_start_date": "2024-01-15",
+  "bloom_switch_date": "2024-03-01",
+  "harvest_date": "2024-05-01",
+  
+  "total_days": 106,
+  "bloom_days": 61,
+  "breeder_bloom_days": 60,
+  
+  "final_readings": {
+    "temperature": 24.5,
+    "humidity": 55,
+    "vwc": 0.45,
+    "ec": 1.8
+  },
+  
+  "notes": "Great yield, dense buds"
+}
+```
+
+#### Premium API Integration
+
+The `GrowCompleted` event is handled by `OGBPremiumIntegration.py`:
+
+```python
+async def _on_grow_completed(self, data):
+    """Send harvest data to Premium API for analytics and compliance."""
+    
+    # Only sends if user is logged in to Premium
+    if not self.is_logged_in or not self.ogb_ws:
+        return
+    
+    # Send via WebSocket
+    await self.ogb_ws.send_encrypted_message("grow-completed", harvest_payload)
+```
+
+This enables:
+- **Harvest history tracking** - View all completed grows
+- **Analytics and insights** - Analyze performance across grows
+- **Compliance records** - Audit trail for regulatory requirements
+- **AI learning** - Improve predictions based on actual outcomes
+
+#### Data Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ Frontend: GrowDayCounter.jsx                                                     │
+│ User clicks "Finish Grow Cycle" button                                          │
+└────────────────────────────────────┬────────────────────────────────────────────┘
+                                     │ connection.sendMessagePromise()
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ Home Assistant WebSocket API                                                     │
+│ Routes to: opengrowbox.finish_grow service                                       │
+└────────────────────────────────────┬────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ sensor.py: handle_finish_grow()                                                  │
+│ → Finds coordinator for room                                                     │
+│ → Emits "FinishGrow" event                                                       │
+└────────────────────────────────────┬────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ OGBMediumManager._on_finish_grow()                                               │
+│ → Calls finish_medium_grow()                                                     │
+│   ├─ Archives grow data → emit("GrowCompleted")                                  │
+│   ├─ Resets medium (plant_name, dates → null)                                   │
+│   ├─ Saves to datastore                                                          │
+│   ├─ emit("MediumPlantsUpdate") → UI refresh                                     │
+│   └─ emit("GrowFinishNotification") → UI notification                            │
+└────────────────────────────────────┬────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ OGBPremiumIntegration._on_grow_completed()                                       │
+│ → Sends harvest data to Premium API via WebSocket                               │
+│ → Fires HA event: ogb_grow_completed                                            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Medium Initialization
 
 ```python
