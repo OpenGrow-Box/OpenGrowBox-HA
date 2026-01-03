@@ -36,6 +36,34 @@ class SimpleEventEmitter:
 
 
 class DataStore(SimpleEventEmitter):
+    # Keys to exclude from serialization to prevent unbounded growth
+    # These contain runtime data that shouldn't be persisted
+    SERIALIZATION_EXCLUDE_KEYS = {
+        # Heavy runtime objects
+        "hass",
+        "event_manager",
+        "eventManager",
+        "data_store",
+        "dataStore",
+        # GrowMedium runtime data (not persisted)
+        "sensor_history",
+        "sensor_readings",
+        "devices",  # DeviceBinding objects
+        "sensor_type_map",
+        # Lists that grow unbounded
+        "readings",
+        "histories",
+        "media",
+        # Device lists (reconstructed at startup)
+        "ownDeviceList",
+        # Callback functions
+        "callback",
+        "callbacks",
+        # Private attributes
+        "_background_tasks",
+        "_shutdown_event",
+    }
+
     def __init__(self, initial_state):
         super().__init__()
         # Falls initial_state None ist, benutze das leere OGBConf Objekt
@@ -96,6 +124,14 @@ class DataStore(SimpleEventEmitter):
         else:
             raise AttributeError(f"Cannot set '{last_key}' on '{type(data).__name__}'")
 
+    def _should_exclude_key(self, key: str) -> bool:
+        """Check if a key should be excluded from serialization."""
+        if key in self.SERIALIZATION_EXCLUDE_KEYS:
+            return True
+        if key.startswith("_"):
+            return True
+        return False
+
     def _make_serializable(self, obj, visited=None):
         """Konvertiert Objekte in JSON-serialisierbare Formate mit Schutz vor zirkulären Referenzen."""
         if visited is None:
@@ -125,20 +161,20 @@ class DataStore(SimpleEventEmitter):
                 result = {
                     key: self._make_serializable(value, visited)
                     for key, value in obj.items()
-                    if key != "hass"
+                    if not self._should_exclude_key(key)
                 }
                 visited.remove(obj_id)
                 return result
             except:
                 visited.discard(obj_id)
-                return {key: str(value) for key, value in obj.items() if key != "hass"}
+                return {key: str(value) for key, value in obj.items() if not self._should_exclude_key(key)}
         elif dataclasses.is_dataclass(obj):
             visited.add(obj_id)
             try:
-                # Konvertiere Dataclass zu Dictionary, aber schließe hass aus
+                # Konvertiere Dataclass zu Dictionary, aber schließe excluded keys aus
                 result = {}
                 for field in dataclasses.fields(obj):
-                    if field.name != "hass":  # Schließe hass aus
+                    if not self._should_exclude_key(field.name):
                         value = getattr(obj, field.name)
                         result[field.name] = self._make_serializable(value, visited)
                 visited.remove(obj_id)
@@ -147,25 +183,26 @@ class DataStore(SimpleEventEmitter):
                 visited.discard(obj_id)
                 return str(obj)
         elif hasattr(obj, "to_dict"):
+            # PRIORITY: Always use to_dict() if available - this ensures objects
+            # like GrowMedium use their optimized serialization
             visited.add(obj_id)
             try:
-                # Falls das Objekt eine to_dict Methode hat
                 dict_result = obj.to_dict()
                 result = self._make_serializable(dict_result, visited)
                 visited.remove(obj_id)
                 return result
-            except:
+            except Exception as e:
                 visited.discard(obj_id)
+                _LOGGER.warning(f"to_dict() failed for {type(obj).__name__}: {e}")
                 return str(obj)
         elif hasattr(obj, "__dict__"):
             visited.add(obj_id)
             try:
                 # Für andere Objekte mit __dict__, konvertiere zu Dictionary
+                # Exclude all keys in SERIALIZATION_EXCLUDE_KEYS
                 result = {}
                 for key, value in obj.__dict__.items():
-                    if key != "hass" and not key.startswith(
-                        "_"
-                    ):  # Schließe hass und private Attribute aus
+                    if not self._should_exclude_key(key):
                         result[key] = self._make_serializable(value, visited)
                 visited.remove(obj_id)
                 return result
