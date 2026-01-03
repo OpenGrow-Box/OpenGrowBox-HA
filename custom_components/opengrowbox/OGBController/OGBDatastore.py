@@ -67,6 +67,30 @@ class DataStore(SimpleEventEmitter):
         "sunrise_task",
         "sunset_task",
         "pause_event",
+        # workData - runtime sensor data, reconstructed on startup
+        "workData",
+    }
+    
+    # Keys within CropSteering that should NOT be persisted (runtime data)
+    # Only Calibration data and user settings should be saved
+    CROPSTEERING_RUNTIME_KEYS = {
+        # Current sensor values - change constantly
+        "vwc_current",
+        "ec_current",
+        "weight_current",
+        # Runtime phase tracking
+        "phaseStartTime",
+        "lastIrrigationTime",
+        "lastCheck",
+        "shotCounter",
+        "startNightMoisture",
+        # P1 runtime tracking
+        "p1_start_vwc",
+        "p1_irrigation_count",
+        "p1_last_vwc",
+        "p1_last_irrigation_time",
+        # P3 runtime tracking
+        "p3_emergency_count",
     }
 
     def __init__(self, initial_state):
@@ -136,6 +160,43 @@ class DataStore(SimpleEventEmitter):
         if key.startswith("_"):
             return True
         return False
+    
+    def _filter_cropsteering_for_save(self, cs_data: dict) -> dict:
+        """Filter CropSteering dict to only include persistable data.
+        
+        Only saves:
+        - Calibration data (VWCMax, VWCMin, timestamps)
+        - User settings (ShotIntervall, ShotDuration, etc.)
+        - Mode and Active state
+        
+        Excludes runtime data that changes constantly.
+        """
+        if not isinstance(cs_data, dict):
+            return cs_data
+        
+        filtered = {}
+        for key, value in cs_data.items():
+            # Skip runtime keys
+            if key in self.CROPSTEERING_RUNTIME_KEYS:
+                continue
+            
+            # Keep Calibration data
+            if key == "Calibration":
+                filtered[key] = value
+                continue
+            
+            # Keep mode/active settings
+            if key in ("Mode", "Active", "ActiveMode", "CropPhase", "MediumType"):
+                filtered[key] = value
+                continue
+            
+            # Keep phase-specific user settings (ShotIntervall, VWCTarget, etc.)
+            # These are dicts like {"p0": {"value": X}, "p1": {"value": Y}, ...}
+            if isinstance(value, dict) and any(p in value for p in ["p0", "p1", "p2", "p3"]):
+                filtered[key] = value
+                continue
+        
+        return filtered
 
     def _make_serializable(self, obj, visited=None):
         """Konvertiert Objekte in JSON-serialisierbare Formate mit Schutz vor zirkulären Referenzen."""
@@ -231,6 +292,11 @@ class DataStore(SimpleEventEmitter):
                         
                     try:
                         value = getattr(self.state, field.name)
+                        
+                        # Special handling for CropSteering - filter runtime data
+                        if field.name == "CropSteering" and isinstance(value, dict):
+                            value = self._filter_cropsteering_for_save(value)
+                        
                         state_dict[field.name] = self._make_serializable(value)
                     except Exception as e:
                         _LOGGER.warning(
