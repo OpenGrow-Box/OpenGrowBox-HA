@@ -1017,8 +1017,8 @@ class OGBWebSocketConManager:
             self.ws_connected = True
 
         @self.sio.on("v1:error", namespace=ns)
-        async def v1_error(data):
-            """Handle V1 errors - indicates authentication failure"""
+        async def on_v1_error(data):
+            """Handle V1 errors - indicates authentication failure (e.g., session not found after API restart)"""
             logging.error(f"❌ {self.ws_room} V1 ERROR RECEIVED: {data}")
             self.authenticated = False
             self._auth_success = False
@@ -1038,6 +1038,13 @@ class OGBWebSocketConManager:
                 finally:
                     self._pending_auth_callback = None
                     self._pending_event_id = None
+            
+            # Check if this is a session-not-found error (API was restarted)
+            # In this case, trigger immediate re-login instead of waiting for reconnect attempts
+            error_msg = str(data.get('message', '')).lower()
+            if 'session' in error_msg or 'not found' in error_msg or 'invalid' in error_msg or data == {}:
+                logging.warning(f"🔄 {self.ws_room} Session invalid/not found - triggering immediate re-login...")
+                asyncio.create_task(self._trigger_relogin("v1_error_session_invalid"))
 
         @self.sio.on("grow-data_acknowledged", namespace=ns)
         async def grow_data_acknowledged(data):
@@ -1054,12 +1061,15 @@ class OGBWebSocketConManager:
             """Handle message errors from server"""
             logging.error(f"❌ {self.ws_room} Message error: {data}")
 
-            # Empty error object indicates authentication failure
+            # Empty error object indicates authentication failure (session not found)
             if data == {}:
-                logging.error(f"❌ {self.ws_room} Authentication rejected by server (empty message_error)")
+                logging.error(f"❌ {self.ws_room} Authentication rejected by server (empty message_error) - triggering re-login")
                 self.authenticated = False
                 self._auth_success = False
                 self._auth_confirmed.set()  # Wake waiting authentication code with failure
+                
+                # Trigger re-login for session recovery
+                asyncio.create_task(self._trigger_relogin("message_error_empty"))
 
         @self.sio.on("pong", namespace=ns)
         async def pong(data):
@@ -2345,6 +2355,93 @@ class OGBWebSocketConManager:
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Reconnection attempt failed: {e}")
             return False
+
+    async def _trigger_relogin(self, reason: str):
+        """
+        Trigger a full re-login when session is invalid (e.g., after API restart).
+        
+        Unlike reconnect, this performs a fresh login to get a new session ID.
+        This is needed when:
+        - API was restarted and old sessions are invalidated
+        - Session expired on server side
+        - v1:error indicates session not found
+        
+        Args:
+            reason: Why re-login is being triggered (for logging)
+        """
+        # Use lock to prevent multiple simultaneous re-login attempts
+        async with self._reconnection_lock:
+            if self._reconnection_in_progress:
+                logging.debug(f"⏭️ {self.ws_room} Re-login skipped - reconnection already in progress ({reason})")
+                return
+            
+            if not self._should_reconnect:
+                logging.debug(f"⏭️ {self.ws_room} Re-login disabled ({reason})")
+                return
+            
+            if self._connection_closing:
+                logging.debug(f"⏭️ {self.ws_room} Connection closing, skipping re-login ({reason})")
+                return
+            
+            self._reconnection_in_progress = True
+            logging.info(f"🔐 {self.ws_room} Starting re-login sequence (reason: {reason})")
+        
+        try:
+            # Check if we have stored credentials
+            if not self._access_token:
+                logging.error(f"❌ {self.ws_room} Cannot re-login - no access token stored")
+                return
+            
+            # Clear old session data to force fresh session
+            logging.info(f"🔑 {self.ws_room} Clearing stale session data for fresh re-login")
+            self._session_id = None
+            self._session_key = None
+            self._aes_gcm = None
+            self.authenticated = False
+            self._auth_success = None
+            self._auth_confirmed.clear()
+            
+            # Disconnect existing socket cleanly
+            if hasattr(self, "sio") and self.sio.connected:
+                try:
+                    await self.sio.disconnect()
+                except Exception:
+                    pass
+            
+            # Brief delay before re-login
+            await asyncio.sleep(2)
+            
+            # Perform fresh login with stored credentials
+            login_success = await self._perform_login(
+                email=getattr(self, '_stored_email', None) or "auto_relogin@restore",
+                OGBToken=self._access_token,
+                room_id=self.room_id,
+                room_name=self.ws_room,
+                event_id=self.create_event_id()
+            )
+            
+            if login_success:
+                logging.info(f"✅ {self.ws_room} Re-login successful! New session obtained.")
+                
+                # Connect WebSocket with new session
+                connect_success = await self._connect_websocket()
+                if connect_success:
+                    logging.info(f"✅ {self.ws_room} Connection successful after re-login")
+                    self.ws_reconnect_attempts = 0
+                    self._reconnect_delay = 5
+                    
+                    # Restart keep-alive and health monitor
+                    await self._start_keepalive()
+                    await self._start_health_monitor()
+                else:
+                    logging.error(f"❌ {self.ws_room} Connection failed even after successful re-login")
+            else:
+                logging.error(f"❌ {self.ws_room} Re-login failed - credentials may be invalid or API unreachable")
+                
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Re-login error ({reason}): {e}")
+        finally:
+            self._reconnection_in_progress = False
 
     async def _trigger_reconnect_with_lock(self, reason: str):
         """
