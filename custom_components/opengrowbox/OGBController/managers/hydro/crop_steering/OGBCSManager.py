@@ -791,17 +791,19 @@ class OGBCSManager:
         vwc_max = p2_preset.get("VWCMax", 68)
         vwc_min = p0_preset.get("VWCMin", 55)
         
-        if vwc >= vwc_max * 0.90:
-            # Block is relatively full -> P2 Maintenance
-            _LOGGER.info(f"{self.room} - Day, VWC high ({vwc:.1f}% >= {vwc_max * 0.90:.1f}%), starting P2 Maintenance")
-            return "p2"
-        elif vwc < vwc_min:
-            # Block is dry -> P1 Saturation
+        # P0 is the DEFAULT starting phase for daytime
+        # Only start in P1 if critically dry, only start in P2 if already at/above max
+        if vwc < vwc_min:
+            # Block is dry -> P1 Saturation needed
             _LOGGER.info(f"{self.room} - Day, VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
             return "p1"
+        elif vwc >= vwc_max:
+            # Block is already at max -> P2 Maintenance (just hold it)
+            _LOGGER.info(f"{self.room} - Day, VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
+            return "p2"
         else:
-            # Somewhere in between -> P0 Monitoring
-            _LOGGER.info(f"{self.room} - Day, VWC normal ({vwc:.1f}%), starting P0 Monitoring")
+            # VWC is between min and max -> P0 Monitoring (wait for dryback signal)
+            _LOGGER.info(f"{self.room} - Day, VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
             return "p0"
 
     async def _automatic_cycle(self):

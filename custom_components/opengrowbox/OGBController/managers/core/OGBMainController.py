@@ -256,9 +256,15 @@ class OGBMainController:
             _LOGGER.debug(f"Skipping invalid entity type: {type(entity)}")
             return
         
-        # Check if entity should be ignored (OGB internal entities)
+        # Check if this is an OGB config entity (select, number, etc.)
         if "ogb_" in entity.Name:
-            await self.manager(entity)
+            # Route to configuration manager for handling
+            if self.config_manager:
+                # Extract entity key from entity name (lowercase, without room suffix in some cases)
+                entity_key = entity.Name.lower()
+                self.config_manager.handle_configuration_update(entity_key, entity)
+            else:
+                _LOGGER.warning(f"{self.room} - config_manager not available for entity: {entity.Name}")
             return
 
         # Handle light scheduling updates

@@ -1140,4 +1140,3 @@ class Light(Device):
         else:
             log_message = f"{self.deviceName} Voltage: Not Set"
         _LOGGER.debug(f"{self.deviceName} - {action_name}: {log_message}")
-
