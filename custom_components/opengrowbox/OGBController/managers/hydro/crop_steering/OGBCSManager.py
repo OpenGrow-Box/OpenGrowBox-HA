@@ -247,11 +247,16 @@ class OGBCSManager:
         for phase in ["p0", "p1", "p2", "p3"]:
             # Shot Duration -> irrigation_duration
             shot_duration = self.data_store.getDeep(f"CropSteering.ShotDuration.{phase}")
+            _LOGGER.warning(f"🔍 {self.room} ShotDuration.{phase} raw value: {shot_duration} (type: {type(shot_duration).__name__})")
+            
             if shot_duration is not None:
                 val = shot_duration.get("value") if isinstance(shot_duration, dict) else shot_duration
-                if val is not None:
+                _LOGGER.warning(f"🔍 {self.room} ShotDuration.{phase} extracted value: {val}")
+                if val is not None and val != 0:
                     presets[phase]["irrigation_duration"] = int(float(val))
                     _LOGGER.debug(f"{self.room} - User irrigation_duration for {phase}: {val}s")
+                else:
+                    _LOGGER.warning(f"⚠️ {self.room} ShotDuration.{phase} is 0 or None, using default: {presets[phase].get('irrigation_duration', 'NOT SET')}")
             
             # VWC settings
             for key, store_key in [
@@ -681,11 +686,12 @@ class OGBCSManager:
 
     async def _get_configuration(self, mode: CSMode):
         """Get configuration for mode"""
+        plant_phase, gen_week = self._get_plant_info_from_medium()
         config = {
             "mode": mode,
             "drippers": self._get_drippers(),
-            "plant_phase": self.data_store.getDeep("isPlantDay.plantPhase"),
-            "generative_week": self.data_store.getDeep("isPlantDay.generativeWeek"),
+            "plant_phase": plant_phase,
+            "generative_week": gen_week,
         }
 
         if not config["drippers"]:
@@ -757,8 +763,8 @@ class OGBCSManager:
         vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
         is_light_on = self.data_store.getDeep("isPlantDay.islightON")
 
-        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase") or "veg"
-        gen_week = self.data_store.getDeep("isPlantDay.generativeWeek") or 0
+        # Get plant info from GrowMedium (authoritative source)
+        plant_phase, gen_week = self._get_plant_info_from_medium()
 
         # Get adjusted presets
         p0_preset = self._get_adjusted_preset("p0", plant_phase, gen_week)
@@ -791,6 +797,12 @@ class OGBCSManager:
         vwc_max = p2_preset.get("VWCMax", 68)
         vwc_min = p0_preset.get("VWCMin", 55)
         
+        # DEBUG: Log ALL values used for phase determination
+        _LOGGER.warning(
+            f"🔍 {self.room} PHASE DECISION: VWC={vwc:.1f}%, VWCMin={vwc_min}, VWCMax={vwc_max}, "
+            f"is_light_on={is_light_on}, p0_preset={p0_preset}, p2_preset={p2_preset}"
+        )
+        
         # P0 is the DEFAULT starting phase for daytime
         # Only start in P1 if critically dry, only start in P2 if already at/above max
         if vwc < vwc_min:
@@ -806,6 +818,53 @@ class OGBCSManager:
             _LOGGER.info(f"{self.room} - Day, VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
             return "p0"
 
+    def _get_plant_info_from_medium(self) -> tuple:
+        """
+        Get plant phase and week from GrowMedium objects.
+        Falls back to isPlantDay data if no medium found.
+        
+        Returns:
+            tuple: (plant_phase, generative_week)
+        """
+        grow_mediums = self.data_store.get("growMediums") or []
+        
+        for medium in grow_mediums:
+            if hasattr(medium, 'get_current_phase') and hasattr(medium, 'get_bloom_week'):
+                # GrowMedium object
+                phase = medium.get_current_phase()  # "veg" or "flower"
+                if phase == "flower":
+                    week = medium.get_bloom_week()
+                    return ("flower", week)
+                else:
+                    week = medium.get_veg_week()
+                    return ("veg", week)
+            elif isinstance(medium, dict):
+                # Dictionary representation
+                bloom_switch = medium.get("bloom_switch_date")
+                grow_start = medium.get("grow_start_date")
+                
+                if bloom_switch:
+                    # In flower - calculate bloom week
+                    from datetime import datetime
+                    if isinstance(bloom_switch, str):
+                        bloom_switch = datetime.fromisoformat(bloom_switch.replace('Z', '+00:00'))
+                    days = (datetime.now() - bloom_switch).days
+                    week = (days // 7) + 1 if days > 0 else 1
+                    return ("flower", week)
+                elif grow_start:
+                    # In veg - calculate veg week  
+                    from datetime import datetime
+                    if isinstance(grow_start, str):
+                        grow_start = datetime.fromisoformat(grow_start.replace('Z', '+00:00'))
+                    days = (datetime.now() - grow_start).days
+                    week = (days // 7) + 1 if days > 0 else 1
+                    return ("veg", week)
+        
+        # Fallback to isPlantDay data
+        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase") or "veg"
+        generative_week = self.data_store.getDeep("isPlantDay.generativeWeek") or 0
+        return (plant_phase, generative_week)
+
     async def _automatic_cycle(self):
         """Automatic sensor-based cycle mit festen Presets"""
         try:
@@ -814,11 +873,17 @@ class OGBCSManager:
                 await self._sync_medium_type()
                 self.isInitialized = True
             
-            plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
-            generative_week = self.data_store.getDeep("isPlantDay.generativeWeek")
+            # Get plant info from GrowMedium (authoritative source)
+            plant_phase, generative_week = self._get_plant_info_from_medium()
+            
+            _LOGGER.info(f"{self.room} - Plant info from medium: phase={plant_phase}, week={generative_week}")
 
-            # IMPORTANT: Determine start phase based on current conditions
+            # IMPORTANT: ALWAYS determine start phase based on CURRENT conditions
+            # Ignore any persisted phase - we need to evaluate the actual situation
+            _LOGGER.warning(f"{self.room} - Automatic cycle starting, determining initial phase...")
             initial_phase = await self._determine_initial_phase()
+            
+            # Clear any old persisted phase and set the freshly determined one
             self.data_store.setDeep("CropSteering.CropPhase", initial_phase)
 
             _LOGGER.warning(
@@ -1439,8 +1504,7 @@ class OGBCSManager:
         pre_temp = pre_sensor_data.get("temperature") if pre_sensor_data else None
 
         current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p0"
-        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
-        gen_week = self.data_store.getDeep("isPlantDay.generativeWeek")
+        plant_phase, gen_week = self._get_plant_info_from_medium()
         preset = self._get_adjusted_preset(current_phase, plant_phase, gen_week)
 
         try:
@@ -1624,8 +1688,7 @@ class OGBCSManager:
         # Emit AI event for learning
         sensor_data = await self._get_sensor_averages()
         is_light_on = self.data_store.getDeep("isPlantDay.islightON")
-        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
-        gen_week = self.data_store.getDeep("isPlantDay.generativeWeek")
+        plant_phase, gen_week = self._get_plant_info_from_medium()
         preset = self._get_adjusted_preset(to_phase, plant_phase, gen_week)
 
         await self.event_manager.emit(
