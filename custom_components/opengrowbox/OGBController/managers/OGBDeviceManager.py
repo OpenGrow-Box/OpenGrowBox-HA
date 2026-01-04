@@ -172,43 +172,125 @@ class OGBDeviceManager:
         """
         Gerät anhand von Namen, Labels und Typzuordnung identifizieren.
         Wenn Labels vorhanden sind, werden sie bevorzugt zur Geräteerkennung genutzt.
+        
+        IMPORTANT: Special light types (LightFarRed, LightUV, etc.) must be matched
+        BEFORE generic Light type. We use EXACT matching first, then fallback to
+        contains matching with priority ordering.
         """
 
-        label_matches = []
+        detected_type = None
+        detected_label = None
+
+        # Priority-ordered list for special types that need exact/priority matching
+        # More specific types MUST come before generic types
+        PRIORITY_DEVICE_TYPES = [
+            "LightFarRed",  # Must match before "Light"
+            "LightUV",      # Must match before "Light"
+            "LightBlue",    # Must match before "Light"
+            "LightRed",     # Must match before "Light"
+        ]
+
         if device_labels:
             for lbl in device_labels:
                 label_name = lbl.get("name", "").lower()
                 if not label_name:
                     continue
+                
+                # First pass: Try EXACT match for special types (highest priority)
+                for device_type in PRIORITY_DEVICE_TYPES:
+                    keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
+                    # Check for exact match first
+                    if label_name in keywords:
+                        detected_type = device_type
+                        detected_label = device_type
+                        _LOGGER.info(
+                            f"Device '{device_name}' identified via EXACT label match as {detected_type} (label: {label_name})"
+                        )
+                        break
+                
+                if detected_type:
+                    break
+                
+                # Second pass: Check contains match with priority ordering
                 for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                    if any(keyword == label_name for keyword in keywords):
+                        # Exact keyword match
+                        detected_type = device_type
+                        detected_label = device_type
+                        _LOGGER.info(
+                            f"Device '{device_name}' identified via label keyword '{label_name}' as {detected_type}"
+                        )
+                        break
+                
+                if detected_type:
+                    break
+
+        # Fallback: No exact label match found, try contains matching with priority
+        if not detected_type and device_labels:
+            for lbl in device_labels:
+                label_name = lbl.get("name", "").lower()
+                if not label_name:
+                    continue
+                
+                # Check priority types first (special lights before generic)
+                for device_type in PRIORITY_DEVICE_TYPES:
+                    keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
                     if any(keyword in label_name for keyword in keywords):
-                        label_matches.append(device_type)
+                        detected_type = device_type
+                        detected_label = device_type
+                        _LOGGER.info(
+                            f"Device '{device_name}' identified via label contains-match as {detected_type} (label: {label_name})"
+                        )
+                        break
+                
+                if detected_type:
+                    break
+                
+                # Then check all other types
+                for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                    if device_type in PRIORITY_DEVICE_TYPES:
+                        continue  # Already checked
+                    if any(keyword in label_name for keyword in keywords):
+                        detected_type = device_type
+                        detected_label = device_type
+                        _LOGGER.debug(
+                            f"Device '{device_name}' identified via label as {detected_type}"
+                        )
+                        break
+                
+                if detected_type:
+                    break
 
-        detected_type = None
-        detected_label = None
-
-        if label_matches:
-            from collections import Counter
-
-            detected_type = Counter(label_matches).most_common(1)[0][0]
-            detected_label = detected_type
-            _LOGGER.debug(
-                f"Device '{device_name}' identified via label as {detected_type}"
-            )
-
+        # Fallback: Name-based identification with priority ordering
         if not detected_type:
-            for device_type, keywords in DEVICE_TYPE_MAPPING.items():
-                if any(keyword in device_name.lower() for keyword in keywords):
+            device_name_lower = device_name.lower()
+            
+            # Check priority types first (special lights before generic Light)
+            for device_type in PRIORITY_DEVICE_TYPES:
+                keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
+                if any(keyword in device_name_lower for keyword in keywords):
                     detected_type = device_type
-                    # Wenn Labels existieren, nimm den ersten Label-Namen als Fallback
-                    if device_labels:
-                        detected_label = device_labels[0].get("name", "unknown")
-                    else:
-                        detected_label = "EMPTY"
-                    _LOGGER.warning(
-                        f"Device '{device_name}' identified via name as {detected_type}"
+                    detected_label = device_type if not device_labels else device_labels[0].get("name", device_type)
+                    _LOGGER.info(
+                        f"Device '{device_name}' identified via name as {detected_type} (priority match)"
                     )
                     break
+            
+            # Then check all other types
+            if not detected_type:
+                for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                    if device_type in PRIORITY_DEVICE_TYPES:
+                        continue  # Already checked
+                    if any(keyword in device_name_lower for keyword in keywords):
+                        detected_type = device_type
+                        if device_labels:
+                            detected_label = device_labels[0].get("name", "unknown")
+                        else:
+                            detected_label = "EMPTY"
+                        _LOGGER.warning(
+                            f"Device '{device_name}' identified via name as {detected_type}"
+                        )
+                        break
 
         if not detected_type:
             _LOGGER.error(
@@ -320,20 +402,9 @@ class OGBDeviceManager:
                     currentLabel = getattr(currentDevice, "deviceLabel", "EMPTY")
 
                     # Bestimme das Label, das bei der aktuellen Identifizierung erkannt würde
-                    from collections import Counter
-
-                    label_matches = []
-                    for lbl in realDevice.get("labels", []):
-                        label_name = lbl.get("name", "").lower()
-                        if label_name:
-                            for device_type, keywords in DEVICE_TYPE_MAPPING.items():
-                                if any(keyword in label_name for keyword in keywords):
-                                    label_matches.append(device_type)
-
-                    expected_label = (
-                        Counter(label_matches).most_common(1)[0][0]
-                        if label_matches
-                        else "EMPTY"
+                    # Use same priority logic as identify_device()
+                    expected_label = self._determine_device_type_from_labels(
+                        realDevice.get("labels", [])
                     )
 
                     # Nur neu identifizieren, wenn sich das erkannte Label tatsächlich geändert hat
@@ -426,3 +497,61 @@ class OGBDeviceManager:
         if cleaned:
             self.data_store.set("capabilities", capabilities)
             _LOGGER.info(f"{self.room}: Capability duplicates cleaned")
+
+    def _determine_device_type_from_labels(self, labels: list) -> str:
+        """
+        Determine device type from labels using priority-based matching.
+        
+        Special light types (LightFarRed, LightUV, etc.) must be matched
+        before generic Light type.
+        
+        Args:
+            labels: List of label dicts with 'name' key
+            
+        Returns:
+            Device type string or "EMPTY" if no match
+        """
+        # Priority-ordered list - special types before generic
+        PRIORITY_DEVICE_TYPES = [
+            "LightFarRed",
+            "LightUV",
+            "LightBlue",
+            "LightRed",
+        ]
+        
+        for lbl in labels:
+            label_name = lbl.get("name", "").lower()
+            if not label_name:
+                continue
+            
+            # First: Check exact match for priority types
+            for device_type in PRIORITY_DEVICE_TYPES:
+                keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
+                if label_name in keywords:
+                    return device_type
+            
+            # Second: Check exact match for all types
+            for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                if label_name in keywords:
+                    return device_type
+        
+        # Third: Contains matching with priority ordering
+        for lbl in labels:
+            label_name = lbl.get("name", "").lower()
+            if not label_name:
+                continue
+            
+            # Check priority types first
+            for device_type in PRIORITY_DEVICE_TYPES:
+                keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
+                if any(keyword in label_name for keyword in keywords):
+                    return device_type
+            
+            # Then check all other types
+            for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                if device_type in PRIORITY_DEVICE_TYPES:
+                    continue
+                if any(keyword in label_name for keyword in keywords):
+                    return device_type
+        
+        return "EMPTY"
