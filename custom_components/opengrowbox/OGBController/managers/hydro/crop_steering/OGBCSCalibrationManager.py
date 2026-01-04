@@ -26,7 +26,7 @@ class OGBCSCalibrationManager:
     sensor stabilization monitoring, and calibration data management.
     """
 
-    def __init__(self, room: str, data_store, event_manager, advanced_sensor):
+    def __init__(self, room: str, data_store, event_manager, advanced_sensor, hass=None):
         """
         Initialize calibration manager.
 
@@ -35,11 +35,13 @@ class OGBCSCalibrationManager:
             data_store: Data store instance
             event_manager: Event manager instance
             advanced_sensor: Advanced sensor processing instance
+            hass: Home Assistant instance for updating number entities
         """
         self.room = room
         self.data_store = data_store
         self.event_manager = event_manager
         self.advanced_sensor = advanced_sensor
+        self.hass = hass
 
         # Calibration settings
         self.calibration_readings = []
@@ -50,6 +52,44 @@ class OGBCSCalibrationManager:
 
         # Calibration tasks
         self._calibration_task = None
+
+    async def _update_number_entity(self, parameter: str, phase: str, value: float):
+        """
+        Update a HA number entity with calibrated value.
+        
+        Args:
+            parameter: Parameter name (e.g., 'VWCMax', 'VWCMin')
+            phase: Phase identifier (e.g., 'p1', 'p2')
+            value: The calibrated value to set
+        """
+        if not self.hass:
+            _LOGGER.debug(f"{self.room} - Cannot update number entity: hass not available")
+            return
+        
+        try:
+            # Entity naming: OGB_CropSteering_P1_VWC_Max_{room} -> number.ogb_cropsteering_p1_vwc_max_{room}
+            # Map parameter names to entity format
+            param_map = {
+                "VWCMax": "vwc_max",
+                "VWCMin": "vwc_min",
+                "VWCTarget": "vwc_target",
+            }
+            param_name = param_map.get(parameter, parameter.lower())
+            entity_id = f"number.ogb_cropsteering_{phase}_{param_name}_{self.room.lower()}"
+            
+            await self.hass.services.async_call(
+                domain="number",
+                service="set_value",
+                service_data={"entity_id": entity_id, "value": float(value)},
+                blocking=True,
+            )
+            
+            _LOGGER.info(
+                f"{self.room} - Updated number entity {entity_id} to {value:.1f}"
+            )
+            
+        except Exception as e:
+            _LOGGER.warning(f"{self.room} - Failed to update number entity for {parameter}.{phase}: {e}")
 
     async def handle_vwc_calibration_command(self, command_data: Dict[str, Any]):
         """
@@ -153,7 +193,7 @@ class OGBCSCalibrationManager:
             max_vwc = await self._collect_calibration_readings("max", phase)
 
             if max_vwc is not None:
-                # Store the calibrated max value
+                # Store the calibrated max value in DataStore
                 self.data_store.setDeep(
                     f"CropSteering.Calibration.{phase}.VWCMax", max_vwc
                 )
@@ -161,6 +201,9 @@ class OGBCSCalibrationManager:
                     f"CropSteering.Calibration.{phase}.timestamp",
                     datetime.now().isoformat()
                 )
+                
+                # Update the Number entity so user sees the new value in UI
+                await self._update_number_entity("VWCMax", phase, max_vwc)
                 
                 # Persist calibration to disk
                 await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
@@ -250,7 +293,7 @@ class OGBCSCalibrationManager:
             min_vwc = await self._collect_calibration_readings("min", phase)
 
             if min_vwc is not None:
-                # Store the calibrated min value
+                # Store the calibrated min value in DataStore
                 self.data_store.setDeep(
                     f"CropSteering.Calibration.{phase}.VWCMin", min_vwc
                 )
@@ -258,6 +301,9 @@ class OGBCSCalibrationManager:
                     f"CropSteering.Calibration.{phase}.timestamp",
                     datetime.now().isoformat()
                 )
+                
+                # Update the Number entity so user sees the new value in UI
+                await self._update_number_entity("VWCMin", phase, min_vwc)
                 
                 # Persist calibration to disk
                 await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})

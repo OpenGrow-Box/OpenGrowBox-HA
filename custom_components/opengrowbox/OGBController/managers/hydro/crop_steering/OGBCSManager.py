@@ -47,7 +47,8 @@ class OGBCSManager:
             room=room,
             data_store=dataStore,
             event_manager=eventManager,
-            advanced_sensor=self.advanced_sensor
+            advanced_sensor=self.advanced_sensor,
+            hass=hass
         )
 
         # Default values for missing attributes (normally set by modular managers)
@@ -366,6 +367,44 @@ class OGBCSManager:
                 adjustments["ec_modifier"] = 0.3
 
         return adjustments
+
+    async def _update_number_entity(self, parameter: str, phase: str, value: float):
+        """
+        Update a HA number entity with calibrated value.
+        
+        Args:
+            parameter: Parameter name (e.g., 'VWCMax', 'VWCMin')
+            phase: Phase identifier (e.g., 'p1', 'p2')
+            value: The calibrated value to set
+        """
+        if not self.hass:
+            _LOGGER.debug(f"{self.room} - Cannot update number entity: hass not available")
+            return
+        
+        try:
+            # Entity naming: OGB_CropSteering_P1_VWC_Max_{room} -> number.ogb_cropsteering_p1_vwc_max_{room}
+            # Map parameter names to entity format
+            param_map = {
+                "VWCMax": "vwc_max",
+                "VWCMin": "vwc_min",
+                "VWCTarget": "vwc_target",
+            }
+            param_name = param_map.get(parameter, parameter.lower())
+            entity_id = f"number.ogb_cropsteering_{phase}_{param_name}_{self.room.lower()}"
+            
+            await self.hass.services.async_call(
+                domain="number",
+                service="set_value",
+                service_data={"entity_id": entity_id, "value": float(value)},
+                blocking=True,
+            )
+            
+            _LOGGER.info(
+                f"{self.room} - Updated number entity {entity_id} to {value:.1f}"
+            )
+            
+        except Exception as e:
+            _LOGGER.warning(f"{self.room} - Failed to update number entity for {parameter}.{phase}: {e}")
 
     def _get_adjusted_preset(self, phase, plant_phase, generative_week):
         """
@@ -928,6 +967,8 @@ class OGBCSManager:
             )
             self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
             self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
+            # Update the Number entity so user sees the new calibrated value
+            await self._update_number_entity("VWCMax", "p1", vwc)
             await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
             await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
             return
@@ -938,6 +979,8 @@ class OGBCSManager:
             _LOGGER.info(f"{self.room} - P1: Max attempts reached ({max_attempts})")
             self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
             self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
+            # Update the Number entity so user sees the new calibrated value
+            await self._update_number_entity("VWCMax", "p1", vwc)
             await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
             await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
             return
