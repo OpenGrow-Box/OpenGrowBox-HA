@@ -747,46 +747,62 @@ class OGBCSManager:
         - Aktueller VWC
         - Licht-Status
         - Kalibrierte/Preset Werte
+        
+        Priority:
+        - Light OFF -> P3 (Night Dryback) unless emergency dry
+        - Light ON + dry -> P1 (Saturation)
+        - Light ON + full -> P2 (Maintenance)
+        - Light ON + normal -> P0 (Monitoring)
         """
         vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
         is_light_on = self.data_store.getDeep("isPlantDay.islightON")
 
-        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
-        gen_week = self.data_store.getDeep("isPlantDay.generativeWeek")
+        plant_phase = self.data_store.getDeep("isPlantDay.plantPhase") or "veg"
+        gen_week = self.data_store.getDeep("isPlantDay.generativeWeek") or 0
 
         # Get adjusted presets
         p0_preset = self._get_adjusted_preset("p0", plant_phase, gen_week)
         p2_preset = self._get_adjusted_preset("p2", plant_phase, gen_week)
 
-        # Decision logic
-        if vwc == 0:
-            return "p0"  # No data, start in monitoring
+        _LOGGER.info(
+            f"{self.room} - Determining initial phase: "
+            f"VWC={vwc:.1f}%, is_light_on={is_light_on}, "
+            f"VWCMin={p0_preset.get('VWCMin')}, VWCMax={p2_preset.get('VWCMax')}"
+        )
 
-        if is_light_on:
-            # Day time
-            if vwc >= p2_preset["VWCMax"] * 0.90:
-                # Block is relatively full -> P2 Maintenance
-                return "p2"
-            elif vwc < p0_preset["VWCMin"]:
-                # Block is dry -> P1 Saturation
+        # Decision logic - LIGHT STATUS IS PRIMARY FACTOR
+        if not is_light_on:
+            # === NIGHT TIME - Default to P3 ===
+            if vwc < p0_preset.get("VWCMin", 50) * 0.8:
+                # Block is critically dry even at night -> Emergency P1
+                _LOGGER.warning(f"{self.room} - Night but VWC critically low ({vwc:.1f}%), starting P1 emergency")
                 return "p1"
             else:
-                # Somewhere in between -> P0 Monitoring
-                return "p0"
+                # Normal night -> P3 Dryback
+                self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+                _LOGGER.info(f"{self.room} - Night time, starting P3 Dryback (VWC={vwc:.1f}%)")
+                return "p3"
+        
+        # === DAY TIME ===
+        if vwc == 0:
+            _LOGGER.warning(f"{self.room} - No VWC data, starting P0 Monitoring")
+            return "p0"
+        
+        vwc_max = p2_preset.get("VWCMax", 68)
+        vwc_min = p0_preset.get("VWCMin", 55)
+        
+        if vwc >= vwc_max * 0.90:
+            # Block is relatively full -> P2 Maintenance
+            _LOGGER.info(f"{self.room} - Day, VWC high ({vwc:.1f}% >= {vwc_max * 0.90:.1f}%), starting P2 Maintenance")
+            return "p2"
+        elif vwc < vwc_min:
+            # Block is dry -> P1 Saturation
+            _LOGGER.info(f"{self.room} - Day, VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
+            return "p1"
         else:
-            # Night time
-            if vwc >= p2_preset["VWCMax"] * 0.90:
-                # Block full, night -> P3 Dryback
-                # Set startNightMoisture for dryback calculation
-                self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-                return "p3"
-            elif vwc < p0_preset["VWCMin"]:
-                # Block too dry even at night -> P1 Emergency Saturation
-                return "p1"
-            else:
-                # Normal at night -> P3 Dryback
-                self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-                return "p3"
+            # Somewhere in between -> P0 Monitoring
+            _LOGGER.info(f"{self.room} - Day, VWC normal ({vwc:.1f}%), starting P0 Monitoring")
+            return "p0"
 
     async def _automatic_cycle(self):
         """Automatic sensor-based cycle mit festen Presets"""
@@ -887,7 +903,22 @@ class OGBCSManager:
             await self._emergency_stop()
 
     async def _handle_phase_p0_auto(self, vwc, ec, preset):
-        """P0: Monitoring phase - Wait for Dryback Signal"""
+        """P0: Monitoring phase - Wait for Dryback Signal
+        
+        IMPORTANT: If lights go OFF during P0, transition to P3.
+        """
+        # Check light status first
+        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        if not is_light_on:
+            _LOGGER.info(
+                f"{self.room} - P0: Lights are OFF, transitioning to P3 Night Dryback"
+            )
+            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+            self.data_store.setDeep("CropSteering.CropPhase", "p3")
+            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+            await self._log_phase_change("p0", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
+            return
+        
         # P0 is simple: Wait until VWC falls below minimum
         if vwc < preset["VWCMin"]:
             _LOGGER.info(
@@ -910,7 +941,29 @@ class OGBCSManager:
         """
         P1: Saturation phase - Saturate block quickly
         WITH OWN INTERVAL TRACKING (not blockCheckIntervall!)
+        
+        IMPORTANT: P1 should only run during lights ON.
+        If lights go OFF during P1, transition to P3.
         """
+        # Check light status first - P1 only runs during day
+        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        if not is_light_on:
+            _LOGGER.warning(
+                f"{self.room} - P1: Lights are OFF, transitioning to P3 Night Dryback"
+            )
+            # Clear P1 state
+            self.data_store.setDeep("CropSteering.p1_start_vwc", None)
+            self.data_store.setDeep("CropSteering.p1_irrigation_count", 0)
+            self.data_store.setDeep("CropSteering.p1_last_vwc", None)
+            self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
+            # Set night moisture for dryback calculation
+            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+            # Transition to P3
+            self.data_store.setDeep("CropSteering.CropPhase", "p3")
+            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+            await self._log_phase_change("p1", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
+            return
+        
         # Check if calibrated max value already exists
         calibrated_max = self.data_store.getDeep(f"CropSteering.Calibration.p1.VWCMax")
         target_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
