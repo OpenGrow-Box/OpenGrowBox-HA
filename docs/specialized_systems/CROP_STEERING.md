@@ -57,17 +57,112 @@ class OGBAdvancedSensor:
 - **Watering**: Manual or external systems only
 - **Use Case**: Maintenance, troubleshooting, manual control
 
-### 2. Basic Mode (VWCMin/VWCMax)
-- **Logic**: Simple threshold-based watering
-- **Trigger**: When VWC drops below VWCMin
-- **Duration**: Water until VWCMax reached
-- **Use Case**: Straightforward automation for beginners
+### 2. Config Mode
+- **Purpose**: Pre-configuration without activation
+- **Watering**: None - only settings are adjusted
+- **Use Case**: Setting up parameters before going live
 
-### 3. Advanced Mode (Phase-Based)
-- **Logic**: Plant stage and environmental adaptation
-- **Factors**: Growth phase, temperature, humidity, light
-- **Optimization**: Prevents over/under watering
-- **Use Case**: Optimal plant health and resource efficiency
+### 3. Automatic Mode (Phase-Based)
+- **Logic**: Sensor-driven, light-aware 4-phase system
+- **Factors**: VWC, EC, light status, growth phase
+- **Phases**: P0 (Monitor) → P1 (Saturate) → P2 (Maintain) → P3 (Dryback)
+- **Use Case**: Optimal plant health with full automation
+
+### 4. Manual Mode (Manual-P0, P1, P2, P3)
+- **Logic**: User selects specific phase to run
+- **Control**: Forces system into selected phase
+- **Use Case**: Testing, troubleshooting, specific interventions
+
+## Phase System
+
+### Phase Overview
+
+The CropSteering system operates in 4 phases that follow the natural day/night cycle:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        LIGHT ON (Day)                               │
+│                                                                     │
+│   P0 (Monitor)  ──VWC drops──▶  P1 (Saturate)  ──target──▶  P2     │
+│        │                              │                      │      │
+│        │                              │                      │      │
+│    VWC OK                        irrigating              maintain   │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                        LIGHT OFF (Night)                            │
+│                                                                     │
+│                         P3 (Night Dryback)                          │
+│                                                                     │
+│              Monitor dryback, emergency irrigation only             │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Phase Definitions
+
+| Phase | Name | Light Status | Purpose | Actions |
+|-------|------|--------------|---------|---------|
+| **P0** | Monitoring | ON only | Wait for dryback signal | No irrigation, monitor VWC |
+| **P1** | Saturation | ON only | Rapid block saturation | Multiple irrigation shots |
+| **P2** | Maintenance | ON only | Hold VWC level | Maintenance irrigation |
+| **P3** | Night Dryback | OFF only | Controlled dryback | Emergency irrigation only |
+
+### Light-Based Phase Transitions
+
+**CRITICAL**: The light status is the PRIMARY factor for phase determination.
+
+#### On Startup
+```python
+# System determines initial phase based on light status FIRST
+if not is_light_on:
+    # Night time → Always start in P3
+    return "p3"
+else:
+    # Day time → Check VWC to determine P0, P1, or P2
+    if vwc >= vwc_max * 0.90:
+        return "p2"  # Block full → Maintenance
+    elif vwc < vwc_min:
+        return "p1"  # Block dry → Saturation
+    else:
+        return "p0"  # Normal → Monitoring
+```
+
+#### During Operation
+- **Light turns OFF** → Any phase (P0, P1, P2) immediately transitions to P3
+- **Light turns ON** → P3 transitions back to P0 (monitoring)
+
+### Phase Details
+
+#### P0: Monitoring Phase
+- **Active during**: Lights ON
+- **Purpose**: Wait for natural dryback to trigger saturation
+- **Trigger to P1**: VWC drops below VWCMin
+- **On light OFF**: Transitions to P3
+
+#### P1: Saturation Phase  
+- **Active during**: Lights ON only
+- **Purpose**: Rapidly saturate the growing medium
+- **Actions**: Multiple irrigation shots with wait periods
+- **Completion**: VWC reaches target OR stagnation detected OR max attempts
+- **On light OFF**: Immediately stops, transitions to P3
+- **Auto-calibration**: Updates VWCMax when saturation detected
+
+#### P2: Day Maintenance Phase
+- **Active during**: Lights ON
+- **Purpose**: Maintain VWC level during light period
+- **Actions**: Small maintenance irrigations when VWC drops below hold threshold
+- **Hold threshold**: VWCMax × 0.95 (configurable)
+- **On light OFF**: Transitions to P3
+
+#### P3: Night Dryback Phase
+- **Active during**: Lights OFF only
+- **Purpose**: Allow controlled dryback overnight
+- **Actions**: 
+  - Monitor dryback percentage
+  - Adjust EC target based on dryback rate
+  - Emergency irrigation if VWC critically low
+- **Emergency threshold**: VWCMax × 0.85
+- **On light ON**: Transitions to P0
 
 ## Plant Growth Phases
 
@@ -542,6 +637,30 @@ async def _validate_irrigation_effectiveness(self):
 
 ## Configuration and Setup
 
+### User Settings from DataStore
+
+User-configured values are loaded from the DataStore and merged with defaults. The system reads from:
+
+```python
+# Shot Duration (irrigation duration in seconds)
+CropSteering.ShotDuration.{phase}.value  →  irrigation_duration
+
+# VWC Targets
+CropSteering.VWCTarget.{phase}.value  →  VWCTarget
+CropSteering.VWCMin.{phase}.value     →  VWCMin  
+CropSteering.VWCMax.{phase}.value     →  VWCMax
+
+# EC Targets
+CropSteering.ECTarget.{phase}.value   →  ECTarget
+CropSteering.MinEC.{phase}.value      →  MinEC
+CropSteering.MaxEC.{phase}.value      →  MaxEC
+
+# Shot Interval (minutes between shots)
+CropSteering.ShotIntervall.{phase}.value  →  wait_between (P1) / irrigation_interval (P2/P3)
+```
+
+Where `{phase}` is one of: `p0`, `p1`, `p2`, `p3`
+
 ### Medium-Specific Adjustments
 
 The system includes medium-specific adjustments for optimal performance:
@@ -556,6 +675,8 @@ MEDIUM_ADJUSTMENTS = {
     "water": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0}
 }
 ```
+
+These adjustments are applied on top of user settings.
 
 ### Phase-Specific Adjustments
 
@@ -663,6 +784,14 @@ async def submit_irrigation_analytics(self):
 
 ### Common Issues
 
+#### System Starts in Wrong Phase
+- **Symptom**: P1 irrigation shots during night, or P3 during day
+- **Cause**: `isPlantDay.islightON` not correctly set
+- **Solution**: 
+  1. Check that light schedule is configured correctly
+  2. Verify `isPlantDay.islightON` in DataStore reflects actual light status
+  3. System should always start in P3 if lights are OFF
+
 #### VWC Sensors Reading Incorrectly
 - **Symptom**: Irrigations at wrong times or not at all
 - **Cause**: Poor calibration or sensor placement
@@ -673,10 +802,23 @@ async def submit_irrigation_analytics(self):
 - **Cause**: Wrong VWC targets for plant phase/medium
 - **Solution**: Adjust phase-specific VWC ranges
 
+#### P1 Not Stopping When Lights Turn Off
+- **Symptom**: Irrigation continues at night
+- **Cause**: Light status not updating (older versions)
+- **Solution**: Update to latest version - P1 now checks light status each cycle
+
 #### System Not Responding
 - **Symptom**: No irrigation despite low VWC
 - **Cause**: Emergency stop or calibration issues
 - **Solution**: Check system status, recalibrate if needed
+
+#### Irrigation Duration Not Using User Settings
+- **Symptom**: Default duration (45s, 20s, 15s) instead of configured value
+- **Cause**: DataStore path mismatch or value not set
+- **Solution**: 
+  1. Check `CropSteering.ShotDuration.{phase}.value` is set
+  2. Ensure value is numeric (not string)
+  3. Restart integration to reload settings
 
 ### Diagnostic Tools
 
