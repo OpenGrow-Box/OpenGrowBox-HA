@@ -1621,6 +1621,7 @@ class OGBPremiumIntegration:
             return
 
         # Core grow data - essential fields only to avoid "Data too large" errors
+        # actionData is populated by OGBActionManager.publicationActionHandler() for ALL modes
         grow_data = {
             "room": self.room,
             "mainControl": self.data_store.get("mainControl"),  # CRITICAL: API needs this to decide controller execution
@@ -1637,7 +1638,12 @@ class OGBPremiumIntegration:
             "growMediums": self.data_store.get("growMediums"),
             "controlOptions": self.data_store.get("controlOptions"),
             "capabilities": self.data_store.get("capabilities"),
-            "vpdDetermination": self.data_store.get("vpdDetermination"),         
+            "vpdDetermination": self.data_store.get("vpdDetermination"),
+            # CRITICAL: Include previous actions for API processing (CompactDataSchema.js)
+            "previousActions": self.data_store.get("previousActions") or [],
+            # CRITICAL: Include actionData for AI training (HistoricalDataTrainer.js)
+            # This is populated by OGBActionManager.publicationActionHandler() for ALL control modes
+            "actionData": self.data_store.get("actionData") or {},
         }
         
         # Add optional data if not too large

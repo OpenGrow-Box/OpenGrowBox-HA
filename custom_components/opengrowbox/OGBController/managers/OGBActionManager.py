@@ -670,21 +670,72 @@ class OGBActionManager:
         """
         _LOGGER.debug(f"{self.room}: Executing {len(actionMap)} validated actions")
 
-        # Store previous actions for analytics
+        # Store previous actions for analytics - API expects specific format
+        # Format: [{actions: [{device, action, priority, reason, timestamp, controllerType}, ...]}, ...]
+        # See: ogb-grow-api/AGENTS.md lines 495-503 and CompactDataSchema.js
         previousActions = self.data_store.get("previousActions") or []
         current_time = time.time()
+        
+        # Get current tent mode for controller type
+        tentMode = self.data_store.get("tentMode") or "VPD Perfection"
 
-        # Build action history entry
-        previousActions.append({
-            "capability": [getattr(a, 'capability', '') for a in actionMap],
-            "action": [getattr(a, 'action', '') for a in actionMap],
-            "message": [getattr(a, 'message', '') for a in actionMap],
-            "time": current_time,
-        })
+        # Build action set with all actions from this execution cycle
+        # API expects: {device: "exhaust", action: "Increase", priority: "high", reason: "...", controllerType: "VPD-P"}
+        action_set = {
+            "actions": [],
+            "timestamp": current_time,
+            "room": self.room,
+            "controllerType": self._map_tentmode_to_controller_type(tentMode),
+        }
+        
+        for action in actionMap:
+            # Map capability to device name (canExhaust -> exhaust, canHeat -> heat, etc.)
+            capability = getattr(action, 'capability', '')
+            device = capability.replace('can', '').lower() if capability.startswith('can') else capability.lower()
+            
+            action_entry = {
+                "device": device,
+                "action": getattr(action, 'action', 'Eval'),
+                "priority": getattr(action, 'priority', 'medium') or 'medium',
+                "reason": getattr(action, 'message', ''),
+                "timestamp": current_time,
+                "controllerType": action_set["controllerType"],
+                # Keep capability for backwards compatibility with HA format conversion
+                "capability": capability,
+            }
+            action_set["actions"].append(action_entry)
 
-        # Clean up old actions (older than 15 minutes)
-        previousActions = [a for a in previousActions if current_time - a["time"] < 900]
+        # Only add if we have actions
+        if action_set["actions"]:
+            previousActions.append(action_set)
+
+        # Keep only the last 5 action sets (API expects max 5)
+        previousActions = previousActions[-5:]
         self.data_store.set("previousActions", previousActions)
+        
+        # CRITICAL: Also store actionData for API compatibility
+        # The API's HistoricalDataTrainer.extractActionsFromRecord() expects actionData.controlCommands
+        # This ensures ALL modes (VPD Perfection, PID, MPC, AI, etc.) provide data for AI training
+        controlCommands = []
+        for action_entry in action_set.get("actions", []):
+            controlCommands.append({
+                "device": action_entry.get("device", ""),
+                "action": action_entry.get("action", "Eval"),
+                "priority": action_entry.get("priority", "medium"),
+                "reason": action_entry.get("reason", ""),
+                "timestamp": action_entry.get("timestamp", current_time),
+                "controllerType": action_set.get("controllerType", "VPD-P"),
+            })
+        
+        actionData = {
+            "controllerType": action_set.get("controllerType", "VPD-P"),
+            "commandCount": len(controlCommands),
+            "controlCommands": controlCommands,
+        }
+        self.data_store.set("actionData", actionData)
+        
+        # DEBUG: Log the format being saved
+        _LOGGER.debug(f"🔍 {self.room} actionData: {actionData}")
 
         # Execute device-specific actions
         for action in actionMap:
@@ -771,6 +822,36 @@ class OGBActionManager:
 
         # Fallback: return first available action
         return actionMap[0] if actionMap else None
+
+    def _map_tentmode_to_controller_type(self, tentMode: str) -> str:
+        """
+        Map tentMode to controller type for history storage.
+        Must match ogb-grow-api/src/history/CompactDataSchema.js mapTentModeToControllerType()
+        
+        Args:
+            tentMode: The tent mode from dataStore
+            
+        Returns:
+            Controller type identifier (e.g., 'VPD-P', 'PID', 'AI')
+        """
+        if not tentMode:
+            return 'NONE'
+        
+        mode_map = {
+            # Local HA control modes (from select.py OGB_TentMode)
+            'VPD Perfection': 'VPD-P',
+            'VPD Target': 'VPD-T',
+            'Closed Environment': 'CLOSED',
+            'Drying': 'DRY',
+            'Disabled': 'OFF',
+            # Premium API control modes
+            'AI Control': 'AI',
+            'PID Control': 'PID',
+            'MPC Control': 'MPC',
+            'Premium': 'PREM',
+        }
+        
+        return mode_map.get(tentMode, tentMode[:6].upper().replace(' ', ''))
 
     async def async_shutdown(self):
         """Shutdown action manager and cleanup resources."""
