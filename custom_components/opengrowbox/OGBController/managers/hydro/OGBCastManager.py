@@ -55,9 +55,7 @@ class OGBCastManager:
         self.event_manager.on("PlamtWateringStart", self.hydro_PlantWatering)
         self.event_manager.on("HydroModeRetrieveChange", self.HydroModRetrieveChange)
         self.event_manager.on("HydroRetriveModeStart", self.retrive_Mode)
-        self.event_manager.on(
-            "CropSteeringChanges", self.CropSteeringManager.handle_mode_change
-        )
+        self.event_manager.on("CropSteeringChanges", self._handle_crop_steering_changes)
 
     ## Pump State Management
     async def _register_pump_operation(
@@ -204,6 +202,29 @@ class OGBCastManager:
                     cycle = True  # Retrieve should always cycle
 
                     await self.retrive_Mode(cycle, intervall, duration, PumpDevices)
+
+    ## CropSteering Event Handler
+    async def _handle_crop_steering_changes(self, data):
+        """
+        Central handler for CropSteeringChanges events.
+        
+        CRITICAL: Only forwards to CropSteeringManager if Hydro.Mode == "Crop-Steering"!
+        This prevents CropSteering from running when user is in Hydro, Plant-Watering, or OFF mode.
+        """
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        
+        if hydro_mode != "Crop-Steering":
+            _LOGGER.warning(
+                f"{self.room} - CropSteeringChanges BLOCKED: Hydro.Mode is '{hydro_mode}', "
+                f"not 'Crop-Steering'. Event ignored."
+            )
+            # Make sure CS is not active
+            self.data_store.setDeep("CropSteering.Active", False)
+            return
+        
+        # Hydro.Mode is "Crop-Steering" - forward to CS Manager
+        _LOGGER.info(f"{self.room} - CropSteeringChanges forwarded to CSManager (Hydro.Mode={hydro_mode})")
+        await self.CropSteeringManager.handle_mode_change(data)
 
     ## Hydro Modes
     async def HydroModeChange(self, pumpAction):

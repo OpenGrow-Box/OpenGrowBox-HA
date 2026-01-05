@@ -72,6 +72,7 @@ class OGBCSConfigurationManager:
         presets = {
             "p0": {
                 # P0: Monitoring - Warte auf Dryback Signal
+                # No irrigation in P0 - just monitoring until VWC drops below min
                 "description": "Initial Monitoring Phase",
                 "VWCTarget": 58.0,
                 "VWCMin": 55.0,
@@ -79,9 +80,6 @@ class OGBCSConfigurationManager:
                 "ECTarget": 2.0,
                 "MinEC": 1.8,
                 "MaxEC": 2.2,
-                "irrigation_duration": 30,
-                "max_cycles": 5,  # Max shots before re-evaluating
-                "irrigation_interval": 1800,  # 30 min check interval
                 "trigger_condition": "vwc_below_min",
             },
             "p1": {
@@ -109,7 +107,6 @@ class OGBCSConfigurationManager:
                 "MinEC": 1.8,
                 "MaxEC": 2.2,
                 "irrigation_duration": 20,
-                "max_cycles": 8,  # Max maintenance shots per light cycle
                 "irrigation_interval": 1800,  # 30 min between maintenance shots
                 "check_light": True,
                 "trigger_condition": "light_off",
@@ -130,8 +127,8 @@ class OGBCSConfigurationManager:
                 "ec_increase_step": 0.1,
                 "ec_decrease_step": 0.1,
                 "irrigation_duration": 15,
-                "irrigation_interval": 3600,  # 1 hour between P3 emergency shots
                 "max_emergency_shots": 2,  # Max 2 emergency irrigations per night
+                "irrigation_interval": 3600,  # 1 hour between P3 emergency shots
                 "trigger_condition": "light_on",
             },
         }
