@@ -138,6 +138,21 @@ class OGBCSConfigurationManager:
 
         return presets
 
+    def _is_valid_nonzero(self, value) -> bool:
+        """
+        Check if a value is valid and non-zero.
+        Handles strings like '0.0', '0', actual numbers, and None.
+        
+        CRITICAL: DataStore often stores values as strings like '35.0', '0.0'
+        Simple comparison like `val != 0` fails for strings!
+        """
+        if value is None:
+            return False
+        try:
+            return float(value) != 0.0
+        except (ValueError, TypeError):
+            return False
+
     def _apply_user_settings(self, presets: Dict[str, Dict[str, Any]]) -> None:
         """
         Apply user settings from DataStore to presets.
@@ -145,34 +160,36 @@ class OGBCSConfigurationManager:
         
         Reads from CropSteering.Substrate.{phase}.{parameter} paths
         as set by the core OGBConfigurationManager.
+        
+        CRITICAL: Uses _is_valid_nonzero() to properly check string values like '0.0'
         """
         for phase in ["p0", "p1", "p2", "p3"]:
             # EC parameters
             ec_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_EC")
-            if ec_target is not None and ec_target != 0:
+            if self._is_valid_nonzero(ec_target):
                 presets[phase]["ECTarget"] = float(ec_target)
 
             min_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Min_EC")
-            if min_ec is not None and min_ec != 0:
+            if self._is_valid_nonzero(min_ec):
                 presets[phase]["MinEC"] = float(min_ec)
 
             max_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Max_EC")
-            if max_ec is not None and max_ec != 0:
+            if self._is_valid_nonzero(max_ec):
                 presets[phase]["MaxEC"] = float(max_ec)
 
             # VWC parameters
             vwc_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Target")
-            if vwc_target is not None and vwc_target != 0:
+            if self._is_valid_nonzero(vwc_target):
                 presets[phase]["VWCTarget"] = float(vwc_target)
                 _LOGGER.debug(f"{self.room} - User VWCTarget for {phase}: {vwc_target}")
 
             vwc_min = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Min")
-            if vwc_min is not None and vwc_min != 0:
+            if self._is_valid_nonzero(vwc_min):
                 presets[phase]["VWCMin"] = float(vwc_min)
                 _LOGGER.debug(f"{self.room} - User VWCMin for {phase}: {vwc_min}")
 
             vwc_max = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Max")
-            if vwc_max is not None and vwc_max != 0:
+            if self._is_valid_nonzero(vwc_max):
                 presets[phase]["VWCMax"] = float(vwc_max)
                 _LOGGER.debug(f"{self.room} - User VWCMax for {phase}: {vwc_max}")
 
@@ -180,12 +197,12 @@ class OGBCSConfigurationManager:
             shot_duration_path = f"CropSteering.Substrate.{phase}.Shot_Duration_Sec"
             shot_duration = self.data_store.getDeep(shot_duration_path)
             _LOGGER.warning(f"{self.room} - Reading {shot_duration_path} = {shot_duration}")
-            if shot_duration is not None and shot_duration != 0:
-                presets[phase]["irrigation_duration"] = int(shot_duration)
-                _LOGGER.warning(f"{self.room} - Set irrigation_duration for {phase} = {int(shot_duration)}s")
+            if self._is_valid_nonzero(shot_duration):
+                presets[phase]["irrigation_duration"] = int(float(shot_duration))
+                _LOGGER.warning(f"{self.room} - Set irrigation_duration for {phase} = {int(float(shot_duration))}s")
 
             shot_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
-            if shot_interval is not None and shot_interval != 0:
+            if self._is_valid_nonzero(shot_interval):
                 interval_sec = int(float(shot_interval) * 60)  # Convert minutes to seconds
                 if phase == "p1":
                     presets[phase]["wait_between"] = interval_sec
@@ -193,27 +210,27 @@ class OGBCSConfigurationManager:
                     presets[phase]["irrigation_interval"] = interval_sec
 
             irrigation_freq = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Irrigation_Frequency")
-            if irrigation_freq is not None and irrigation_freq != 0:
-                presets[phase]["irrigation_frequency"] = int(irrigation_freq)
+            if self._is_valid_nonzero(irrigation_freq):
+                presets[phase]["irrigation_frequency"] = int(float(irrigation_freq))
 
             # Dryback parameters
             dryback_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Target_Percent")
-            if dryback_target is not None and dryback_target != 0:
+            if self._is_valid_nonzero(dryback_target):
                 presets[phase]["target_dryback_percent"] = float(dryback_target)
 
             dryback_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Duration_Hours")
-            if dryback_duration is not None and dryback_duration != 0:
-                presets[phase]["dryback_duration"] = int(dryback_duration)
+            if self._is_valid_nonzero(dryback_duration):
+                presets[phase]["dryback_duration"] = int(float(dryback_duration))
                 
             # Moisture dryback
             moisture_dryback = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Moisture_Dryback")
-            if moisture_dryback is not None and moisture_dryback != 0:
+            if self._is_valid_nonzero(moisture_dryback):
                 presets[phase]["moisture_dryback"] = float(moisture_dryback)
 
             # Shot Sum (max_cycles) - number of irrigation shots per cycle
             shot_sum = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Sum")
-            if shot_sum is not None and shot_sum != 0:
-                presets[phase]["max_cycles"] = int(shot_sum)
+            if self._is_valid_nonzero(shot_sum):
+                presets[phase]["max_cycles"] = int(float(shot_sum))
                 _LOGGER.debug(f"{self.room} - User max_cycles for {phase}: {shot_sum}")
 
     def get_automatic_presets(
@@ -231,6 +248,14 @@ class OGBCSConfigurationManager:
         Returns:
             Dictionary of phase presets with user overrides
         """
+        # DEBUG: Dump what's in CropSteering.Substrate to see if user values are there
+        substrate_data = self.data_store.getDeep("CropSteering.Substrate") or {}
+        _LOGGER.warning(f"🔍 {self.room} - CropSteering.Substrate RAW DATA: {substrate_data}")
+        
+        # Also check the full CropSteering object
+        cs_data = self.data_store.getDeep("CropSteering") or {}
+        _LOGGER.warning(f"🔍 {self.room} - CropSteering FULL DATA keys: {list(cs_data.keys())}")
+        
         base_presets = self.get_base_presets()
 
         # Get medium-specific adjustments (ONLY for VWC/EC thresholds!)
@@ -250,9 +275,9 @@ class OGBCSConfigurationManager:
             
             # Duration (seconds) - User says 91s = 91s, period.
             user_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
-            if user_duration is not None and user_duration != 0:
-                adjusted_presets[phase]["irrigation_duration"] = int(user_duration)
-                _LOGGER.warning(f"{self.room} - {phase} duration: {int(user_duration)}s (USER)")
+            if self._is_valid_nonzero(user_duration):
+                adjusted_presets[phase]["irrigation_duration"] = int(float(user_duration))
+                _LOGGER.warning(f"{self.room} - {phase} duration: {int(float(user_duration))}s (USER)")
             else:
                 default_val = preset.get("irrigation_duration", 30)
                 adjusted_presets[phase]["irrigation_duration"] = default_val
@@ -260,11 +285,11 @@ class OGBCSConfigurationManager:
             
             # Interval (minutes in UI -> seconds internally)
             user_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
-            if user_interval is not None and user_interval != 0:
+            if self._is_valid_nonzero(user_interval):
                 interval_sec = int(float(user_interval) * 60)
                 adjusted_presets[phase]["wait_between"] = interval_sec
                 adjusted_presets[phase]["irrigation_interval"] = interval_sec
-                _LOGGER.warning(f"{self.room} - {phase} interval: {interval_sec}s / {user_interval}min (USER)")
+                _LOGGER.warning(f"{self.room} - {phase} interval: {interval_sec}s / {float(user_interval):.1f}min (USER)")
             else:
                 default_val = preset.get("wait_between", preset.get("irrigation_interval", 180))
                 adjusted_presets[phase]["wait_between"] = default_val
@@ -273,22 +298,25 @@ class OGBCSConfigurationManager:
             
             # Shot Sum / Max Cycles
             user_shot_sum = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Sum")
-            if user_shot_sum is not None and user_shot_sum != 0:
-                adjusted_presets[phase]["max_cycles"] = int(user_shot_sum)
-                _LOGGER.warning(f"{self.room} - {phase} max_cycles: {int(user_shot_sum)} (USER)")
+            if self._is_valid_nonzero(user_shot_sum):
+                adjusted_presets[phase]["max_cycles"] = int(float(user_shot_sum))
+                _LOGGER.warning(f"{self.room} - {phase} max_cycles: {int(float(user_shot_sum))} (USER)")
             else:
                 default_val = preset.get("max_cycles", 10)
                 adjusted_presets[phase]["max_cycles"] = default_val
                 _LOGGER.warning(f"{self.room} - {phase} max_cycles: {default_val} (DEFAULT)")
 
             # ========== VWC/EC THRESHOLDS - Medium adjustments apply here ==========
+            # CRITICAL: Ensure preset values are float before adding offset
             for key in ["VWCTarget", "VWCMin", "VWCMax"]:
                 if key in preset:
-                    adjusted_presets[phase][key] = preset[key] + vwc_offset
+                    base_val = float(preset[key]) if preset[key] is not None else 0.0
+                    adjusted_presets[phase][key] = base_val + vwc_offset
 
             for key in ["ECTarget", "MinEC", "MaxEC"]:
                 if key in preset:
-                    adjusted_presets[phase][key] = preset[key] + ec_offset
+                    base_val = float(preset[key]) if preset[key] is not None else 0.0
+                    adjusted_presets[phase][key] = base_val + ec_offset
 
         return adjusted_presets
 
