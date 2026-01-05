@@ -63,7 +63,8 @@ class OGBCSPhaseManager:
         return getattr(CSMode, mode_key, CSMode.DISABLED)
 
     async def determine_initial_phase(
-        self, mode: "CSMode", sensor_data: Dict[str, Any]
+        self, mode: "CSMode", sensor_data: Dict[str, Any],
+        vwc_min: float = 55.0, vwc_max: float = 68.0
     ) -> str:
         """
         Determine initial phase based on mode and sensor data.
@@ -71,9 +72,17 @@ class OGBCSPhaseManager:
         Args:
             mode: Current CSMode
             sensor_data: Current sensor readings
+            vwc_min: Minimum VWC threshold (from P0 preset)
+            vwc_max: Maximum VWC threshold (from P2 preset)
 
         Returns:
             Initial phase identifier (p0, p1, p2, p3)
+            
+        Phase Logic:
+            - Light OFF → P3 (Night Dryback) unless VWC critically low
+            - Light ON + VWC < VWCMin → P1 (Saturation needed)
+            - Light ON + VWC >= VWCMax → P2 (Maintenance - already at target)
+            - Light ON + VWC between min/max → P0 (Monitoring - wait for dryback)
         """
         if mode == CSMode.AUTOMATIC:
             # Determine based on light status and VWC
@@ -81,16 +90,29 @@ class OGBCSPhaseManager:
             vwc = sensor_data.get("vwc")
 
             if not is_light_on:
-                # Night time - start with P3 (dryback)
+                # Night time - default to P3 (dryback)
+                # Unless VWC is critically low (emergency)
+                if vwc is not None and vwc < vwc_min * 0.8:
+                    _LOGGER.warning(f"{self.room} - Night but VWC critically low ({vwc:.1f}%), starting P1 emergency")
+                    return "p1"
                 return "p3"
             else:
-                # Day time - check VWC level
-                if vwc is None:
+                # Day time - check VWC level against thresholds
+                if vwc is None or vwc == 0:
+                    _LOGGER.warning(f"{self.room} - No VWC data, starting P0 Monitoring")
                     return "p0"  # Monitoring if no VWC data
-                elif vwc < 60:
-                    return "p1"  # Saturation needed
+                elif vwc < vwc_min:
+                    # VWC below minimum - needs saturation
+                    _LOGGER.info(f"{self.room} - VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
+                    return "p1"
+                elif vwc >= vwc_max:
+                    # VWC at or above max - maintenance mode
+                    _LOGGER.info(f"{self.room} - VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
+                    return "p2"
                 else:
-                    return "p2"  # Maintenance
+                    # VWC between min and max - monitoring (wait for dryback signal)
+                    _LOGGER.info(f"{self.room} - VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
+                    return "p0"
 
         elif mode in [
             CSMode.MANUAL_P0,

@@ -206,6 +206,8 @@ class OGBPremiumIntegration:
             self.room,           # ws_room (unique per room)
             self.room_id,        # room_id (unique per room)
         )
+        # Give WebSocket client access to credentials for auto-relogin
+        self.ogb_ws._credential_provider = self._get_credentials_for_relogin
         self.is_primary_ws_client = True  # Always true since no sharing
         self._datarelease_counter = 0  # Track DataRelease events
         self._last_datarelease_time = 0  # Debounce DataRelease events
@@ -738,6 +740,15 @@ class OGBPremiumIntegration:
                         self.ogb_ws.authenticated = False
 
                 self.ogb_ws.token_expires_at = ws_data.get("token_expires_at")
+                
+                # CRITICAL: Restore credentials for auto-relogin after API restart
+                _LOGGER.info(f"🔐 {self.room} Restoring credentials: email={bool(self.ogb_login_email)}, token={bool(self.ogb_login_token)}")
+                if self.ogb_login_email:
+                    self.ogb_ws._stored_email = self.ogb_login_email
+                    _LOGGER.info(f"🔐 {self.room} Set _stored_email: {self.ogb_login_email[:3]}***")
+                if self.ogb_login_token:
+                    self.ogb_ws._stored_ogb_token = self.ogb_login_token
+                    _LOGGER.info(f"🔐 {self.room} Set _stored_ogb_token: {self.ogb_login_token[:8]}***")
 
                 # Prepare session data
                 session_data = {}
@@ -832,6 +843,13 @@ class OGBPremiumIntegration:
                 return False
 
         return True
+
+    def _get_credentials_for_relogin(self):
+        """Provide credentials to WebSocket client for auto-relogin after API restart."""
+        return {
+            "email": self.ogb_login_email,
+            "token": self.ogb_login_token
+        }
 
     # =================================================================
     # User Profile
@@ -1004,7 +1022,18 @@ class OGBPremiumIntegration:
             OGBToken = event.data.get("OGBToken")
             event_id = event.data.get("event_id")
 
-            _LOGGER.info(f"🔐 {self.room} Processing Premium login request")
+            # CRITICAL: Store credentials IMMEDIATELY for auto-relogin after API restart
+            # Must be done BEFORE login_and_connect to ensure they're available for retry
+            if email:
+                self.ogb_login_email = email
+                if self.ogb_ws:
+                    self.ogb_ws._stored_email = email
+            if OGBToken:
+                self.ogb_login_token = OGBToken
+                if self.ogb_ws:
+                    self.ogb_ws._stored_ogb_token = OGBToken
+
+            _LOGGER.info(f"🔐 {self.room} Processing Premium login request (email stored: {bool(email)})")
 
             # login_and_connect now returns success immediately on WebSocket connection
             # The actual V1 authentication happens asynchronously and calls _handle_auth_result
@@ -1323,6 +1352,10 @@ class OGBPremiumIntegration:
                 self.ogb_ws.is_premium = is_premium
                 self.ogb_ws.ogb_sessions = ogb_sessions
                 self.ogb_ws.ogb_max_sessions = ogb_max_sessions
+                
+                # CRITICAL: Store email for auto-relogin after API restart
+                if ogb_login_email:
+                    self.ogb_ws._stored_email = ogb_login_email
 
                 if self.ogb_ws.is_logged_in:
                     self.ogb_ws.authenticated = True
