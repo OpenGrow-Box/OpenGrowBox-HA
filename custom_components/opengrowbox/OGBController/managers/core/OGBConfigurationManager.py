@@ -161,11 +161,63 @@ class OGBConfigurationManager:
             f"ogb_mediumtype_{self.room.lower()}": self._update_medium_type,
             f"ogb_multi_mediumctrl_{self.room.lower()}": self._update_multi_medium_control,
             # Crop Steering - note: entity names are lowercase with underscores
-            # OGB_CropSteering_Mode becomes ogb_cropsteering_mode (no underscore between crop/steering)
             f"ogb_cropsteering_mode_{self.room.lower()}": self._crop_steering_mode,
             f"ogb_cropsteering_phases_{self.room.lower()}": self._crop_steering_phase,
-            # Crop steering parameter sets handled dynamically by _crop_steering_sets
-            # This will match: ogb_cs_p0_shot_ec, ogb_cs_p1_dryback_target, etc.
+            # Crop Steering Parameters - Shot Intervall
+            f"ogb_cropsteering_p0_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - Shot Duration
+            f"ogb_cropsteering_p0_shot_duration_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_shot_duration_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_shot_duration_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_shot_duration_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - Shot Sum
+            f"ogb_cropsteering_p0_shot_sum_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_shot_sum_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_shot_sum_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_shot_sum_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - EC Target
+            f"ogb_cropsteering_p0_ec_target_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_ec_target_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_ec_target_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_ec_target_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - EC Dryback
+            f"ogb_cropsteering_p0_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_ec_dryback_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - Moisture Dryback
+            f"ogb_cropsteering_p0_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_moisture_dryback_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - Max EC
+            f"ogb_cropsteering_p0_maxec_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_maxec_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_maxec_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_maxec_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - Min EC
+            f"ogb_cropsteering_p0_minec_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_minec_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_minec_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_minec_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - VWC Target
+            f"ogb_cropsteering_p0_vwc_target_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_vwc_target_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_vwc_target_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_vwc_target_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - VWC Max
+            f"ogb_cropsteering_p0_vwc_max_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_vwc_max_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_vwc_max_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_vwc_max_{self.room.lower()}": self._crop_steering_sets,
+            # Crop Steering Parameters - VWC Min
+            f"ogb_cropsteering_p0_vwc_min_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p1_vwc_min_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p2_vwc_min_{self.room.lower()}": self._crop_steering_sets,
+            f"ogb_cropsteering_p3_vwc_min_{self.room.lower()}": self._crop_steering_sets,
             
             # Special Lights - Far Red
             f"ogb_light_farred_enabled_{self.room.lower()}": self._update_farred_enabled,
