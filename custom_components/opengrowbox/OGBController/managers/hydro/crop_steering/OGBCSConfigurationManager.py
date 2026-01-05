@@ -5,7 +5,7 @@ Handles preset configurations, medium adjustments, and configuration management
 for the Crop Steering system.
 
 Responsibilities:
-- Base preset definitions
+- Base preset definitions‚
 - Medium-specific adjustments
 - Growth phase adjustments
 - Configuration building and validation
@@ -38,16 +38,18 @@ class OGBCSConfigurationManager:
     building for the Crop Steering system.
     """
 
-    def __init__(self, data_store, room: str):
+    def __init__(self, data_store, room: str, hass=None):
         """
         Initialize configuration manager.
 
         Args:
             data_store: Data store instance
             room: Room identifier for logging
+            hass: Home Assistant instance (for reading entity states)
         """
         self.data_store = data_store
         self.room = room
+        self.hass = hass
 
         # Medium-specific preset adjustments
         self._medium_adjustments = {
@@ -256,6 +258,13 @@ class OGBCSConfigurationManager:
         cs_data = self.data_store.getDeep("CropSteering") or {}
         _LOGGER.warning(f"🔍 {self.room} - CropSteering FULL DATA keys: {list(cs_data.keys())}")
         
+        # DEBUG: Check SPECIFIC p1 values
+        p1_data = self.data_store.getDeep("CropSteering.Substrate.p1") or {}
+        _LOGGER.warning(f"🔍 {self.room} - CropSteering.Substrate.p1 FULL: {p1_data}")
+        _LOGGER.warning(f"🔍 {self.room} - p1.Shot_Duration_Sec DIRECT: {self.data_store.getDeep('CropSteering.Substrate.p1.Shot_Duration_Sec')}")
+        _LOGGER.warning(f"🔍 {self.room} - p1.Shot_Intervall DIRECT: {self.data_store.getDeep('CropSteering.Substrate.p1.Shot_Intervall')}")
+        _LOGGER.warning(f"🔍 {self.room} - p1.Shot_Sum DIRECT: {self.data_store.getDeep('CropSteering.Substrate.p1.Shot_Sum')}")
+        
         base_presets = self.get_base_presets()
 
         # Get medium-specific adjustments (ONLY for VWC/EC thresholds!)
@@ -275,13 +284,15 @@ class OGBCSConfigurationManager:
             
             # Duration (seconds) - User says 91s = 91s, period.
             user_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
-            if self._is_valid_nonzero(user_duration):
+            is_valid = self._is_valid_nonzero(user_duration)
+            _LOGGER.warning(f"🔍 {self.room} - {phase} Shot_Duration_Sec raw='{user_duration}' (type={type(user_duration).__name__}), _is_valid_nonzero={is_valid}")
+            if is_valid:
                 adjusted_presets[phase]["irrigation_duration"] = int(float(user_duration))
-                _LOGGER.warning(f"{self.room} - {phase} duration: {int(float(user_duration))}s (USER)")
+                _LOGGER.warning(f"✅ {self.room} - {phase} duration: {int(float(user_duration))}s (USER)")
             else:
                 default_val = preset.get("irrigation_duration", 30)
                 adjusted_presets[phase]["irrigation_duration"] = default_val
-                _LOGGER.warning(f"{self.room} - {phase} duration: {default_val}s (DEFAULT)")
+                _LOGGER.warning(f"⚠️ {self.room} - {phase} duration: {default_val}s (DEFAULT - user value was invalid)")
             
             # Interval (minutes in UI -> seconds internally)
             user_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
