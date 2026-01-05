@@ -655,38 +655,50 @@ class OGBCSManager:
         Reads from CropSteering.Substrate.{phase}.{parameter} paths
         as set by the core OGBConfigurationManager.
         Falls back to legacy paths if new paths not available.
+        
+        CRITICAL: All values are returned as proper numeric types (int/float),
+        not strings, because DataStore may store values as strings like '35.0'.
         """
-        def get_value(new_path, legacy_path, default=0):
-            """Try new path first, then legacy, then default."""
+        def get_numeric_value(new_path, legacy_path, default, as_int=False):
+            """Try new path first, then legacy, then default. Returns numeric value."""
             # Try new path (from OGBConfigurationManager)
             val = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.{new_path}")
-            if val is not None and val != 0:
-                return {"value": val}
+            if val is not None:
+                try:
+                    numeric_val = float(val)
+                    if numeric_val != 0:
+                        return int(numeric_val) if as_int else numeric_val
+                except (ValueError, TypeError):
+                    pass
             
             # Try legacy path (from OGBData.py defaults)
             legacy_val = self.data_store.getDeep(f"CropSteering.{legacy_path}.{phase}")
             if legacy_val is not None:
-                if isinstance(legacy_val, dict):
-                    v = legacy_val.get("value", 0)
-                    if v != 0:
-                        return legacy_val
-                elif legacy_val != 0:
-                    return {"value": legacy_val}
+                try:
+                    if isinstance(legacy_val, dict):
+                        v = legacy_val.get("value", 0)
+                        numeric_val = float(v)
+                    else:
+                        numeric_val = float(legacy_val)
+                    if numeric_val != 0:
+                        return int(numeric_val) if as_int else numeric_val
+                except (ValueError, TypeError):
+                    pass
             
-            return {"value": default}
+            return int(default) if as_int else float(default)
         
         return {
-            "ShotIntervall": get_value("Shot_Intervall", "ShotIntervall", default=30),  # minutes
-            "ShotDuration": get_value("Shot_Duration_Sec", "ShotDuration", default=30),  # seconds
-            "ShotSum": get_value("Shot_Sum", "ShotSum", default=5),  # count
-            "MoistureDryBack": get_value("Moisture_Dryback", "MoistureDryBack", default=10),  # percent
-            "ECDryBack": get_value("EC_Dryback", "ECDryBack", default=0.2),
-            "ECTarget": get_value("Shot_EC", "ECTarget", default=2.0),
-            "MaxEC": get_value("Max_EC", "MaxEC", default=2.5),
-            "MinEC": get_value("Min_EC", "MinEC", default=1.5),
-            "VWCTarget": get_value("VWC_Target", "VWCTarget", default=65),
-            "VWCMax": get_value("VWC_Max", "VWCMax", default=70),
-            "VWCMin": get_value("VWC_Min", "VWCMin", default=55),
+            "ShotIntervall": {"value": get_numeric_value("Shot_Intervall", "ShotIntervall", 30, as_int=False)},  # minutes
+            "ShotDuration": {"value": get_numeric_value("Shot_Duration_Sec", "ShotDuration", 30, as_int=True)},  # seconds
+            "ShotSum": {"value": get_numeric_value("Shot_Sum", "ShotSum", 5, as_int=True)},  # count
+            "MoistureDryBack": {"value": get_numeric_value("Moisture_Dryback", "MoistureDryBack", 10, as_int=False)},  # percent
+            "ECDryBack": {"value": get_numeric_value("EC_Dryback", "ECDryBack", 0.2, as_int=False)},
+            "ECTarget": {"value": get_numeric_value("Shot_EC", "ECTarget", 2.0, as_int=False)},
+            "MaxEC": {"value": get_numeric_value("Max_EC", "MaxEC", 2.5, as_int=False)},
+            "MinEC": {"value": get_numeric_value("Min_EC", "MinEC", 1.5, as_int=False)},
+            "VWCTarget": {"value": get_numeric_value("VWC_Target", "VWCTarget", 65, as_int=False)},
+            "VWCMax": {"value": get_numeric_value("VWC_Max", "VWCMax", 70, as_int=False)},
+            "VWCMin": {"value": get_numeric_value("VWC_Min", "VWCMin", 55, as_int=False)},
         }
 
     # ==================== AUTOMATIC MODE ====================
@@ -1417,11 +1429,14 @@ class OGBCSManager:
         try:
             settings = self._get_manual_phase_settings(phase)
 
-            shot_duration = settings["ShotDuration"]["value"]
-            shot_interval = settings["ShotIntervall"]["value"]
-            shot_count = settings["ShotSum"]["value"]
+            # Values are already converted to proper numeric types by _get_manual_phase_settings
+            shot_duration = settings["ShotDuration"]["value"]  # int (seconds)
+            shot_interval = settings["ShotIntervall"]["value"]  # float (minutes)
+            shot_count = settings["ShotSum"]["value"]  # int (count)
+            
+            _LOGGER.info(f"{self.room} - Manual {phase} settings: duration={shot_duration}s, interval={shot_interval}min, count={shot_count}")
 
-            if shot_interval <= 0 or int(float(shot_count)) <= 0:
+            if shot_interval <= 0 or shot_count <= 0:
                 await self.event_manager.emit(
                     "LogForClient",
                     f"CropSteering: Invalid settings for {phase}",
@@ -1452,9 +1467,10 @@ class OGBCSManager:
                 )
 
                 # EC management - LOG ONLY (no actual adjustment, needs nutrient system integration)
-                ec_target = float(settings["ECTarget"]["value"])
-                min_ec = float(settings["MinEC"]["value"])
-                max_ec = float(settings["MaxEC"]["value"])
+                # Values are already proper numeric types from _get_manual_phase_settings
+                ec_target = settings["ECTarget"]["value"]
+                min_ec = settings["MinEC"]["value"]
+                max_ec = settings["MaxEC"]["value"]
                 
                 if ec_target > 0 and ec:
                     if ec < min_ec:
@@ -1462,8 +1478,9 @@ class OGBCSManager:
                     elif ec > max_ec:
                         _LOGGER.info(f"{self.room} - Manual: EC {ec:.2f} > Max {max_ec:.2f} (would decrease)")
 
-                # Emergency irrigation
-                if vwc and vwc < int(float(settings["VWCMin"]["value"])) * 0.9:
+                # Emergency irrigation - VWCMin is already a float
+                vwc_min = settings["VWCMin"]["value"]
+                if vwc and vwc < vwc_min * 0.9:
                     await self._irrigate(duration=shot_duration)
                     await self.event_manager.emit(
                         "LogForClient",
