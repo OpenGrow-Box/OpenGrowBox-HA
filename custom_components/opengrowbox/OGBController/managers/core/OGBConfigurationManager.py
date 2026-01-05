@@ -223,9 +223,25 @@ class OGBConfigurationManager:
             _LOGGER.debug(f"OGB-Manager {self.room}: Routing {entity_key} to handler")
             asyncio.create_task(action(data))
             return True
-        else:
-            _LOGGER.info(f"OGB-Manager {self.room}: No action found for {entity_key} (original: {original_key}).")
-            return False
+        
+        # Dynamic handler for CropSteering parameters (number entities)
+        # Matches: ogb_cropsteering_p0_vwc_max_veggitent, ogb_cropsteering_p1_shot_ec_veggitent, etc.
+        has_cropsteering = "cropsteering" in entity_key.lower()
+        has_phase = any(f"_p{i}_" in entity_key.lower() for i in range(4))
+        is_cs_param = has_cropsteering and has_phase
+        
+        _LOGGER.warning(f"OGB-Manager {self.room}: CS param check: key={entity_key}, has_cropsteering={has_cropsteering}, has_phase={has_phase}, is_cs={is_cs_param}")
+        
+        if is_cs_param:
+            _LOGGER.warning(f"OGB-Manager {self.room}: ✅ Dynamic CropSteering parameter MATCHED: {entity_key}")
+            _LOGGER.warning(f"OGB-Manager {self.room}: ✅ Data newState: {getattr(data, 'newState', 'N/A')}")
+            asyncio.create_task(self._crop_steering_sets(data, entity_key))
+            return True
+        
+        # Only log if it's a relevant entity we might care about
+        if "ogb_" in entity_key.lower():
+            _LOGGER.warning(f"OGB-Manager {self.room}: No action found for {entity_key} (original: {original_key}).")
+        return False
 
     # Core control methods
     async def _ogb_vpd_determination(self, data):
@@ -1196,19 +1212,21 @@ class OGBConfigurationManager:
 
     # Crop Steering configuration methods
     async def _crop_steering_mode(self, data):
-        """Update CropSteering active mode."""
+        """
+        Update CropSteering active mode setting.
+        
+        NOTE: This only stores the user's selection.
+        The actual activation/deactivation is handled by OGBCastManager
+        when the user changes Hydro.Mode to "Crop-Steering".
+        """
         value = data.newState[0]
         _LOGGER.warning(f"{self.room}: _crop_steering_mode called with value: {value}")
         
+        # Store the user's mode selection
         self.data_store.setDeep("CropSteering.ActiveMode", value)
         _LOGGER.warning(f"{self.room}: CropSteering.ActiveMode set to: {value}")
         
-        # Also set CropSteering.Active based on mode
-        if value in ("Automatic", "Manual"):
-            self.data_store.setDeep("CropSteering.Active", True)
-        elif value in ("Disabled", "Config"):
-            self.data_store.setDeep("CropSteering.Active", False)
-        
+        # Emit event - CastManager/CSManager will check if it should actually run
         await self.event_manager.emit("CropSteeringChanges", data)
         _LOGGER.warning(f"{self.room}: CropSteeringChanges event emitted for mode: {value}")
 
@@ -1223,10 +1241,17 @@ class OGBConfigurationManager:
         self.data_store.setDeep("CropSteering.CropPhase", value)
         _LOGGER.info(f"{self.room}: Crop Steering phase changed to {value}")
 
-    async def _crop_steering_sets(self, data):
-        """Dynamic setter for all Crop Steering parameters."""
+    async def _crop_steering_sets(self, data, entity_key=None):
+        """Dynamic setter for all Crop Steering parameters.
+        
+        This stores user-configured values for CropSteering phases.
+        Values are stored at: CropSteering.Substrate.{phase}.{parameter}
+        """
         value = data.newState[0]
-        name = data.Name.lower()
+        # Use entity_key if provided, otherwise fall back to data.Name
+        name = (entity_key or getattr(data, 'Name', '') or '').lower()
+        
+        _LOGGER.warning(f"🌱 {self.room}: _crop_steering_sets CALLED - entity_key='{entity_key}', data.Name='{getattr(data, 'Name', 'N/A')}', value={value}")
         
         # Extract phase from parameter name (p0, p1, p2, p3)
         phase = None
@@ -1268,11 +1293,17 @@ class OGBConfigurationManager:
             "irrigation_frequency": ("Substrate", "Irrigation_Frequency"),
         }
         
+        _LOGGER.warning(f"🌱 {self.room}: CS parameter lookup - name='{name}', phase='{phase}', value={value}")
+        
         for param_key, (soil_path, sub_key) in cs_parameter_mapping.items():
             if param_key in name:
                 path = f"CropSteering.{soil_path}.{phase}.{sub_key}"
                 self.data_store.setDeep(path, value)
-                _LOGGER.debug(f"{self.room}: Set {path} = {value}")
+                _LOGGER.warning(f"🌱 {self.room}: ✅ STORED {path} = {value}")
+                
+                # Verify it was actually stored
+                verify = self.data_store.getDeep(path)
+                _LOGGER.warning(f"🌱 {self.room}: ✅ VERIFY {path} = {verify}")
                 return
         
         _LOGGER.error(f"⚠️ {self.room}: NO MATCH found for crop steering parameter: {name}")

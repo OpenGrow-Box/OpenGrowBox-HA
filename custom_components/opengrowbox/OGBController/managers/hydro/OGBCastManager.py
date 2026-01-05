@@ -145,14 +145,22 @@ class OGBCastManager:
         self.active_pumps.clear()
 
     ## Task Helper
-    async def _cancel_all_tasks(self):
-        """Cancels all running hydro/soil related tasks with proper cleanup"""
+    async def _cancel_all_tasks(self, skip_crop_steering: bool = False):
+        """Cancels all running hydro/soil related tasks with proper cleanup.
+        
+        Args:
+            skip_crop_steering: If True, don't stop CropSteering operations.
+                               Used when switching TO Crop-Steering mode.
+        """
         tasks = [
             (self._hydro_task, "hydro"),
             (self._retrive_task, "retrieve"),
             (self._plant_watering_task, "plant_watering"),
-            (self._crop_steering_task, "crop_steering"),
         ]
+        
+        # Only cancel crop steering task if not skipping
+        if not skip_crop_steering:
+            tasks.append((self._crop_steering_task, "crop_steering"))
 
         for task, operation_type in tasks:
             if task is not None and not task.done():
@@ -166,16 +174,11 @@ class OGBCastManager:
         self._hydro_task = None
         self._retrive_task = None
         self._plant_watering_task = None
-        self._crop_steering_task = None
-
-        await self.CropSteeringManager.stop_all_operations()
-
-        await self.CropSteeringManager.stop_all_operations()
-
-        # Reset all task references
-        self._hydro_task = None
-        self._retrive_task = None
-        self._plant_watering_task = None
+        
+        if not skip_crop_steering:
+            self._crop_steering_task = None
+            # Only stop CS operations when NOT switching to Crop-Steering
+            await self.CropSteeringManager.stop_all_operations()
 
     async def _ensure_retrieve_system(self, primary_mode: str):
         """Ensure retrieve system is running alongside the primary hydro mode."""
@@ -257,7 +260,9 @@ class OGBCastManager:
             return
 
         # Stoppe ALLE laufenden Tasks bei jedem Moduswechsel
-        await self._cancel_all_tasks()
+        # WICHTIG: Bei Wechsel zu Crop-Steering, CS-Tasks NICHT stoppen!
+        skip_cs = (mode == "Crop-Steering")
+        await self._cancel_all_tasks(skip_crop_steering=skip_cs)
 
         if mode == "OFF":
             sysmessage = "Hydro mode is OFFLINE"
@@ -276,17 +281,23 @@ class OGBCastManager:
 
         elif mode == "Crop-Steering":
             sysmessage = "Crop-Steering mode active"
-            self.data_store.setDeep("CropSteering.Active", True)
             self.data_store.setDeep("CropSteering.Mode", mode)
             self.data_store.setDeep("Hydro.Mode", mode)
             self.data_store.setDeep("Hydro.Active", False)
             
-            # IMPORTANT: Set ActiveMode to "Automatic" if not already set
-            # This ensures handle_mode_change() has a valid mode to work with
+            # Check ActiveMode - respect user's choice (Disabled/Config should stay!)
             current_active_mode = self.data_store.getDeep("CropSteering.ActiveMode")
-            if not current_active_mode or current_active_mode in ("Disabled", "Config", None):
+            
+            # Only set to Automatic if completely unset
+            if not current_active_mode:
                 self.data_store.setDeep("CropSteering.ActiveMode", "Automatic")
-                _LOGGER.info(f"{self.room} - CropSteering ActiveMode set to Automatic (was: {current_active_mode})")
+                current_active_mode = "Automatic"
+                _LOGGER.info(f"{self.room} - CropSteering ActiveMode defaulted to Automatic")
+            
+            # Set Active based on mode - Disabled/Config = not active
+            is_active = current_active_mode not in ("Disabled", "Config", None)
+            self.data_store.setDeep("CropSteering.Active", is_active)
+            _LOGGER.info(f"{self.room} - CropSteering Active={is_active} (mode={current_active_mode})")
             
             await self.CropSteeringManager.handle_mode_change(pumpAction)
             # Start retrieve system alongside crop-steering

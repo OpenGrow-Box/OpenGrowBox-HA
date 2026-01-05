@@ -56,11 +56,22 @@ class OGBAdvancedSensor:
 - **Purpose**: Safety mode, all automation disabled
 - **Watering**: Manual or external systems only
 - **Use Case**: Maintenance, troubleshooting, manual control
+- **Behavior on Switch**:
+  - All running tasks are **immediately cancelled**
+  - All drippers are turned OFF
+  - P1 state tracking is **reset** (irrigation count, last VWC, last irrigation time)
+  - Switching back to Automatic will start **fresh** (no waiting for old interval)
 
 ### 2. Config Mode
 - **Purpose**: Pre-configuration without activation
 - **Watering**: None - only settings are adjusted
 - **Use Case**: Setting up parameters before going live
+- **Behavior on Switch**:
+  - All running tasks are **immediately cancelled**
+  - All drippers are turned OFF
+  - P1 state tracking is **reset** (same as Disabled)
+  - User can safely adjust Duration, Interval, Shot Sum, VWC targets
+  - Changes are saved to DataStore immediately and used on next Automatic start
 
 ### 3. Automatic Mode (Phase-Based)
 - **Logic**: Sensor-driven, light-aware 4-phase system
@@ -107,6 +118,66 @@ The CropSteering system operates in 4 phases that follow the natural day/night c
 | **P2** | Maintenance | ON only | Hold VWC level | Maintenance irrigation |
 | **P3** | Night Dryback | OFF only | Controlled dryback | Emergency irrigation only |
 
+### Complete Phase Transition Diagram
+
+```
+                              LIGHT ON (Day)
+    ┌──────────────────────────────────────────────────────────────┐
+    │                                                              │
+    │   ┌─────────┐      VWC < VWCMin      ┌─────────┐             │
+    │   │         │ ────────────────────► │         │             │
+    │   │   P0    │                        │   P1    │             │
+    │   │ Monitor │                        │Saturate │             │
+    │   │         │ ◄──── VWC >= VWCMin    │         │             │
+    │   └────┬────┘       (after P3)       └────┬────┘             │
+    │        │                                  │                  │
+    │        │ Lights OFF                       │ VWC >= VWCMax    │
+    │        │                                  │ OR stagnation    │
+    │        │                                  │ OR max_shots     │
+    │        │                                  ▼                  │
+    │        │                             ┌─────────┐             │
+    │        │                             │         │             │
+    │        │                             │   P2    │             │
+    │        │                             │Maintain │             │
+    │        │                             │         │             │
+    │        │                             └────┬────┘             │
+    │        │                                  │                  │
+    │        │                                  │ Lights OFF       │
+    │        │                                  │                  │
+    └────────┼──────────────────────────────────┼──────────────────┘
+             │                                  │
+             │         LIGHT OFF (Night)        │
+             │                                  │
+             ▼                                  ▼
+        ┌──────────────────────────────────────────┐
+        │                                          │
+        │                  P3                      │
+        │            Night Dryback                 │
+        │                                          │
+        │   • Monitor dryback percentage           │
+        │   • Emergency irrigation if VWC < 85%    │
+        │   • Adjust EC based on dryback rate      │
+        │                                          │
+        └────────────────────┬─────────────────────┘
+                             │
+                             │ Lights ON
+                             ▼
+                        Back to P0
+```
+
+### Phase Transition Summary Table
+
+| From | To | Trigger Condition |
+|------|-----|-------------------|
+| P0 | P1 | VWC < VWCMin (dryback detected) |
+| P0 | P3 | Lights OFF |
+| P1 | P2 | VWC >= VWCMax (saturation complete) |
+| P1 | P2 | Stagnation detected (VWC not increasing after 3+ shots) |
+| P1 | P2 | Max irrigation attempts reached |
+| P1 | P3 | Lights OFF (interrupts saturation) |
+| P2 | P3 | Lights OFF |
+| P3 | P0 | Lights ON (new day begins) |
+
 ### Light-Based Phase Transitions
 
 **CRITICAL**: The light status is the PRIMARY factor for phase determination.
@@ -143,9 +214,34 @@ else:
 - **Active during**: Lights ON only
 - **Purpose**: Rapidly saturate the growing medium
 - **Actions**: Multiple irrigation shots with wait periods
-- **Completion**: VWC reaches target OR stagnation detected OR max attempts
+- **Completion Conditions**:
+  1. VWC reaches target (VWCMax or calibrated max)
+  2. Stagnation detected (VWC not increasing after 3+ shots)
+  3. Max irrigation attempts reached (Shot Sum)
 - **On light OFF**: Immediately stops, transitions to P3
 - **Auto-calibration**: Updates VWCMax when saturation detected
+
+##### P1 Stagnation Detection & Calibration Safety
+
+**CRITICAL**: The system includes safety checks to prevent invalid calibration values:
+
+```python
+# Stagnation is only accepted as "block full" if VWC >= 40%
+min_vwc_for_stagnation = max(40.0, preset_vwc_min)
+
+if stagnation_detected and vwc >= min_vwc_for_stagnation:
+    # Valid stagnation - block is actually full
+    save_calibration(vwc)
+else:
+    # VWC too low - something is wrong (sensor, pump, water supply)
+    log_warning("VWC stuck at low level - check system!")
+    # Continue irrigating, do NOT save bad calibration
+```
+
+**Why this matters**: 
+- If VWC stagnates at 19% after multiple shots, this indicates a problem (not a full block)
+- Without this check, 19% would be saved as VWCMax, causing immediate P1→P2 transitions
+- The system now warns about potential issues instead of saving incorrect calibration
 
 #### P2: Day Maintenance Phase
 - **Active during**: Lights ON
@@ -639,27 +735,54 @@ async def _validate_irrigation_effectiveness(self):
 
 ### User Settings from DataStore
 
-User-configured values are loaded from the DataStore and merged with defaults. The system reads from:
+User-configured values are loaded from the DataStore and merged with defaults. 
+
+#### Medium-Based Configuration (Current)
+
+The modular version uses medium-based paths for user settings:
 
 ```python
 # Shot Duration (irrigation duration in seconds)
-CropSteering.ShotDuration.{phase}.value  →  irrigation_duration
+CropSteering.Substrate.{phase}.Shot_Duration_Sec  →  irrigation_duration
+
+# Shot Interval (minutes in UI → converted to seconds internally)
+CropSteering.Substrate.{phase}.Shot_Intervall     →  wait_between (converted: value * 60)
+
+# Shot Sum (max irrigation attempts)
+CropSteering.Substrate.{phase}.Shot_Sum           →  max_cycles
 
 # VWC Targets
-CropSteering.VWCTarget.{phase}.value  →  VWCTarget
-CropSteering.VWCMin.{phase}.value     →  VWCMin  
-CropSteering.VWCMax.{phase}.value     →  VWCMax
+CropSteering.Substrate.{phase}.VWC_Target         →  VWCTarget
+CropSteering.Substrate.{phase}.VWC_Min            →  VWCMin  
+CropSteering.Substrate.{phase}.VWC_Max            →  VWCMax
 
 # EC Targets
-CropSteering.ECTarget.{phase}.value   →  ECTarget
-CropSteering.MinEC.{phase}.value      →  MinEC
-CropSteering.MaxEC.{phase}.value      →  MaxEC
-
-# Shot Interval (minutes between shots)
-CropSteering.ShotIntervall.{phase}.value  →  wait_between (P1) / irrigation_interval (P2/P3)
+CropSteering.Substrate.{phase}.EC_Target          →  ECTarget
+CropSteering.Substrate.{phase}.Min_EC             →  MinEC
+CropSteering.Substrate.{phase}.Max_EC             →  MaxEC
 ```
 
 Where `{phase}` is one of: `p0`, `p1`, `p2`, `p3`
+
+#### Home Assistant Entity Names
+
+Entity names follow this pattern:
+```
+number.ogb_cropsteering_{phase}_{parameter}_{roomname}
+
+Examples:
+- number.ogb_cropsteering_p1_shot_duration_veggitent
+- number.ogb_cropsteering_p1_shot_intervall_veggitent  
+- number.ogb_cropsteering_p1_shot_sum_veggitent
+```
+
+#### Value Loading Priority
+
+1. **User Entity Value** (highest priority) - Values set via HA UI entities
+2. **Medium Adjustments** - Applied only to VWC/EC thresholds
+3. **Default Presets** (lowest priority) - Fallback values per medium type
+
+**IMPORTANT**: User timing values (duration, interval, shot_sum) are used **exactly as configured** - no drainage_factor adjustments are applied to timing parameters.
 
 ### Medium-Specific Adjustments
 
@@ -1009,6 +1132,16 @@ $ cs_calibrate -h
 
 ---
 
-**Last Updated**: January 3, 2026
-**Version**: 3.1 (CalibrationManager Refactored)
+**Last Updated**: January 5, 2026
+**Version**: 3.2 (Phase Logic & Config Mode Fixes)
 **Status**: ✅ **PRODUCTION READY** - All managers implemented and integrated
+
+### Changelog v3.2 (January 5, 2026)
+- **Fixed**: Config/Disabled mode now properly cancels running tasks
+- **Fixed**: P1 state tracking reset when entering Config/Disabled (no stale interval waits)
+- **Fixed**: Stagnation detection safety - requires VWC >= 40% before saving calibration
+- **Fixed**: Auto-reset of invalid calibration values (< 40% or < preset minimum)
+- **Added**: Detailed phase transition diagram
+- **Added**: Medium-based DataStore paths documentation
+- **Added**: Entity naming convention documentation
+- **Improved**: P1 shot logging now includes duration and next interval time
