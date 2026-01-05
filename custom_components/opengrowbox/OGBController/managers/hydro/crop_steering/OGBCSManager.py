@@ -69,12 +69,15 @@ class OGBCSManager:
         self._irrigation_lock = asyncio.Lock()
         self._irrigation_in_progress = False
         
-        # Debounce protection - prevents duplicate handle_mode_change calls
+        # Debounce protection - prevents duplicate handle_mode_change calls with SAME mode
         self._last_mode_change_time = None
-        self._mode_change_debounce_seconds = 2.0  # Ignore calls within 2 seconds
+        self._last_mode_change_mode = None  # Track which mode was last activated
+        self._mode_change_debounce_seconds = 2.0  # Ignore duplicate calls within 2 seconds
 
         # Event subscriptions
-        self.event_manager.on("CropSteeringChanges", self.handle_mode_change)
+        # NOTE: CropSteeringChanges is handled by OGBCastManager which validates 
+        # Hydro.Mode and then calls our handle_mode_change() - no direct subscription needed!
+        # self.event_manager.on("CropSteeringChanges", self.handle_mode_change)  # REMOVED - was causing double calls!
         self.event_manager.on(
             "VWCCalibrationCommand", self.handle_vwc_calibration_command
         )
@@ -164,6 +167,58 @@ class OGBCSManager:
                 haEvent=True,
             )
 
+    # ==================== CALIBRATION RESET ====================
+
+    async def reset_calibration(self, phase: str = None):
+        """Reset calibration values to force re-calibration.
+        
+        Args:
+            phase: Optional phase to reset (p0, p1, p2, p3). If None, resets all.
+        """
+        phases_to_reset = [phase] if phase else ["p0", "p1", "p2", "p3"]
+        
+        for p in phases_to_reset:
+            # Clear calibration values
+            self.data_store.setDeep(f"CropSteering.Calibration.{p}.VWCMax", None)
+            self.data_store.setDeep(f"CropSteering.Calibration.{p}.VWCMin", None)
+            self.data_store.setDeep(f"CropSteering.Calibration.{p}.timestamp", None)
+            _LOGGER.warning(f"{self.room} - Reset calibration for phase {p}")
+        
+        await self.event_manager.emit(
+            "LogForClient",
+            {
+                "Name": self.room,
+                "Type": "CSLOG",
+                "Message": f"Calibration reset for phases: {', '.join(phases_to_reset)}",
+            },
+            haEvent=True,
+        )
+    
+    def debug_dump_cropsteering_config(self):
+        """Dump all CropSteering config from DataStore for debugging."""
+        cs_data = self.data_store.getDeep("CropSteering") or {}
+        
+        _LOGGER.warning(f"===== {self.room} CropSteering DataStore Dump =====")
+        _LOGGER.warning(f"ActiveMode: {cs_data.get('ActiveMode')}")
+        _LOGGER.warning(f"Active: {cs_data.get('Active')}")
+        _LOGGER.warning(f"CropPhase: {cs_data.get('CropPhase')}")
+        _LOGGER.warning(f"MediumType: {cs_data.get('MediumType')}")
+        
+        # Calibration values
+        calibration = cs_data.get('Calibration', {})
+        _LOGGER.warning(f"Calibration: {calibration}")
+        
+        # Substrate (user settings)
+        substrate = cs_data.get('Substrate', {})
+        _LOGGER.warning(f"Substrate (user settings): {substrate}")
+        
+        # Current sensor values
+        _LOGGER.warning(f"vwc_current: {cs_data.get('vwc_current')}")
+        _LOGGER.warning(f"ec_current: {cs_data.get('ec_current')}")
+        _LOGGER.warning(f"===== End Dump =====")
+        
+        return cs_data
+
     # ==================== PRESET ACCESS (delegated to config_manager) ====================
 
     def _get_adjusted_preset(self, phase: str, plant_phase: str, generative_week: int) -> Dict[str, Any]:
@@ -229,139 +284,177 @@ class OGBCSManager:
         """SINGLE entry point for all mode changes.
         
         Called from:
-        1. CropSteeringChanges event (when user changes CS sub-selector)
+        1. CropSteeringChanges event via CastManager (when user changes CS sub-selector)
         2. CastManager.HydroModeChange() (when user selects Crop-Steering hydro mode)
         
-        CRITICAL: Only runs if Hydro.Mode == "Crop-Steering"!
-        
-        PROTECTION FEATURES:
-        - Debounce: Ignores duplicate calls within 2 seconds
-        - Irrigation Lock: Does NOT cancel running irrigation
+        CRITICAL: This is the ONLY place where CS tasks are started/stopped!
         """
-        _LOGGER.warning(f"{self.room} - CropSteering handle_mode_change called with: {data}")
+        requested_mode = self.data_store.getDeep("CropSteering.ActiveMode") or "Automatic"
+        _LOGGER.warning(f"{self.room} - CropSteering handle_mode_change: requested={requested_mode}, data={data}")
 
-        # DEBOUNCE CHECK: Prevent duplicate calls within short time window
-        now = datetime.now()
-        if self._last_mode_change_time:
-            elapsed = (now - self._last_mode_change_time).total_seconds()
-            if elapsed < self._mode_change_debounce_seconds:
-                _LOGGER.warning(
-                    f"{self.room} - CropSteering DEBOUNCED: Last call was {elapsed:.1f}s ago "
-                    f"(threshold: {self._mode_change_debounce_seconds}s). Ignoring duplicate."
-                )
-                return
-        self._last_mode_change_time = now
-
-        # CRITICAL CHECK: Only run if Hydro.Mode is explicitly "Crop-Steering"
-        # This prevents CropSteering from running when user is in Hydro, Plant-Watering, or OFF mode
-        hydro_mode = self.data_store.getDeep("Hydro.Mode")
-        cs_active = self.data_store.getDeep("CropSteering.Active")
-        cs_mode = self.data_store.getDeep("CropSteering.ActiveMode")
-        
-        _LOGGER.warning(f"{self.room} - CropSteering state: Hydro.Mode={hydro_mode}, Active={cs_active}, ActiveMode={cs_mode}")
-        
-        # STRICT CHECK: Hydro.Mode MUST be "Crop-Steering" to run
-        if hydro_mode != "Crop-Steering":
-            _LOGGER.warning(
-                f"{self.room} - CropSteering BLOCKED: Hydro.Mode is '{hydro_mode}', not 'Crop-Steering'. "
-                f"Stopping any running CS operations."
-            )
-            # Make sure CS is stopped if it was somehow running
-            await self.stop_all_operations()
-            return
-        
-        # Double-check: CS must be marked as active
-        if not cs_active:
-            _LOGGER.warning(f"{self.room} - CropSteering not active (CropSteering.Active=False), ignoring")
-            return
-
-        # IRRIGATION PROTECTION: Don't stop if irrigation is in progress
-        if self._irrigation_in_progress:
-            _LOGGER.warning(
-                f"{self.room} - CropSteering mode change SKIPPED: Irrigation in progress! "
-                f"Will apply changes after irrigation completes."
-            )
-            return
-
-        # Stop any existing operation first (but NOT during irrigation)
-        await self.stop_all_operations()
-
-        # Parse mode - multiMediumControl check is now optional (True or None both work)
-        multimediumCtrl = self.data_store.getDeep("controlOptions.multiMediumControl")
-        _LOGGER.warning(f"{self.room} - CropSteering multiMediumControl: {multimediumCtrl}")
-
-        if multimediumCtrl is False:  # Explicit False check, None is OK
-            _LOGGER.error(
-                f"{self.room} - CropSteering requires multiMediumControl=True. Current: {multimediumCtrl}"
-            )
-            return
-
-        cropMode = self.data_store.getDeep("CropSteering.ActiveMode")
-        _LOGGER.warning(f"{self.room} - CropSteering ActiveMode from dataStore: {cropMode}")
-        
-        if not cropMode:
-            # Default to Automatic if not set
-            cropMode = "Automatic"
-            self.data_store.setDeep("CropSteering.ActiveMode", cropMode)
-            _LOGGER.warning(f"{self.room} - CropSteering.ActiveMode was not set, defaulting to: {cropMode}")
-            
-        mode = self._parse_mode(cropMode)
+        # ===== STEP 1: Parse mode FIRST to know what to do =====
+        mode = self._parse_mode(requested_mode)
         _LOGGER.warning(f"{self.room} - CropSteering parsed mode: {mode}")
 
+        # ===== STEP 2: Handle STOP modes (Disabled/Config) - ALWAYS stop, no checks =====
         if mode == CSMode.DISABLED:
-            _LOGGER.warning(f"{self.room} - CropSteering is DISABLED, stopping all operations")
-            await self.stop_all_operations()
+            _LOGGER.warning(f"{self.room} - CropSteering DISABLED - stopping all operations")
+            await self._force_stop_all()
+            self.data_store.setDeep("CropSteering.Active", False)
+            # CRITICAL: Reset debounce so next mode change works immediately
+            self._last_mode_change_mode = None
+            self._last_mode_change_time = None
+            # CRITICAL: Reset P1 state tracking so next Automatic start irrigates immediately
+            self._reset_p1_state_tracking()
             return
             
         if mode == CSMode.CONFIG:
-            _LOGGER.warning(f"{self.room} - CropSteering in CONFIG mode, waiting for configuration")
+            _LOGGER.warning(f"{self.room} - CropSteering CONFIG mode - stopping operations")
+            await self._force_stop_all()
+            # CRITICAL: Reset debounce so next mode change works immediately
+            self._last_mode_change_mode = None
+            self._last_mode_change_time = None
+            # CRITICAL: Reset P1 state tracking so next Automatic start irrigates immediately
+            self._reset_p1_state_tracking()
             return
 
-        # Sync medium type before getting sensor data
+        # ===== STEP 3: For RUN modes, validate environment =====
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        if hydro_mode != "Crop-Steering":
+            _LOGGER.warning(f"{self.room} - CropSteering BLOCKED: Hydro.Mode='{hydro_mode}' != 'Crop-Steering'")
+            await self._force_stop_all()
+            return
+
+        # ===== STEP 4: Debounce - prevent duplicate START calls =====
+        now = datetime.now()
+        if self._last_mode_change_time and self._last_mode_change_mode == requested_mode:
+            elapsed = (now - self._last_mode_change_time).total_seconds()
+            if elapsed < self._mode_change_debounce_seconds:
+                _LOGGER.warning(f"{self.room} - DEBOUNCED: Same mode '{requested_mode}' within {elapsed:.1f}s")
+                return
+        
+        self._last_mode_change_time = now
+        self._last_mode_change_mode = requested_mode
+
+        # ===== STEP 5: Check if task already running for this mode =====
+        if self._main_task and not self._main_task.done():
+            _LOGGER.warning(f"{self.room} - CS task already running, cancelling before restart")
+            await self._cancel_main_task()
+
+        # ===== STEP 6: Validate prerequisites =====
+        multimediumCtrl = self.data_store.getDeep("controlOptions.multiMediumControl")
+        if multimediumCtrl is False:
+            _LOGGER.error(f"{self.room} - CropSteering requires multiMediumControl=True")
+            return
+
+        # Sync medium type
         if not self.isInitialized:
             await self._sync_medium_type()
             self.isInitialized = True
 
+        # DEBUG: Dump CropSteering config to see what's actually stored
+        self.debug_dump_cropsteering_config()
+
         # Get sensor data
         sensor_data = await self._get_sensor_averages()
         if not sensor_data:
-            _LOGGER.warning(f"{self.room} - CropSteering: No sensor data available! Check workData.moisture and workData.ec")
+            _LOGGER.warning(f"{self.room} - No sensor data! Cannot start CropSteering")
             await self._log_missing_sensors()
             return
 
         # Update current values
         self.data_store.setDeep("CropSteering.vwc_current", sensor_data["vwc"])
         self.data_store.setDeep("CropSteering.ec_current", sensor_data["ec"])
+        self.data_store.setDeep("CropSteering.Active", True)
 
         # Get configuration
         config = await self._get_configuration(mode)
         if not config:
+            _LOGGER.error(f"{self.room} - Failed to get configuration for mode {mode}")
             return
 
         # Log start
         await self._log_mode_start(mode, config, sensor_data)
 
-        # CRITICAL: Stop any existing task before starting new one
+        # ===== STEP 7: Start the appropriate task =====
+        if mode == CSMode.AUTOMATIC:
+            _LOGGER.warning(f"{self.room} - STARTING AUTOMATIC cycle")
+            self._main_task = asyncio.create_task(self._automatic_cycle())
+        elif mode.value.startswith("Manual"):
+            phase = mode.value.split("-")[1]
+            _LOGGER.warning(f"{self.room} - STARTING MANUAL cycle for phase {phase}")
+            self._main_task = asyncio.create_task(self._manual_cycle(phase))
+        else:
+            _LOGGER.error(f"{self.room} - Unknown mode: {mode}")
+
+    async def _cancel_main_task(self):
+        """Cancel the main task without turning off drippers."""
         if self._main_task and not self._main_task.done():
-            _LOGGER.warning(f"{self.room} - Cancelling existing CS task before starting new one")
             self._main_task.cancel()
             try:
                 await self._main_task
             except asyncio.CancelledError:
                 pass
+            self._main_task = None
 
-        # Start appropriate mode
-        if mode == CSMode.AUTOMATIC:
-            _LOGGER.warning(f"{self.room} - Starting AUTOMATIC cycle task")
-            self._main_task = asyncio.create_task(self._automatic_cycle())
-        elif mode.value.startswith("Manual"):
-            phase = mode.value.split("-")[1]  # Extract "p0", "p1", etc.
-            _LOGGER.warning(f"{self.room} - Starting MANUAL cycle task for phase {phase}")
-            self._main_task = asyncio.create_task(self._manual_cycle(phase))
+    async def _force_stop_all(self):
+        """Force stop all operations - used for Disabled/Config modes."""
+        _LOGGER.warning(f"{self.room} - 🛑 FORCE STOP: Cancelling all CS operations...")
+        
+        # Cancel main task
+        if self._main_task:
+            task_done = self._main_task.done()
+            _LOGGER.warning(f"{self.room} - 🛑 Main task exists, done={task_done}")
+            if not task_done:
+                _LOGGER.warning(f"{self.room} - 🛑 Cancelling main task...")
+                self._main_task.cancel()
+                try:
+                    await self._main_task
+                except asyncio.CancelledError:
+                    _LOGGER.warning(f"{self.room} - 🛑 Main task cancelled successfully")
+                except Exception as e:
+                    _LOGGER.error(f"{self.room} - 🛑 Error cancelling main task: {e}")
+        else:
+            _LOGGER.warning(f"{self.room} - 🛑 No main task to cancel")
+        
+        # Cancel calibration task
+        if self._calibration_task:
+            task_done = self._calibration_task.done()
+            _LOGGER.warning(f"{self.room} - 🛑 Calibration task exists, done={task_done}")
+            if not task_done:
+                _LOGGER.warning(f"{self.room} - 🛑 Cancelling calibration task...")
+                self._calibration_task.cancel()
+                try:
+                    await self._calibration_task
+                except asyncio.CancelledError:
+                    _LOGGER.warning(f"{self.room} - 🛑 Calibration task cancelled successfully")
+                except Exception as e:
+                    _LOGGER.error(f"{self.room} - 🛑 Error cancelling calibration task: {e}")
+        
+        self._main_task = None
+        self._calibration_task = None
+        self._irrigation_in_progress = False
+        
+        # Turn off drippers
+        await self._turn_off_all_drippers()
+        _LOGGER.warning(f"{self.room} - 🛑 FORCE STOP COMPLETE: All CS operations stopped")
 
     async def handle_stop(self, event=None):
         """Stop handler for external stop events"""
         await self.stop_all_operations()
+
+    def _reset_p1_state_tracking(self):
+        """Reset P1 state tracking variables.
+        
+        Called when entering Config/Disabled mode so that when
+        Automatic mode starts again, it will irrigate immediately
+        instead of waiting for the remaining interval time.
+        """
+        _LOGGER.warning(f"{self.room} - 🔄 Resetting P1 state tracking (irrigation will start fresh)")
+        self.data_store.setDeep("CropSteering.p1_start_vwc", None)
+        self.data_store.setDeep("CropSteering.p1_irrigation_count", 0)
+        self.data_store.setDeep("CropSteering.p1_last_vwc", None)
+        self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
 
     # ==================== MODE PARSING ====================
 
@@ -890,8 +983,35 @@ class OGBCSManager:
             return
         
         # Check if calibrated max value already exists
+        # IMPORTANT: Only use calibrated value if it's REASONABLE (> 40% and > preset VWCMin)
         calibrated_max = self.data_store.getDeep(f"CropSteering.Calibration.p1.VWCMax")
-        target_max = float(calibrated_max) if calibrated_max else preset["VWCMax"]
+        preset_vwc_max = preset.get("VWCMax", 70)
+        preset_vwc_min = preset.get("VWCMin", 55)
+        
+        # Use calibrated value only if it makes sense
+        # A calibrated value of 19% when preset is 65% is clearly wrong - auto-reset it
+        use_calibrated = (
+            calibrated_max is not None 
+            and calibrated_max > 40 
+            and calibrated_max > preset_vwc_min
+        )
+        
+        # AUTO-RESET: If calibrated value is clearly wrong (< 40% or < preset min), clear it
+        if calibrated_max is not None and not use_calibrated:
+            _LOGGER.warning(
+                f"{self.room} - P1: BAD CALIBRATION VALUE DETECTED! "
+                f"calibrated={calibrated_max}% is invalid (< 40 or < preset_min={preset_vwc_min}). "
+                f"RESETTING to use preset value {preset_vwc_max}%"
+            )
+            self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", None)
+            calibrated_max = None
+        
+        target_max = float(calibrated_max) if use_calibrated else preset_vwc_max
+        
+        _LOGGER.warning(
+            f"{self.room} - P1 CHECK: vwc={vwc:.1f}%, calibrated={calibrated_max}, "
+            f"preset_max={preset_vwc_max}, use_calibrated={use_calibrated}, target={target_max}"
+        )
 
         # === P1 State Tracking ===
         p1_start_vwc = self.data_store.getDeep("CropSteering.p1_start_vwc")
@@ -929,51 +1049,96 @@ class OGBCSManager:
             return
 
         # === 2. Stagnation detected? ===
+        # CRITICAL: Only accept stagnation as "block full" if VWC is at least 40%!
+        # A stagnation at 19% means there's a problem (sensor issue, no water, etc.), not that the block is full.
         vwc_increase_since_last = vwc - p1_last_vwc
+        min_vwc_for_stagnation = max(40.0, preset_vwc_min)  # At least 40% or preset minimum
+        
         if p1_irrigation_count >= 3 and vwc_increase_since_last < 0.5:
-            _LOGGER.info(
-                f"{self.room} - P1: Stagnation at {vwc:.1f}% (no increase since last shot)"
-            )
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": f"Block full at {vwc:.1f}% (no more increase)",
-                },
-                haEvent=True,
-            )
-            self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
-            self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
-            # Update the Number entity so user sees the new calibrated value
-            await self._update_number_entity("VWCMax", "p1", vwc)
-            await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
-            await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
-            return
+            if vwc >= min_vwc_for_stagnation:
+                # Legitimate stagnation - block is actually full
+                _LOGGER.info(
+                    f"{self.room} - P1: Stagnation at {vwc:.1f}% (no increase since last shot)"
+                )
+                await self.event_manager.emit(
+                    "LogForClient",
+                    {
+                        "Name": self.room,
+                        "Type": "CSLOG",
+                        "Message": f"Block full at {vwc:.1f}% (no more increase)",
+                    },
+                    haEvent=True,
+                )
+                self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+                self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
+                # Update the Number entity so user sees the new calibrated value
+                await self._update_number_entity("VWCMax", "p1", vwc)
+                await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
+                await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+                return
+            else:
+                # Stagnation at low VWC - something is wrong, NOT block full!
+                _LOGGER.warning(
+                    f"{self.room} - P1: IGNORING stagnation at {vwc:.1f}% - too low! "
+                    f"(need >= {min_vwc_for_stagnation:.1f}% to consider block full). "
+                    f"Check: pump working? water supply? sensor calibration?"
+                )
+                await self.event_manager.emit(
+                    "LogForClient",
+                    {
+                        "Name": self.room,
+                        "Type": "CSLOG",
+                        "Message": f"WARNING: VWC stuck at {vwc:.1f}% after {p1_irrigation_count} shots - check pump/water supply!",
+                    },
+                    haEvent=True,
+                )
+                # Continue trying to irrigate - don't save bad calibration!
 
         # === 3. Max Attempts? ===
         max_attempts = preset.get("max_cycles", 10)
         if p1_irrigation_count >= max_attempts:
             _LOGGER.info(f"{self.room} - P1: Max attempts reached ({max_attempts})")
-            self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
-            self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
-            # Update the Number entity so user sees the new calibrated value
-            await self._update_number_entity("VWCMax", "p1", vwc)
-            await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
-            await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+            
+            # Only save calibration if VWC reached a reasonable level
+            if vwc >= min_vwc_for_stagnation:
+                self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", vwc)
+                self.data_store.setDeep("CropSteering.Calibration.p1.timestamp", datetime.now().isoformat())
+                # Update the Number entity so user sees the new calibrated value
+                await self._update_number_entity("VWCMax", "p1", vwc)
+                await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
+                await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
+            else:
+                # VWC too low after max attempts - problem detected!
+                _LOGGER.error(
+                    f"{self.room} - P1: Max attempts ({max_attempts}) reached but VWC only {vwc:.1f}%! "
+                    f"NOT saving as calibration. Check pump/water supply!"
+                )
+                await self.event_manager.emit(
+                    "LogForClient",
+                    {
+                        "Name": self.room,
+                        "Type": "CSLOG",
+                        "Message": f"ERROR: {max_attempts} irrigations but VWC only {vwc:.1f}% - check system!",
+                    },
+                    haEvent=True,
+                )
+                # Move to P2 anyway but don't save bad calibration
+                await self._complete_p1_saturation(vwc, target_max, success=False, updated_max=False)
             return
 
         # === 4. Check interval ===
         wait_time = preset.get("wait_between", 180)
+        irrigation_duration = preset.get("irrigation_duration", 45)
         time_since_last = (
             (now - last_irrigation_time).total_seconds()
             if last_irrigation_time
             else float("inf")
         )
+        time_until_next = max(0, wait_time - time_since_last)
 
         if time_since_last >= wait_time:
             # Time for next shot!
-            await self._irrigate(duration=preset.get("irrigation_duration", 45))
+            await self._irrigate(duration=irrigation_duration)
 
             # Update state
             p1_irrigation_count += 1
@@ -983,17 +1148,25 @@ class OGBCSManager:
             self.data_store.setDeep("CropSteering.p1_last_vwc", vwc)
             self.data_store.setDeep("CropSteering.p1_last_irrigation_time", now)
 
+            # Calculate next shot time
+            next_shot_min = wait_time / 60
+            
             await self.event_manager.emit(
                 "LogForClient",
                 {
                     "Name": self.room,
                     "Type": "CSLOG",
-                    "Message": f"P1 Shot {p1_irrigation_count}/{max_attempts} → VWC: {vwc:.1f}% (target: {target_max:.1f}%)",
+                    "Message": f"P1 Shot {p1_irrigation_count}/{max_attempts} → VWC: {vwc:.1f}% (target: {target_max:.1f}%) | Duration: {irrigation_duration}s | Next in: {next_shot_min:.0f}min",
                 },
                 haEvent=True,
             )
             _LOGGER.info(
-                f"{self.room} - P1: Shot {p1_irrigation_count}/{max_attempts}, VWC now {vwc:.1f}%"
+                f"{self.room} - P1: Shot {p1_irrigation_count}/{max_attempts}, VWC={vwc:.1f}%, duration={irrigation_duration}s, next in {next_shot_min:.0f}min"
+            )
+        else:
+            # Not time yet - log waiting status
+            _LOGGER.debug(
+                f"{self.room} - P1: Waiting for next shot, {time_until_next:.0f}s remaining (interval: {wait_time}s)"
             )
 
     async def _complete_p1_saturation(
@@ -1278,13 +1451,16 @@ class OGBCSManager:
                     float(self.data_store.getDeep("CropSteering.shotCounter"))
                 )
 
-                # EC management
-                ec_target = int(float(settings["ECTarget"]["value"]))
+                # EC management - LOG ONLY (no actual adjustment, needs nutrient system integration)
+                ec_target = float(settings["ECTarget"]["value"])
+                min_ec = float(settings["MinEC"]["value"])
+                max_ec = float(settings["MaxEC"]["value"])
+                
                 if ec_target > 0 and ec:
-                    if ec < int(float(settings["MinEC"]["value"])):
-                        await self._adjust_ec_to_target(ec_target, increase=True)
-                    elif ec > settings["MaxEC"]["value"]:
-                        await self._adjust_ec_to_target(ec_target, increase=False)
+                    if ec < min_ec:
+                        _LOGGER.info(f"{self.room} - Manual: EC {ec:.2f} < Min {min_ec:.2f} (would increase)")
+                    elif ec > max_ec:
+                        _LOGGER.info(f"{self.room} - Manual: EC {ec:.2f} > Max {max_ec:.2f} (would decrease)")
 
                 # Emergency irrigation
                 if vwc and vwc < int(float(settings["VWCMin"]["value"])) * 0.9:
@@ -1347,11 +1523,15 @@ class OGBCSManager:
 
     # ==================== IRRIGATION ====================
 
-    async def _irrigate(self, duration=30, is_emergency=False):
+    async def _irrigate(self, duration=None, is_emergency=False):
         """Execute irrigation with protection against cancellation.
         
         Uses _irrigation_in_progress flag to prevent handle_mode_change 
         from stopping irrigation mid-cycle.
+        
+        Args:
+            duration: Irrigation duration in seconds. If None, reads from preset.
+            is_emergency: Whether this is an emergency irrigation
         """
         drippers = self._get_drippers()
 
@@ -1359,10 +1539,15 @@ class OGBCSManager:
             _LOGGER.warning(f"⚠️ {self.room} - No drippers found, skipping irrigation")
             return
         
-        # CRITICAL: Ensure duration is valid
+        # If no duration passed, get from preset
         if duration is None or duration <= 0:
-            _LOGGER.error(f"❌ {self.room} - Invalid irrigation duration: {duration}s - using default 30s")
-            duration = 30
+            current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p1"
+            plant_phase, gen_week = self._get_plant_info_from_medium()
+            preset = self._get_adjusted_preset(current_phase, plant_phase, gen_week)
+            duration = preset.get("irrigation_duration", 30)
+            _LOGGER.warning(f"{self.room} - _irrigate: No duration passed, using preset value: {duration}s")
+        
+        _LOGGER.warning(f"{self.room} - _irrigate called with duration={duration}s")
 
         # SET IRRIGATION LOCK - prevents mode change from cancelling us
         async with self._irrigation_lock:
@@ -1390,12 +1575,24 @@ class OGBCSManager:
                     await self.event_manager.emit("PumpAction", action)
                     _LOGGER.warning(f"🚿 {self.room} - Sent ON to {dev_id}")
 
+                # Get shot counter info for logging
+                shot_counter = self.data_store.getDeep("CropSteering.shotCounter") or 0
+                max_shots = preset.get("max_cycles") or preset.get("ShotSum") or "?"
+                interval = preset.get("wait_between") or preset.get("irrigation_interval") or 0
+                interval_min = int(interval / 60) if interval else "?"
+                
                 await self.event_manager.emit(
                     "LogForClient",
                     {
                         "Name": self.room,
                         "Type": "CSLOG",
-                        "Message": f"Irrigation started ({duration}s)",
+                        "Message": f"Irrigation started ({duration}s) - Shot {shot_counter}/{max_shots}",
+                        "Phase": current_phase,
+                        "Shot": f"{shot_counter}/{max_shots}",
+                        "Duration": f"{duration}s",
+                        "Interval": f"{interval_min}min",
+                        "PreVWC": pre_vwc,
+                        "PreEC": pre_ec,
                     },
                     haEvent=True,
                 )
@@ -1403,7 +1600,7 @@ class OGBCSManager:
                 await asyncio.sleep(duration)
 
                 # Turn off
-                _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
+                _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s (Shot {shot_counter}/{max_shots}) - turning off {len(drippers)} drippers")
                 for dev_id in drippers:
                     action = {
                         "Name": self.room, "Action": "off", "Device": dev_id, "Cycle": False
@@ -1479,27 +1676,8 @@ class OGBCSManager:
     # ==================== STOP & CLEANUP ====================
 
     async def stop_all_operations(self):
-        """Stop all running operations"""
-        tasks_to_cancel = []
-
-        if self._main_task and not self._main_task.done():
-            tasks_to_cancel.append(self._main_task)
-
-        if self._calibration_task and not self._calibration_task.done():
-            tasks_to_cancel.append(self._calibration_task)
-
-        for task in tasks_to_cancel:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-        self._main_task = None
-        self._calibration_task = None
-
-        await self._turn_off_all_drippers()
-        _LOGGER.info(f"{self.room} - All CS operations stopped")
+        """Stop all running operations - delegates to _force_stop_all."""
+        await self._force_stop_all()
 
     async def _emergency_stop(self):
         """Emergency stop all operations"""
@@ -1544,31 +1722,76 @@ class OGBCSManager:
     # ==================== LOGGING ====================
 
     async def _log_mode_start(self, mode, config, sensor_data):
-        """Log mode start"""
+        """Log mode start with preset values"""
+        # Get current phase preset to show configured values
+        current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p1"
+        plant_phase = config.get("plant_phase", "unknown")
+        gen_week = config.get("generative_week", 0)
+        preset = self._get_adjusted_preset(current_phase, plant_phase, gen_week)
+        
+        # Build detailed message
+        duration = preset.get("irrigation_duration", "?")
+        interval = preset.get("wait_between", preset.get("irrigation_interval", "?"))
+        max_shots = preset.get("max_cycles", preset.get("ShotSum", "?"))
+        vwc_target = preset.get("VWCTarget", "?")
+        
+        # Convert interval to minutes for display
+        interval_min = int(interval / 60) if isinstance(interval, (int, float)) else interval
+        
         await self.event_manager.emit(
             "LogForClient",
             {
                 "Name": self.room,
                 "Type": "CSLOG",
                 "Message": f"CropSteering {mode.value} started",
+                "Phase": current_phase,
+                "Duration": f"{duration}s",
+                "Interval": f"{interval_min}min",
+                "MaxShots": max_shots,
+                "VWCTarget": vwc_target,
                 "VWC": sensor_data.get("vwc"),
                 "EC": sensor_data.get("ec"),
-                "PlantPhase": config["plant_phase"],
-                "Week": config["generative_week"],
+                "PlantPhase": plant_phase,
+                "Week": gen_week,
             },
             haEvent=True,
         )
+        
+        _LOGGER.warning(
+            f"{self.room} - CS Started: phase={current_phase}, duration={duration}s, "
+            f"interval={interval_min}min, max_shots={max_shots}, vwc_target={vwc_target}"
+        )
 
     async def _log_phase_change(self, from_phase, to_phase, reason):
-        """Log phase change"""
+        """Log phase change with preset details"""
+        # Get new phase preset for logging
+        plant_phase, gen_week = self._get_plant_info_from_medium()
+        new_preset = self._get_adjusted_preset(to_phase, plant_phase, gen_week)
+        
+        duration = new_preset.get("irrigation_duration", "?")
+        interval = new_preset.get("wait_between", new_preset.get("irrigation_interval", 0))
+        interval_min = int(interval / 60) if isinstance(interval, (int, float)) and interval > 0 else "?"
+        max_shots = new_preset.get("max_cycles", new_preset.get("ShotSum", "?"))
+        vwc_target = new_preset.get("VWCTarget", "?")
+        
         await self.event_manager.emit(
             "LogForClient",
             {
                 "Name": self.room,
                 "Type": "CSLOG",
-                "Message": f"{from_phase} -> {to_phase}: {reason}",
+                "Message": f"Phase {from_phase} -> {to_phase}: {reason}",
+                "NewPhase": to_phase,
+                "Duration": f"{duration}s",
+                "Interval": f"{interval_min}min",
+                "MaxShots": max_shots,
+                "VWCTarget": vwc_target,
             },
             haEvent=True,
+        )
+        
+        _LOGGER.warning(
+            f"{self.room} - Phase change: {from_phase} -> {to_phase} ({reason}) "
+            f"| duration={duration}s, interval={interval_min}min, max_shots={max_shots}"
         )
 
         # Emit AI event for learning

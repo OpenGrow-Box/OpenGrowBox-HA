@@ -177,9 +177,12 @@ class OGBCSConfigurationManager:
                 _LOGGER.debug(f"{self.room} - User VWCMax for {phase}: {vwc_max}")
 
             # Irrigation parameters
-            shot_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
+            shot_duration_path = f"CropSteering.Substrate.{phase}.Shot_Duration_Sec"
+            shot_duration = self.data_store.getDeep(shot_duration_path)
+            _LOGGER.warning(f"{self.room} - Reading {shot_duration_path} = {shot_duration}")
             if shot_duration is not None and shot_duration != 0:
                 presets[phase]["irrigation_duration"] = int(shot_duration)
+                _LOGGER.warning(f"{self.room} - Set irrigation_duration for {phase} = {int(shot_duration)}s")
 
             shot_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
             if shot_interval is not None and shot_interval != 0:
@@ -217,53 +220,75 @@ class OGBCSConfigurationManager:
         self, medium_type: str = "rockwool"
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Get medium-adjusted automatic presets.
-        Applies medium-specific adjustments to base presets.
+        Get presets with user values from DataStore.
+        
+        User values ALWAYS win - no drainage_factor bullshit on timing!
+        drainage_factor is ONLY used for VWC/EC thresholds (medium water retention).
 
         Args:
             medium_type: Type of growing medium
 
         Returns:
-            Dictionary of adjusted phase presets
+            Dictionary of phase presets with user overrides
         """
         base_presets = self.get_base_presets()
 
-        # Get medium-specific adjustments
+        # Get medium-specific adjustments (ONLY for VWC/EC thresholds!)
         adjustments = self._medium_adjustments.get(
             medium_type, self._medium_adjustments["rockwool"]
         )
-
         vwc_offset = adjustments["vwc_offset"]
         ec_offset = adjustments["ec_offset"]
-        drainage_factor = adjustments["drainage_factor"]
+        
+        _LOGGER.warning(f"{self.room} - Building presets for medium '{medium_type}'")
 
         adjusted_presets = {}
         for phase, preset in base_presets.items():
             adjusted_presets[phase] = preset.copy()
 
-            # Adjust VWC targets based on medium
+            # ========== IRRIGATION TIMING - User values or defaults (NO drainage factor!) ==========
+            
+            # Duration (seconds) - User says 91s = 91s, period.
+            user_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
+            if user_duration is not None and user_duration != 0:
+                adjusted_presets[phase]["irrigation_duration"] = int(user_duration)
+                _LOGGER.warning(f"{self.room} - {phase} duration: {int(user_duration)}s (USER)")
+            else:
+                default_val = preset.get("irrigation_duration", 30)
+                adjusted_presets[phase]["irrigation_duration"] = default_val
+                _LOGGER.warning(f"{self.room} - {phase} duration: {default_val}s (DEFAULT)")
+            
+            # Interval (minutes in UI -> seconds internally)
+            user_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
+            if user_interval is not None and user_interval != 0:
+                interval_sec = int(float(user_interval) * 60)
+                adjusted_presets[phase]["wait_between"] = interval_sec
+                adjusted_presets[phase]["irrigation_interval"] = interval_sec
+                _LOGGER.warning(f"{self.room} - {phase} interval: {interval_sec}s / {user_interval}min (USER)")
+            else:
+                default_val = preset.get("wait_between", preset.get("irrigation_interval", 180))
+                adjusted_presets[phase]["wait_between"] = default_val
+                adjusted_presets[phase]["irrigation_interval"] = default_val
+                _LOGGER.warning(f"{self.room} - {phase} interval: {default_val}s (DEFAULT)")
+            
+            # Shot Sum / Max Cycles
+            user_shot_sum = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Sum")
+            if user_shot_sum is not None and user_shot_sum != 0:
+                adjusted_presets[phase]["max_cycles"] = int(user_shot_sum)
+                _LOGGER.warning(f"{self.room} - {phase} max_cycles: {int(user_shot_sum)} (USER)")
+            else:
+                default_val = preset.get("max_cycles", 10)
+                adjusted_presets[phase]["max_cycles"] = default_val
+                _LOGGER.warning(f"{self.room} - {phase} max_cycles: {default_val} (DEFAULT)")
+
+            # ========== VWC/EC THRESHOLDS - Medium adjustments apply here ==========
             for key in ["VWCTarget", "VWCMin", "VWCMax"]:
                 if key in preset:
                     adjusted_presets[phase][key] = preset[key] + vwc_offset
 
-            # Adjust EC targets based on medium
             for key in ["ECTarget", "MinEC", "MaxEC"]:
                 if key in preset:
                     adjusted_presets[phase][key] = preset[key] + ec_offset
-
-            # Adjust irrigation timing based on drainage
-            if "irrigation_duration" in preset:
-                adjusted_presets[phase]["irrigation_duration"] = int(
-                    preset["irrigation_duration"] * drainage_factor
-                )
-            if "wait_between" in preset:
-                adjusted_presets[phase]["wait_between"] = int(
-                    preset["wait_between"] / drainage_factor
-                )
-
-        _LOGGER.debug(
-            f"{self.room} - Presets adjusted for {medium_type}: vwc_offset={vwc_offset}, ec_offset={ec_offset}"
-        )
 
         return adjusted_presets
 
