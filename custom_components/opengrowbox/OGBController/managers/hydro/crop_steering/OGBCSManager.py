@@ -64,6 +64,14 @@ class OGBCSManager:
         # Single task for any CS operation
         self._main_task = None
         self._calibration_task = None
+        
+        # Irrigation protection - prevents mode change from cancelling active irrigation
+        self._irrigation_lock = asyncio.Lock()
+        self._irrigation_in_progress = False
+        
+        # Debounce protection - prevents duplicate handle_mode_change calls
+        self._last_mode_change_time = None
+        self._mode_change_debounce_seconds = 2.0  # Ignore calls within 2 seconds
 
         # Event subscriptions
         self.event_manager.on("CropSteeringChanges", self.handle_mode_change)
@@ -223,32 +231,59 @@ class OGBCSManager:
         Called from:
         1. CropSteeringChanges event (when user changes CS sub-selector)
         2. CastManager.HydroModeChange() (when user selects Crop-Steering hydro mode)
+        
+        CRITICAL: Only runs if Hydro.Mode == "Crop-Steering"!
+        
+        PROTECTION FEATURES:
+        - Debounce: Ignores duplicate calls within 2 seconds
+        - Irrigation Lock: Does NOT cancel running irrigation
         """
         _LOGGER.warning(f"{self.room} - CropSteering handle_mode_change called with: {data}")
 
-        # Check if CropSteering should be active
-        # It's active if either:
-        # 1. Hydro.Mode == "Crop-Steering" (user selected CS from Hydro mode dropdown)
-        # 2. CropSteering.Active == True (CS was activated)
-        # 3. CropSteering.ActiveMode is set to something other than Disabled (user changed sub-selector)
+        # DEBOUNCE CHECK: Prevent duplicate calls within short time window
+        now = datetime.now()
+        if self._last_mode_change_time:
+            elapsed = (now - self._last_mode_change_time).total_seconds()
+            if elapsed < self._mode_change_debounce_seconds:
+                _LOGGER.warning(
+                    f"{self.room} - CropSteering DEBOUNCED: Last call was {elapsed:.1f}s ago "
+                    f"(threshold: {self._mode_change_debounce_seconds}s). Ignoring duplicate."
+                )
+                return
+        self._last_mode_change_time = now
+
+        # CRITICAL CHECK: Only run if Hydro.Mode is explicitly "Crop-Steering"
+        # This prevents CropSteering from running when user is in Hydro, Plant-Watering, or OFF mode
         hydro_mode = self.data_store.getDeep("Hydro.Mode")
         cs_active = self.data_store.getDeep("CropSteering.Active")
         cs_mode = self.data_store.getDeep("CropSteering.ActiveMode")
         
         _LOGGER.warning(f"{self.room} - CropSteering state: Hydro.Mode={hydro_mode}, Active={cs_active}, ActiveMode={cs_mode}")
         
-        # If user is changing CS sub-selector while CS is not the active Hydro mode,
-        # we should still respect their choice (they might be pre-configuring)
-        # BUT we only START the cycle if CS is actually active
-        is_cs_hydro_mode = hydro_mode == "Crop-Steering"
+        # STRICT CHECK: Hydro.Mode MUST be "Crop-Steering" to run
+        if hydro_mode != "Crop-Steering":
+            _LOGGER.warning(
+                f"{self.room} - CropSteering BLOCKED: Hydro.Mode is '{hydro_mode}', not 'Crop-Steering'. "
+                f"Stopping any running CS operations."
+            )
+            # Make sure CS is stopped if it was somehow running
+            await self.stop_all_operations()
+            return
         
-        if not is_cs_hydro_mode and not cs_active:
-            # CS is not active, but user might be configuring - just log and return
-            if cs_mode and cs_mode not in ("Disabled", "Config"):
-                _LOGGER.warning(f"{self.room} - CropSteering configured to {cs_mode} but Hydro mode is {hydro_mode}. Will start when Crop-Steering is selected.")
+        # Double-check: CS must be marked as active
+        if not cs_active:
+            _LOGGER.warning(f"{self.room} - CropSteering not active (CropSteering.Active=False), ignoring")
             return
 
-        # Stop any existing operation first
+        # IRRIGATION PROTECTION: Don't stop if irrigation is in progress
+        if self._irrigation_in_progress:
+            _LOGGER.warning(
+                f"{self.room} - CropSteering mode change SKIPPED: Irrigation in progress! "
+                f"Will apply changes after irrigation completes."
+            )
+            return
+
+        # Stop any existing operation first (but NOT during irrigation)
         await self.stop_all_operations()
 
         # Parse mode - multiMediumControl check is now optional (True or None both work)
@@ -1313,7 +1348,11 @@ class OGBCSManager:
     # ==================== IRRIGATION ====================
 
     async def _irrigate(self, duration=30, is_emergency=False):
-        """Execute irrigation"""
+        """Execute irrigation with protection against cancellation.
+        
+        Uses _irrigation_in_progress flag to prevent handle_mode_change 
+        from stopping irrigation mid-cycle.
+        """
         drippers = self._get_drippers()
 
         if not drippers:
@@ -1325,71 +1364,85 @@ class OGBCSManager:
             _LOGGER.error(f"❌ {self.room} - Invalid irrigation duration: {duration}s - using default 30s")
             duration = 30
 
-        # Capture pre-irrigation sensor data for AI learning
-        pre_sensor_data = await self._get_sensor_averages()
-        pre_vwc = pre_sensor_data.get("vwc") if pre_sensor_data else None
-        pre_ec = pre_sensor_data.get("ec") if pre_sensor_data else None
-        pre_pore_ec = pre_sensor_data.get("pore_ec") if pre_sensor_data else None
-        pre_temp = pre_sensor_data.get("temperature") if pre_sensor_data else None
+        # SET IRRIGATION LOCK - prevents mode change from cancelling us
+        async with self._irrigation_lock:
+            self._irrigation_in_progress = True
+            _LOGGER.info(f"🔒 {self.room} - Irrigation lock ACQUIRED for {duration}s cycle")
 
-        current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p0"
-        plant_phase, gen_week = self._get_plant_info_from_medium()
-        preset = self._get_adjusted_preset(current_phase, plant_phase, gen_week)
+            # Capture pre-irrigation sensor data for AI learning
+            pre_sensor_data = await self._get_sensor_averages()
+            pre_vwc = pre_sensor_data.get("vwc") if pre_sensor_data else None
+            pre_ec = pre_sensor_data.get("ec") if pre_sensor_data else None
+            pre_pore_ec = pre_sensor_data.get("pore_ec") if pre_sensor_data else None
+            pre_temp = pre_sensor_data.get("temperature") if pre_sensor_data else None
 
-        try:
-            # Turn on
-            _LOGGER.warning(f"🚿 {self.room} - Irrigation STARTING for {duration}s - turning on {len(drippers)} drippers")
-            for dev_id in drippers:
-                action = {
-                    "Name": self.room, "Action": "on", "Device": dev_id, "Cycle": False
-                }
-                await self.event_manager.emit("PumpAction", action)
-                _LOGGER.warning(f"🚿 {self.room} - Sent ON to {dev_id}")
+            current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p0"
+            plant_phase, gen_week = self._get_plant_info_from_medium()
+            preset = self._get_adjusted_preset(current_phase, plant_phase, gen_week)
 
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Type": "CSLOG",
-                    "Message": f"Irrigation started ({duration}s)",
-                },
-                haEvent=True,
-            )
+            try:
+                # Turn on
+                _LOGGER.warning(f"🚿 {self.room} - Irrigation STARTING for {duration}s - turning on {len(drippers)} drippers")
+                for dev_id in drippers:
+                    action = {
+                        "Name": self.room, "Action": "on", "Device": dev_id, "Cycle": False
+                    }
+                    await self.event_manager.emit("PumpAction", action)
+                    _LOGGER.warning(f"🚿 {self.room} - Sent ON to {dev_id}")
 
-            await asyncio.sleep(duration)
+                await self.event_manager.emit(
+                    "LogForClient",
+                    {
+                        "Name": self.room,
+                        "Type": "CSLOG",
+                        "Message": f"Irrigation started ({duration}s)",
+                    },
+                    haEvent=True,
+                )
 
-            # Turn off
-            _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
-            for dev_id in drippers:
-                action = {
-                    "Name": self.room, "Action": "off", "Device": dev_id, "Cycle": False
-                }
-                await self.event_manager.emit("PumpAction", action)
-                _LOGGER.warning(f"🛑 {self.room} - Sent OFF to {dev_id}")
+                await asyncio.sleep(duration)
 
-            # Emit AI irrigation event
-            await self.event_manager.emit(
-                "CSIrrigation",
-                {
-                    "room": self.room,
-                    "shot_number": self.data_store.getDeep("CropSteering.shotCounter")
-                    or 1,
-                    "duration": duration,
-                    "pre_vwc": pre_vwc,
-                    "pre_ec": pre_ec,
-                    "pre_pore_ec": pre_pore_ec,
-                    "pre_temperature": pre_temp,
-                    "interval": preset.get("irrigation_interval")
-                    or preset.get("wait_between"),
-                    "target_vwc": preset.get("VWCTarget"),
-                    "max_shots": preset.get("max_cycles") or preset.get("ShotSum"),
-                    "is_emergency": is_emergency,
-                },
-            )
+                # Turn off
+                _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
+                for dev_id in drippers:
+                    action = {
+                        "Name": self.room, "Action": "off", "Device": dev_id, "Cycle": False
+                    }
+                    await self.event_manager.emit("PumpAction", action)
+                    _LOGGER.warning(f"🛑 {self.room} - Sent OFF to {dev_id}")
 
-        except Exception as e:
-            _LOGGER.error(f"Irrigation error: {e}")
-            await self._emergency_stop()
+                # Emit AI irrigation event
+                await self.event_manager.emit(
+                    "CSIrrigation",
+                    {
+                        "room": self.room,
+                        "shot_number": self.data_store.getDeep("CropSteering.shotCounter")
+                        or 1,
+                        "duration": duration,
+                        "pre_vwc": pre_vwc,
+                        "pre_ec": pre_ec,
+                        "pre_pore_ec": pre_pore_ec,
+                        "pre_temperature": pre_temp,
+                        "interval": preset.get("irrigation_interval")
+                        or preset.get("wait_between"),
+                        "target_vwc": preset.get("VWCTarget"),
+                        "max_shots": preset.get("max_cycles") or preset.get("ShotSum"),
+                        "is_emergency": is_emergency,
+                    },
+                )
+
+            except asyncio.CancelledError:
+                # Task was cancelled - still need to turn off drippers safely
+                _LOGGER.warning(f"⚠️ {self.room} - Irrigation CANCELLED mid-cycle! Turning off drippers...")
+                await self._turn_off_all_drippers()
+                raise  # Re-raise to propagate cancellation
+            except Exception as e:
+                _LOGGER.error(f"Irrigation error: {e}")
+                await self._emergency_stop()
+            finally:
+                # ALWAYS release the irrigation lock
+                self._irrigation_in_progress = False
+                _LOGGER.info(f"🔓 {self.room} - Irrigation lock RELEASED")
 
     # ==================== EC ADJUSTMENT ====================
 
