@@ -8,7 +8,7 @@ from ....data.OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPubl
 
 from .OGBAdvancedSensor import OGBAdvancedSensor
 from .OGBCSCalibrationManager import OGBCSCalibrationManager
-from .OGBCSConfigurationManager import CSMode  # Only need the enum
+from .OGBCSConfigurationManager import CSMode, OGBCSConfigurationManager
 from .OGBCSIrrigationManager import OGBCSIrrigationManager
 from .OGBCSPhaseManager import OGBCSPhaseManager
 
@@ -50,18 +50,13 @@ class OGBCSManager:
             advanced_sensor=self.advanced_sensor,
             hass=hass
         )
+        
+        # Configuration Manager - handles presets and medium adjustments
+        self.config_manager = OGBCSConfigurationManager(
+            data_store=dataStore,
+            room=room
+        )
 
-        # Default values for missing attributes (normally set by modular managers)
-        # Medium-specific preset adjustments for CropSteering
-        self._medium_adjustments = {
-            "rockwool": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
-            "coco": {"vwc_offset": 3, "ec_offset": -0.1, "drainage_factor": 0.9},
-            "soil": {"vwc_offset": -5, "ec_offset": 0.2, "drainage_factor": 0.7},
-            "perlite": {"vwc_offset": -8, "ec_offset": 0.1, "drainage_factor": 1.2},
-            "aero": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
-            "water": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
-            "custom": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
-        }
         self.blockCheckIntervall = 300  # 5 minutes
         self.max_irrigation_attempts = 5
         self.stability_tolerance = 0.1
@@ -161,217 +156,27 @@ class OGBCSManager:
                 haEvent=True,
             )
 
-    # ==================== AUTOMATIC PRESETS ====================
+    # ==================== PRESET ACCESS (delegated to config_manager) ====================
 
-    def _get_base_presets(self) -> Dict[str, Dict[str, Any]]:
+    def _get_adjusted_preset(self, phase: str, plant_phase: str, generative_week: int) -> Dict[str, Any]:
         """
-        Base presets for automatic mode (rockwool defaults).
-        User settings from DataStore are merged on top of defaults.
+        Get preset with all adjustments applied.
+        Delegates to OGBCSConfigurationManager.
         
-        User settings loaded from:
-        - CropSteering.ShotDuration.{phase}.value → irrigation_duration
-        - CropSteering.VWCTarget.{phase}.value → VWCTarget
-        - CropSteering.VWCMin.{phase}.value → VWCMin
-        - etc.
-        """
-        # Default presets
-        presets = {
-            "p0": {
-                "description": "Initial Monitoring Phase",
-                "VWCTarget": 58.0,
-                "VWCMin": 55.0,
-                "VWCMax": 65.0,
-                "ECTarget": 2.0,
-                "MinEC": 1.8,
-                "MaxEC": 2.2,
-                "trigger_condition": "vwc_below_min",
-            },
-            "p1": {
-                "description": "Saturation Phase",
-                "VWCTarget": 70.0,
-                "VWCMax": 68.0,
-                "VWCMin": 55.0,
-                "ECTarget": 1.8,
-                "MinEC": 1.6,
-                "MaxEC": 2.0,
-                "irrigation_duration": 45,
-                "max_cycles": 10,
-                "wait_between": 180,
-                "trigger_condition": "vwc_above_target",
-            },
-            "p2": {
-                "description": "Day Maintenance Phase",
-                "VWCTarget": 65.0,
-                "VWCMax": 68.0,
-                "VWCMin": 62.0,
-                "hold_percentage": 0.95,
-                "ECTarget": 2.0,
-                "MinEC": 1.8,
-                "MaxEC": 2.2,
-                "irrigation_duration": 20,
-                "irrigation_interval": 1800,
-                "check_light": True,
-                "trigger_condition": "light_off",
-            },
-            "p3": {
-                "description": "Night Dryback Phase",
-                "VWCTarget": 60.0,
-                "VWCMax": 68.0,
-                "VWCMin": 52.0,
-                "target_dryback_percent": 10.0,
-                "min_dryback_percent": 8.0,
-                "max_dryback_percent": 12.0,
-                "emergency_threshold": 0.85,
-                "ECTarget": 2.2,
-                "MinEC": 2.0,
-                "MaxEC": 2.5,
-                "ec_increase_step": 0.1,
-                "ec_decrease_step": 0.1,
-                "irrigation_duration": 15,
-                "irrigation_interval": 3600,
-                "max_emergency_shots": 2,
-                "trigger_condition": "light_on",
-            },
-        }
-        
-        # Merge user settings from DataStore on top of defaults
-        self._apply_user_settings(presets)
-        
-        return presets
-
-    def _apply_user_settings(self, presets: Dict[str, Dict[str, Any]]):
-        """
-        Apply user settings from DataStore to presets.
-        User settings override defaults.
-        """
-        for phase in ["p0", "p1", "p2", "p3"]:
-            # Shot Duration -> irrigation_duration
-            shot_duration = self.data_store.getDeep(f"CropSteering.ShotDuration.{phase}")
-            _LOGGER.warning(f"🔍 {self.room} ShotDuration.{phase} raw value: {shot_duration} (type: {type(shot_duration).__name__})")
+        Args:
+            phase: Phase identifier (p0, p1, p2, p3)
+            plant_phase: Current plant phase ('veg' or 'gen')
+            generative_week: Week number in generative phase
             
-            if shot_duration is not None:
-                val = shot_duration.get("value") if isinstance(shot_duration, dict) else shot_duration
-                _LOGGER.warning(f"🔍 {self.room} ShotDuration.{phase} extracted value: {val}")
-                if val is not None and val != 0:
-                    presets[phase]["irrigation_duration"] = int(float(val))
-                    _LOGGER.debug(f"{self.room} - User irrigation_duration for {phase}: {val}s")
-                else:
-                    _LOGGER.warning(f"⚠️ {self.room} ShotDuration.{phase} is 0 or None, using default: {presets[phase].get('irrigation_duration', 'NOT SET')}")
-            
-            # VWC settings
-            for key, store_key in [
-                ("VWCTarget", "VWCTarget"),
-                ("VWCMin", "VWCMin"),
-                ("VWCMax", "VWCMax"),
-            ]:
-                user_val = self.data_store.getDeep(f"CropSteering.{store_key}.{phase}")
-                if user_val is not None:
-                    val = user_val.get("value") if isinstance(user_val, dict) else user_val
-                    if val is not None:
-                        presets[phase][key] = float(val)
-            
-            # EC settings
-            for key, store_key in [
-                ("ECTarget", "ECTarget"),
-                ("MinEC", "MinEC"),
-                ("MaxEC", "MaxEC"),
-            ]:
-                user_val = self.data_store.getDeep(f"CropSteering.{store_key}.{phase}")
-                if user_val is not None:
-                    val = user_val.get("value") if isinstance(user_val, dict) else user_val
-                    if val is not None:
-                        presets[phase][key] = float(val)
-            
-            # Shot Interval -> wait_between (for P1) or irrigation_interval (for P2/P3)
-            shot_interval = self.data_store.getDeep(f"CropSteering.ShotIntervall.{phase}")
-            if shot_interval is not None:
-                val = shot_interval.get("value") if isinstance(shot_interval, dict) else shot_interval
-                if val is not None:
-                    interval_sec = int(float(val) * 60)  # Convert minutes to seconds
-                    if phase == "p1":
-                        presets[phase]["wait_between"] = interval_sec
-                    else:
-                        presets[phase]["irrigation_interval"] = interval_sec
-
-    def _get_automatic_presets(self) -> Dict[str, Dict[str, Any]]:
+        Returns:
+            Adjusted preset configuration
         """
-        Get medium-adjusted automatic presets.
-        Applies medium-specific adjustments to base presets.
-        """
-        base_presets = self._get_base_presets()
-
-        # Get medium-specific adjustments
-        adjustments = self._medium_adjustments.get(
-            self.medium_type, self._medium_adjustments.get("rockwool", {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0})
+        return self.config_manager.get_adjusted_preset(
+            phase=phase,
+            plant_phase=plant_phase,
+            generative_week=generative_week,
+            medium_type=self.medium_type
         )
-
-        vwc_offset = adjustments["vwc_offset"]
-        ec_offset = adjustments["ec_offset"]
-        drainage_factor = adjustments["drainage_factor"]
-
-        adjusted_presets = {}
-        for phase, preset in base_presets.items():
-            adjusted_presets[phase] = preset.copy()
-
-            # Adjust VWC targets based on medium
-            for key in ["VWCTarget", "VWCMin", "VWCMax"]:
-                if key in preset:
-                    adjusted_presets[phase][key] = preset[key] + vwc_offset
-
-            # Adjust EC targets based on medium
-            for key in ["ECTarget", "MinEC", "MaxEC"]:
-                if key in preset:
-                    adjusted_presets[phase][key] = preset[key] + ec_offset
-
-            # Adjust irrigation timing based on drainage factor
-            # Note: User settings already applied, drainage_factor scales them
-            if "irrigation_duration" in preset:
-                adjusted_presets[phase]["irrigation_duration"] = int(
-                    preset["irrigation_duration"] * drainage_factor
-                )
-            if "wait_between" in preset:
-                adjusted_presets[phase]["wait_between"] = int(
-                    preset["wait_between"] / drainage_factor
-                )
-
-        _LOGGER.debug(
-            f"{self.room} - Presets adjusted for {self.medium_type}: vwc_offset={vwc_offset}, ec_offset={ec_offset}"
-        )
-
-        return adjusted_presets
-
-    def _get_phase_growth_adjustments(self, plant_phase, generative_week):
-        """
-        Growth phase-specific adjustments.
-        
-        Vegetative: More moisture, less dryback
-        Generative: Less moisture, more dryback (stress for flowering)
-        """
-        adjustments = {"vwc_modifier": 0.0, "dryback_modifier": 0.0, "ec_modifier": 0.0}
-
-        if plant_phase == "veg":
-            adjustments["vwc_modifier"] = 2.0
-            adjustments["dryback_modifier"] = -2.0
-            adjustments["ec_modifier"] = -0.1
-        elif plant_phase == "gen":
-            if generative_week <= 3:
-                adjustments["vwc_modifier"] = 1.0
-                adjustments["dryback_modifier"] = -1.0
-                adjustments["ec_modifier"] = 0.05
-            elif generative_week <= 5:
-                adjustments["vwc_modifier"] = -2.0
-                adjustments["dryback_modifier"] = 2.0
-                adjustments["ec_modifier"] = 0.2
-            elif generative_week <= 7:
-                adjustments["vwc_modifier"] = 2.0
-                adjustments["dryback_modifier"] = -2.0
-                adjustments["ec_modifier"] = 0.1
-            else:
-                adjustments["vwc_modifier"] = -3.0
-                adjustments["dryback_modifier"] = 3.0
-                adjustments["ec_modifier"] = 0.3
-
-        return adjustments
 
     async def _update_number_entity(self, parameter: str, phase: str, value: float):
         """
@@ -410,30 +215,6 @@ class OGBCSManager:
             
         except Exception as e:
             _LOGGER.warning(f"{self.room} - Failed to update number entity for {parameter}.{phase}: {e}")
-
-    def _get_adjusted_preset(self, phase, plant_phase, generative_week):
-        """
-        Get preset with all adjustments applied:
-        1. User settings from DataStore
-        2. Medium adjustments
-        3. Growth phase adjustments
-        """
-        base_preset = self._get_automatic_presets()[phase].copy()
-        adjustments = self._get_phase_growth_adjustments(plant_phase, generative_week)
-
-        # Apply growth phase adjustments
-        if "VWCTarget" in base_preset:
-            base_preset["VWCTarget"] += adjustments["vwc_modifier"]
-        if "VWCMax" in base_preset:
-            base_preset["VWCMax"] += adjustments["vwc_modifier"]
-        if "VWCMin" in base_preset:
-            base_preset["VWCMin"] += adjustments["vwc_modifier"]
-        if "target_dryback_percent" in base_preset:
-            base_preset["target_dryback_percent"] += adjustments["dryback_modifier"]
-        if "ECTarget" in base_preset:
-            base_preset["ECTarget"] += adjustments["ec_modifier"]
-
-        return base_preset
 
     # ==================== ENTRY POINT ====================
     async def handle_mode_change(self, data):
@@ -525,11 +306,22 @@ class OGBCSManager:
         # Log start
         await self._log_mode_start(mode, config, sensor_data)
 
+        # CRITICAL: Stop any existing task before starting new one
+        if self._main_task and not self._main_task.done():
+            _LOGGER.warning(f"{self.room} - Cancelling existing CS task before starting new one")
+            self._main_task.cancel()
+            try:
+                await self._main_task
+            except asyncio.CancelledError:
+                pass
+
         # Start appropriate mode
         if mode == CSMode.AUTOMATIC:
+            _LOGGER.warning(f"{self.room} - Starting AUTOMATIC cycle task")
             self._main_task = asyncio.create_task(self._automatic_cycle())
         elif mode.value.startswith("Manual"):
             phase = mode.value.split("-")[1]  # Extract "p0", "p1", etc.
+            _LOGGER.warning(f"{self.room} - Starting MANUAL cycle task for phase {phase}")
             self._main_task = asyncio.create_task(self._manual_cycle(phase))
 
     async def handle_stop(self, event=None):
@@ -729,20 +521,44 @@ class OGBCSManager:
         ]
 
     def _get_manual_phase_settings(self, phase):
-        """Get USER settings für Manual Mode"""
-        cs = self.data_store.getDeep("CropSteering")
+        """
+        Get USER settings for Manual Mode.
+        
+        Reads from CropSteering.Substrate.{phase}.{parameter} paths
+        as set by the core OGBConfigurationManager.
+        Falls back to legacy paths if new paths not available.
+        """
+        def get_value(new_path, legacy_path, default=0):
+            """Try new path first, then legacy, then default."""
+            # Try new path (from OGBConfigurationManager)
+            val = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.{new_path}")
+            if val is not None and val != 0:
+                return {"value": val}
+            
+            # Try legacy path (from OGBData.py defaults)
+            legacy_val = self.data_store.getDeep(f"CropSteering.{legacy_path}.{phase}")
+            if legacy_val is not None:
+                if isinstance(legacy_val, dict):
+                    v = legacy_val.get("value", 0)
+                    if v != 0:
+                        return legacy_val
+                elif legacy_val != 0:
+                    return {"value": legacy_val}
+            
+            return {"value": default}
+        
         return {
-            "ShotIntervall": cs["ShotIntervall"][phase],
-            "ShotDuration": cs["ShotDuration"][phase],
-            "ShotSum": cs["ShotSum"][phase],
-            "MoistureDryBack": cs["MoistureDryBack"][phase],
-            "ECDryBack": cs["ECDryBack"][phase],
-            "ECTarget": cs["ECTarget"][phase],
-            "MaxEC": cs["MaxEC"][phase],
-            "MinEC": cs["MinEC"][phase],
-            "VWCTarget": cs["VWCTarget"][phase],
-            "VWCMax": cs["VWCMax"][phase],
-            "VWCMin": cs["VWCMin"][phase],
+            "ShotIntervall": get_value("Shot_Intervall", "ShotIntervall", default=30),  # minutes
+            "ShotDuration": get_value("Shot_Duration_Sec", "ShotDuration", default=30),  # seconds
+            "ShotSum": get_value("Shot_Sum", "ShotSum", default=5),  # count
+            "MoistureDryBack": get_value("Moisture_Dryback", "MoistureDryBack", default=10),  # percent
+            "ECDryBack": get_value("EC_Dryback", "ECDryBack", default=0.2),
+            "ECTarget": get_value("Shot_EC", "ECTarget", default=2.0),
+            "MaxEC": get_value("Max_EC", "MaxEC", default=2.5),
+            "MinEC": get_value("Min_EC", "MinEC", default=1.5),
+            "VWCTarget": get_value("VWC_Target", "VWCTarget", default=65),
+            "VWCMax": get_value("VWC_Max", "VWCMax", default=70),
+            "VWCMin": get_value("VWC_Min", "VWCMin", default=55),
         }
 
     # ==================== AUTOMATIC MODE ====================
@@ -826,39 +642,46 @@ class OGBCSManager:
         Returns:
             tuple: (plant_phase, generative_week)
         """
-        grow_mediums = self.data_store.get("growMediums") or []
-        
-        for medium in grow_mediums:
-            if hasattr(medium, 'get_current_phase') and hasattr(medium, 'get_bloom_week'):
-                # GrowMedium object
-                phase = medium.get_current_phase()  # "veg" or "flower"
-                if phase == "flower":
-                    week = medium.get_bloom_week()
-                    return ("flower", week)
-                else:
-                    week = medium.get_veg_week()
-                    return ("veg", week)
-            elif isinstance(medium, dict):
-                # Dictionary representation
-                bloom_switch = medium.get("bloom_switch_date")
-                grow_start = medium.get("grow_start_date")
-                
-                if bloom_switch:
-                    # In flower - calculate bloom week
-                    from datetime import datetime
-                    if isinstance(bloom_switch, str):
-                        bloom_switch = datetime.fromisoformat(bloom_switch.replace('Z', '+00:00'))
-                    days = (datetime.now() - bloom_switch).days
-                    week = (days // 7) + 1 if days > 0 else 1
-                    return ("flower", week)
-                elif grow_start:
-                    # In veg - calculate veg week  
-                    from datetime import datetime
-                    if isinstance(grow_start, str):
-                        grow_start = datetime.fromisoformat(grow_start.replace('Z', '+00:00'))
-                    days = (datetime.now() - grow_start).days
-                    week = (days // 7) + 1 if days > 0 else 1
-                    return ("veg", week)
+        try:
+            grow_mediums = self.data_store.get("growMediums") or []
+            
+            for medium in grow_mediums:
+                try:
+                    if hasattr(medium, 'get_current_phase') and hasattr(medium, 'get_bloom_week'):
+                        # GrowMedium object
+                        phase = medium.get_current_phase()  # "veg" or "flower"
+                        if phase == "flower":
+                            week = medium.get_bloom_week()
+                            return ("flower", week)
+                        else:
+                            week = medium.get_veg_week()
+                            return ("veg", week)
+                    elif isinstance(medium, dict):
+                        # Dictionary representation
+                        bloom_switch = medium.get("bloom_switch_date")
+                        grow_start = medium.get("grow_start_date")
+                        
+                        if bloom_switch:
+                            # In flower - calculate bloom week
+                            from datetime import datetime
+                            if isinstance(bloom_switch, str):
+                                bloom_switch = datetime.fromisoformat(bloom_switch.replace('Z', '+00:00'))
+                            days = (datetime.now() - bloom_switch).days
+                            week = (days // 7) + 1 if days > 0 else 1
+                            return ("flower", week)
+                        elif grow_start:
+                            # In veg - calculate veg week  
+                            from datetime import datetime
+                            if isinstance(grow_start, str):
+                                grow_start = datetime.fromisoformat(grow_start.replace('Z', '+00:00'))
+                            days = (datetime.now() - grow_start).days
+                            week = (days // 7) + 1 if days > 0 else 1
+                            return ("veg", week)
+                except Exception as e:
+                    _LOGGER.warning(f"{self.room} - Error parsing medium plant info: {e}")
+                    continue
+        except Exception as e:
+            _LOGGER.warning(f"{self.room} - Error getting plant info from mediums: {e}")
         
         # Fallback to isPlantDay data
         plant_phase = self.data_store.getDeep("isPlantDay.plantPhase") or "veg"
@@ -1494,7 +1317,13 @@ class OGBCSManager:
         drippers = self._get_drippers()
 
         if not drippers:
+            _LOGGER.warning(f"⚠️ {self.room} - No drippers found, skipping irrigation")
             return
+        
+        # CRITICAL: Ensure duration is valid
+        if duration is None or duration <= 0:
+            _LOGGER.error(f"❌ {self.room} - Invalid irrigation duration: {duration}s - using default 30s")
+            duration = 30
 
         # Capture pre-irrigation sensor data for AI learning
         pre_sensor_data = await self._get_sensor_averages()
@@ -1509,11 +1338,13 @@ class OGBCSManager:
 
         try:
             # Turn on
+            _LOGGER.warning(f"🚿 {self.room} - Irrigation STARTING for {duration}s - turning on {len(drippers)} drippers")
             for dev_id in drippers:
                 action = {
                     "Name": self.room, "Action": "on", "Device": dev_id, "Cycle": False
                 }
                 await self.event_manager.emit("PumpAction", action)
+                _LOGGER.warning(f"🚿 {self.room} - Sent ON to {dev_id}")
 
             await self.event_manager.emit(
                 "LogForClient",
@@ -1528,11 +1359,13 @@ class OGBCSManager:
             await asyncio.sleep(duration)
 
             # Turn off
+            _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
             for dev_id in drippers:
                 action = {
                     "Name": self.room, "Action": "off", "Device": dev_id, "Cycle": False
                 }
                 await self.event_manager.emit("PumpAction", action)
+                _LOGGER.warning(f"🛑 {self.room} - Sent OFF to {dev_id}")
 
             # Emit AI irrigation event
             await self.event_manager.emit(

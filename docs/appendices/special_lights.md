@@ -513,6 +513,48 @@ Reset happens automatically at midnight.
    ```
 3. Wait up to 30 seconds for the scheduler to apply the change
 
+### Entity "Missing or Currently Not Available"
+
+This error occurs when OGB cannot find or communicate with the light entity. Common causes:
+
+1. **Entity is unavailable at startup**: The light device was offline when Home Assistant started
+   - Solution: Restart HA after the device comes online
+   
+2. **Incorrect entity naming**: OGB cannot find a matching entity
+   - Solution: Check that your light entity exists in HA with a recognizable name
+   - Example: `light.lightred` should exist in HA Developer Tools -> States
+   
+3. **Entity state is "unavailable" or "unknown"**: Device is disconnected or not responding
+   - Check device power and network connection
+   - Verify the device appears in HA Integrations
+   
+4. **Label mismatch**: Device is labeled but entity structure doesn't match expectations
+   - Ensure the light entity starts with `light.` or `switch.`
+   - Check logs for: `No switches/entities found!`
+
+**Debug Steps:**
+
+1. Check HA logs for these messages:
+   ```
+   WARNING - light_red: No switches/entities found!
+   WARNING - light_red: Entity 'light.light_red' is currently unavailable
+   ```
+
+2. Verify entity exists in HA:
+   - Go to Developer Tools -> States
+   - Search for your light entity (e.g., `light.lightred`, `light.light_red`)
+   - Ensure state is not "unavailable"
+
+3. Check OGB identified the device:
+   ```
+   Device 'lightred' identified via label as LightRed
+   ```
+
+4. If entity was recovered automatically, you'll see:
+   ```
+   INFO - lightred: Found entity 'light.lightred' in HA. Adding to switches list.
+   ```
+
 ---
 
 ## Example Setup: Full Spectrum Flower Room
@@ -559,6 +601,13 @@ number.py                  # Duration/intensity number entities
 ---
 
 ## Changelog
+
+### v1.5.1 - Entity Validation Improvements
+- Added `_validate_entity_availability()` method to all special light classes
+- Automatic entity recovery when switches list is empty
+- Improved error messages for missing/unavailable entities
+- Better logging for troubleshooting entity issues
+- Added troubleshooting section for "missing or not available" errors
 
 ### v1.5.0 - Mode System Added
 - Added **Mode** select entities for all special light types

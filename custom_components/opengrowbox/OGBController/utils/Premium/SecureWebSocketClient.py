@@ -65,6 +65,10 @@ class OGBWebSocketConManager:
         self._session_id = None
         self._user_id = None
         self._access_token = None
+        self._stored_email = None  # For auto-relogin after API restart
+        self._stored_ogb_token = None  # For auto-relogin - the OGBToken (API key), NOT the JWT
+        self._session_error_relogin_triggered = False  # Prevents disconnect handler from interfering
+        self._credential_provider = None  # Callback to get credentials from OGBPremiumIntegration
         self.token_expires_at = None
 
         # Connection state
@@ -191,6 +195,15 @@ class OGBWebSocketConManager:
                         event_id, "error", "Email and OGB-token required"
                     )
                     return False
+
+                # CRITICAL: Store credentials immediately for auto-relogin after API restart
+                # This ensures we have them even if login fails later
+                if email:
+                    self._stored_email = email
+                    logging.debug(f"🔐 {self.ws_room} Stored email for auto-relogin: {email[:3]}***")
+                if OGBToken:
+                    self._stored_ogb_token = OGBToken
+                    logging.debug(f"🔐 {self.ws_room} Stored OGBToken for auto-relogin")
 
                 # Store auth callback for V1 authentication success
                 self._pending_auth_callback = auth_callback
@@ -901,15 +914,35 @@ class OGBWebSocketConManager:
             self.ws_connected = True
 
         @self.sio.on('disconnect', namespace=ns)
-        async def on_disconnect():
-            logging.warning(f"❌ {self.ws_room} WebSocket disconnected from V1 namespace")
+        async def on_disconnect(reason=None):
+            logging.warning(f"❌ {self.ws_room} WebSocket disconnected from V1 namespace (reason: {reason})")
             self.ws_connected = False
             self.authenticated = False
             
+            # Check if session error handler already triggered re-login
+            if self._session_error_relogin_triggered:
+                logging.info(f"⏭️ {self.ws_room} Session error already triggered re-login - skipping disconnect handler")
+                return
+            
             # Trigger automatic reconnection if enabled and not already in progress
             if self._should_reconnect and not self._reconnection_in_progress and not self._connection_closing:
-                logging.info(f"🔄 {self.ws_room} Scheduling automatic reconnection after disconnect...")
-                asyncio.create_task(self._trigger_reconnect_with_lock("disconnect_event"))
+                # CRITICAL: If we have stored credentials, do immediate re-login instead of slow reconnect
+                # This handles API restarts where all sessions are invalidated
+                # Check local credentials first, then try credential provider
+                has_credentials = self._stored_email and self._stored_ogb_token
+                if not has_credentials and self._credential_provider:
+                    try:
+                        creds = self._credential_provider()
+                        has_credentials = creds and creds.get("email") and creds.get("token")
+                    except:
+                        pass
+                
+                if has_credentials:
+                    logging.info(f"🔐 {self.ws_room} Have credentials - triggering immediate re-login after disconnect...")
+                    asyncio.create_task(self._trigger_relogin("disconnect_with_credentials"))
+                else:
+                    logging.info(f"🔄 {self.ws_room} No stored credentials - scheduling reconnection after disconnect...")
+                    asyncio.create_task(self._trigger_reconnect_with_lock("disconnect_event"))
 
         @self.sio.on('auth_success', namespace=ns)
         async def on_auth_success(data):
@@ -1042,9 +1075,38 @@ class OGBWebSocketConManager:
             # Check if this is a session-not-found error (API was restarted)
             # In this case, trigger immediate re-login instead of waiting for reconnect attempts
             error_msg = str(data.get('message', '')).lower()
-            if 'session' in error_msg or 'not found' in error_msg or 'invalid' in error_msg or data == {}:
-                logging.warning(f"🔄 {self.ws_room} Session invalid/not found - triggering immediate re-login...")
-                asyncio.create_task(self._trigger_relogin("v1_error_session_invalid"))
+            error_code = str(data.get('code', '')).upper()
+            
+            is_session_error = (
+                'session' in error_msg or 
+                'not found' in error_msg or 
+                'invalid' in error_msg or 
+                error_code == 'INVALID_SESSION' or
+                error_code == 'SESSION_NOT_FOUND' or
+                error_code == 'AUTH_FAILED' or
+                data == {}
+            )
+            
+            if is_session_error:
+                logging.warning(f"🔐 {self.ws_room} Session error detected (code={error_code}, msg={error_msg}) - triggering immediate re-login...")
+                # IMPORTANT: Don't block here with sleep - create task immediately
+                # The re-login method has its own locking to prevent duplicates
+                # Check local credentials first, then try credential provider
+                has_credentials = self._stored_email and self._stored_ogb_token
+                if not has_credentials and self._credential_provider:
+                    try:
+                        creds = self._credential_provider()
+                        has_credentials = creds and creds.get("email") and creds.get("token")
+                    except:
+                        pass
+                
+                if has_credentials:
+                    # Set flag to prevent disconnect handler from interfering
+                    self._session_error_relogin_triggered = True
+                    logging.info(f"🔐 {self.ws_room} Have credentials - scheduling re-login task")
+                    asyncio.create_task(self._trigger_relogin("v1_error_session_invalid"))
+                else:
+                    logging.error(f"❌ {self.ws_room} Cannot re-login: no credentials available")
 
         @self.sio.on("grow-data_acknowledged", namespace=ns)
         async def grow_data_acknowledged(data):
@@ -2320,7 +2382,9 @@ class OGBWebSocketConManager:
                 logging.error(f"❌ {self.ws_room} Reconnection failed on attempt {self.ws_reconnect_attempts}")
                 
                 # AUTO-RELOGIN FALLBACK: If we have stored credentials, try fresh login
-                if self.ws_reconnect_attempts >= 3 and self._user_id and self._access_token:
+                # CRITICAL: Use _stored_ogb_token (API key), NOT _access_token (JWT)
+                ogb_token = getattr(self, '_stored_ogb_token', None)
+                if self.ws_reconnect_attempts >= 3 and self._user_id and ogb_token:
                     logging.warning(f"🔄 {self.ws_room} Attempting auto-relogin with stored credentials after {self.ws_reconnect_attempts} failed reconnection attempts")
                     
                     try:
@@ -2328,7 +2392,7 @@ class OGBWebSocketConManager:
                         # This will get a new session from the server
                         login_success = await self._perform_login(
                             email=getattr(self, '_stored_email', None) or "auto_relogin@restore",
-                            OGBToken=self._access_token,
+                            OGBToken=ogb_token,
                             room_id=self.room_id,
                             room_name=self.ws_room,
                             event_id=self.create_event_id()
@@ -2388,12 +2452,13 @@ class OGBWebSocketConManager:
         
         try:
             # Check if we have stored credentials
+            logging.info(f"🔐 {self.ws_room} Re-login credentials check: token={bool(self._access_token)}, email={bool(self._stored_email)}")
             if not self._access_token:
                 logging.error(f"❌ {self.ws_room} Cannot re-login - no access token stored")
                 return
             
             # Clear old session data to force fresh session
-            logging.info(f"🔑 {self.ws_room} Clearing stale session data for fresh re-login")
+            logging.info(f"🔑 {self.ws_room} Clearing stale session data: session_id={self._session_id}, has_key={bool(self._session_key)}")
             self._session_id = None
             self._session_key = None
             self._aes_gcm = None
@@ -2412,13 +2477,34 @@ class OGBWebSocketConManager:
             await asyncio.sleep(2)
             
             # Perform fresh login with stored credentials
+            # CRITICAL: Use _stored_ogb_token (API key), NOT _access_token (JWT)
+            email_to_use = getattr(self, '_stored_email', None)
+            ogb_token_to_use = getattr(self, '_stored_ogb_token', None)
+            
+            # If not stored locally, try getting from credential provider (OGBPremiumIntegration)
+            if (not email_to_use or not ogb_token_to_use) and self._credential_provider:
+                try:
+                    creds = self._credential_provider()
+                    if creds:
+                        email_to_use = email_to_use or creds.get("email")
+                        ogb_token_to_use = ogb_token_to_use or creds.get("token")
+                        logging.info(f"🔐 {self.ws_room} Got credentials from provider: email={bool(email_to_use)}, token={bool(ogb_token_to_use)}")
+                except Exception as e:
+                    logging.error(f"❌ {self.ws_room} Error getting credentials from provider: {e}")
+            
+            if not email_to_use or not ogb_token_to_use:
+                logging.error(f"❌ {self.ws_room} Cannot re-login - missing credentials: email={bool(email_to_use)}, token={bool(ogb_token_to_use)}")
+                return
+            
+            logging.info(f"🔐 {self.ws_room} Calling _perform_login with email={email_to_use[:3] if email_to_use else 'None'}***, room_id={self.room_id}")
             login_success = await self._perform_login(
-                email=getattr(self, '_stored_email', None) or "auto_relogin@restore",
-                OGBToken=self._access_token,
+                email=email_to_use,
+                OGBToken=ogb_token_to_use,
                 room_id=self.room_id,
                 room_name=self.ws_room,
                 event_id=self.create_event_id()
             )
+            logging.info(f"🔐 {self.ws_room} _perform_login returned: {login_success}")
             
             if login_success:
                 logging.info(f"✅ {self.ws_room} Re-login successful! New session obtained.")
@@ -2442,6 +2528,7 @@ class OGBWebSocketConManager:
             logging.error(f"❌ {self.ws_room} Re-login error ({reason}): {e}")
         finally:
             self._reconnection_in_progress = False
+            self._session_error_relogin_triggered = False  # Reset flag after re-login attempt
 
     async def _trigger_reconnect_with_lock(self, reason: str):
         """
@@ -2548,16 +2635,25 @@ class OGBWebSocketConManager:
                     logging.debug(f"🏥 {self.ws_room} Health check: reconnection disabled")
                     continue
                 
+                # Helper to trigger reconnect or relogin based on available credentials
+                async def trigger_recovery(reason: str):
+                    if self._access_token and self._stored_email:
+                        logging.info(f"🔐 {self.ws_room} Health monitor: triggering re-login ({reason})")
+                        await self._trigger_relogin(f"health_monitor_{reason}")
+                    else:
+                        logging.info(f"🔄 {self.ws_room} Health monitor: triggering reconnect ({reason})")
+                        await self._trigger_reconnect_with_lock(f"health_monitor_{reason}")
+                
                 # Check 1: Should be connected but isn't
                 if self.is_logged_in and not self.ws_connected:
                     logging.warning(f"🏥 {self.ws_room} Health check FAILED: logged in but WebSocket not connected")
-                    asyncio.create_task(self._trigger_reconnect_with_lock("health_monitor_disconnected"))
+                    asyncio.create_task(trigger_recovery("disconnected"))
                     continue
                 
                 # Check 2: Connected but not authenticated (stuck state)
                 if self.ws_connected and not self.authenticated and self.is_logged_in:
                     logging.warning(f"🏥 {self.ws_room} Health check FAILED: connected but not authenticated")
-                    asyncio.create_task(self._trigger_reconnect_with_lock("health_monitor_auth_stuck"))
+                    asyncio.create_task(trigger_recovery("auth_stuck"))
                     continue
                 
                 # Check 3: No pong received for too long (connection is dead but not detected)
@@ -2568,7 +2664,7 @@ class OGBWebSocketConManager:
                             f"🏥 {self.ws_room} Health check FAILED: no pong for {pong_age:.0f}s "
                             f"(max: {MAX_PONG_AGE}s)"
                         )
-                        asyncio.create_task(self._trigger_reconnect_with_lock("health_monitor_stale_pong"))
+                        asyncio.create_task(trigger_recovery("stale_pong"))
                         continue
                 
                 # All checks passed

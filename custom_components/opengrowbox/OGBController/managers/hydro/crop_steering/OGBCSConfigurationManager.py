@@ -57,92 +57,18 @@ class OGBCSConfigurationManager:
             "perlite": {"vwc_offset": -8, "ec_offset": 0.1, "drainage_factor": 1.2},
             "aero": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
             "water": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
+            "custom": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
         }
-
-    def _load_user_presets(self) -> Optional[Dict[str, Dict[str, Any]]]:
-        """
-        Load user-configured crop steering presets from datastore.
-
-        Returns:
-            User presets if available, None otherwise
-        """
-        try:
-            presets = {}
-
-            for phase in ["p0", "p1", "p2", "p3"]:
-                phase_config = {}
-
-                # Load all user-configured parameters for this phase
-                # EC parameters
-                ec_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_EC")
-                if ec_target is not None:
-                    phase_config["ECTarget"] = float(ec_target)
-
-                min_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Min_EC")
-                if min_ec is not None:
-                    phase_config["MinEC"] = float(min_ec)
-
-                max_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Max_EC")
-                if max_ec is not None:
-                    phase_config["MaxEC"] = float(max_ec)
-
-                # VWC parameters
-                vwc_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Target")
-                if vwc_target is not None:
-                    phase_config["VWCTarget"] = float(vwc_target)
-
-                vwc_min = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Min")
-                if vwc_min is not None:
-                    phase_config["VWCMin"] = float(vwc_min)
-
-                vwc_max = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Max")
-                if vwc_max is not None:
-                    phase_config["VWCMax"] = float(vwc_max)
-
-                # Irrigation parameters
-                shot_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
-                if shot_duration is not None:
-                    phase_config["irrigation_duration"] = int(shot_duration)
-
-                irrigation_freq = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Irrigation_Frequency")
-                if irrigation_freq is not None:
-                    phase_config["irrigation_frequency"] = int(irrigation_freq)
-
-                # Dryback parameters
-                dryback_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Target_Percent")
-                if dryback_target is not None:
-                    phase_config["dryback_target"] = float(dryback_target)
-
-                dryback_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Duration_Hours")
-                if dryback_duration is not None:
-                    phase_config["dryback_duration"] = int(dryback_duration)
-
-                # Only add phase if it has user configurations
-                if phase_config:
-                    presets[phase] = phase_config
-                    _LOGGER.info(f"{self.room} - Loaded user config for phase {phase}: {phase_config}")
-
-            return presets if presets else None
-
-        except Exception as e:
-            _LOGGER.error(f"{self.room} - Error loading user crop steering presets: {e}")
-            return None
 
     def get_base_presets(self) -> Dict[str, Dict[str, Any]]:
         """
         Base presets for automatic mode (rockwool defaults).
-        These are adjusted based on medium type and can be overridden by user configurations.
+        User configurations from DataStore are merged on top of defaults.
 
         Returns:
-            Dictionary of phase presets
+            Dictionary of phase presets with user overrides applied
         """
-        # Check for user-configured presets first
-        user_presets = self._load_user_presets()
-        if user_presets:
-            _LOGGER.info(f"{self.room} - Using user-configured crop steering presets")
-            return user_presets
-
-        # Default presets (will be merged with user configs at the end)
+        # Default presets
         presets = {
             "p0": {
                 # P0: Monitoring - Warte auf Dryback Signal
@@ -153,6 +79,9 @@ class OGBCSConfigurationManager:
                 "ECTarget": 2.0,
                 "MinEC": 1.8,
                 "MaxEC": 2.2,
+                "irrigation_duration": 30,
+                "max_cycles": 5,  # Max shots before re-evaluating
+                "irrigation_interval": 1800,  # 30 min check interval
                 "trigger_condition": "vwc_below_min",
             },
             "p1": {
@@ -180,6 +109,7 @@ class OGBCSConfigurationManager:
                 "MinEC": 1.8,
                 "MaxEC": 2.2,
                 "irrigation_duration": 20,
+                "max_cycles": 8,  # Max maintenance shots per light cycle
                 "irrigation_interval": 1800,  # 30 min between maintenance shots
                 "check_light": True,
                 "trigger_condition": "light_off",
@@ -206,88 +136,85 @@ class OGBCSConfigurationManager:
             },
         }
 
-        # Merge with user configurations
-        user_presets = self._load_user_presets()
-        if user_presets:
-            # Merge user configs with defaults
-            for phase, user_config in user_presets.items():
-                if phase in presets:
-                    presets[phase].update(user_config)
-                    _LOGGER.info(f"{self.room} - Merged user config for phase {phase}")
-                else:
-                    presets[phase] = user_config
-                    _LOGGER.info(f"{self.room} - Added user config for phase {phase}")
+        # Merge with user configurations from DataStore
+        self._apply_user_settings(presets)
 
         return presets
 
-    def _load_user_presets(self) -> Optional[Dict[str, Dict[str, Any]]]:
+    def _apply_user_settings(self, presets: Dict[str, Dict[str, Any]]) -> None:
         """
-        Load user-configured crop steering presets from datastore.
-
-        Returns:
-            User presets if available, None otherwise
+        Apply user settings from DataStore to presets.
+        User settings override defaults.
+        
+        Reads from CropSteering.Substrate.{phase}.{parameter} paths
+        as set by the core OGBConfigurationManager.
         """
-        try:
-            presets = {}
+        for phase in ["p0", "p1", "p2", "p3"]:
+            # EC parameters
+            ec_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_EC")
+            if ec_target is not None and ec_target != 0:
+                presets[phase]["ECTarget"] = float(ec_target)
 
-            for phase in ["p0", "p1", "p2", "p3"]:
-                phase_config = {}
+            min_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Min_EC")
+            if min_ec is not None and min_ec != 0:
+                presets[phase]["MinEC"] = float(min_ec)
 
-                # Load all user-configured parameters for this phase
-                # EC parameters
-                ec_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_EC")
-                if ec_target is not None:
-                    phase_config["ECTarget"] = float(ec_target)
+            max_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Max_EC")
+            if max_ec is not None and max_ec != 0:
+                presets[phase]["MaxEC"] = float(max_ec)
 
-                min_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Min_EC")
-                if min_ec is not None:
-                    phase_config["MinEC"] = float(min_ec)
+            # VWC parameters
+            vwc_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Target")
+            if vwc_target is not None and vwc_target != 0:
+                presets[phase]["VWCTarget"] = float(vwc_target)
+                _LOGGER.debug(f"{self.room} - User VWCTarget for {phase}: {vwc_target}")
 
-                max_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Max_EC")
-                if max_ec is not None:
-                    phase_config["MaxEC"] = float(max_ec)
+            vwc_min = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Min")
+            if vwc_min is not None and vwc_min != 0:
+                presets[phase]["VWCMin"] = float(vwc_min)
+                _LOGGER.debug(f"{self.room} - User VWCMin for {phase}: {vwc_min}")
 
-                # VWC parameters
-                vwc_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Target")
-                if vwc_target is not None:
-                    phase_config["VWCTarget"] = float(vwc_target)
+            vwc_max = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Max")
+            if vwc_max is not None and vwc_max != 0:
+                presets[phase]["VWCMax"] = float(vwc_max)
+                _LOGGER.debug(f"{self.room} - User VWCMax for {phase}: {vwc_max}")
 
-                vwc_min = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Min")
-                if vwc_min is not None:
-                    phase_config["VWCMin"] = float(vwc_min)
+            # Irrigation parameters
+            shot_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
+            if shot_duration is not None and shot_duration != 0:
+                presets[phase]["irrigation_duration"] = int(shot_duration)
 
-                vwc_max = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Max")
-                if vwc_max is not None:
-                    phase_config["VWCMax"] = float(vwc_max)
+            shot_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
+            if shot_interval is not None and shot_interval != 0:
+                interval_sec = int(float(shot_interval) * 60)  # Convert minutes to seconds
+                if phase == "p1":
+                    presets[phase]["wait_between"] = interval_sec
+                else:
+                    presets[phase]["irrigation_interval"] = interval_sec
 
-                # Irrigation parameters
-                shot_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
-                if shot_duration is not None:
-                    phase_config["irrigation_duration"] = int(shot_duration)
+            irrigation_freq = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Irrigation_Frequency")
+            if irrigation_freq is not None and irrigation_freq != 0:
+                presets[phase]["irrigation_frequency"] = int(irrigation_freq)
 
-                irrigation_freq = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Irrigation_Frequency")
-                if irrigation_freq is not None:
-                    phase_config["irrigation_frequency"] = int(irrigation_freq)
+            # Dryback parameters
+            dryback_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Target_Percent")
+            if dryback_target is not None and dryback_target != 0:
+                presets[phase]["target_dryback_percent"] = float(dryback_target)
 
-                # Dryback parameters
-                dryback_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Target_Percent")
-                if dryback_target is not None:
-                    phase_config["dryback_target"] = float(dryback_target)
+            dryback_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Duration_Hours")
+            if dryback_duration is not None and dryback_duration != 0:
+                presets[phase]["dryback_duration"] = int(dryback_duration)
+                
+            # Moisture dryback
+            moisture_dryback = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Moisture_Dryback")
+            if moisture_dryback is not None and moisture_dryback != 0:
+                presets[phase]["moisture_dryback"] = float(moisture_dryback)
 
-                dryback_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Duration_Hours")
-                if dryback_duration is not None:
-                    phase_config["dryback_duration"] = int(dryback_duration)
-
-                # Only add phase if it has user configurations
-                if phase_config:
-                    presets[phase] = phase_config
-                    _LOGGER.info(f"{self.room} - Loaded user config for phase {phase}: {phase_config}")
-
-            return presets if presets else None
-
-        except Exception as e:
-            _LOGGER.error(f"{self.room} - Error loading user crop steering presets: {e}")
-            return None
+            # Shot Sum (max_cycles) - number of irrigation shots per cycle
+            shot_sum = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Sum")
+            if shot_sum is not None and shot_sum != 0:
+                presets[phase]["max_cycles"] = int(shot_sum)
+                _LOGGER.debug(f"{self.room} - User max_cycles for {phase}: {shot_sum}")
 
     def get_automatic_presets(
         self, medium_type: str = "rockwool"

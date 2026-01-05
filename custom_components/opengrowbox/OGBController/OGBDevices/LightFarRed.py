@@ -89,6 +89,9 @@ class LightFarRed(Device):
         self._load_settings()
         self._start_scheduler()
         
+        # Validate entity availability
+        self._validate_entity_availability()
+        
         # Register event handlers
         self.event_manager.on("LightTimeChanges", self._on_light_time_change)
         self.event_manager.on("toggleLight", self._on_main_light_toggle)
@@ -101,6 +104,61 @@ class LightFarRed(Device):
             f"StartDuration:{self.start_duration_minutes}min EndDuration:{self.end_duration_minutes}min "
             f"Active:{self.is_fr_active} Phase:{self.current_phase} Running:{self.isRunning}"
         )
+
+    def _validate_entity_availability(self):
+        """
+        Validate that the light entity is available in Home Assistant.
+        If switches list is empty, log warning and attempt to find the entity.
+        """
+        if not self.switches:
+            _LOGGER.warning(
+                f"{self.deviceName}: No switches/entities found! "
+                f"The Far Red light entity may be unavailable or not correctly labeled. "
+                f"Please ensure the entity exists in Home Assistant and has the correct label "
+                f"(light_fr, light_farred, farred, far_red)."
+            )
+            # Try to find entity in HA directly if hass is available
+            if self.hass:
+                # Common entity patterns for far red lights
+                possible_entity_ids = [
+                    f"light.{self.deviceName}",
+                    f"light.{self.deviceName.lower()}",
+                    f"light.{self.deviceName.replace(' ', '_').lower()}",
+                    f"switch.{self.deviceName}",
+                    f"switch.{self.deviceName.lower()}",
+                ]
+                
+                for entity_id in possible_entity_ids:
+                    state = self.hass.states.get(entity_id)
+                    if state and state.state not in ("unavailable", "unknown", None):
+                        _LOGGER.info(
+                            f"{self.deviceName}: Found entity '{entity_id}' in HA. "
+                            f"Adding to switches list."
+                        )
+                        self.switches.append({
+                            "entity_id": entity_id,
+                            "value": state.state,
+                            "platform": "recovered"
+                        })
+                        self.isRunning = state.state == "on"
+                        return
+                
+                _LOGGER.error(
+                    f"{self.deviceName}: Could not find any valid entity in Home Assistant. "
+                    f"Tried: {possible_entity_ids}. "
+                    f"Please check that your Far Red light device exists and is correctly configured."
+                )
+        else:
+            # Validate existing switches are available
+            for switch in self.switches:
+                entity_id = switch.get("entity_id")
+                if self.hass and entity_id:
+                    state = self.hass.states.get(entity_id)
+                    if state and state.state in ("unavailable", "unknown"):
+                        _LOGGER.warning(
+                            f"{self.deviceName}: Entity '{entity_id}' is currently {state.state}. "
+                            f"The device may not respond to commands until it becomes available."
+                        )
 
     def _load_settings(self):
         """Load Far Red settings from datastore."""
