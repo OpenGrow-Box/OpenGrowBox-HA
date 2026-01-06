@@ -8,7 +8,7 @@ from ....data.OGBDataClasses.OGBPublications import OGBHydroAction, OGBWaterActi
 from .OGBAdvancedSensor import OGBAdvancedSensor
 from .OGBCSCalibrationManager import OGBCSCalibrationManager
 from .OGBCSConfigurationManager import CSMode, OGBCSConfigurationManager
-from .OGBCSIrrigationManager import OGBCSIrrigationManager
+# OGBCSIrrigationManager removed - irrigation handled directly in CSManager like CastManager
 from .OGBCSPhaseManager import OGBCSPhaseManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,14 +33,6 @@ class OGBCSManager:
             room=room,
             event_manager=eventManager
         )
-        
-        self.irrigation_manager = OGBCSIrrigationManager(
-            room=room,
-            data_store=dataStore,
-            event_manager=eventManager,
-            hass=hass
-        )
-        
         # Calibration Manager - handles VWC max/min calibration
         self.calibration_manager = OGBCSCalibrationManager(
             room=room,
