@@ -2,7 +2,7 @@
 
 ## Overview
 
-Proper calibration of sensors and devices is essential for accurate environmental control and optimal plant growth. This guide covers calibration procedures for all OpenGrowBox sensors and devices.
+Proper calibration of sensors and devices is essential for accurate environmental control and optimal plant growth. This guide covers calibration procedures for all OpenGrowBox sensors and devices, including the advanced **hydroponic pump calibration system** for precise proportional nutrient dosing.
 
 ## Calibration Architecture
 
@@ -652,6 +652,7 @@ def recover_calibration_data():
 - ✅ Temperature, humidity, and VPD sensors
 - ✅ Fan speed and airflow devices
 - ✅ Pump flow rate and irrigation systems
+- ✅ **Hydroponic dosing pumps** (proportional nutrient delivery)
 - ✅ Humidity control devices
 - ✅ Thermal control systems
 - ✅ Automated calibration scheduling
@@ -661,6 +662,108 @@ def recover_calibration_data():
 - **Sensors**: Every 60-90 days or when accuracy is questionable
 - **Devices**: Every 30-180 days depending on usage and criticality
 - **Critical Systems**: Immediate recalibration if readings seem inaccurate
+
+## Hydroponic Pump Calibration (Proportional Dosing)
+
+The hydroponic feeding system uses **advanced pump calibration** for precise nutrient delivery in the proportional dosing system. This ensures accurate small-dose adjustments and prevents over-fertilization.
+
+### Pump Calibration Architecture
+
+```python
+class PumpCalibration:
+    """Advanced pump calibration data."""
+    pump_type: str
+    calibration_factor: float = 1.0      # Flow rate adjustment
+    last_calibration: datetime = None
+    is_calibrated: bool = False
+    accuracy_score: float = 0.0          # Percentage accuracy
+    test_volume: float = 10.0            # Calibration test volume (ml)
+```
+
+### Automatic Calibration Features
+
+#### Daily Auto-Calibration
+- **Schedule**: Automatic calibration at 2:00 AM daily
+- **Scope**: All nutrient, pH, and water pumps
+- **Process**: 10ml test dose → measure actual delivery → adjust factor
+- **Validity**: 30-day expiration with accuracy scoring
+
+#### Manual Calibration Trigger
+```bash
+# Via Home Assistant service call
+service: opengrowbox.calibrate_pump
+data:
+  pump_type: "switch.feedpump_a"
+```
+
+### Calibration Algorithm
+
+```python
+async def start_pump_calibration(self, pump_type: str):
+    """Execute pump calibration with accuracy validation."""
+
+    # 1. Record baseline sensor readings
+    ec_before = self.current_ec
+
+    # 2. Execute 10ml test dose
+    await self._activate_pump(pump_type, run_time, 10.0)
+
+    # 3. Wait for sensor stabilization (2 minutes)
+    await asyncio.sleep(120)
+
+    # 4. Measure EC change
+    ec_after = self.current_ec
+    actual_ec_change = ec_after - ec_before
+
+    # 5. Calculate expected vs actual
+    expected_ec_change = (10.0 / reservoir_volume) * concentration_factor
+    accuracy_ratio = actual_ec_change / expected_ec_change
+
+    # 6. Update calibration factor (limited to ±20% adjustment)
+    new_factor = min(1.2, max(0.8, accuracy_ratio))
+    calibration.calibration_factor *= new_factor
+
+    # 7. Update metadata
+    calibration.last_calibration = datetime.now()
+    calibration.accuracy_score = min(100.0, accuracy_ratio * 100)
+    calibration.is_calibrated = True
+```
+
+### Calibration Status Monitoring
+
+```python
+# Check calibration health
+calibration_status = {
+    "total_pumps": len(pump_calibrations),
+    "calibrated_pumps": sum(1 for c in calibrations if c.is_calibrated),
+    "valid_calibrations": sum(1 for c in calibrations if c.is_calibration_valid()),
+    "average_accuracy": mean(c.accuracy_score for c in calibrations)
+}
+```
+
+### Proportional Dosing Integration
+
+Calibrated pumps enable precise proportional dosing:
+
+```python
+# Apply calibration to proportional doses
+calibrated_dose = dose_ml * pump_calibration.calibration_factor
+await self._activate_pump(pump_type, run_time, calibrated_dose)
+```
+
+### Calibration Maintenance
+
+**Recommended Schedule:**
+- **Automatic**: Daily at 2:00 AM (if accuracy < 95%)
+- **Manual**: When switching nutrient brands or after maintenance
+- **Validation**: Check calibration status in system diagnostics
+
+**Performance Metrics:**
+- **Target Accuracy**: > 95% delivery accuracy
+- **Calibration Stability**: < 5% factor change between calibrations
+- **System Impact**: Automatic recalibration during low-usage periods
+
+---
 
 **For additional configuration options, see the [Configuration Guide](CONFIGURATION.md)**
 

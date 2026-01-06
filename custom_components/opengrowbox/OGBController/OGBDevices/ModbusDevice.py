@@ -214,10 +214,45 @@ class OGBModbusDevice(Device):
         # Parse modbus_config from entitys if available
         if "modbus" in entitys:
             self.modbus_config.update(entitys["modbus"])
+
+        # Configure capabilities based on device type and modbus config
+        self._configure_capabilities()
+
         # Ensure IP is provided or detected
         if not self.modbus_config.get("host"):
             self.modbus_config["host"] = self.detect_modbus_ip()
         super().deviceInit(entitys)
+
+    def _configure_capabilities(self):
+        """Configure device capabilities for ActionManager integration."""
+        # Map device types to capabilities
+        device_type_capabilities = {
+            "ModbusDevice": [],  # Generic - configured via modbus config
+            "ModbusSensor": ["canSense"],  # Sensors can provide sensor data
+        }
+
+        # Get capabilities for this device type
+        capabilities = device_type_capabilities.get(self.deviceType, [])
+
+        # Add capabilities from modbus config if specified
+        modbus_capabilities = self.modbus_config.get("capabilities", [])
+        capabilities.extend(modbus_capabilities)
+
+        # Register with capabilities system (if data_store has capabilities)
+        if hasattr(self, 'data_store') and self.data_store:
+            current_caps = self.data_store.get("capabilities") or {}
+
+            for cap in capabilities:
+                if cap not in current_caps:
+                    current_caps[cap] = {"state": False, "count": 0, "devEntities": []}
+
+                if self.deviceName not in current_caps[cap]["devEntities"]:
+                    current_caps[cap]["state"] = True
+                    current_caps[cap]["count"] += 1
+                    current_caps[cap]["devEntities"].append(self.deviceName)
+
+            self.data_store.setDeep("capabilities", current_caps)
+            _LOGGER.info(f"Registered Modbus device {self.deviceName} with capabilities: {capabilities}")
 
     def detect_modbus_ip(self):
         """Detect Modbus device IP (placeholder for auto-detection)."""

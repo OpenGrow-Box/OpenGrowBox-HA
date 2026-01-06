@@ -84,6 +84,57 @@ class OGBAdvancedSensor:
 - **Control**: Forces system into selected phase
 - **Use Case**: Testing, troubleshooting, specific interventions
 
+#### Manual Mode Phase Selection (v3.3)
+
+Manual mode now correctly extracts the phase from the CropPhase selector:
+
+```python
+def _extract_phase_from_mode(self, mode: CSMode) -> str:
+    """Extract phase identifier from Manual mode enum.
+
+    Handles:
+    - Enum value: "Manual-p1" -> "p1"
+    - Enum name: "MANUAL_P1" -> "p1"
+    """
+    mode_value = mode.value
+    if "-" in mode_value:
+        return mode_value.split("-")[1].lower()
+
+    mode_name = mode.name
+    if "_" in mode_name:
+        phase = mode_name.split("_")[-1].lower()
+        if phase in ["p0", "p1", "p2", "p3"]:
+            return phase
+
+    return "p0"  # Default fallback
+
+def _extract_phase_from_value(self, value: str) -> str:
+    """Extract phase from stored value (e.g., "P1" -> "p1").
+
+    Handles uppercase, lowercase, and numeric inputs.
+    """
+    if not value:
+        return "p0"
+
+    value_lower = value.lower()
+    if value_lower in ["p0", "p1", "p2", "p3"]:
+        return value_lower
+
+    # Try extracting from end of string
+    if len(value_lower) >= 2:
+        possible_phase = value_lower[-2:]
+        if possible_phase in ["p0", "p1", "p2", "p3"]:
+            return possible_phase
+
+    return "p0"
+```
+
+**Manual Mode Flow:**
+1. User selects "Manual P1" in UI
+2. System reads `CropSteering.CropPhase` from DataStore
+3. Phase extraction converts "P1" → "p1"
+4. Manual cycle runs with correct phase settings
+
 ## Phase System
 
 ### Phase Overview
@@ -600,25 +651,34 @@ async def irrigate(self, duration: int = 30, is_emergency: bool = False) -> bool
 
 #### Dripper Management
 ```python
-def get_drippers(self) -> List[Dict[str, Any]]:
-    """Get list of available dripper devices."""
+def _get_drippers(self):
+    """Get valid dripper devices from canPump capability.
 
-    devices = self.data_store.get("devices") or []
-    drippers = []
+    Filter returns only devices that contain 'dripper' keyword in name.
+    This excludes cloner pumps and other non-irrigation pumps.
+    """
+    dripperDevices = self.data_store.getDeep("capabilities.canPump")
+    if not dripperDevices:
+        _LOGGER.warning(f"{self.room} - _get_drippers: No canPump capability found!")
+        return []
 
-    for device in devices:
-        # Check device type
-        device_type = None
-        if isinstance(device, dict):
-            device_type = device.get("deviceType")
-        elif hasattr(device, "device_type"):
-            device_type = getattr(device, "device_type", None)
+    devices = dripperDevices.get("devEntities", [])
+    if not devices:
+        _LOGGER.warning(f"{self.room} - _get_drippers: No pump devices found!")
+        return []
 
-        # Accept Pump and Valve devices
-        if device_type in ["Pump", "Valve"]:
-            drippers.append(device)
+    valid_keywords = ["dripper"]
 
-    return drippers
+    dripper_devices = [
+        dev for dev in devices
+        if any(keyword in dev.lower() for keyword in valid_keywords)
+    ]
+
+    if not dripper_devices:
+        _LOGGER.warning(f"{self.room} - _get_drippers: No dripper devices found in: {devices}")
+
+    _LOGGER.warning(f"{self.room} - _get_drippers: Returning {len(dripper_devices)} dripper(s): {dripper_devices}")
+    return dripper_devices
 ```
 
 ## Medium-Specific Logic
@@ -783,6 +843,35 @@ Examples:
 3. **Default Presets** (lowest priority) - Fallback values per medium type
 
 **IMPORTANT**: User timing values (duration, interval, shot_sum) are used **exactly as configured** - no drainage_factor adjustments are applied to timing parameters.
+
+#### Automatic Mode Timing Settings (v3.3)
+
+In Automatic mode, the system now uses **user-configurable timing values** while maintaining **preset-based VWC/EC thresholds**:
+
+```python
+def _get_automatic_timing_settings(self, phase: str) -> Dict[str, Any]:
+    """Get USER timing settings for Automatic Mode.
+
+    Reads Duration/Interval/ShotSum from user settings.
+    These are the ONLY user-settable parameters in Automatic mode.
+    All other parameters (VWC/EC/etc) come from presets.
+
+    Args:
+        phase: Phase identifier (p0, p1, p2, p3)
+
+    Returns:
+        Dictionary with timing settings as proper numeric types
+    """
+    # Reads from CropSteering.Substrate.{phase}.Shot_Duration_Sec
+    # Reads from CropSteering.Substrate.{phase}.Shot_Intervall
+    # Reads from CropSteering.Substrate.{phase}.Shot_Sum
+    # Converts minutes to seconds, validates ranges
+```
+
+**Automatic Mode Logic:**
+- **Timing**: Uses user settings (duration, interval, shot_sum)
+- **VWC/EC Thresholds**: Uses preset values with medium adjustments
+- **Logging**: Shows both user timing and preset thresholds
 
 ### Medium-Specific Adjustments
 
@@ -1132,9 +1221,18 @@ $ cs_calibrate -h
 
 ---
 
-**Last Updated**: January 5, 2026
-**Version**: 3.2 (Phase Logic & Config Mode Fixes)
-**Status**: ✅ **PRODUCTION READY** - All managers implemented and integrated
+**Last Updated**: January 6, 2026
+**Version**: 3.3 (Phase Extraction, Pump Filtering & User Timing Fixes)
+**Status**: ✅ **PRODUCTION READY** - All critical bugs fixed, enhanced user control
+
+### Changelog v3.3 (January 6, 2026)
+- **Fixed**: Manual mode phase extraction bug - now correctly reads from CropPhase selector (P1 vs p0)
+- **Fixed**: Pump filtering bug - `_get_drippers()` now filters by "dripper" keyword to exclude pumpcloner
+- **Added**: Automatic mode user timing settings - Duration/Interval/ShotSum now use user values instead of hardcoded presets
+- **Added**: Phase extraction helper methods `_extract_phase_from_mode()` and `_extract_phase_from_value()`
+- **Added**: Automatic timing settings method `_get_automatic_timing_settings()` for user-configurable timing
+- **Fixed**: Indentation and syntax errors in `_irrigate()` method try/catch blocks
+- **Improved**: Better logging for user timing values vs preset VWC/EC values in Automatic mode
 
 ### Changelog v3.2 (January 5, 2026)
 - **Fixed**: Config/Disabled mode now properly cancels running tasks
