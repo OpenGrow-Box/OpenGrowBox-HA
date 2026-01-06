@@ -811,7 +811,7 @@ class Light(Device):
 
         if lightState:
             if not self.isRunning:
-                if int(float(self.voltage)) == 0 or int(float(self.voltage)) == None:
+                if self.voltage is None or self.voltage == 0:
                     if not self.isDimmable:
                         message = "Turn On"
                         lightAction = OGBLightAction(
@@ -1095,9 +1095,21 @@ class Light(Device):
         )
 
         # Get light min max
-        light_min_max_active = self.data_store.getDeep("DeviceMinMax.Light").get(
-            "active", "True"
-        )
+        device_minmax = self.data_store.getDeep("DeviceMinMax.Light")
+        if not device_minmax:
+            _LOGGER.warning(f"💡 {self.deviceName}: DeviceMinMax.Light not found in DataStore. Using defaults.")
+            light_min_max_active = False
+            light_min = 20.0
+            light_max = 100.0
+        else:
+            light_min_max_active = device_minmax.get("active", "True")
+            if not light_min_max_active:
+                _LOGGER.warning(f"💡 {self.deviceName}: DeviceMinMax.Light not active. Using default values 20-100%.")
+                light_min = 20.0
+                light_max = 100.0
+            else:
+                light_min = float(device_minmax.get("minVoltage", 20.0))
+                light_max = float(device_minmax.get("maxVoltage", 100.0))
         if not light_min_max_active:
             _LOGGER.warning(
                 f"💡 {self.deviceName}: No active light min max found. Using default values 20-100%."

@@ -85,13 +85,16 @@ class LightFarRed(Device):
         self._schedule_task = None
         self._turn_off_task = None
         
-        # Initialize
+        # Initialize parent class first (important for Device inheritance)
+        self.init()
+
+        # Initialize FarRed specific settings
         self._load_settings()
         self._start_scheduler()
-        
+
         # Validate entity availability
         self._validate_entity_availability()
-        
+
         # Register event handlers
         self.event_manager.on("LightTimeChanges", self._on_light_time_change)
         self.event_manager.on("toggleLight", self._on_main_light_toggle)

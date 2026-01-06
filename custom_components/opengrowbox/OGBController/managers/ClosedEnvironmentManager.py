@@ -8,10 +8,11 @@ Provides VPD-perfection-like control but specifically designed for sealed grow c
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..logic.ClosedControlLogic import ClosedControlLogic
 from ..managers.OGBActionManager import OGBActionManager
+from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -118,49 +119,83 @@ class ClosedEnvironmentManager:
         self.data_store.setDeep("targets.temperature", temp_target)
         self.data_store.setDeep("targets.humidity", humidity_target)
 
-        # Emit control actions based on targets
-        await self._emit_temperature_actions(capabilities, temp_target)
-        await self._emit_humidity_actions(capabilities, humidity_target)
+        # Create action publications and process through ActionManager (for Premium API compatibility)
+        action_map = []
+        if temp_target is not None:
+            action_map.extend(await self._create_temperature_actions(capabilities, temp_target))
+        if humidity_target is not None:
+            action_map.extend(await self._create_humidity_actions(capabilities, humidity_target))
+
+        if action_map:
+            # Use ActionManager to process actions (creates Premium API output)
+            await self.event_manager.emit("checkLimitsAndPublicate", action_map)
+            _LOGGER.debug(f"Closed environment actions processed: {len(action_map)} actions")
 
         # Update control timestamp
         self.last_control_time = datetime.now()
 
         _LOGGER.debug(f"Closed environment cycle completed for {self.room}")
 
-    async def _emit_temperature_actions(self, capabilities: Dict[str, Any], target_temp: float):
+    async def _create_temperature_actions(self, capabilities: Dict[str, Any], target_temp: float) -> List[Any]:
         """
-        Emit temperature control actions based on ambient-enhanced targets.
+        Create temperature control actions based on ambient-enhanced targets.
+        Returns list of OGBActionPublication objects for ActionManager processing.
         """
         current_temp = self.data_store.getDeep("sensors.temperature")
+        actions = []
 
         if current_temp is None:
-            return
+            return actions
 
         temp_delta = target_temp - current_temp
 
         if abs(temp_delta) > 1.0:  # 1°C tolerance
             action_type = "Increase" if temp_delta > 0 else "Reduce"
-            await self.event_manager.emit(f"{action_type} Heater", capabilities)
+            actions.append(OGBActionPublication(
+                capability="canHeat",
+                action=action_type,
+                Name=self.room,
+                message=f"Closed Environment: {action_type} heating (delta: {temp_delta:.1f}°C)",
+                priority="medium"
+            ))
             _LOGGER.debug(f"Temperature control: {action_type} heating (delta: {temp_delta:.1f}°C)")
 
-    async def _emit_humidity_actions(self, capabilities: Dict[str, Any], target_humidity: float):
+        return actions
+
+    async def _create_humidity_actions(self, capabilities: Dict[str, Any], target_humidity: float) -> List[Any]:
         """
-        Emit humidity control actions based on ambient-enhanced targets.
+        Create humidity control actions based on ambient-enhanced targets.
+        Returns list of OGBActionPublication objects for ActionManager processing.
         """
         current_humidity = self.data_store.getDeep("sensors.humidity")
+        actions = []
 
         if current_humidity is None:
-            return
+            return actions
 
         humidity_delta = target_humidity - current_humidity
 
         if abs(humidity_delta) > 3.0:  # 3% RH tolerance
             if humidity_delta > 0:
-                await self.event_manager.emit("Increase Humidifier", capabilities)
+                actions.append(OGBActionPublication(
+                    capability="canHumidify",
+                    action="Increase",
+                    Name=self.room,
+                    message=f"Closed Environment: Increase humidification (delta: {humidity_delta:.1f}%)",
+                    priority="medium"
+                ))
                 _LOGGER.debug(f"Humidity control: Increase humidification (delta: {humidity_delta:.1f}%)")
             else:
-                await self.event_manager.emit("Increase Dehumidifier", capabilities)
+                actions.append(OGBActionPublication(
+                    capability="canDehumidify",
+                    action="Increase",
+                    Name=self.room,
+                    message=f"Closed Environment: Increase dehumidification (delta: {humidity_delta:.1f}%)",
+                    priority="medium"
+                ))
                 _LOGGER.debug(f"Humidity control: Increase dehumidification (delta: {humidity_delta:.1f}%)")
+
+        return actions
 
     async def _handle_control_cycle(self, capabilities: Dict[str, Any]):
         """
