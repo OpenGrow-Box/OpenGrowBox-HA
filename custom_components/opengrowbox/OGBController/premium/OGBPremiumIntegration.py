@@ -621,18 +621,38 @@ class OGBPremiumIntegration:
         try:
             plant_stage = data.get("plantStage")
             
-            if plant_stage:
-                _LOGGER.info(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
+            if not plant_stage:
+                return
+            
+            # Deduplicate: Skip if same stage already set
+            current_stage = self.data_store.get("plantStage")
+            if current_stage == plant_stage:
+                _LOGGER.debug(f"🌱 {self.room} PlantStage unchanged, skipping: {plant_stage}")
+                return
                 
-                # Update data store
-                self.data_store.setDeep("plantStage", plant_stage)
-                
-                # Emit event for mode manager
-                await self.event_manager.emit("PlantStageChange", {
-                    "room": self.room,
-                    "plantStage": plant_stage,
-                    "source": "webapp"
-                })
+            _LOGGER.info(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
+            
+            # Update data store
+            self.data_store.set("plantStage", plant_stage)
+            
+            # Update Home Assistant select entity
+            plant_stage_select = f"select.ogb_plantstage_{self.room.lower()}"
+            await self.hass.services.async_call(
+                domain="select",
+                service="select_option",
+                service_data={
+                    "entity_id": plant_stage_select,
+                    "option": plant_stage
+                },
+                blocking=True
+            )
+            
+            # Emit event for mode manager and other listeners
+            await self.event_manager.emit("PlantStageChange", {
+                "room": self.room,
+                "plantStage": plant_stage,
+                "source": "webapp"
+            })
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Webapp plant_stage_change handler error: {e}")
@@ -2084,8 +2104,14 @@ class OGBPremiumIntegration:
             await self._change_ctrl_values(tentmode=data)
         elif isinstance(data, dict):
             tentmode = data.get("tentMode")
-            controls = {k: v for k, v in data.items() if k != "tentMode"}
+            plant_stage = data.get("plantStage")
+            controls = {k: v for k, v in data.items() if k not in ["tentMode", "plantStage"]}
             await self._change_ctrl_values(tentmode=tentmode, controls=controls)
+            
+            # Handle plantStage separately - update select and emit event
+            if plant_stage:
+                _LOGGER.info(f"🌱 {self.room} CTRL Change plantStage: {plant_stage}")
+                await self._on_webapp_plant_stage_change({"plantStage": plant_stage})
         else:
             _LOGGER.error(f"Unsupported data format: {data}")
 
