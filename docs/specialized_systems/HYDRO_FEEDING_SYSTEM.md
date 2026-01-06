@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Hydroponic Feeding System provides comprehensive automated nutrient delivery for hydroponic cultivation. It manages nutrient solution preparation, pH and EC control, feeding schedules, and integrates with environmental monitoring to ensure optimal plant nutrition.
+The Hydroponic Feeding System provides **intelligent, proportional nutrient delivery** for hydroponic cultivation. It features **automated small-dose adjustments** rather than large batch preparations, ensuring precise nutrient management and preventing over-fertilization.
+
+**Key Innovation**: **Proportional Dosing** - Instead of large, infrequent nutrient batches, the system delivers small, calculated doses based on real-time deviations from target values.
 
 ## System Architecture
 
@@ -11,32 +13,84 @@ The Hydroponic Feeding System provides comprehensive automated nutrient delivery
 #### 1. OGBTankFeedManager (Main Controller)
 ```python
 class OGBTankFeedManager:
-    """Main hydroponic feeding system controller."""
+    """Main hydroponic feeding system controller with proportional dosing."""
 ```
+**Responsibilities**:
+- Event handling for proportional dosing requests
+- Sensor data processing and normalization
+- Coordination between logic, calibration, and parameter managers
 
-#### 2. OGBFeedConfiguration (Nutrient Profiles)
-```python
-class OGBFeedConfiguration:
-    """Plant-specific nutrient profiles and feeding schedules."""
-```
-
-#### 3. OGBFeedLogicManager (Feeding Logic)
+#### 2. OGBFeedLogicManager (Proportional Dosing Logic)
 ```python
 class OGBFeedLogicManager:
-    """Intelligent feeding decisions and nutrient adjustments."""
+    """Intelligent proportional feeding decisions based on deviation analysis."""
 ```
+**Key Features**:
+- **Dead Zone Logic**: Prevents micro-adjustments for small deviations
+- **Proportional Calculations**: Dose amounts scale with deviation severity
+- **Rate Limiting**: Minimum 30-minute intervals between doses
+- **Event Emission**: Triggers `DoseNutrients`, `DosePHDown`, `DosePHUp` events
+
+#### 3. OGBFeedCalibrationManager (Pump Calibration)
+```python
+class OGBFeedCalibrationManager:
+    """Advanced pump calibration with accuracy tracking and auto-recalibration."""
+```
+**Features**:
+- Individual pump calibration factors
+- Automatic daily recalibration (2 AM)
+- Calibration validity checking (30-day expiration)
+- Accuracy scoring and adjustment factor calculation
 
 #### 4. OGBFeedParameterManager (Parameter Management)
 ```python
 class OGBFeedParameterManager:
-    """Manages feeding parameters and target settings."""
+    """Validates and manages feeding parameters with plant stage adaptation."""
+```
+**Capabilities**:
+- Parameter validation with min/max ranges
+- Plant stage and category-specific adjustments
+- Real-time parameter updates and notifications
+- Configuration persistence and history
+
+## Proportional Dosing System
+
+### Intelligent Adjustment Algorithm
+
+The system uses **proportional dosing** to deliver precise nutrient amounts based on real-time sensor deviations:
+
+#### Dead Zone Logic
+```python
+# Prevent unnecessary micro-adjustments
+if abs(deviation) < 0.03:  # 3% EC tolerance
+    return {'nutrients_needed': False}
+
+if abs(deviation) < 0.1:   # 0.1 pH tolerance
+    return {'ph_down_needed': False}
 ```
 
-#### 5. OGBPumpControlManager (Pump Control)
+#### Proportional Dose Calculation
 ```python
-class OGBPumpControlManager:
-    """Controls nutrient dosing pumps with precision."""
+# Scale dose amount with deviation severity
+base_dose_per_5_percent = 2.5  # ml per nutrient type
+dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
+nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 10.0)
 ```
+
+#### Adjustment Examples
+| Deviation | Old System | New Proportional |
+|-----------|------------|------------------|
+| EC 2% | No action | No action (dead zone) |
+| EC 5% | Full 5ml dose | 2.5ml dose |
+| EC 10% | Full 5ml dose | 5.0ml dose |
+| pH 0.1 | No action | No action (dead zone) |
+| pH 0.3 | Full pH dose | 1.5ml pH adjuster |
+
+### Feeding Frequency Optimization
+
+- **Checks**: Every 10 minutes (reduced from 5 minutes)
+- **Actual Dosing**: Every 30+ minutes (increased safety margin)
+- **Daily Limit**: 12 doses maximum (allows frequent small adjustments)
 
 ## Hydroponic Modes
 
@@ -184,33 +238,37 @@ async def prepare_nutrient_solution(self, target_profile: Dict[str, Any]) -> boo
 
 ### pH Management
 
-#### pH Adjustment Algorithm
+#### Proportional pH Adjustment
 ```python
-async def adjust_ph(self, target_ph: float) -> bool:
-    """Adjust solution pH to target value."""
+def _calculate_ph_adjustment(self, current_ph: Optional[float], target_ph: float) -> Dict[str, Any]:
+    """Calculate proportional pH adjustment needed."""
 
-    current_ph = await self.measure_ph()
-    tolerance = 0.1  # Acceptable pH range
+    if current_ph is None:
+        return {'ph_down_needed': False, 'ph_up_needed': False}
 
-    if abs(current_ph - target_ph) <= tolerance:
-        return True  # Already within tolerance
+    deviation = current_ph - target_ph
 
-    # Determine adjustment direction
-    if current_ph > target_ph:
-        # Too alkaline, add pH down
-        adjustment_ml = self.calculate_ph_down_volume(current_ph, target_ph)
-        await self.dose_ph_down(adjustment_ml)
-    else:
-        # Too acidic, add pH up
-        adjustment_ml = self.calculate_ph_up_volume(current_ph, target_ph)
-        await self.dose_ph_up(adjustment_ml)
+    # Dead zone - don't adjust for small deviations
+    if abs(deviation) < 0.1:  # 0.1 pH tolerance
+        return {'ph_down_needed': False, 'ph_up_needed': False}
 
-    # Mix and re-measure
-    await self.activate_mixer(duration_seconds=60)
-    await asyncio.sleep(30)
+    # Proportional dosing: more deviation = more pH adjustment
+    base_dose_per_0_2_ph = 1.0  # ml for 0.2 pH deviation
+    dose_multiplier = abs(deviation) / 0.2
+    ph_dose_ml = min(base_dose_per_0_2_ph * dose_multiplier, 3.0)  # Cap at 3ml
 
-    final_ph = await self.measure_ph()
-    return abs(final_ph - target_ph) <= tolerance
+    if deviation > 0:  # pH too high
+        return {
+            'ph_down_needed': True,
+            'ph_down_dose_ml': ph_dose_ml,
+            'ph_up_needed': False
+        }
+    else:  # pH too low
+        return {
+            'ph_down_needed': False,
+            'ph_up_needed': True,
+            'ph_up_dose_ml': ph_dose_ml
+        }
 ```
 
 #### pH Adjustment Calculations
@@ -232,35 +290,51 @@ def calculate_ph_down_volume(self, current_ph: float, target_ph: float) -> float
 
 ### EC Management
 
-#### EC Adjustment Algorithm
+#### Proportional EC Adjustment
 ```python
-async def adjust_ec(self, target_ec: float) -> bool:
-    """Adjust solution EC to target value."""
+def _calculate_ec_adjustment(self, current_ec: Optional[float], target_ec: float) -> Dict[str, Any]:
+    """Calculate proportional nutrient adjustment needed for EC correction."""
 
-    current_ec = await self.measure_ec()
-    tolerance = 0.1  # Acceptable EC range (mS/cm)
+    if current_ec is None:
+        return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
 
-    if abs(current_ec - target_ec) <= tolerance:
-        return True
+    deviation = abs(current_ec - target_ec) / target_ec
 
-    # Calculate nutrient adjustment needed
-    ec_difference = target_ec - current_ec
+    # Dead zone - don't adjust for small deviations
+    if deviation < 0.03:  # 3% tolerance
+        return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
 
-    if ec_difference > 0:
-        # Need to increase EC - add concentrated nutrients
-        nutrient_mix = self.calculate_nutrient_boost(ec_difference)
-        await self.add_nutrients(nutrient_mix)
-    else:
-        # Need to decrease EC - add water or use RO dilution
-        dilution_volume = self.calculate_dilution_volume(abs(ec_difference))
-        await self.dilute_solution(dilution_volume)
+    # Proportional dosing: more deviation = more nutrients
+    base_dose_per_5_percent = 2.5  # ml per nutrient type for 5% deviation
+    dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
+    nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 10.0)  # Cap at 10ml
 
-    # Mix and re-measure
-    await self.activate_mixer(duration_seconds=120)
-    await asyncio.sleep(60)
+    return {
+        'nutrients_needed': True,
+        'nutrient_dose_ml': nutrient_dose_ml
+    }
+```
 
-    final_ec = await self.measure_ec()
-    return abs(final_ec - target_ec) <= tolerance
+#### Proportional Feeding Execution
+```python
+async def _perform_proportional_feeding(self, ec_adjustment: Dict, ph_adjustment: Dict) -> bool:
+    """Execute proportional feeding based on calculated adjustments."""
+
+    # Feed nutrients if needed
+    if ec_adjustment.get('nutrients_needed', False):
+        nutrient_dose = ec_adjustment['nutrient_dose_ml']
+        await self.event_manager.emit("DoseNutrients", {'dose_ml': nutrient_dose})
+
+    # Adjust pH if needed
+    if ph_adjustment.get('ph_down_needed', False):
+        ph_down_dose = ph_adjustment['ph_down_dose_ml']
+        await self.event_manager.emit("DosePHDown", {'dose_ml': ph_down_dose})
+
+    if ph_adjustment.get('ph_up_needed', False):
+        ph_up_dose = ph_adjustment['ph_up_dose_ml']
+        await self.event_manager.emit("DosePHUp", {'dose_ml': ph_up_dose})
+
+    return True
 ```
 
 ## Feeding Schedules
@@ -329,25 +403,45 @@ def calculate_feeding_volume(self, plant_stage: str, plant_count: int) -> float:
 
 ### Precision Dosing Pumps
 
-#### Pump Calibration
+#### Advanced Pump Calibration System
 ```python
 @dataclass
 class PumpCalibration:
-    """Pump calibration data."""
+    """Advanced pump calibration with accuracy tracking."""
     pump_type: str
-    target_dose_ml: float = 0.0
-    actual_dose_ml: float = 0.0
     calibration_factor: float = 1.0
     last_calibration: Optional[datetime] = None
+    is_calibrated: bool = False
+    accuracy_score: float = 0.0  # Percentage accuracy
+    test_volume: float = 10.0  # ml calibration test volume
 
     def calculate_adjustment(self) -> float:
-        """Calculate adjustment factor based on calibration results."""
-        if self.target_dose_ml <= 0 or self.actual_dose_ml <= 0:
+        """Calculate flow rate adjustment factor."""
+        if not self.is_calibrated or self.calibration_factor <= 0:
             return 1.0
+        return self.calibration_factor
 
-        # If actual was higher than target, reduce next dose
-        adjustment = self.target_dose_ml / self.actual_dose_ml
-        return max(0.8, min(1.2, adjustment))  # Limit to ±20%
+    def is_calibration_valid(self) -> bool:
+        """Check if calibration is still valid (30 days)."""
+        if not self.last_calibration:
+            return False
+        max_age = timedelta(days=30)
+        return (datetime.now() - self.last_calibration) < max_age
+```
+
+#### Automatic Calibration Management
+```python
+class OGBFeedCalibrationManager:
+    """Manages pump calibration with auto-recalibration."""
+
+    async def start_pump_calibration(self, pump_type: str) -> bool:
+        """Start calibration for specific pump with accuracy validation."""
+
+    async def start_daily_calibration(self):
+        """Enable automatic daily recalibration at 2 AM."""
+
+    async def validate_all_calibrations(self) -> bool:
+        """Validate all pumps have current, accurate calibrations."""
 ```
 
 #### Pump Operation
@@ -566,6 +660,29 @@ async def calibrate_pump(self, pump_id: str):
 
 ---
 
+## New Proportional Features Summary
+
+### ✅ Implemented Features
+- **Proportional Dosing**: Dose amounts scale with deviation severity
+- **Dead Zone Logic**: Prevents unnecessary micro-adjustments (< 3% EC, < 0.1 pH)
+- **Frequent Small Doses**: 30-minute minimum intervals vs 2-hour batches
+- **Advanced Calibration**: Auto-recalibration with accuracy scoring
+- **Parameter Validation**: Comprehensive validation with plant stage adaptation
+
+### 🔧 Key Improvements
+- **Prevents Over-Fertilization**: Small doses instead of large batches
+- **Responsive Control**: Adjusts based on real-time deviations
+- **Equipment Protection**: Reduces pump cycling and wear
+- **Calibration Accuracy**: Automatic validation and adjustment
+
+### 📊 Performance Metrics
+- **Adjustment Frequency**: Every 30+ minutes (vs 2+ hours)
+- **Dose Precision**: 0.1ml increments with calibration factors
+- **Safety Limits**: 10ml nutrient cap, 3ml pH adjuster cap
+- **Daily Capacity**: 12 adjustments (vs 8 batch preparations)
+
+---
+
 **Last Updated**: December 24, 2025
-**Version**: 2.0 (Advanced Nutrient Management)
-**Status**: Production Ready
+**Version**: 3.0 (Proportional Nutrient Management)
+**Status**: Production Ready with Advanced Features

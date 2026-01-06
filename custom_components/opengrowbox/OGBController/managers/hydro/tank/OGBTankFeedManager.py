@@ -270,6 +270,11 @@ class OGBTankFeedManager:
         self.event_manager.on("PlantStageChange", self._plant_stage_change)
         self.event_manager.on("CalibrateNutrientPump", self._start_pump_calibration)
 
+        # Proportional dosing events
+        self.event_manager.on("DoseNutrients", self._dose_nutrients_proportional)
+        self.event_manager.on("DosePHDown", self._dose_ph_down_proportional)
+        self.event_manager.on("DosePHUp", self._dose_ph_up_proportional)
+
         # Initialize specialized managers
         from .OGBFeedLogicManager import OGBFeedLogicManager
         from .OGBFeedParameterManager import OGBFeedParameterManager
@@ -407,24 +412,29 @@ class OGBTankFeedManager:
             _LOGGER.info(f"[{self.room}] Calibration EC after: {self.ec_after_dose:.2f}, EC change: {actual_ec_change:.2f}")
             
             # Step 5 & 6: Calculate and adjust calibration
-            if actual_ec_change > 0:
-                # Erwartete EC Änderung: ~0.5 pro 5ml in 100L Reservoir
-                expected_ec_change = (target_dose_ml / self.reservoir_volume_liters) * 10
-                
+            if actual_ec_change > 0 and cal is not None:
+                # For calibration, we use a configurable concentration factor
+                # Default assumes 1ml of nutrient concentrate gives ~0.1 EC change in reservoir
+                concentration_factor = self.data_store.getDeep("Hydro.CalibrationConcentrationFactor", 10.0)
+
+                expected_ec_change = (target_dose_ml / self.reservoir_volume_liters) * concentration_factor
+
+                cal.actual_ec_change = actual_ec_change
+                cal.expected_ec_change = expected_ec_change
+                cal.target_dose_ml = target_dose_ml
+                cal.actual_dose_ml = (actual_ec_change / expected_ec_change) * target_dose_ml if expected_ec_change > 0 else target_dose_ml
+
+                # Adjust calibration factor based on delivery accuracy
                 new_factor = cal.calculate_adjustment()
                 cal.calibration_factor *= new_factor
-                cal.target_dose_ml = target_dose_ml
-                cal.actual_dose_ml = (actual_ec_change / expected_ec_change) * target_dose_ml
-                cal.expected_ec_change = expected_ec_change
-                cal.actual_ec_change = actual_ec_change
                 cal.last_calibration = datetime.now()
                 cal.calibration_count += 1
-                
+
                 _LOGGER.warning(f"[{self.room}] Calibration result for {pump_type}:")
                 _LOGGER.warning(f"  Target dose: {target_dose_ml}ml, Actual: {cal.actual_dose_ml:.2f}ml")
                 _LOGGER.warning(f"  Expected EC change: {expected_ec_change:.2f}, Actual: {actual_ec_change:.2f}")
                 _LOGGER.warning(f"  New calibration factor: {cal.calibration_factor:.3f} (count: {cal.calibration_count})")
-                
+
                 await self._save_calibration_data()
             else:
                 _LOGGER.error(f"[{self.room}] Calibration failed - no EC change detected")
@@ -565,13 +575,13 @@ class OGBTankFeedManager:
             cal = self.pump_calibrations.get(PumpType.PH_DOWN.value)
             
             # Anwende Kalibrierungsfaktor
-            if cal:
-                dose_ml *= cal.calibration_factor
-            
+            calibration_factor = cal.calibration_factor if cal else 1.0
+            dose_ml *= calibration_factor
+
             run_time = self._calculate_dose_time(dose_ml)
-            
+
             if run_time > 0:
-                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_DOWN.value} with {dose_ml:.2f}ml and {run_time:.1f}s (calibration factor: {cal.calibration_factor:.3f})")
+                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_DOWN.value} with {dose_ml:.2f}ml and {run_time:.1f}s (calibration factor: {calibration_factor:.3f})")
                 return await self._activate_pump(PumpType.PH_DOWN.value, run_time, dose_ml)
                 
         except Exception as e:
@@ -585,13 +595,13 @@ class OGBTankFeedManager:
             cal = self.pump_calibrations.get(PumpType.PH_UP.value)
             
             # Anwende Kalibrierungsfaktor
-            if cal:
-                dose_ml *= cal.calibration_factor
-            
+            calibration_factor = cal.calibration_factor if cal else 1.0
+            dose_ml *= calibration_factor
+
             run_time = self._calculate_dose_time(dose_ml)
-            
+
             if run_time > 0:
-                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_UP.value} with {dose_ml:.2f}ml and {run_time:.1f}s (calibration factor: {cal.calibration_factor:.3f})")
+                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_UP.value} with {dose_ml:.2f}ml and {run_time:.1f}s (calibration factor: {calibration_factor:.3f})")
                 return await self._activate_pump(PumpType.PH_UP.value, run_time, dose_ml)
                 
         except Exception as e:
@@ -626,11 +636,118 @@ class OGBTankFeedManager:
             _LOGGER.error(f"[{self.room}] Error dosing nutrients: {e}")
         return False
 
+    async def _dose_nutrients_proportional(self, data: Dict[str, Any]):
+        """Handle proportional nutrient dosing requests."""
+        try:
+            dose_ml = data.get('dose_ml', 0.0)
+            if dose_ml <= 0:
+                return
+
+            _LOGGER.info(f"[{self.room}] Starting proportional nutrient dosing: {dose_ml:.2f}ml per nutrient")
+
+            # Dose each nutrient proportionally
+            await self._dose_nutrients_with_amount(dose_ml)
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error in proportional nutrient dosing: {e}")
+
+    async def _dose_ph_down_proportional(self, data: Dict[str, Any]):
+        """Handle proportional pH down dosing requests."""
+        try:
+            dose_ml = data.get('dose_ml', 0.0)
+            if dose_ml <= 0:
+                return
+
+            _LOGGER.info(f"[{self.room}] Starting proportional pH down dosing: {dose_ml:.2f}ml")
+
+            # Use the existing pH down method but with custom amount
+            await self._dose_ph_down_with_amount(dose_ml)
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error in proportional pH down dosing: {e}")
+
+    async def _dose_ph_up_proportional(self, data: Dict[str, Any]):
+        """Handle proportional pH up dosing requests."""
+        try:
+            dose_ml = data.get('dose_ml', 0.0)
+            if dose_ml <= 0:
+                return
+
+            _LOGGER.info(f"[{self.room}] Starting proportional pH up dosing: {dose_ml:.2f}ml")
+
+            # Use the existing pH up method but with custom amount
+            await self._dose_ph_up_with_amount(dose_ml)
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error in proportional pH up dosing: {e}")
+
+    async def _dose_nutrients_with_amount(self, dose_ml: float) -> bool:
+        """Dose nutrients with a specific amount per nutrient type."""
+        try:
+            # Dose in order: A, B, C with delays between
+            nutrients_to_dose = ['A', 'B', 'C']
+
+            for nutrient in nutrients_to_dose:
+                if nutrient in self.nutrients and self.nutrients[nutrient] > 0:
+                    # Apply calibration factor
+                    pump_enum = getattr(PumpType, f"NUTRIENT_{nutrient}")
+                    cal = self.pump_calibrations.get(pump_enum.value)
+                    calibrated_dose = dose_ml * (cal.calibration_factor if cal else 1.0)
+
+                    if calibrated_dose > 0:
+                        run_time = self._calculate_dose_time(calibrated_dose)
+
+                        if await self._activate_pump(pump_enum.value, run_time, calibrated_dose):
+                            # Wait between nutrients to prevent mixing issues
+                            await asyncio.sleep(30)
+                        else:
+                            _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
+
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing nutrients with amount: {e}")
+            return False
+
+    async def _dose_ph_down_with_amount(self, dose_ml: float) -> bool:
+        """Dose pH down with a specific amount."""
+        try:
+            # Apply calibration factor
+            cal = self.pump_calibrations.get(PumpType.PH_DOWN.value)
+            calibrated_dose = dose_ml * (cal.calibration_factor if cal else 1.0)
+
+            run_time = self._calculate_dose_time(calibrated_dose)
+
+            if run_time > 0:
+                _LOGGER.info(f"[{self.room}] Dosing {calibrated_dose:.2f}ml pH down (calibration factor: {cal.calibration_factor if cal else 1.0:.3f})")
+                return await self._activate_pump(PumpType.PH_DOWN.value, run_time, calibrated_dose)
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing pH down with amount: {e}")
+        return False
+
+    async def _dose_ph_up_with_amount(self, dose_ml: float) -> bool:
+        """Dose pH up with a specific amount."""
+        try:
+            # Apply calibration factor
+            cal = self.pump_calibrations.get(PumpType.PH_UP.value)
+            calibrated_dose = dose_ml * (cal.calibration_factor if cal else 1.0)
+
+            run_time = self._calculate_dose_time(calibrated_dose)
+
+            if run_time > 0:
+                _LOGGER.info(f"[{self.room}] Dosing {calibrated_dose:.2f}ml pH up (calibration factor: {cal.calibration_factor if cal else 1.0:.3f})")
+                return await self._activate_pump(PumpType.PH_UP.value, run_time, calibrated_dose)
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing pH up with amount: {e}")
+        return False
+
     async def _activate_pump(self, pump_type: str, run_time: float, dose_ml: float) -> bool:
         """Activate a pump for specified time using Home Assistant switch entity"""
         try:
             _LOGGER.warning(f"[{self.room}] Activating {pump_type}: {dose_ml:.1f}ml for {run_time:.1f}s")
-            
+
             # Turn ON pump via Home Assistant service call
             await self.hass.services.async_call(
                 "switch",
@@ -638,12 +755,12 @@ class OGBTankFeedManager:
                 {"entity_id": pump_type},
                 blocking=False
             )
-            
+
             # Log action
             waterAction = OGBWaterAction(
                 Name=self.room,
                 Device=pump_type,
-                Cycle=dose_ml,
+                Cycle=str(dose_ml),
                 Action="on",
                 Message=f"Dosing {dose_ml:.1f}ml"
             )
@@ -675,18 +792,18 @@ class OGBTankFeedManager:
             _LOGGER.warning(f"[{self.room}] Activating {pump_type}: {dose_ml:.1f}ml for {run_time:.1f}s")
             
             pumpAction = OGBHydroAction(
-                Name=self.room, 
-                Action="on", 
-                Device=device_id, 
-                Cycle=True
+                Name=self.room,
+                Action="on",
+                Device=str(pump_type),
+                Cycle=str(run_time)
             )
             await self.event_manager.emit("PumpAction", pumpAction)
             
             # Log action
             waterAction = OGBWaterAction(
                 Name=self.room,
-                Device=pump_type,
-                Cycle=dose_ml,
+                Device=str(pump_type),
+                Cycle=str(dose_ml),
                 Action="on",
                 Message=f"Dosing {dose_ml:.1f}ml"
             )
@@ -697,10 +814,10 @@ class OGBTankFeedManager:
             
             # Turn OFF pump via PumpAction event
             pumpAction = OGBHydroAction(
-                Name=self.room, 
-                Action="off", 
-                Device=device_id, 
-                Cycle=True
+                Name=self.room,
+                Action="off",
+                Device=str(pump_type),
+                Cycle=str(run_time)
             )
             await self.event_manager.emit("PumpAction", pumpAction)
             

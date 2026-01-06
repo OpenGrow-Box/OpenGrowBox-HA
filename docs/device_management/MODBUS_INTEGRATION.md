@@ -2,12 +2,22 @@
 
 ## Overview
 
-The OpenGrowBox integration supports Modbus devices for industrial-grade control of grow room equipment. Modbus is commonly used for:
+The OpenGrowBox integration supports Modbus devices for industrial-grade control of grow room equipment. **After recent improvements, Modbus devices now function identically to native OGB devices**, including full integration with the action system and capabilities management.
+
+Modbus is commonly used for:
 - Commercial HVAC systems
 - Industrial fans and ventilation
 - Professional EC/pH controllers
 - Temperature/humidity controllers
 - CO2 controllers and sensors
+- Custom industrial equipment
+
+### Key Improvements (v2.0)
+- ✅ **Full Action System Integration**: Modbus devices register with capabilities and respond to OGB actions
+- ✅ **Improved Error Handling**: Automatic reconnection and graceful failure recovery
+- ✅ **Proper Initialization**: Fixed inheritance issues and async task safety
+- ✅ **Capabilities Registration**: Automatic integration with ActionManager for device control
+- ✅ **Enhanced Polling**: Configurable intervals with proper cancellation support
 
 ## Supported Protocols
 
@@ -15,6 +25,45 @@ The OpenGrowBox integration supports Modbus devices for industrial-grade control
 |----------|-------------|----------|
 | **Modbus TCP** | Ethernet-based | Network-connected devices |
 | **Modbus RTU** | Serial (RS-485/RS-232) | Local serial connections |
+
+---
+
+## Recent Bug Fixes & Improvements
+
+### v2.0 Critical Fixes
+**Fixed in December 2025** - These fixes ensure Modbus devices work exactly like native OGB devices:
+
+#### 1. Multiple Inheritance Fix
+**Problem**: `class ModbusSensor(Sensor, OGBModbusDevice)` caused initialization conflicts
+**Solution**: Changed to `class ModbusSensor(OGBModbusDevice, Sensor)` with proper method resolution order
+
+#### 2. Async Task Safety
+**Problem**: `asyncio.create_task()` called in `__init__` before object fully initialized
+**Solution**: Moved polling startup to `deviceInit()` method after complete initialization
+
+#### 3. Infinite Loop Prevention
+**Problem**: Polling loops ran forever with no exit condition
+**Solution**: Added proper `asyncio.CancelledError` handling and task cancellation support
+
+#### 4. Missing Configuration
+**Problem**: Register mappings never loaded from device configuration
+**Solution**: Added automatic parsing of `registers` config from entity data
+
+#### 5. Action System Integration
+**Problem**: Modbus devices invisible to ActionManager and capabilities system
+**Solution**: Added `_configure_capabilities()` to register devices with OGB control system
+
+#### 6. Error Resilience
+**Problem**: Single connection failure crashed entire device
+**Solution**: Added try/catch with automatic retry and brief pause on errors
+
+### Compatibility Verification
+Modbus devices now support the same features as native devices:
+- ✅ **Event Handling**: Respond to all standard OGB action events
+- ✅ **Capabilities**: Registered in ActionManager for device targeting
+- ✅ **Work Modes**: Proper work mode switching and polling control
+- ✅ **Sensor Updates**: Same event emission patterns as native sensors
+- ✅ **Error Recovery**: Automatic reconnection with exponential backoff
 
 ---
 
@@ -54,6 +103,30 @@ modbus_config:
   control_register: 0    # Coil address for ON/OFF control
   value_register: 1      # Holding register for value setting
   scale_factor: 1        # Multiply value before writing
+  capabilities:          # NEW: Action system integration
+    - "canHeat"          # Register as heater device
+    - "canCool"          # Register as cooler device
+```
+
+#### Capabilities Configuration
+For full OGB integration, configure device capabilities:
+
+```yaml
+# Heater device
+modbus_config:
+  capabilities: ["canHeat"]
+
+# Fan device
+modbus_config:
+  capabilities: ["canVentilate"]
+
+# Pump device
+modbus_config:
+  capabilities: ["canPump"]
+
+# Multi-capability device (e.g., climate controller)
+modbus_config:
+  capabilities: ["canHeat", "canCool", "canHumidify", "canDehumidify"]
 ```
 
 #### Modbus RTU Configuration
@@ -104,10 +177,12 @@ registers:
 Base class for controllable Modbus devices (fans, pumps, valves, etc.)
 
 **Features:**
-- ON/OFF control via coil registers
-- Value setting via holding registers
-- Automatic reconnection handling
-- Scale factor support
+- ✅ **Full OGB Integration**: Registered with capabilities system for ActionManager control
+- ✅ **ON/OFF control** via coil registers
+- ✅ **Value setting** via holding registers with scale factor support
+- ✅ **Automatic reconnection** with exponential backoff
+- ✅ **Error recovery** with graceful failure handling
+- ✅ **Work mode support** for conditional operation
 
 **Example Usage:**
 
@@ -123,17 +198,25 @@ await device.turn_off()
 
 # Set value (writes to value_register with scale_factor)
 await device.set_value(75)  # e.g., 75% fan speed
+
+# Device is automatically registered with capabilities for ActionManager
+# Example: If configured with capabilities: ["canHeat"], device responds to:
+await event_manager.emit("increase_vpd", capabilities)  # VPD actions
+await event_manager.emit("checkLimitsAndPublicate", action_map)  # Direct actions
 ```
 
 ### ModbusSensor
 
-Specialized class for Modbus sensors with automatic polling.
+Specialized class for Modbus sensors with automatic polling and full OGB compatibility.
 
 **Features:**
-- Automatic periodic polling
-- Multi-register support
-- Value scaling and offset
-- Integration with OGB sensor system
+- ✅ **Automatic periodic polling** with configurable intervals (default 30s)
+- ✅ **Multi-register support** with individual scaling/offset per sensor
+- ✅ **Full Sensor compatibility** - same event emission and data handling as native sensors
+- ✅ **Context-aware readings** (air, water, soil, light contexts)
+- ✅ **Robust error handling** with connection retry and polling continuation
+- ✅ **Proper initialization** with safe async task startup
+- ✅ **Work mode integration** for conditional polling control
 
 **Example Register Configuration:**
 
@@ -290,8 +373,28 @@ registers:
 
 **Solutions:**
 1. Verify label is exactly: `modbus`, `modbus_device`, `modbus_tcp`, or `modbus_rtu`
-2. Restart Home Assistant after adding labels
-3. Check OGB logs for device identification messages
+2. **NEW**: Ensure `capabilities` are configured for device control
+3. Restart Home Assistant after adding labels
+4. Check OGB logs for device identification messages
+5. **NEW**: Verify device appears in capabilities: `data_store.get("capabilities")`
+
+### Action System Issues
+
+**Problem:** Modbus device not responding to OGB actions
+
+**Solutions:**
+1. Check capabilities configuration includes required capabilities
+2. Verify device registered in ActionManager: Check `capabilities[cap]["devEntities"]`
+3. Ensure proper `modbus_config` with `control_register` and `value_register`
+4. Check device logs for connection errors
+
+**Problem:** Modbus sensor not updating values
+
+**Solutions:**
+1. Verify `registers` configuration in entity attributes
+2. Check polling is active: Look for "Modbus polling started" in logs
+3. Verify register addresses and types match device documentation
+4. Check for connection errors in device logs
 
 ### Value Scaling Issues
 
@@ -353,11 +456,14 @@ await sensor.poll_sensors()
 
 ## Best Practices
 
-1. **Document Your Registers**: Always keep a mapping of your device's Modbus registers
-2. **Use Unique Slave IDs**: On RS-485 buses, ensure each device has a unique slave ID
-3. **Test Manually First**: Use a Modbus tool (like QModMaster) to verify connectivity before configuring OGB
-4. **Monitor Polling Interval**: Don't poll too frequently - 30 seconds is usually sufficient
-5. **Handle Disconnections**: OGBModbusDevice includes automatic reconnection, but monitor logs for connection issues
+1. **Configure Capabilities**: Always specify `capabilities` array for ActionManager integration
+2. **Document Your Registers**: Keep detailed mapping of Modbus registers with addresses and scaling
+3. **Use Unique Slave IDs**: On RS-485 buses, ensure each device has a unique slave ID (1-247)
+4. **Test Manually First**: Use Modbus tools (QModMaster, Modbus Poll) to verify connectivity
+5. **Monitor Polling Interval**: Default 30 seconds is usually sufficient; adjust based on device response time
+6. **Handle Disconnections**: Automatic reconnection is built-in, but monitor logs for persistent issues
+7. **Scale Factor Calibration**: Test scale_factor values to ensure proper value mapping
+8. **Register Type Verification**: Confirm register types (holding/input/coil) match device documentation
 
 ---
 
@@ -377,6 +483,16 @@ custom_components/opengrowbox/OGBController/
 ---
 
 ## Changelog
+
+### v2.0.0 - Critical Bug Fixes & Full OGB Integration (December 2025)
+- ✅ **Fixed Multiple Inheritance**: Proper initialization order for ModbusSensor
+- ✅ **Async Task Safety**: Moved polling startup to deviceInit() method
+- ✅ **Infinite Loop Prevention**: Added proper task cancellation and cleanup
+- ✅ **Configuration Loading**: Automatic register parsing from entity data
+- ✅ **Action System Integration**: Capabilities registration for ActionManager control
+- ✅ **Error Resilience**: Try/catch blocks with automatic retry logic
+- ✅ **Work Mode Support**: Proper polling control based on work mode
+- ✅ **Documentation Updates**: Comprehensive setup and troubleshooting guides
 
 ### v1.0.0 - Initial Modbus Support
 - Added `OGBModbusDevice` base class

@@ -50,11 +50,11 @@ class OGBFeedLogicManager:
         self.data_store = data_store
         self.event_manager = event_manager
 
-        # Feeding settings
+        # Feeding settings - adjusted for smaller, more frequent doses
         self.feed_check_interval = 300  # 5 minutes
-        self.emergency_feed_threshold = 0.1  # 10% deviation triggers emergency
-        self.max_daily_feeds = 8  # Maximum feeds per day
-        self.min_feed_interval = 7200  # 2 hours between feeds
+        self.emergency_feed_threshold = 0.15  # 15% deviation triggers emergency
+        self.max_daily_feeds = 12  # Maximum feeds per day (increased)
+        self.min_feed_interval = 1800  # 30 minutes between feeds (reduced from 2 hours)
 
         # Feed state tracking
         self.last_feed_time = None
@@ -256,9 +256,10 @@ class OGBFeedLogicManager:
     async def _check_ranges_and_feed(self) -> bool:
         """
         Check if nutrient levels are within acceptable ranges and determine feeding needs.
+        Uses proportional dosing based on deviation from target.
 
         Returns:
-            True if feeding action is needed
+            True if feeding action was performed
         """
         try:
             current_ec = self.data_store.getDeep("Hydro.ec_current")
@@ -267,23 +268,147 @@ class OGBFeedLogicManager:
             target_ec = self.data_store.getDeep("Hydro.Targets.EC") or 2.0
             target_ph = self.data_store.getDeep("Hydro.Targets.pH") or 5.8
 
-            # Check EC levels
-            ec_needs_feed = self._check_ec_needs_adjustment(current_ec, target_ec)
+            # Calculate proportional adjustments needed
+            ec_adjustment = self._calculate_ec_adjustment(current_ec, target_ec)
+            ph_adjustment = self._calculate_ph_adjustment(current_ph, target_ph)
 
-            # Check pH levels
-            ph_needs_feed = self._check_ph_needs_adjustment(current_ph, target_ph)
+            # Check if any adjustment is needed
+            needs_feeding = (
+                ec_adjustment.get('nutrients_needed', False) or
+                ph_adjustment.get('ph_down_needed', False) or
+                ph_adjustment.get('ph_up_needed', False)
+            )
 
-            # Determine feeding action
-            if ec_needs_feed or ph_needs_feed:
-                _LOGGER.info(
-                    f"{self.room} - Feeding needed: EC={ec_needs_feed}, pH={ph_needs_feed}"
-                )
-                return True
+            if needs_feeding:
+                # Check rate limiting
+                if self.last_feed_time:
+                    time_since_last_feed = datetime.now() - self.last_feed_time
+                    if time_since_last_feed.seconds < self.min_feed_interval:
+                        _LOGGER.debug(
+                            f"{self.room} - Skipping feed: too soon since last feed "
+                            f"({time_since_last_feed.seconds}s < {self.min_feed_interval}s)"
+                        )
+                        return False
+
+                # Perform the feeding action
+                success = await self._perform_proportional_feeding(ec_adjustment, ph_adjustment)
+                if success:
+                    self.last_feed_time = datetime.now()
+                    self.daily_feed_count += 1
+                    _LOGGER.info(
+                        f"{self.room} - Proportional feeding completed: "
+                        f"EC nutrients={ec_adjustment.get('nutrient_dose_ml', 0):.2f}ml, "
+                        f"pH down={ph_adjustment.get('ph_down_dose_ml', 0):.2f}ml, "
+                        f"pH up={ph_adjustment.get('ph_up_dose_ml', 0):.2f}ml"
+                    )
+                    return True
 
             return False
 
         except Exception as e:
-            _LOGGER.error(f"{self.room} - Error checking ranges: {e}")
+            _LOGGER.error(f"{self.room} - Error in proportional feeding: {e}")
+            return False
+
+    def _calculate_ec_adjustment(self, current_ec: Optional[float], target_ec: float) -> Dict[str, Any]:
+        """
+        Calculate proportional nutrient adjustment needed for EC correction.
+
+        Returns:
+            Dict with 'nutrients_needed' and 'nutrient_dose_ml' keys
+        """
+        if current_ec is None:
+            return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
+
+        deviation = abs(current_ec - target_ec) / target_ec
+
+        # Dead zone - don't adjust for small deviations
+        if deviation < 0.03:  # 3% tolerance
+            return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
+
+        # Proportional dosing: more deviation = more nutrients
+        # Base dose for 5% deviation = 2.5ml per nutrient type
+        base_dose_per_5_percent = 2.5
+        dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
+        nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 10.0)  # Cap at 10ml
+
+        return {
+            'nutrients_needed': True,
+            'nutrient_dose_ml': nutrient_dose_ml
+        }
+
+    def _calculate_ph_adjustment(self, current_ph: Optional[float], target_ph: float) -> Dict[str, Any]:
+        """
+        Calculate proportional pH adjustment needed.
+
+        Returns:
+            Dict with 'ph_down_needed', 'ph_up_needed', and dose amounts
+        """
+        if current_ph is None:
+            return {
+                'ph_down_needed': False,
+                'ph_up_needed': False,
+                'ph_down_dose_ml': 0.0,
+                'ph_up_dose_ml': 0.0
+            }
+
+        deviation = current_ph - target_ph
+
+        # Dead zone - don't adjust for small deviations
+        if abs(deviation) < 0.1:  # 0.1 pH tolerance
+            return {
+                'ph_down_needed': False,
+                'ph_up_needed': False,
+                'ph_down_dose_ml': 0.0,
+                'ph_up_dose_ml': 0.0
+            }
+
+        # Proportional dosing: more deviation = more pH adjustment
+        # Base dose for 0.2 pH deviation = 1.0ml
+        base_dose_per_0_2_ph = 1.0
+        dose_multiplier = abs(deviation) / 0.2
+        ph_dose_ml = min(base_dose_per_0_2_ph * dose_multiplier, 3.0)  # Cap at 3ml
+
+        if deviation > 0:  # pH too high, need pH down
+            return {
+                'ph_down_needed': True,
+                'ph_up_needed': False,
+                'ph_down_dose_ml': ph_dose_ml,
+                'ph_up_dose_ml': 0.0
+            }
+        else:  # pH too low, need pH up
+            return {
+                'ph_down_needed': False,
+                'ph_up_needed': True,
+                'ph_down_dose_ml': 0.0,
+                'ph_up_dose_ml': ph_dose_ml
+            }
+
+    async def _perform_proportional_feeding(self, ec_adjustment: Dict[str, Any], ph_adjustment: Dict[str, Any]) -> bool:
+        """
+        Perform the actual proportional feeding based on calculated adjustments.
+        """
+        try:
+            # Feed nutrients if needed
+            if ec_adjustment.get('nutrients_needed', False):
+                nutrient_dose = ec_adjustment['nutrient_dose_ml']
+                await self.event_manager.emit("DoseNutrients", {'dose_ml': nutrient_dose})
+                _LOGGER.debug(f"{self.room} - Dosed {nutrient_dose:.2f}ml nutrients")
+
+            # Adjust pH if needed
+            if ph_adjustment.get('ph_down_needed', False):
+                ph_down_dose = ph_adjustment['ph_down_dose_ml']
+                await self.event_manager.emit("DosePHDown", {'dose_ml': ph_down_dose})
+                _LOGGER.debug(f"{self.room} - Dosed {ph_down_dose:.2f}ml pH down")
+
+            if ph_adjustment.get('ph_up_needed', False):
+                ph_up_dose = ph_adjustment['ph_up_dose_ml']
+                await self.event_manager.emit("DosePHUp", {'dose_ml': ph_up_dose})
+                _LOGGER.debug(f"{self.room} - Dosed {ph_up_dose:.2f}ml pH up")
+
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"{self.room} - Error performing proportional feeding: {e}")
             return False
 
     def _check_ec_needs_adjustment(

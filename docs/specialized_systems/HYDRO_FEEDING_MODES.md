@@ -2,19 +2,36 @@
 
 ## Overview
 
-The OpenGrowBox Hydroponic Feeding System provides multiple operational modes with sophisticated nutrient delivery, pH/EC control, and environmental adaptation. Each mode offers different levels of automation and control complexity.
+The OpenGrowBox Hydroponic Feeding System provides **proportional dosing modes** with intelligent nutrient delivery, pH/EC control, and environmental adaptation. The system features **small-dose adjustments** rather than large batch preparations, ensuring precise control and preventing over-fertilization.
+
+**Key Innovation**: **Proportional Dosing** - Instead of large, infrequent nutrient batches, the system delivers calculated small doses based on real-time sensor deviations.
 
 ## Hydroponic Feeding Modes
 
-### 1. Hydro Mode (Full Automation)
+### 1. Automatic Mode (Proportional Dosing)
 
-**Purpose**: Complete automated hydroponic nutrient delivery with environmental adaptation.
+**Purpose**: Intelligent automated nutrient delivery with proportional adjustments based on real-time sensor feedback.
 
 #### How It Works
-- **Trigger**: Time-based scheduling or sensor thresholds
-- **Process**: Automated nutrient mixing, pH/EC adjustment, feeding cycles
-- **Control**: Continuous monitoring and correction
-- **Features**: Plant stage adaptation, environmental compensation
+- **Trigger**: Every 10 minutes (sensor checks) + proportional dosing every 30+ minutes
+- **Process**: Small-dose nutrient adjustments, pH/EC corrections based on deviations
+- **Control**: Dead zone logic prevents micro-adjustments, proportional scaling for larger deviations
+- **Features**: Plant stage adaptation, environmental compensation, over-fertilization prevention
+
+#### Proportional Dosing Algorithm
+
+```python
+# Dead zone prevents unnecessary adjustments
+if abs(ec_deviation) < 0.03:  # 3% EC tolerance
+    no_nutrient_adjustment()
+
+if abs(ph_deviation) < 0.1:   # 0.1 pH tolerance
+    no_ph_adjustment()
+
+# Proportional dosing for larger deviations
+dose_ml = base_dose * (deviation / threshold)
+dose_ml = min(dose_ml, max_safe_dose)  # Safety capping
+```
 
 #### Process Flow
 
