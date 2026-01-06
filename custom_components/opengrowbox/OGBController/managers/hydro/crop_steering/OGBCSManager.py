@@ -189,24 +189,24 @@ class OGBCSManager:
         """Dump all CropSteering config from DataStore for debugging."""
         cs_data = self.data_store.getDeep("CropSteering") or {}
         
-        _LOGGER.warning(f"===== {self.room} CropSteering DataStore Dump =====")
-        _LOGGER.warning(f"ActiveMode: {cs_data.get('ActiveMode')}")
-        _LOGGER.warning(f"Active: {cs_data.get('Active')}")
-        _LOGGER.warning(f"CropPhase: {cs_data.get('CropPhase')}")
-        _LOGGER.warning(f"MediumType: {cs_data.get('MediumType')}")
+        _LOGGER.debug(f"===== {self.room} CropSteering DataStore Dump =====")
+        _LOGGER.debug(f"ActiveMode: {cs_data.get('ActiveMode')}")
+        _LOGGER.debug(f"Active: {cs_data.get('Active')}")
+        _LOGGER.debug(f"CropPhase: {cs_data.get('CropPhase')}")
+        _LOGGER.debug(f"MediumType: {cs_data.get('MediumType')}")
         
         # Calibration values
         calibration = cs_data.get('Calibration', {})
-        _LOGGER.warning(f"Calibration: {calibration}")
+        _LOGGER.debug(f"Calibration: {calibration}")
         
         # Substrate (user settings)
         substrate = cs_data.get('Substrate', {})
-        _LOGGER.warning(f"Substrate (user settings): {substrate}")
+        _LOGGER.debug(f"Substrate (user settings): {substrate}")
         
         # Current sensor values
-        _LOGGER.warning(f"vwc_current: {cs_data.get('vwc_current')}")
-        _LOGGER.warning(f"ec_current: {cs_data.get('ec_current')}")
-        _LOGGER.warning(f"===== End Dump =====")
+        _LOGGER.debug(f"vwc_current: {cs_data.get('vwc_current')}")
+        _LOGGER.debug(f"ec_current: {cs_data.get('ec_current')}")
+        _LOGGER.debug(f"===== End Dump =====")
         
         return cs_data
 
@@ -281,15 +281,15 @@ class OGBCSManager:
         CRITICAL: This is the ONLY place where CS tasks are started/stopped!
         """
         requested_mode = self.data_store.getDeep("CropSteering.ActiveMode") or "Automatic"
-        _LOGGER.warning(f"{self.room} - CropSteering handle_mode_change: requested={requested_mode}, data={data}")
+        _LOGGER.debug(f"{self.room} - CropSteering handle_mode_change: requested={requested_mode}, data={data}")
 
         # ===== STEP 1: Parse mode FIRST to know what to do =====
         mode = self._parse_mode(requested_mode)
-        _LOGGER.warning(f"{self.room} - CropSteering parsed mode: {mode}")
+        _LOGGER.debug(f"{self.room} - CropSteering parsed mode: {mode}")
 
         # ===== STEP 2: Handle STOP modes (Disabled/Config) - ALWAYS stop, no checks =====
         if mode == CSMode.DISABLED:
-            _LOGGER.warning(f"{self.room} - CropSteering DISABLED - stopping all operations")
+            _LOGGER.debug(f"{self.room} - CropSteering DISABLED - stopping all operations")
             await self._force_stop_all()
             self.data_store.setDeep("CropSteering.Active", False)
             # CRITICAL: Reset debounce so next mode change works immediately
@@ -300,7 +300,7 @@ class OGBCSManager:
             return
             
         if mode == CSMode.CONFIG:
-            _LOGGER.warning(f"{self.room} - CropSteering CONFIG mode - stopping operations")
+            _LOGGER.debug(f"{self.room} - CropSteering CONFIG mode - stopping operations")
             await self._force_stop_all()
             # CRITICAL: Reset debounce so next mode change works immediately
             self._last_mode_change_mode = None
@@ -312,7 +312,7 @@ class OGBCSManager:
         # ===== STEP 3: For RUN modes, validate environment =====
         hydro_mode = self.data_store.getDeep("Hydro.Mode")
         if hydro_mode != "Crop-Steering":
-            _LOGGER.warning(f"{self.room} - CropSteering BLOCKED: Hydro.Mode='{hydro_mode}' != 'Crop-Steering'")
+            _LOGGER.debug(f"{self.room} - CropSteering BLOCKED: Hydro.Mode='{hydro_mode}' != 'Crop-Steering'")
             await self._force_stop_all()
             return
 
@@ -321,10 +321,10 @@ class OGBCSManager:
         if self._main_task and not self._main_task.done():
             # Task is running - check if we should restart
             if self._last_mode_change_mode == requested_mode:
-                _LOGGER.warning(f"{self.room} - CS task already running for '{requested_mode}', ignoring duplicate call")
+                _LOGGER.debug(f"{self.room} - CS task already running for '{requested_mode}', ignoring duplicate call")
                 return
             else:
-                _LOGGER.warning(f"{self.room} - Mode changed from '{self._last_mode_change_mode}' to '{requested_mode}', restarting...")
+                _LOGGER.debug(f"{self.room} - Mode changed from '{self._last_mode_change_mode}' to '{requested_mode}', restarting...")
                 await self._cancel_main_task()
         
         # ===== STEP 5: Debounce - prevent rapid restarts =====
@@ -332,7 +332,7 @@ class OGBCSManager:
         if self._last_mode_change_time and self._last_mode_change_mode == requested_mode:
             elapsed = (now - self._last_mode_change_time).total_seconds()
             if elapsed < self._mode_change_debounce_seconds:
-                _LOGGER.warning(f"{self.room} - DEBOUNCED: Same mode '{requested_mode}' within {elapsed:.1f}s")
+                _LOGGER.debug(f"{self.room} - DEBOUNCED: Same mode '{requested_mode}' within {elapsed:.1f}s")
                 return
         
         self._last_mode_change_time = now
@@ -355,7 +355,7 @@ class OGBCSManager:
         # Get sensor data
         sensor_data = await self._get_sensor_averages()
         if not sensor_data:
-            _LOGGER.warning(f"{self.room} - No sensor data! Cannot start CropSteering")
+            _LOGGER.debug(f"{self.room} - No sensor data! Cannot start CropSteering")
             await self._log_missing_sensors()
             return
 
@@ -381,7 +381,7 @@ class OGBCSManager:
 
         # ===== STEP 7: Start the appropriate task =====
         if mode == CSMode.AUTOMATIC:
-            _LOGGER.warning(f"{self.room} - STARTING AUTOMATIC cycle")
+            _LOGGER.info(f"{self.room} - STARTING AUTOMATIC cycle")
             self._main_task = asyncio.create_task(self._automatic_cycle())
         elif mode.value.startswith("Manual"):
             # For Manual mode, get phase from CropPhase selector (set by Phases entity)
@@ -392,17 +392,17 @@ class OGBCSManager:
                 stored_phase_lower = stored_phase.lower()
                 if stored_phase_lower in ["p0", "p1", "p2", "p3"]:
                     phase = stored_phase_lower
-                    _LOGGER.warning(f"{self.room} - Using phase from CropPhase selector: {phase}")
+                    _LOGGER.debug(f"{self.room} - Using phase from CropPhase selector: {phase}")
                 else:
                     # Try to extract phase from stored_phase value (e.g., "P1" -> "p1")
                     phase = self._extract_phase_from_value(stored_phase)
-                    _LOGGER.warning(f"{self.room} - Extracted phase from stored value: {phase}")
+                    _LOGGER.debug(f"{self.room} - Extracted phase from stored value: {phase}")
             else:
                 # Fallback: extract from mode.value (e.g., "MANUAL_P1" -> "p1")
                 phase = self._extract_phase_from_mode(mode)
-                _LOGGER.warning(f"{self.room} - Extracted phase from mode enum: {phase}")
+                _LOGGER.debug(f"{self.room} - Extracted phase from mode enum: {phase}")
             
-            _LOGGER.warning(f"{self.room} - STARTING MANUAL cycle for phase {phase}")
+            _LOGGER.info(f"{self.room} - STARTING MANUAL cycle for phase {phase}")
             self._main_task = asyncio.create_task(self._manual_cycle(phase))
         else:
             _LOGGER.error(f"{self.room} - Unknown mode: {mode}")
@@ -471,37 +471,37 @@ class OGBCSManager:
 
     async def _force_stop_all(self):
         """Force stop all operations - used for Disabled/Config modes."""
-        _LOGGER.warning(f"{self.room} - 🛑 FORCE STOP: Cancelling all CS operations...")
+        _LOGGER.debug(f"{self.room} - FORCE STOP: Cancelling all CS operations...")
         
         # Cancel main task
         if self._main_task:
             task_done = self._main_task.done()
-            _LOGGER.warning(f"{self.room} - 🛑 Main task exists, done={task_done}")
+            _LOGGER.debug(f"{self.room} - Main task exists, done={task_done}")
             if not task_done:
-                _LOGGER.warning(f"{self.room} - 🛑 Cancelling main task...")
+                _LOGGER.debug(f"{self.room} - Cancelling main task...")
                 self._main_task.cancel()
                 try:
                     await self._main_task
                 except asyncio.CancelledError:
-                    _LOGGER.warning(f"{self.room} - 🛑 Main task cancelled successfully")
+                    _LOGGER.debug(f"{self.room} - Main task cancelled successfully")
                 except Exception as e:
-                    _LOGGER.error(f"{self.room} - 🛑 Error cancelling main task: {e}")
+                    _LOGGER.error(f"{self.room} - Error cancelling main task: {e}")
         else:
-            _LOGGER.warning(f"{self.room} - 🛑 No main task to cancel")
+            _LOGGER.debug(f"{self.room} - No main task to cancel")
         
         # Cancel calibration task
         if self._calibration_task:
             task_done = self._calibration_task.done()
-            _LOGGER.warning(f"{self.room} - 🛑 Calibration task exists, done={task_done}")
+            _LOGGER.debug(f"{self.room} - Calibration task exists, done={task_done}")
             if not task_done:
-                _LOGGER.warning(f"{self.room} - 🛑 Cancelling calibration task...")
+                _LOGGER.debug(f"{self.room} - Cancelling calibration task...")
                 self._calibration_task.cancel()
                 try:
                     await self._calibration_task
                 except asyncio.CancelledError:
-                    _LOGGER.warning(f"{self.room} - 🛑 Calibration task cancelled successfully")
+                    _LOGGER.debug(f"{self.room} - Calibration task cancelled successfully")
                 except Exception as e:
-                    _LOGGER.error(f"{self.room} - 🛑 Error cancelling calibration task: {e}")
+                    _LOGGER.error(f"{self.room} - Error cancelling calibration task: {e}")
         
         self._main_task = None
         self._calibration_task = None
@@ -509,7 +509,7 @@ class OGBCSManager:
         
         # Turn off drippers
         await self._turn_off_all_drippers()
-        _LOGGER.warning(f"{self.room} - 🛑 FORCE STOP COMPLETE: All CS operations stopped")
+        _LOGGER.debug(f"{self.room} - FORCE STOP COMPLETE: All CS operations stopped")
 
     async def handle_stop(self, event=None):
         """Stop handler for external stop events"""
@@ -522,7 +522,7 @@ class OGBCSManager:
         Automatic mode starts again, it will irrigate immediately
         instead of waiting for the remaining interval time.
         """
-        _LOGGER.warning(f"{self.room} - 🔄 Resetting P1 state tracking (irrigation will start fresh)")
+        _LOGGER.debug(f"{self.room} - Resetting P1 state tracking (irrigation will start fresh)")
         self.data_store.setDeep("CropSteering.p1_start_vwc", None)
         self.data_store.setDeep("CropSteering.p1_irrigation_count", 0)
         self.data_store.setDeep("CropSteering.p1_last_vwc", None)
@@ -656,7 +656,13 @@ class OGBCSManager:
         else:
             # Create a mock validation object when sensor is disabled
             from types import SimpleNamespace
-            validation = SimpleNamespace(issues=[], warnings=[], recommendations=[])
+            validation = SimpleNamespace(
+                issues=[],
+                warnings=[],
+                recommendations=[],
+                is_valid=False,
+                corrected_values={}
+            )
 
         if validation.issues:
             _LOGGER.warning(
@@ -973,7 +979,7 @@ class OGBCSManager:
         p0_preset = self._get_adjusted_preset("p0", plant_phase, gen_week)
         p2_preset = self._get_adjusted_preset("p2", plant_phase, gen_week)
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"{self.room} - Determining initial phase: "
             f"VWC={vwc:.1f}%, is_light_on_raw={is_light_on_raw} (type={type(is_light_on_raw).__name__}), "
             f"is_light_on={is_light_on}, VWCMin={p0_preset.get('VWCMin')}, VWCMax={p2_preset.get('VWCMax')}"
@@ -996,8 +1002,8 @@ class OGBCSManager:
         vwc_min = p0_preset.get("VWCMin", 55)
         
         # DEBUG: Log ALL values used for phase determination
-        _LOGGER.warning(
-            f"🔍 {self.room} PHASE DECISION: VWC={vwc:.1f}%, VWCMin={vwc_min}, VWCMax={vwc_max}, "
+        _LOGGER.debug(
+            f"{self.room} PHASE DECISION: VWC={vwc:.1f}%, VWCMin={vwc_min}, VWCMax={vwc_max}, "
             f"is_light_on={is_light_on}, p0_preset={p0_preset}, p2_preset={p2_preset}"
         )
         
@@ -1085,13 +1091,13 @@ class OGBCSManager:
 
             # IMPORTANT: ALWAYS determine start phase based on CURRENT conditions
             # Ignore any persisted phase - we need to evaluate the actual situation
-            _LOGGER.warning(f"{self.room} - Automatic cycle starting, determining initial phase...")
+            _LOGGER.debug(f"{self.room} - Automatic cycle starting, determining initial phase...")
             initial_phase = await self._determine_initial_phase()
             
             # Clear any old persisted phase and set the freshly determined one
             self.data_store.setDeep("CropSteering.CropPhase", initial_phase)
 
-            _LOGGER.warning(
+            _LOGGER.info(
                 f"{self.room} - Automatic CS cycle started in phase {initial_phase}"
             )
 
@@ -1290,7 +1296,7 @@ class OGBCSManager:
         
         target_max = float(calibrated_max) if use_calibrated else preset_vwc_max
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"{self.room} - P1 CHECK: vwc={vwc:.1f}%, calibrated={calibrated_max}, "
             f"preset_max={preset_vwc_max}, use_calibrated={use_calibrated}, target={target_max}"
         )
@@ -1701,7 +1707,7 @@ class OGBCSManager:
     # ==================== MANUAL MODE ====================
     async def _manual_cycle(self, phase):
         """Manual time-based cycle (uses USER settings)"""
-        _LOGGER.warning(f"{self.room} - CS - Manual {phase}: Started")
+        _LOGGER.info(f"{self.room} - CS - Manual {phase}: Started")
         try:
             settings = self._get_manual_phase_settings(phase)
 
@@ -1710,7 +1716,7 @@ class OGBCSManager:
             shot_interval = settings["ShotIntervall"]["value"]  # float (minutes)
             shot_count = settings["ShotSum"]["value"]  # int (count)
             
-            _LOGGER.warning(f"{self.room} - Manual {phase} settings: duration={shot_duration}s, interval={shot_interval}min, count={shot_count}")
+            _LOGGER.debug(f"{self.room} - Manual {phase} settings: duration={shot_duration}s, interval={shot_interval}min, count={shot_count}")
 
             # Apply sensible defaults if values are invalid
             if shot_duration <= 0:
@@ -1726,7 +1732,7 @@ class OGBCSManager:
             self.data_store.setDeep("CropSteering.shotCounter", 0)
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room} - Manual {phase}: {shot_count} shots every {shot_interval}min"
             )
 
@@ -1860,14 +1866,14 @@ class OGBCSManager:
             duration = timing_settings["ShotDuration"]
             _LOGGER.warning(f"{self.room} - _irrigate: No duration passed, using USER timing value: {duration}s")
         
-        _LOGGER.warning(f"{self.room} - _irrigate called with duration={duration}s")
+        _LOGGER.debug(f"{self.room} - _irrigate called with duration={duration}s")
         
         # Log current settings for debugging
         current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p1"
         plant_phase, gen_week = self._get_plant_info_from_medium()
         preset = self._get_adjusted_preset(current_phase, plant_phase, gen_week)
         
-        _LOGGER.warning(
+        _LOGGER.debug(
              f"{self.room} - Using user timing from settings: "
              f"Duration={duration}s (User), "
              f"VWCMin={preset.get('VWCMin')}, VWCMax={preset.get('VWCMax')} (Preset)"
@@ -1882,25 +1888,25 @@ class OGBCSManager:
 
         try:
             # Turn ON drippers - same pattern as CastManager
-            _LOGGER.warning(f"🚿 {self.room} - Starting irrigation for {duration}s with {len(drippers)} drippers")
+            _LOGGER.debug(f"{self.room} - Starting irrigation for {duration}s with {len(drippers)} drippers")
             for dev_id in drippers:
                 pumpAction = OGBHydroAction(
                     Name=self.room, Action="on", Device=dev_id, Cycle="false"
                 )
                 await self.event_manager.emit("PumpAction", pumpAction)
-                _LOGGER.warning(f"🚿 {self.room} - Sent ON to {dev_id}")
+                _LOGGER.debug(f"{self.room} - Sent ON to {dev_id}")
             
             # Wait for irrigation duration
             await asyncio.sleep(duration)
 
             # Turn OFF drippers - same pattern as CastManager
-            _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
+            _LOGGER.debug(f"{self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
             for dev_id in drippers:
                 pumpAction = OGBHydroAction(
                     Name=self.room, Action="off", Device=dev_id, Cycle="false"
                 )
                 await self.event_manager.emit("PumpAction", pumpAction)
-                _LOGGER.warning(f"🛑 {self.room} - Sent OFF to {dev_id}")
+                _LOGGER.debug(f"{self.room} - Sent OFF to {dev_id}")
 
             # Emit AI irrigation event
             await self.event_manager.emit(
@@ -2051,7 +2057,7 @@ class OGBCSManager:
             haEvent=True,
         )
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"{self.room} - CS Started: phase={current_phase}, duration={duration}s, "
             f"interval={interval_min}min, max_shots={max_shots}, vwc_target={vwc_target}"
         )
@@ -2083,7 +2089,7 @@ class OGBCSManager:
             haEvent=True,
         )
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"{self.room} - Phase change: {from_phase} -> {to_phase} ({reason}) "
             f"| duration={duration}s, interval={interval_min}min, max_shots={max_shots}"
         )
