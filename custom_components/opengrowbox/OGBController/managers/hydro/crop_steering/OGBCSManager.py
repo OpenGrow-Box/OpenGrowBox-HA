@@ -819,7 +819,18 @@ class OGBCSManager:
         # Send device status update to UI - ONLY dripper devices for Crop-Steering
         # This ensures UI shows "1/1 Active" not "2/2 Active" by filtering out non-dripper pumps
         if dripper_devices:
-            await self.event_manager.emit("LogForClient", dripper_devices, haEvent=True)
+            await self.event_manager.emit(
+                "LogForClient",
+                {
+                    "Name": self.room,
+                    "Type": "CSLOG",
+                    "Mode": "Crop-Steering",
+                    "Message": f"Crop-Steering active with {len(dripper_devices)} dripper(s)",
+                    "Devices": dripper_devices,
+                    "DeviceCount": len(dripper_devices)
+                },
+                haEvent=True
+            )
             _LOGGER.debug(f"{self.room} - Crop-Steering device status updated: {dripper_devices} (filtered drippers only)")
         else:
             await self.event_manager.emit(
@@ -954,7 +965,15 @@ class OGBCSManager:
         - Light ON + normal -> P0 (Monitoring)
         """
         vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
-        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        is_light_on_raw = self.data_store.getDeep("isPlantDay.islightON")
+        
+        # CRITICAL: Ensure proper boolean conversion - handle None, strings, etc.
+        if is_light_on_raw is None:
+            is_light_on = False
+        elif isinstance(is_light_on_raw, str):
+            is_light_on = is_light_on_raw.lower() in ("true", "1", "on", "yes")
+        else:
+            is_light_on = bool(is_light_on_raw)
 
         # Get plant info from GrowMedium (authoritative source)
         plant_phase, gen_week = self._get_plant_info_from_medium()
@@ -963,24 +982,19 @@ class OGBCSManager:
         p0_preset = self._get_adjusted_preset("p0", plant_phase, gen_week)
         p2_preset = self._get_adjusted_preset("p2", plant_phase, gen_week)
 
-        _LOGGER.info(
+        _LOGGER.warning(
             f"{self.room} - Determining initial phase: "
-            f"VWC={vwc:.1f}%, is_light_on={is_light_on}, "
-            f"VWCMin={p0_preset.get('VWCMin')}, VWCMax={p2_preset.get('VWCMax')}"
+            f"VWC={vwc:.1f}%, is_light_on_raw={is_light_on_raw} (type={type(is_light_on_raw).__name__}), "
+            f"is_light_on={is_light_on}, VWCMin={p0_preset.get('VWCMin')}, VWCMax={p2_preset.get('VWCMax')}"
         )
 
         # Decision logic - LIGHT STATUS IS PRIMARY FACTOR
         if not is_light_on:
-            # === NIGHT TIME - Default to P3 ===
-            if vwc < p0_preset.get("VWCMin", 50) * 0.8:
-                # Block is critically dry even at night -> Emergency P1
-                _LOGGER.warning(f"{self.room} - Night but VWC critically low ({vwc:.1f}%), starting P1 emergency")
-                return "p1"
-            else:
-                # Normal night -> P3 Dryback
-                self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-                _LOGGER.info(f"{self.room} - Night time, starting P3 Dryback (VWC={vwc:.1f}%)")
-                return "p3"
+            # === NIGHT TIME - ALWAYS P3, no irrigation at night ===
+            # Night irrigation disrupts the dryback cycle which is essential for generative steering
+            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+            _LOGGER.info(f"{self.room} - Night time (light OFF), starting P3 Dryback (VWC={vwc:.1f}%)")
+            return "p3"
         
         # === DAY TIME ===
         if vwc == 0:
@@ -1119,7 +1133,14 @@ class OGBCSManager:
 
                     vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
                     ec = float(self.data_store.getDeep("CropSteering.ec_current") or 0)
-                    is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+                    is_light_on_raw = self.data_store.getDeep("isPlantDay.islightON")
+                    # Ensure proper boolean conversion
+                    if is_light_on_raw is None:
+                        is_light_on = False
+                    elif isinstance(is_light_on_raw, str):
+                        is_light_on = is_light_on_raw.lower() in ("true", "1", "on", "yes")
+                    else:
+                        is_light_on = bool(is_light_on_raw)
 
                     if vwc == 0:
                         _LOGGER.debug(f"{self.room} - Automatic: No VWC data yet, waiting...")
@@ -1183,8 +1204,14 @@ class OGBCSManager:
         
         IMPORTANT: If lights go OFF during P0, transition to P3.
         """
-        # Check light status first
-        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        # Check light status first - ensure proper boolean conversion
+        is_light_on_raw = self.data_store.getDeep("isPlantDay.islightON")
+        if is_light_on_raw is None:
+            is_light_on = False
+        elif isinstance(is_light_on_raw, str):
+            is_light_on = is_light_on_raw.lower() in ("true", "1", "on", "yes")
+        else:
+            is_light_on = bool(is_light_on_raw)
         if not is_light_on:
             _LOGGER.info(
                 f"{self.room} - P0: Lights are OFF, transitioning to P3 Night Dryback"
@@ -1222,7 +1249,13 @@ class OGBCSManager:
         If lights go OFF during P1, transition to P3.
         """
         # Check light status first - P1 only runs during day
-        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        is_light_on_raw = self.data_store.getDeep("isPlantDay.islightON")
+        if is_light_on_raw is None:
+            is_light_on = False
+        elif isinstance(is_light_on_raw, str):
+            is_light_on = is_light_on_raw.lower() in ("true", "1", "on", "yes")
+        else:
+            is_light_on = bool(is_light_on_raw)
         if not is_light_on:
             _LOGGER.warning(
                 f"{self.room} - P1: Lights are OFF, transitioning to P3 Night Dryback"
@@ -1848,6 +1881,13 @@ class OGBCSManager:
              f"VWCMin={preset.get('VWCMin')}, VWCMax={preset.get('VWCMax')} (Preset)"
          )
 
+        # Get sensor data BEFORE irrigation for event logging
+        pre_sensor_data = await self._get_sensor_averages()
+        pre_vwc = pre_sensor_data.get("vwc", 0) if pre_sensor_data else 0
+        pre_ec = pre_sensor_data.get("ec", 0) if pre_sensor_data else 0
+        pre_pore_ec = pre_sensor_data.get("pore_ec", 0) if pre_sensor_data else 0
+        pre_temp = pre_sensor_data.get("temperature", 25) if pre_sensor_data else 25
+
         try:
             await asyncio.sleep(duration)
 
@@ -2048,7 +2088,13 @@ class OGBCSManager:
 
         # Emit AI event for learning
         sensor_data = await self._get_sensor_averages()
-        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        is_light_on_raw = self.data_store.getDeep("isPlantDay.islightON")
+        if is_light_on_raw is None:
+            is_light_on = False
+        elif isinstance(is_light_on_raw, str):
+            is_light_on = is_light_on_raw.lower() in ("true", "1", "on", "yes")
+        else:
+            is_light_on = bool(is_light_on_raw)
         plant_phase, gen_week = self._get_plant_info_from_medium()
         preset = self._get_adjusted_preset(to_phase, plant_phase, gen_week)
 

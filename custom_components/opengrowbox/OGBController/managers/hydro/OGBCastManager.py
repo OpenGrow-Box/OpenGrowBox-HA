@@ -352,7 +352,6 @@ class OGBCastManager:
             if any(keyword in dev.lower() for keyword in valid_keywords)
         ]
         _LOGGER.debug(f"🔍 {self.room} Filtered active pumps: {active_pumps}")
-        await self.event_manager.emit("LogForClient", active_pumps, haEvent=True)
 
         if not active_pumps:
             _LOGGER.error(f"❌ {self.room} NO ACTIVE PUMPS FOUND! Stopping.")
@@ -436,7 +435,13 @@ class OGBCastManager:
                 await self.event_manager.emit("PumpAction", pumpAction)
             msg = f"{log_prefix} cycle disabled – hydro pumps set to always ON."
 
-        await self.event_manager.emit("LogForClient", msg, haEvent=True)
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "Mode": "Hydro",
+            "Type": "HYDRO",
+            "Message": msg,
+            "Devices": active_pumps
+        }, haEvent=True)
 
     async def hydro_PlantWatering(
         self,
@@ -517,7 +522,13 @@ class OGBCastManager:
                 f"{log_prefix} cycle disabled – plant watering pumps set to always ON."
             )
 
-        await self.event_manager.emit("LogForClient", msg, haEvent=True)
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "Mode": "Plant-Watering",
+            "Type": "HYDRO",
+            "Message": msg,
+            "Devices": active_pumps
+        }, haEvent=True)
 
     # Hydro Retrive
     async def HydroModRetrieveChange(self, pumpAction):
@@ -586,7 +597,6 @@ class OGBCastManager:
             for dev in devices
             if any(keyword in dev.lower() for keyword in valid_keywords)
         ]
-        await self.event_manager.emit("LogForClient", active_pumps, haEvent=True)
 
         if not active_pumps:
             await self.event_manager.emit(
@@ -662,7 +672,13 @@ class OGBCastManager:
                 await self.event_manager.emit("RetrieveAction", retrieveAction)
             msg = f"{log_prefix} cycle disabled – retrive pumps set to always ON."
 
-        await self.event_manager.emit("LogForClient", msg, haEvent=True)
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "Mode": "Retrieve",
+            "Type": "HYDRO",
+            "Message": msg,
+            "Devices": active_pumps
+        }, haEvent=True)
 
     def log(self, log_message):
         """Logs the performed action."""
