@@ -46,6 +46,13 @@ class Light(Device):
         self.ogbLightControl = None
         self.vpdLightControl = None
 
+        # Light scheduling attributes (correct types for setLightTimes compatibility)
+        self.lightOnTime = None      # datetime.time object (set by setLightTimes)
+        self.lightOffTime = None     # datetime.time object (set by setLightTimes)
+        self.sunRiseDuration = 0     # int seconds (set by setLightTimes)
+        self.sunSetDuration = 0      # int seconds (set by setLightTimes)
+        self.sun_phase_paused = False
+
     def save_voltage(self):
         """Save current voltage to DataStore for persistence across restarts."""
         if self.isDimmable and self.voltage is not None:
