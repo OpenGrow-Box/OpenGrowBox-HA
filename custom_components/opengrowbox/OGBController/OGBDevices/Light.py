@@ -690,7 +690,6 @@ class Light(Device):
                     )
                     self.voltage = round(next_voltage, 1)
                     self.save_voltage()
-                    self.save_voltage()
                     message = f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
                         Name=self.inRoom,
@@ -763,7 +762,6 @@ class Light(Device):
                         start_voltage - (voltage_step * i), target_voltage
                     )
                     self.voltage = round(next_voltage, 1)
-                    self.save_voltage()
                     self.save_voltage()
                     message = f"{self.deviceName}: SunSet Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
@@ -1197,7 +1195,6 @@ class Light(Device):
 
         _LOGGER.debug(f"💡 {self.deviceName}: Voltage set to {new_voltage}%")
         self.voltage = new_voltage
-        self.save_voltage()
         self.save_voltage()
         message = f"Update Light Voltage of {self.deviceName} to {new_voltage}%"
         self.log_action(message)
