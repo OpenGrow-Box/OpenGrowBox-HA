@@ -89,13 +89,10 @@ class OGBVPDActions:
         if capabilities["canCO2"]["state"] and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Increase", action_message))
 
-        if vpd_light_control == True:
-            if capabilities["canLight"]["state"]:
-                action_map.append(
-                    self._create_action("canLight", "Increase", action_message)
-                )
-            else:
-                return
+        if vpd_light_control == True and capabilities["canLight"]["state"]:
+            action_map.append(
+                self._create_action("canLight", "Increase", action_message)
+            )
 
         await self.action_manager.checkLimitsAndPublicate(action_map)
 
@@ -145,13 +142,10 @@ class OGBVPDActions:
         if capabilities["canCO2"]["state"] and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Reduce", action_message))
 
-        if vpd_light_control == True:
-            if capabilities["canLight"]["state"]:
-                action_map.append(
-                    self._create_action("canLight", "Reduce", action_message)
-                )
-            else:
-                return
+        if vpd_light_control == True and capabilities["canLight"]["state"]:
+            action_map.append(
+                self._create_action("canLight", "Reduce", action_message)
+            )
 
         await self.action_manager.checkLimitsAndPublicate(action_map)
 

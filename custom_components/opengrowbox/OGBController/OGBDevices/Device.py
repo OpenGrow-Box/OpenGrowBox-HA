@@ -765,8 +765,8 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON.")
                     return
 
-                # Light einschalten
-                elif self.deviceType == "Light":
+                # Light einschalten (alle Light device types)
+                elif self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"]:
                     if self.isDimmable:
                         if self.voltageFromNumber and hasattr(self, 'islightON') and self.islightON:
                             await self.hass.services.async_call(
@@ -776,7 +776,7 @@ class Device:
                             )
                             await self.set_value(float(brightness_pct/10))
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: Light ON (via Number).")
+                            _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (via Number).")
                             return
                         else:
                             await self.hass.services.async_call(
@@ -788,7 +788,7 @@ class Device:
                                 },
                             )
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: Light ON ({brightness_pct}%).")
+                            _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON ({brightness_pct}%).")
                             return
                     else:
                         await self.hass.services.async_call(
@@ -797,7 +797,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = True
-                        _LOGGER.debug(f"{self.deviceName}: Light ON (Switch).")
+                        _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (Switch).")
                         return
 
                 # Exhaust einschalten

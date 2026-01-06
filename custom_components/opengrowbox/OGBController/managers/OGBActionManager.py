@@ -297,11 +297,11 @@ class OGBActionManager:
         emergencyConditions = []
 
         # Lower threshold for emergency detection
-        if tentData["temperature"] > tentData["maxTemp"]:
+        if tentData["temperature"] >= tentData["maxTemp"]:
             emergencyConditions.append("critical_overheat")
-        if tentData["temperature"] < tentData["minTemp"]:
+        if tentData["temperature"] <= tentData["minTemp"]:
             emergencyConditions.append("critical_cold")
-        if tentData["dewpoint"] >= tentData["temperature"] - 0.5:
+        if tentData["dewpoint"] >= tentData["temperature"]:
             emergencyConditions.append("immediate_condensation_risk")
         if tentData.get("humidity", 0) > 85:
             emergencyConditions.append("critical_humidity")
@@ -748,37 +748,41 @@ class OGBActionManager:
                 
             _LOGGER.debug(f"{self.room}: {actionCap} - {actionType} - {actionMessage}")
 
-            # Emit device-specific events
-            if actionCap == "canExhaust":
-                await self.event_manager.emit(f"{actionType} Exhaust", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Exhaust executed.")
-            elif actionCap == "canIntake":
-                await self.event_manager.emit(f"{actionType} Intake", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Intake executed.")
-            elif actionCap == "canVentilate":
-                await self.event_manager.emit(f"{actionType} Ventilation", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Ventilation executed.")
-            elif actionCap == "canHumidify":
-                await self.event_manager.emit(f"{actionType} Humidifier", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Humidifier executed.")
-            elif actionCap == "canDehumidify":
-                await self.event_manager.emit(f"{actionType} Dehumidifier", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Dehumidifier executed.")
-            elif actionCap == "canHeat":
-                await self.event_manager.emit(f"{actionType} Heater", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Heater executed.")
-            elif actionCap == "canCool":
-                await self.event_manager.emit(f"{actionType} Cooler", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Cooler executed.")
-            elif actionCap == "canClimate":
-                await self.event_manager.emit(f"{actionType} Climate", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Climate executed.")
-            elif actionCap == "canCO2":
-                await self.event_manager.emit(f"{actionType} CO2", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} CO2 executed.")
-            elif actionCap == "canLight":
-                await self.event_manager.emit(f"{actionType} Light", actionType)
-                _LOGGER.debug(f"{self.room}: {actionType} Light executed.")
+            # Emit device-specific events with error handling
+            try:
+                if actionCap == "canExhaust":
+                    await self.event_manager.emit(f"{actionType} Exhaust", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Exhaust executed.")
+                elif actionCap == "canIntake":
+                    await self.event_manager.emit(f"{actionType} Intake", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Intake executed.")
+                elif actionCap == "canVentilate":
+                    await self.event_manager.emit(f"{actionType} Ventilation", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Ventilation executed.")
+                elif actionCap == "canHumidify":
+                    await self.event_manager.emit(f"{actionType} Humidifier", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Humidifier executed.")
+                elif actionCap == "canDehumidify":
+                    await self.event_manager.emit(f"{actionType} Dehumidifier", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Dehumidifier executed.")
+                elif actionCap == "canHeat":
+                    await self.event_manager.emit(f"{actionType} Heater", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Heater executed.")
+                elif actionCap == "canCool":
+                    await self.event_manager.emit(f"{actionType} Cooler", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Cooler executed.")
+                elif actionCap == "canClimate":
+                    await self.event_manager.emit(f"{actionType} Climate", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Climate executed.")
+                elif actionCap == "canCO2":
+                    await self.event_manager.emit(f"{actionType} CO2", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} CO2 executed.")
+                elif actionCap == "canLight":
+                    await self.event_manager.emit(f"{actionType} Light", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Light executed.")
+            except Exception as e:
+                _LOGGER.error(f"{self.room}: Failed to execute {actionCap} {actionType} action: {e}")
+                # Continue with next action instead of failing the entire batch
 
         # Emit DataRelease event for Premium API synchronization (ONLY IF mainControl is Premium)
         mainControl = self.data_store.get("mainControl")

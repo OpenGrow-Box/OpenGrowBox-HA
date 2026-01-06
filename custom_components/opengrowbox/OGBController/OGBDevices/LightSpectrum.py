@@ -113,10 +113,13 @@ class LightSpectrum(Device):
         self.smooth_transitions = True
         self.transition_steps = 10
         
-        # Initialize
+        # Initialize parent class first (important for Device inheritance)
+        self.init()
+
+        # Initialize Spectrum specific settings
         self._load_settings()
         self._start_scheduler()
-        
+
         # Validate entity availability
         self._validate_entity_availability()
         
