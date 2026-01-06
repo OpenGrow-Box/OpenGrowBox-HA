@@ -21,6 +21,7 @@ class OGBDeviceManager:
 - **Sensor**: Environmental monitoring devices
 - **Exhaust/Intake**: Ventilation systems
 - **Heater/Cooler**: Temperature control devices
+- **FridgeGrow**: Plantalytix/FridgeGrow device integration
 
 #### 3. Device Capabilities System
 - **Capability Mapping**: Device features and supported operations
@@ -283,6 +284,7 @@ DEVICE_TYPE_MAPPING = {
     "Humidifier": ["canHumidify"],
     "Dehumidifier": ["canDehumidify"],
     "CO2": ["canMeasureCO2"],
+    "FridgeGrow": ["canHeat", "canDehumidify", "canLight", "canCO2", "canExhaust", "canVentilate"],  # Plantalytix devices
     "GenericSwitch": ["canSwitch"]  # Custom devices
 }
 ```
