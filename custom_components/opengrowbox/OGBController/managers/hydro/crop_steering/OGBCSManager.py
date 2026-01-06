@@ -3,8 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from ....data.OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPublication
-# OGBHydroAction temporarily unavailable, will use dict fallback
+from ....data.OGBDataClasses.OGBPublications import OGBHydroAction, OGBWaterAction, OGBWaterPublication
 
 from .OGBAdvancedSensor import OGBAdvancedSensor
 from .OGBCSCalibrationManager import OGBCSCalibrationManager
@@ -1627,10 +1626,11 @@ class OGBCSManager:
                     self.data_store.getDeep("CropSteering.p3_emergency_count") or 0
                 )
                 max_emergency = preset.get("max_emergency_shots", 2)
+                emergency_shot_duration = preset.get("irrigation_duration", 30)
                 
                 if p3_emergency_count < max_emergency:
                     await self._irrigate(
-                        duration=shot_duration,
+                        duration=emergency_shot_duration,
                         is_emergency=True,
                     )
                     self.data_store.setDeep(
@@ -1889,15 +1889,25 @@ class OGBCSManager:
         pre_temp = pre_sensor_data.get("temperature", 25) if pre_sensor_data else 25
 
         try:
+            # Turn ON drippers - same pattern as CastManager
+            _LOGGER.warning(f"🚿 {self.room} - Starting irrigation for {duration}s with {len(drippers)} drippers")
+            for dev_id in drippers:
+                pumpAction = OGBHydroAction(
+                    Name=self.room, Action="on", Device=dev_id, Cycle="false"
+                )
+                await self.event_manager.emit("PumpAction", pumpAction)
+                _LOGGER.warning(f"🚿 {self.room} - Sent ON to {dev_id}")
+            
+            # Wait for irrigation duration
             await asyncio.sleep(duration)
 
-            # Turn off
+            # Turn OFF drippers - same pattern as CastManager
             _LOGGER.warning(f"🛑 {self.room} - Irrigation STOPPING after {duration}s - turning off {len(drippers)} drippers")
             for dev_id in drippers:
-                action = {
-                    "Name": self.room, "Action": "off", "Device": dev_id, "Cycle": False
-                }
-                await self.event_manager.emit("PumpAction", action)
+                pumpAction = OGBHydroAction(
+                    Name=self.room, Action="off", Device=dev_id, Cycle="false"
+                )
+                await self.event_manager.emit("PumpAction", pumpAction)
                 _LOGGER.warning(f"🛑 {self.room} - Sent OFF to {dev_id}")
 
             # Emit AI irrigation event
@@ -1979,15 +1989,15 @@ class OGBCSManager:
         )
 
     async def _turn_off_all_drippers(self):
-        """Turn off all drippers"""
+        """Turn off all drippers - same pattern as CastManager"""
         drippers = self._get_drippers()
 
         for dev_id in drippers:
             try:
-                action = {
-                    "Name": self.room, "Action": "off", "Device": dev_id, "Cycle": False
-                }
-                await self.event_manager.emit("PumpAction", action)
+                pumpAction = OGBHydroAction(
+                    Name=self.room, Action="off", Device=dev_id, Cycle="false"
+                )
+                await self.event_manager.emit("PumpAction", pumpAction)
             except Exception as e:
                 _LOGGER.error(f"Error turning off {dev_id}: {e}")
 
