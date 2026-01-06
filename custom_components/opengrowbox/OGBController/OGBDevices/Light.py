@@ -41,6 +41,12 @@ class Light(Device):
         self.isInitialized = False
         self.voltageFromNumber = False
 
+    def save_voltage(self):
+        """Save current voltage to DataStore for persistence across restarts."""
+        if self.isDimmable and self.voltage is not None:
+            self.data_store.setDeep(f"devices.{self.deviceName}.lastVoltage", self.voltage)
+            _LOGGER.debug(f"{self.deviceName}: Saved voltage {self.voltage}% to DataStore")
+
         self.islightON = None
         self.ogbLightControl = None
         self.vpdLightControl = None
@@ -226,6 +232,18 @@ class Light(Device):
             self.setLightTimes()
 
             if self.isDimmable:
+                # Load last saved voltage first
+                saved_voltage = self.data_store.getDeep(f"devices.{self.deviceName}.lastVoltage")
+                if saved_voltage is not None:
+                    try:
+                        self.voltage = float(saved_voltage)
+                        _LOGGER.debug(
+                            f"{self.deviceName}: Loaded last voltage from DataStore -> {self.voltage}%."
+                        )
+                    except (ValueError, TypeError):
+                        _LOGGER.warning(f"{self.deviceName}: Invalid saved voltage '{saved_voltage}', ignoring")
+                        self.voltage = None  # Reset to None so initialize_voltage runs
+
                 self.checkForControlValue()
                 self.checkPlantStageLightValue()
                 self.checkMinMax(False)
@@ -233,7 +251,7 @@ class Light(Device):
                     self.initialize_voltage()
                 else:
                     _LOGGER.debug(
-                        f"{self.deviceName}: Voltage init done with Sensor Data -> {self.voltage}%."
+                        f"{self.deviceName}: Voltage init done with saved value -> {self.voltage}%."
                     )
             self.isInitialized = True
 
@@ -286,8 +304,19 @@ class Light(Device):
         self._apply_plant_stage_minmax(plantStage)
 
     def initialize_voltage(self):
-        """Initialisiert den Voltage auf MinVoltage."""
+        """Initialisiert den Voltage auf gespeicherten Wert oder MinVoltage."""
         if self.islightON:
+            # Try to load saved voltage first
+            saved_voltage = self.data_store.getDeep(f"devices.{self.deviceName}.lastVoltage")
+            if saved_voltage is not None:
+                try:
+                    self.voltage = float(saved_voltage)
+                    _LOGGER.debug(f"{self.deviceName}: Using saved voltage {self.voltage}%")
+                    return
+                except (ValueError, TypeError):
+                    _LOGGER.warning(f"{self.deviceName}: Invalid saved voltage, using default")
+
+            # Fallback to default
             self.voltage = self.initVoltage
         else:
             self.voltage = 0
@@ -659,6 +688,8 @@ class Light(Device):
                         start_voltage + (voltage_step * i), target_voltage
                     )
                     self.voltage = round(next_voltage, 1)
+                    self.save_voltage()
+                    self.save_voltage()
                     message = f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
                         Name=self.inRoom,
@@ -731,6 +762,8 @@ class Light(Device):
                         start_voltage - (voltage_step * i), target_voltage
                     )
                     self.voltage = round(next_voltage, 1)
+                    self.save_voltage()
+                    self.save_voltage()
                     message = f"{self.deviceName}: SunSet Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
                         Name=self.inRoom,
@@ -1078,8 +1111,43 @@ class Light(Device):
             light_max = float(
                 self.data_store.getDeep("DeviceMinMax.Light").get("maxVoltage")
             )
+
+            # Validate voltage ranges - must be 0-100% for brightness control
+            # Note: These are brightness percentages, not PPFD µmol/m²/s values
+            if light_max > 100:
+                _LOGGER.warning(
+                    f"💡 {self.deviceName}: maxVoltage {light_max} is too high for brightness control! "
+                    f"Maximum brightness is 100%. Using 100% instead. "
+                    f"If you meant PPFD µmol/m²/s, configure that in the light plan targets."
+                )
+                light_max = 100.0
+            elif light_max > 200:
+                # Additional check: if someone set extremely high values (like 1200)
+                # they might have confused brightness % with PPFD µmol/m²/s
+                _LOGGER.warning(
+                    f"💡 {self.deviceName}: maxVoltage {light_max} seems very high. "
+                    f"Are you confusing brightness % with PPFD µmol/m²/s? "
+                    f"PPFD targets are configured in light plans, not here. "
+                    f"Using 100% for safety."
+                )
+                light_max = 100.0
+
+            if light_min < 0:
+                _LOGGER.warning(
+                    f"💡 {self.deviceName}: minVoltage {light_min} is negative! "
+                    f"Using 0% instead."
+                )
+                light_min = 0.0
+            if light_min >= light_max:
+                _LOGGER.warning(
+                    f"💡 {self.deviceName}: minVoltage {light_min} >= maxVoltage {light_max}! "
+                    f"Using safe defaults: 20-100%."
+                )
+                light_min = 20.0
+                light_max = 100.0
+
             _LOGGER.info(
-                f"💡 {self.deviceName}: Using min {light_min} and max {light_max} from data store."
+                f"💡 {self.deviceName}: Using validated min {light_min} and max {light_max} from data store."
             )
 
         _LOGGER.debug(
@@ -1116,6 +1184,8 @@ class Light(Device):
 
         _LOGGER.debug(f"💡 {self.deviceName}: Voltage set to {new_voltage}%")
         self.voltage = new_voltage
+        self.save_voltage()
+        self.save_voltage()
         message = f"Update Light Voltage of {self.deviceName} to {new_voltage}%"
         self.log_action(message)
         light_action = OGBLightAction(
