@@ -79,6 +79,9 @@ DEVICE_TYPE_MAPPING = {
     # Modbus devices
     "ModbusDevice": ["modbus", "modbus_device", "modbus_rtu", "modbus_tcp"],
     "ModbusSensor": ["modbus_sensor", "modbus_temp", "modbus_humidity"],
+    # FridgeGrow / Plantalytix devices - identified by label combination
+    # Device must have "fridgegrow" or "plantalytix" label + output type label
+    "FridgeGrow": ["fridgegrow", "plantalytix"],
 }
 
 # OGB ROOM DEVICE-CAPS Defintion and Mapping List
