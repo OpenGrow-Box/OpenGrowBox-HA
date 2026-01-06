@@ -46,23 +46,6 @@ class Light(Device):
         self.ogbLightControl = None
         self.vpdLightControl = None
 
-        # Light scheduling attributes (correct types for setLightTimes compatibility)
-        self.lightOnTime = None      # datetime.time object (set by setLightTimes)
-        self.lightOffTime = None     # datetime.time object (set by setLightTimes)
-        self.sunRiseDuration = 0     # int seconds (set by setLightTimes)
-        self.sunSetDuration = 0      # int seconds (set by setLightTimes)
-        self.sun_phase_paused = False
-
-    def save_voltage(self):
-        """Save current voltage to DataStore for persistence across restarts."""
-        if self.isDimmable and self.voltage is not None:
-            self.data_store.setDeep(f"devices.{self.deviceName}.lastVoltage", self.voltage)
-            _LOGGER.debug(f"{self.deviceName}: Saved voltage {self.voltage}% to DataStore")
-
-        self.islightON = None
-        self.ogbLightControl = None
-        self.vpdLightControl = None
-
         # Light Times
         self.lightOnTime = ""
         self.lightOffTime = ""
@@ -127,6 +110,12 @@ class Light(Device):
         
         # Listen to own device state changes for immediate schedule enforcement
         self.event_manager.on("DeviceStateUpdate", self.handle_light_state_change)
+
+    def save_voltage(self):
+        """Save current voltage to DataStore for persistence across restarts."""
+        if self.isDimmable and self.voltage is not None:
+            self.data_store.setDeep(f"devices.{self.deviceName}.lastVoltage", self.voltage)
+            _LOGGER.debug(f"{self.deviceName}: Saved voltage {self.voltage}% to DataStore")
 
     async def handle_light_state_change(self, updateData):
         """Immediately enforce light schedule when device state changes in HA."""
