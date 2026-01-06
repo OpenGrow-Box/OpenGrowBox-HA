@@ -1283,15 +1283,17 @@ class OGBConfigurationManager:
         _LOGGER.warning(f"{self.room}: CropSteeringChanges event emitted for mode: {value}")
 
     async def _crop_steering_phase(self, data):
-        """Update CropSteering phase (Manual mode only)."""
-        active_cs_mode = self.data_store.getDeep("CropSteering.ActiveMode")
-        if active_cs_mode != "Manual":
-            _LOGGER.debug(f"{self.room} - Changing CS Phase works only in Manual mode")
-            return
-
+        """Update CropSteering phase selector.
+        
+        IMPORTANT: Always store the phase, not just in Manual mode!
+        User may set phase BEFORE switching to Manual mode.
+        The phase is stored as-is (e.g., 'P1') - code that reads it should handle case.
+        """
         value = data.newState[0]
-        self.data_store.setDeep("CropSteering.CropPhase", value)
-        _LOGGER.info(f"{self.room}: Crop Steering phase changed to {value}")
+        # Store lowercase for consistency
+        phase_lower = value.lower() if value else "p0"
+        self.data_store.setDeep("CropSteering.CropPhase", phase_lower)
+        _LOGGER.warning(f"{self.room}: Crop Steering phase changed to {phase_lower} (from {value})")
 
     async def _crop_steering_sets(self, data, entity_key=None):
         """Dynamic setter for all Crop Steering parameters.

@@ -476,28 +476,28 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator.room_name,
             coordinator,
             options=["Schedule", "Always On", "Always Off", "Manual"],
-            initial_value="Always Off",
+            initial_value="Schedule",
         ),
         CustomSelect(
             f"OGB_Light_UV_Mode_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             options=["Schedule", "Always On", "Always Off", "Manual"],
-            initial_value="Always Off",
+            initial_value="Schedule",
         ),
         CustomSelect(
             f"OGB_Light_Blue_Mode_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             options=["Schedule", "Always On", "Always Off", "Manual"],
-            initial_value="Always Off",
+            initial_value="Schedule",
         ),
         CustomSelect(
             f"OGB_Light_Red_Mode_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             options=["Schedule", "Always On", "Always Off", "Manual"],
-            initial_value="Always Off",
+            initial_value="Schedule",
         ),
     ]
 

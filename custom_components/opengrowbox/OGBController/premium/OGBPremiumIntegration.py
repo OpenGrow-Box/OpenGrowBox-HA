@@ -692,6 +692,11 @@ class OGBPremiumIntegration:
         self.ogb_login_email = state_data.get("ogb_login_email", None)
         self.is_premium_selected = state_data.get("is_premium_selected", False)
         self.is_primary_auth_room = is_primary_auth_room
+        
+        # DEBUG: Log what's in the state
+        _LOGGER.warning(f"🔍 {self.room} State keys: {list(state_data.keys())}")
+        _LOGGER.warning(f"🔍 {self.room} ogb_login_email in state: {repr(state_data.get('ogb_login_email'))}")
+        _LOGGER.warning(f"🔍 {self.room} ogb_login_token in state: {bool(state_data.get('ogb_login_token'))}")
 
         # Initialize feature manager with restored subscription data
         if self.subscription_data:
@@ -1353,9 +1358,11 @@ class OGBPremiumIntegration:
                 self.ogb_ws.ogb_sessions = ogb_sessions
                 self.ogb_ws.ogb_max_sessions = ogb_max_sessions
                 
-                # CRITICAL: Store email for auto-relogin after API restart
+                # CRITICAL: Store credentials for auto-relogin after API restart
                 if ogb_login_email:
                     self.ogb_ws._stored_email = ogb_login_email
+                if ogb_login_token:
+                    self.ogb_ws._stored_ogb_token = ogb_login_token
 
                 if self.ogb_ws.is_logged_in:
                     self.ogb_ws.authenticated = True

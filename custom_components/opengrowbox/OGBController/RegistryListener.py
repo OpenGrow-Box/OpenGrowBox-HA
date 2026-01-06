@@ -48,6 +48,25 @@ class OGBRegistryEvenListener:
         _LOGGER.debug(f"Entities in Room '{room_name}': {entities_by_room}")
         return entities_by_room
 
+    def _has_modbus_labels(self, entity, label_registry) -> bool:
+        """Prüfe ob Entity Modbus-relevante Labels hat."""
+        if not hasattr(entity, 'labels') or not entity.labels:
+            return False
+
+        modbus_keywords = [
+            "modbus", "modbus_device", "modbus_tcp", "modbus_rtu",
+            "modbus_sensor", "modbus_temp", "modbus_humidity"
+        ]
+
+        entity_labels = []
+        for label_id in entity.labels:
+            label_entry = label_registry.labels.get(label_id)
+            if label_entry:
+                entity_labels.append(label_entry.name.lower())
+
+        return any(any(keyword in label for keyword in modbus_keywords)
+                  for label in entity_labels)
+
     async def get_entities_and_devices_by_room(self, room_name):
         """Hole alle Entitäten und Geräte nach Raum."""
         # Entitäten abrufen
@@ -330,8 +349,15 @@ class OGBRegistryEvenListener:
 
         async def process_entity(entity):
             """Verarbeite eine einzelne Entität mit Retry-Logik."""
-            if entity.device_id not in devices_in_room:
+            # BESTEHENDE LOGIK: Physische Devices müssen im Raum sein
+            if entity.device_id and entity.device_id not in devices_in_room:
                 return None
+
+            # NEU: Modbus-Entities ohne device_id ZULASSEN wenn sie Labels haben
+            if not entity.device_id:
+                has_modbus_labels = self._has_modbus_labels(entity, label_registry)
+                if not has_modbus_labels:
+                    return None  # Keine Modbus-Labels → weiter ignorieren
 
             if not (
                 entity.entity_id.startswith(RELEVANT_PREFIXES)

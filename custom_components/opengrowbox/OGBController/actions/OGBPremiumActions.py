@@ -47,20 +47,46 @@ class OGBPremiumActions:
         _LOGGER.warning(f"{self.ogb.room}: Start PID Actions Handling")
 
         controlData = premActions.get("actionData")
-        actionData = controlData.get("controlCommands")
+        actionData = controlData.get("controlCommands", [])
         pidStates = controlData.get("pidStates")
-
-        # Store PID state history
-        pidStatesCopy = copy.deepcopy(pidStates)
-        currentActions = self.ogb.dataStore.get("previousActions", [])
-        currentActions.append(pidStatesCopy)
         controlData["room"] = self.ogb.room
 
-        # Keep only recent history
-        if len(currentActions) > 1:
-            currentActions = currentActions[-1:]
-
-        self.ogb.dataStore.set("previousActions", currentActions)
+        # Store actions in API-compatible format
+        # Format: {actions: [{device, action, priority, reason, timestamp, controllerType}, ...], timestamp, room, controllerType}
+        import time
+        current_time = time.time()
+        
+        previousActions = self.ogb.dataStore.get("previousActions") or []
+        
+        # Build action set with all actions from this PID execution cycle
+        action_set = {
+            "actions": [],
+            "timestamp": current_time,
+            "room": self.ogb.room,
+            "controllerType": "PID",
+            "pidStates": copy.deepcopy(pidStates) if pidStates else None,  # Keep pidStates as metadata
+        }
+        
+        for action in actionData:
+            device = action.get("device", "").lower()
+            action_entry = {
+                "device": device,
+                "action": action.get("action", "Eval"),
+                "priority": action.get("priority", "medium") or "medium",
+                "reason": action.get("reason", "") or f"PID control: {device}",
+                "timestamp": current_time,
+                "controllerType": "PID",
+                "capability": f"can{device.capitalize()}",
+            }
+            action_set["actions"].append(action_entry)
+        
+        # Only add if we have actions
+        if action_set["actions"]:
+            previousActions.append(action_set)
+        
+        # Keep only the last 5 action sets (API expects max 5)
+        previousActions = previousActions[-5:]
+        self.ogb.dataStore.set("previousActions", previousActions)
 
         # Group actions by device to detect conflicts
         device_actions = {}
