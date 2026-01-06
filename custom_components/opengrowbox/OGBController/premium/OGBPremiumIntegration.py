@@ -271,12 +271,23 @@ class OGBPremiumIntegration:
         self.event_manager.on("KillSwitchActivated", self._on_kill_switch_activated)
         self.event_manager.on("SubscriptionChanged", self._on_subscription_changed)
 
+        # Subscription lifecycle events
+        self.event_manager.on("SubscriptionExpiringSoon", self._on_subscription_expiring_soon)
+        self.event_manager.on("SubscriptionExpired", self._on_subscription_expired)
+
         # Grow Plan events from WebSocket
         self.event_manager.on("new_grow_plans", self._on_new_grow_plans)
         self.event_manager.on("plan_activation", self._on_plan_activated)
 
         # API Usage updates from WebSocket - CRITICAL for browser refresh to show current values
         self.event_manager.on("api_usage_update", self._on_api_usage_update)
+
+        # Webapp control sync events
+        self.event_manager.on("WebappControlChange", self._on_webapp_ctrl_change)
+        self.event_manager.on("WebappControlValuesChange", self._on_webapp_ctrl_values_change)
+        self.event_manager.on("WebappControlValueUpdate", self._on_webapp_ctrl_value_update)
+        self.event_manager.on("WebappPlantStageChange", self._on_webapp_plant_stage_change)
+        self.event_manager.on("WebappPremiumActions", self._on_webapp_premium_actions)
 
         # Grow completion events - send harvest data to Premium API
         self.event_manager.on("GrowCompleted", self._on_grow_completed)
@@ -444,6 +455,204 @@ class OGBPremiumIntegration:
 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Subscription change error: {e}")
+
+    async def _on_subscription_expiring_soon(self, data):
+        """Handle subscription expiring soon warning."""
+        try:
+            plan_name = data.get("plan_name", "unknown")
+            expires_in = data.get("expires_in_seconds", 0)
+            
+            _LOGGER.warning(
+                f"⚠️ {self.room} Subscription '{plan_name}' expiring in {expires_in}s!"
+            )
+            
+            # Fire HA event for UI notification
+            self.hass.bus.async_fire("ogb_premium_subscription_expiring", {
+                "room": self.room,
+                "plan_name": plan_name,
+                "expires_in_seconds": expires_in,
+                "current_period_end": data.get("current_period_end"),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            
+            # Emit to frontend for notification
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "WARNING",
+                "Message": f"Premium subscription expiring in {expires_in // 60} minutes!"
+            }, haEvent=True)
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Subscription expiring handler error: {e}")
+
+    async def _on_subscription_expired(self, data):
+        """Handle subscription expired event - downgrade to free."""
+        try:
+            previous_plan = data.get("previous_plan", "unknown")
+            new_plan = data.get("new_plan", "free")
+            
+            _LOGGER.error(
+                f"🚨 {self.room} Subscription EXPIRED! {previous_plan} -> {new_plan}"
+            )
+            
+            # Update local state
+            self.is_premium = False
+            
+            # Update subscription_data to free plan
+            if not self.subscription_data:
+                self.subscription_data = {}
+            self.subscription_data["plan_name"] = new_plan
+            self.subscription_data["features"] = {}
+            self.subscription_data["limits"] = {"max_rooms": 1, "max_sessions": 1}
+            
+            # Update WebSocket client
+            if self.ogb_ws:
+                self.ogb_ws.subscription_data = self.subscription_data
+                self.ogb_ws.is_premium = False
+            
+            # Update feature manager
+            self._update_feature_manager()
+            
+            # Check if current mode requires premium
+            current_mode = self.data_store.getDeep("tentMode")
+            premium_modes = ["AI Control", "MPC Control", "PID Control"]
+            
+            if current_mode in premium_modes:
+                _LOGGER.warning(
+                    f"⚠️ {self.room} Switching from {current_mode} to VPD Perfection (subscription expired)"
+                )
+                await self._change_ctrl_values(tentmode="VPD Perfection")
+            
+            # Fire HA event
+            self.hass.bus.async_fire("ogb_premium_subscription_expired", {
+                "room": self.room,
+                "previous_plan": previous_plan,
+                "new_plan": new_plan,
+                "expired_at": data.get("expired_at"),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            
+            # Emit to frontend for notification
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "ERROR",
+                "Message": f"Premium subscription expired! Downgraded to {new_plan} plan."
+            }, haEvent=True)
+            
+            # Refresh UI controls
+            await self._managePremiumControls()
+            
+            # Save state
+            await self._save_request(True)
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Subscription expired handler error: {e}")
+
+    # =================================================================
+    # Webapp Control Sync Handlers
+    # =================================================================
+
+    async def _on_webapp_ctrl_change(self, data):
+        """Handle control mode changes from webapp."""
+        try:
+            ctrl_data = data.get("data", data)
+            
+            _LOGGER.info(f"🎛️ {self.room} Webapp control change: {ctrl_data}")
+            
+            # If it's a tent mode change
+            if isinstance(ctrl_data, str):
+                await self._change_ctrl_values(tentmode=ctrl_data)
+            elif isinstance(ctrl_data, dict):
+                # Control options update
+                if "controlOptions" in ctrl_data:
+                    for key, value in ctrl_data["controlOptions"].items():
+                        self.data_store.setDeep(f"controlOptions.{key}", value)
+                
+                if "tentMode" in ctrl_data:
+                    await self._change_ctrl_values(tentmode=ctrl_data["tentMode"])
+            
+            # Fire HA event
+            self.hass.bus.async_fire("ogb_webapp_ctrl_change", {
+                "room": self.room,
+                "data": ctrl_data,
+                "source": "webapp"
+            })
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Webapp ctrl_change handler error: {e}")
+
+    async def _on_webapp_ctrl_values_change(self, data):
+        """Handle control values changes from webapp."""
+        try:
+            _LOGGER.info(f"🎛️ {self.room} Webapp control values change")
+            
+            # Update controlOptionData
+            if "controlOptionData" in data and data["controlOptionData"]:
+                for key, value in data["controlOptionData"].items():
+                    self.data_store.setDeep(f"controlOptionData.{key}", value)
+            
+            # Update light status
+            if "isLightON" in data:
+                self.data_store.setDeep("isPlantDay.islightON", data["isLightON"])
+            
+            # Update VPD
+            if "vpd" in data and data["vpd"]:
+                for key, value in data["vpd"].items():
+                    self.data_store.setDeep(f"vpd.{key}", value)
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Webapp ctrl_values_change handler error: {e}")
+
+    async def _on_webapp_ctrl_value_update(self, data):
+        """Handle individual control value update from webapp."""
+        try:
+            key = data.get("key")
+            value = data.get("value")
+            
+            if key:
+                _LOGGER.debug(f"🎛️ {self.room} Webapp value update: {key}={value}")
+                self.data_store.setDeep(key, value)
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Webapp ctrl_value_update handler error: {e}")
+
+    async def _on_webapp_plant_stage_change(self, data):
+        """Handle plant stage change from webapp."""
+        try:
+            plant_stage = data.get("plantStage")
+            
+            if plant_stage:
+                _LOGGER.info(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
+                
+                # Update data store
+                self.data_store.setDeep("plantStage", plant_stage)
+                
+                # Emit event for mode manager
+                await self.event_manager.emit("PlantStageChange", {
+                    "room": self.room,
+                    "plantStage": plant_stage,
+                    "source": "webapp"
+                })
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Webapp plant_stage_change handler error: {e}")
+
+    async def _on_webapp_premium_actions(self, data):
+        """Handle premium actions from webapp."""
+        try:
+            actions = data.get("actions", [])
+            
+            _LOGGER.info(f"⚡ {self.room} Webapp premium actions: {len(actions)} actions")
+            
+            # Emit to action manager for execution
+            await self.event_manager.emit("ExecuteActions", {
+                "room": self.room,
+                "actions": actions,
+                "source": "premium_webapp"
+            })
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Webapp premium_actions handler error: {e}")
 
     async def _on_api_usage_update(self, data):
         """Handle API usage updates from WebSocket.
