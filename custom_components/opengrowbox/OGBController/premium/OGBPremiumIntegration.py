@@ -2119,7 +2119,7 @@ class OGBPremiumIntegration:
                 "nightVPDHold": f"select.ogb_holdvpdnight_{self.room.lower()}",
                 "minMaxControl": f"select.ogb_minmax_control_{self.room.lower()}",
                 "ambientControl": f"select.ogb_ambientcontrol_{self.room.lower()}",
-                "vpdDeviceDampening": f"ogb_vpd_devicedampening_{self.room.lower()}",
+                "vpdDeviceDampening": f"select.ogb_vpd_devicedampening_{self.room.lower()}",
                 "vpdLightControl": f"select.ogb_vpdlightcontrol_{self.room.lower()}",
                 "lightbyOGBControl": f"select.ogb_lightcontrol_{self.room.lower()}",
             }

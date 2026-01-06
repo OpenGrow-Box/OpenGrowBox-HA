@@ -457,19 +457,38 @@ class OGBTankFeedManager:
         """Calculate actual ml dose based on reservoir volume"""
         return nutrient_ml_per_liter * self.reservoir_volume_liters
 
-    async def _plant_stage_change(self, new_stage: str):
-        """Handle plant stage changes"""
-        if new_stage not in self.automaticFeedConfigs:
-            _LOGGER.warning(f"[{self.room}] Unknown plant stage: {new_stage}")
+    async def _plant_stage_change(self, new_stage):
+        """Handle plant stage changes.
+        
+        Args:
+            new_stage: Either a string (stage name) or a dict with stage info.
+                       Dict formats supported:
+                       - {"new_stage": "...", "old_stage": "...", "room": "..."}
+                       - {"plantStage": "...", "room": "...", "source": "..."}
+                       - {"stage": "..."}
+        """
+        # Handle both string and dict payloads for backwards compatibility
+        if isinstance(new_stage, dict):
+            # Extract stage from dict - check multiple possible keys
+            stage_value = (
+                new_stage.get("new_stage") or 
+                new_stage.get("plantStage") or 
+                new_stage.get("stage")
+            )
+        else:
+            stage_value = new_stage
+        
+        if not stage_value or stage_value not in self.automaticFeedConfigs:
+            _LOGGER.warning(f"[{self.room}] Unknown or missing plant stage: {stage_value}")
             return
             
-        self.current_plant_stage = new_stage
+        self.current_plant_stage = stage_value
         
         # If in automatic mode, update targets based on new stage
         if self.feed_mode == FeedMode.AUTOMATIC:
             await self._update_automatic_targets()
                   
-        _LOGGER.info(f"[{self.room}] Plant stage changed to: {new_stage}")
+        _LOGGER.info(f"[{self.room}] Plant stage changed to: {stage_value}")
 
     async def _update_automatic_targets(self):
         """Update feed targets based on current plant stage in automatic mode"""
