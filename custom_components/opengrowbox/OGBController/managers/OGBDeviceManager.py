@@ -18,6 +18,7 @@ from ..OGBDevices.LightUV import LightUV
 from ..OGBDevices.LightSpectrum import LightBlue, LightRed
 from ..OGBDevices.ModbusDevice import OGBModbusDevice
 from ..OGBDevices.ModbusSensor import ModbusSensor
+from ..OGBDevices.FridgeGrow import FridgeGrowDevice
 from ..OGBDevices.Pump import Pump
 from ..OGBDevices.Sensor import Sensor
 from ..OGBDevices.Ventilation import Ventilation
@@ -190,6 +191,33 @@ class OGBDeviceManager:
             "LightRed",     # Must match before "Light"
         ]
 
+        # FRIDGEGROW CHECK: If device has "fridgegrow" or "plantalytix" label,
+        # it's a FridgeGrow device regardless of other labels
+        if device_labels:
+            label_names = [lbl.get("name", "").lower() for lbl in device_labels]
+            fridgegrow_keywords = DEVICE_TYPE_MAPPING.get("FridgeGrow", [])
+            
+            if any(kw in label_names for kw in fridgegrow_keywords):
+                detected_type = "FridgeGrow"
+                detected_label = "FridgeGrow"
+                _LOGGER.info(
+                    f"Device '{device_name}' identified as FridgeGrow via label "
+                    f"(labels: {label_names})"
+                )
+                
+                DeviceClass = self.get_device_class(detected_type)
+                return DeviceClass(
+                    device_name,
+                    device_data,
+                    self.event_manager,
+                    self.data_store,
+                    detected_type,
+                    self.room,
+                    self.hass,
+                    detected_label,
+                    device_labels,
+                )
+
         if device_labels:
             for lbl in device_labels:
                 label_name = lbl.get("name", "").lower()
@@ -338,6 +366,8 @@ class OGBDeviceManager:
             "Modbus": OGBModbusDevice,
             "ModbusDevice": OGBModbusDevice,
             "ModbusSensor": ModbusSensor,
+            # FridgeGrow / Plantalytix devices
+            "FridgeGrow": FridgeGrowDevice,
         }
         return device_classes.get(device_type, Device)
 
