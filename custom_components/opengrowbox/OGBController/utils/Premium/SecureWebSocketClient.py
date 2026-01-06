@@ -1093,12 +1093,14 @@ class OGBWebSocketConManager:
                 # The re-login method has its own locking to prevent duplicates
                 # Check local credentials first, then try credential provider
                 has_credentials = self._stored_email and self._stored_ogb_token
+                logging.info(f"🔐 {self.ws_room} Local credentials: email={bool(self._stored_email)}, token={bool(self._stored_ogb_token)}, provider={bool(self._credential_provider)}")
                 if not has_credentials and self._credential_provider:
                     try:
                         creds = self._credential_provider()
+                        logging.info(f"🔐 {self.ws_room} Provider returned: email={bool(creds.get('email') if creds else None)}, token={bool(creds.get('token') if creds else None)}")
                         has_credentials = creds and creds.get("email") and creds.get("token")
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.error(f"❌ {self.ws_room} Provider error: {e}")
                 
                 if has_credentials:
                     # Set flag to prevent disconnect handler from interfering
@@ -2448,17 +2450,16 @@ class OGBWebSocketConManager:
                 return
             
             self._reconnection_in_progress = True
-            logging.info(f"🔐 {self.ws_room} Starting re-login sequence (reason: {reason})")
+            logging.warning(f"🔐 {self.ws_room} Starting re-login sequence (reason: {reason})")
         
         try:
-            # Check if we have stored credentials
-            logging.info(f"🔐 {self.ws_room} Re-login credentials check: token={bool(self._access_token)}, email={bool(self._stored_email)}")
-            if not self._access_token:
-                logging.error(f"❌ {self.ws_room} Cannot re-login - no access token stored")
-                return
+            # Check if we have stored credentials for re-login
+            # CRITICAL: We need _stored_ogb_token (API key), NOT _access_token (JWT)
+            # The _access_token is invalid after API restart, but _stored_ogb_token is permanent
+            logging.warning(f"🔐 {self.ws_room} Re-login credentials check: email={bool(self._stored_email)}, ogb_token={bool(self._stored_ogb_token)}")
             
             # Clear old session data to force fresh session
-            logging.info(f"🔑 {self.ws_room} Clearing stale session data: session_id={self._session_id}, has_key={bool(self._session_key)}")
+            logging.warning(f"🔑 {self.ws_room} Clearing stale session data: session_id={self._session_id}, has_key={bool(self._session_key)}")
             self._session_id = None
             self._session_key = None
             self._aes_gcm = None
@@ -2488,7 +2489,7 @@ class OGBWebSocketConManager:
                     if creds:
                         email_to_use = email_to_use or creds.get("email")
                         ogb_token_to_use = ogb_token_to_use or creds.get("token")
-                        logging.info(f"🔐 {self.ws_room} Got credentials from provider: email={bool(email_to_use)}, token={bool(ogb_token_to_use)}")
+                        logging.warning(f"🔐 {self.ws_room} Got credentials from provider: email={bool(email_to_use)}, token={bool(ogb_token_to_use)}")
                 except Exception as e:
                     logging.error(f"❌ {self.ws_room} Error getting credentials from provider: {e}")
             
@@ -2496,7 +2497,7 @@ class OGBWebSocketConManager:
                 logging.error(f"❌ {self.ws_room} Cannot re-login - missing credentials: email={bool(email_to_use)}, token={bool(ogb_token_to_use)}")
                 return
             
-            logging.info(f"🔐 {self.ws_room} Calling _perform_login with email={email_to_use[:3] if email_to_use else 'None'}***, room_id={self.room_id}")
+            logging.warning(f"🔐 {self.ws_room} Calling _perform_login with email={email_to_use[:3] if email_to_use else 'None'}***, room_id={self.room_id}")
             login_success = await self._perform_login(
                 email=email_to_use,
                 OGBToken=ogb_token_to_use,
@@ -2504,15 +2505,15 @@ class OGBWebSocketConManager:
                 room_name=self.ws_room,
                 event_id=self.create_event_id()
             )
-            logging.info(f"🔐 {self.ws_room} _perform_login returned: {login_success}")
+            logging.warning(f"🔐 {self.ws_room} _perform_login returned: {login_success}")
             
             if login_success:
-                logging.info(f"✅ {self.ws_room} Re-login successful! New session obtained.")
+                logging.warning(f"✅ {self.ws_room} Re-login successful! New session obtained.")
                 
                 # Connect WebSocket with new session
                 connect_success = await self._connect_websocket()
                 if connect_success:
-                    logging.info(f"✅ {self.ws_room} Connection successful after re-login")
+                    logging.warning(f"✅ {self.ws_room} Connection successful after re-login")
                     self.ws_reconnect_attempts = 0
                     self._reconnect_delay = 5
                     
