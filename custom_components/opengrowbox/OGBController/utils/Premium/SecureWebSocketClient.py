@@ -1226,6 +1226,50 @@ class OGBWebSocketConManager:
             logging.info(f"🌱 {self.ws_room} Received grow_plans: {data}")
             await self._handle_grow_plans(data)
 
+        # === Subscription Lifecycle Events ===
+        @self.sio.on("subscription_expiring_soon", namespace=ns)
+        async def on_subscription_expiring_soon(data):
+            """Handle subscription expiring warning"""
+            logging.warning(f"⚠️ {self.ws_room} Subscription expiring soon: {data}")
+            await self._handle_subscription_expiring(data)
+
+        @self.sio.on("subscription_expired", namespace=ns)
+        async def on_subscription_expired(data):
+            """Handle subscription expired event"""
+            logging.error(f"🚨 {self.ws_room} Subscription EXPIRED: {data}")
+            await self._handle_subscription_expired(data)
+
+        # === Control Sync Events (from Webapp) ===
+        @self.sio.on("ctrl_change", namespace=ns)
+        async def on_ctrl_change(data):
+            """Handle control mode changes from webapp"""
+            logging.info(f"🎛️ {self.ws_room} Control change from webapp: {data}")
+            await self._handle_ctrl_change(data)
+
+        @self.sio.on("ctrl_values_change", namespace=ns)
+        async def on_ctrl_values_change(data):
+            """Handle control values changes from webapp"""
+            logging.info(f"🎛️ {self.ws_room} Control values change from webapp: {data}")
+            await self._handle_ctrl_values_change(data)
+
+        @self.sio.on("ctrl_value_update", namespace=ns)
+        async def on_ctrl_value_update(data):
+            """Handle individual control value update from webapp"""
+            logging.debug(f"🎛️ {self.ws_room} Control value update: {data}")
+            await self._handle_ctrl_value_update(data)
+
+        @self.sio.on("plant_stage_change", namespace=ns)
+        async def on_plant_stage_change(data):
+            """Handle plant stage change from webapp"""
+            logging.info(f"🌱 {self.ws_room} Plant stage change from webapp: {data}")
+            await self._handle_plant_stage_change(data)
+
+        @self.sio.on("prem_actions", namespace=ns)
+        async def on_prem_actions(data):
+            """Handle premium actions from webapp"""
+            logging.info(f"⚡ {self.ws_room} Premium actions from webapp: {data}")
+            await self._handle_prem_actions(data)
+
         # V1 Debug: Catch ALL events from server (namespace-specific)
         @self.sio.on('*', namespace=ns)
         async def v1_debug_all_events(event, *args):
@@ -1361,6 +1405,152 @@ class OGBWebSocketConManager:
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling grow_plans: {e}")
+
+    # =================================================================
+    # Subscription Lifecycle Handlers
+    # =================================================================
+
+    async def _handle_subscription_expiring(self, data: dict):
+        """Handle subscription expiring soon warning"""
+        try:
+            plan_name = data.get("plan_name", "unknown")
+            expires_in = data.get("expires_in_seconds", 0)
+            
+            logging.warning(
+                f"⚠️ {self.ws_room} Subscription '{plan_name}' expiring in {expires_in}s"
+            )
+            
+            # Emit to HA for Premium Integration to handle
+            await self._safe_emit("SubscriptionExpiringSoon", {
+                "room": self.ws_room,
+                "plan_name": plan_name,
+                "expires_in_seconds": expires_in,
+                "current_period_end": data.get("current_period_end"),
+                "timestamp": data.get("timestamp")
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling subscription_expiring: {e}")
+
+    async def _handle_subscription_expired(self, data: dict):
+        """Handle subscription expired event - downgrade to free"""
+        try:
+            previous_plan = data.get("previous_plan", "unknown")
+            new_plan = data.get("new_plan", "free")
+            
+            logging.error(
+                f"🚨 {self.ws_room} Subscription EXPIRED! {previous_plan} -> {new_plan}"
+            )
+            
+            # Update local state
+            self.is_premium = False
+            
+            # Emit to HA for Premium Integration to handle
+            await self._safe_emit("SubscriptionExpired", {
+                "room": self.ws_room,
+                "previous_plan": previous_plan,
+                "new_plan": new_plan,
+                "expired_at": data.get("expired_at"),
+                "timestamp": data.get("timestamp")
+            }, haEvent=True)
+            
+            # Also emit SubscriptionChanged for feature manager update
+            await self._safe_emit("SubscriptionChanged", {
+                "room": self.ws_room,
+                "plan_name": new_plan,
+                "features": {},  # Free plan has no premium features
+                "limits": {"max_rooms": 1, "max_sessions": 1},
+                "reason": "expired"
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling subscription_expired: {e}")
+
+    # =================================================================
+    # Control Sync Handlers (from Webapp)
+    # =================================================================
+
+    async def _handle_ctrl_change(self, data: dict):
+        """Handle control mode changes from webapp"""
+        try:
+            logging.info(f"🎛️ {self.ws_room} Processing ctrl_change: {data}")
+            
+            # Emit to HA using the existing event name that OGBPremiumIntegration listens for
+            await self._safe_emit("PremUICTRLChange", data, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling ctrl_change: {e}")
+
+    async def _handle_ctrl_values_change(self, data: dict):
+        """Handle control values changes from webapp"""
+        try:
+            logging.info(f"🎛️ {self.ws_room} Processing ctrl_values_change: {data}")
+            
+            # Emit to HA for data store update
+            await self._safe_emit("WebappControlValuesChange", {
+                "room": self.ws_room,
+                "controlOptionData": data.get("controlOptionData"),
+                "isLightON": data.get("isLightON"),
+                "vpd": data.get("vpd"),
+                "source": "webapp"
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling ctrl_values_change: {e}")
+
+    async def _handle_ctrl_value_update(self, data: dict):
+        """Handle individual control value update from webapp"""
+        try:
+            key = data.get("key")
+            value = data.get("value")
+            
+            logging.debug(f"🎛️ {self.ws_room} Control value update: {key}={value}")
+            
+            # Emit to HA for data store update
+            await self._safe_emit("WebappControlValueUpdate", {
+                "room": self.ws_room,
+                "key": key,
+                "value": value,
+                "source": "webapp"
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling ctrl_value_update: {e}")
+
+    async def _handle_plant_stage_change(self, data: dict):
+        """Handle plant stage change from webapp"""
+        try:
+            plant_stage = data.get("plantStage")
+            
+            logging.info(f"🌱 {self.ws_room} Plant stage change: {plant_stage}")
+            
+            # Emit to HA for mode manager to handle
+            await self._safe_emit("WebappPlantStageChange", {
+                "room": self.ws_room,
+                "plantStage": plant_stage,
+                "source": "webapp"
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling plant_stage_change: {e}")
+
+    async def _handle_prem_actions(self, data: dict):
+        """Handle premium actions from webapp"""
+        try:
+            actions = data.get("actions", [])
+            
+            logging.info(f"⚡ {self.ws_room} Premium actions received: {len(actions)} actions")
+            
+            # Emit to HA for action manager to execute
+            await self._safe_emit("WebappPremiumActions", {
+                "room": self.ws_room,
+                "actions": actions,
+                "source": data.get("source", "webapp"),
+                "timestamp": data.get("timestamp")
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling prem_actions: {e}")
 
     async def _handle_session_update(self, data: dict):
         """Handle session updates from server"""
