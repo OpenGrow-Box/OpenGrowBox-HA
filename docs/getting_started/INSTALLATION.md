@@ -110,8 +110,8 @@ services:
 1. **Assign Existing Devices**:
    - Go to your HA devices
    - Add labels to entities:
-     - Temperature sensor: `temperature`
-     - Humidity sensor: `humidity`
+     - Temperature sensor: `Sensor`
+     - Humidity sensor: `Sensor`
      - Heater: `heater`
      - Light: `light`
      - Exhaust fan: `exhaust`
