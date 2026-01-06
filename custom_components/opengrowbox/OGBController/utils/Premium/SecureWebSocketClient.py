@@ -1487,19 +1487,14 @@ class OGBWebSocketConManager:
             logging.info(f"🎛️ {self.ws_room} Processing ctrl_values_change: {data}")
             
             # Emit to HA for data store update
+            # Note: plantStage is handled via ctrl_change -> _handle_ctrl_change path only
             await self._safe_emit("WebappControlValuesChange", {
                 "room": self.ws_room,
                 "controlOptionData": data.get("controlOptionData"),
                 "isLightON": data.get("isLightON"),
                 "vpd": data.get("vpd"),
-                "plantStage": data.get("plantStage"),
                 "source": "webapp"
             }, haEvent=True)
-            
-            # If plantStage is included, also emit dedicated plant stage change event
-            if data.get("plantStage"):
-                logging.info(f"🌱 {self.ws_room} Plant stage in ctrl_values_change: {data.get('plantStage')}")
-                await self._handle_plant_stage_change({"plantStage": data.get("plantStage")})
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling ctrl_values_change: {e}")
@@ -1512,13 +1507,8 @@ class OGBWebSocketConManager:
             
             logging.debug(f"🎛️ {self.ws_room} Control value update: {key}={value}")
             
-            # Special handling for plantStage - route to dedicated handler
-            if key == "plantStage" and value:
-                logging.info(f"🌱 {self.ws_room} PlantStage via ctrl_value_update: {value}")
-                await self._handle_plant_stage_change({"plantStage": value})
-                return
-            
             # Emit to HA for data store update
+            # Note: plantStage is handled via ctrl_change -> _handle_ctrl_change path only
             await self._safe_emit("WebappControlValueUpdate", {
                 "room": self.ws_room,
                 "key": key,
