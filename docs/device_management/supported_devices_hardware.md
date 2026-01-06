@@ -684,11 +684,13 @@ await ogb.bulk_device_control([
 - `fan.*` - Exhaust fans, intake fans, ventilation systems
 - `humidifier.*` - Humidifiers, dehumidifiers
 - `irrigation.*` - Irrigation systems, sprinkler controllers
+- `number.*` - FridgeGrow/Plantalytix devices (0-1 scale), dimmable controls
 
 **Integration Methods:**
 - **ESPHome**: Custom firmware for ESP32/RPi
 - **Zigbee/Z-Wave**: Wireless mesh networks
 - **WiFi**: Shelly, Sonoff, Tuya devices
+- **MQTT**: FridgeGrow, Plantalytix devices, custom controllers
 - **Ethernet**: Modbus, BACnet industrial devices
 - **Cloud**: Google Nest, Philips Hue, smart home ecosystems
 
