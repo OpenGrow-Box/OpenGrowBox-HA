@@ -41,6 +41,11 @@ class Light(Device):
         self.isInitialized = False
         self.voltageFromNumber = False
 
+        # Initialize attributes used in __repr__
+        self.islightON = None
+        self.ogbLightControl = None
+        self.vpdLightControl = None
+
     def save_voltage(self):
         """Save current voltage to DataStore for persistence across restarts."""
         if self.isDimmable and self.voltage is not None:
