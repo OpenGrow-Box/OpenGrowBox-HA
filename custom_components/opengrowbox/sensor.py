@@ -12,7 +12,7 @@ from .premium_entities import should_register_premium_entity
 _LOGGER = logging.getLogger(__name__)
 
 
-class CustomSensor(Entity):
+class CustomSensor(RestoreEntity):
     """Custom sensor for multiple hubs with update capability and graph support."""
 
     def __init__(
@@ -94,6 +94,46 @@ class CustomSensor(Entity):
         self._state = new_state
         _LOGGER.debug(f"🔄 SENSOR UPDATE: {self._name} changed from {old_state} to {new_state}")
         self.async_write_ha_state()
+
+    async def async_added_to_hass(self):
+        """Restore last known state on startup."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+
+        if last_state and last_state.state is not None:
+            try:
+                # Attempt to restore the previous state
+                restored_value = last_state.state
+
+                # For numeric sensors, validate and convert
+                if self._device_class in ["temperature", "humidity", "vpd", "ppfd", "dli"]:
+                    try:
+                        # Try to convert to float for numeric sensors
+                        restored_value = float(restored_value)
+                    except (ValueError, TypeError):
+                        _LOGGER.warning(
+                            f"Could not convert restored value to float for '{self._name}': {restored_value}"
+                        )
+                        restored_value = self._state  # Keep initial value
+
+                # Only update if current state is None (initial state)
+                if self._state is None:
+                    self._state = restored_value
+                    _LOGGER.info(
+                        f"✅ RESTORED: '{self._name}' state restored to: {restored_value}"
+                    )
+                else:
+                    _LOGGER.debug(
+                        f"ℹ️ SKIP: '{self._name}' has initial value {self._state}, not restoring"
+                    )
+            except Exception as e:
+                _LOGGER.error(
+                    f"❌ ERROR: Failed to restore state for '{self._name}': {e}"
+                )
+        else:
+            _LOGGER.debug(
+                f"ℹ️ FIRST_RUN: No previous state found for '{self._name}' (using initial value: {self._state})"
+            )
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
