@@ -16,7 +16,7 @@ class CustomSensor(RestoreEntity):
     """Custom sensor for multiple hubs with update capability and graph support."""
 
     def __init__(
-        self, name, room_name, coordinator, initial_value=None, device_class=None
+        self, name, room_name, coordinator, initial_value=None, device_class=None, should_restore=True
     ):
         """Initialize the sensor."""
 
@@ -27,6 +27,7 @@ class CustomSensor(RestoreEntity):
         self._device_class = device_class  # e.g., temperature, humidity, light
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
         self._attr_unique_id = self._unique_id
+        self._should_restore = should_restore  # Control state restoration
 
     @property
     def unique_id(self):
@@ -116,8 +117,8 @@ class CustomSensor(RestoreEntity):
                         )
                         restored_value = self._state  # Keep initial value
 
-                # Only update if current state is None (initial state)
-                if self._state is None:
+                # Only update if current state is None (initial state) AND restoration is enabled
+                if self._state is None and self._should_restore:
                     self._state = restored_value
                     _LOGGER.info(
                         f"✅ RESTORED: '{self._name}' state restored to: {restored_value}"
@@ -171,6 +172,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=None,
             device_class="vpd",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_AVGTemperature_{coordinator.room_name}",
@@ -178,6 +180,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=None,
             device_class="temperature",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_AVGDewpoint_{coordinator.room_name}",
@@ -185,6 +188,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=None,
             device_class="temperature",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_AVGHumidity_{coordinator.room_name}",
@@ -192,6 +196,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=None,
             device_class="humidity",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_Current_VPD_Target_{coordinator.room_name}",
@@ -221,6 +226,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="temperature",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_AmbientDewpoint_{coordinator.room_name}",
@@ -228,6 +234,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="temperature",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_AmbientHumidity_{coordinator.room_name}",
@@ -235,6 +242,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="humidity",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         # Outside Sensors
         CustomSensor(
@@ -243,6 +251,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="temperature",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_OutsiteDewpoint_{coordinator.room_name}",
@@ -250,6 +259,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="temperature",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_OutsiteHumidity_{coordinator.room_name}",
@@ -257,6 +267,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="humidity",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         # Light Sensors
         CustomSensor(
@@ -265,6 +276,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="ppfd",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         CustomSensor(
             f"OGB_DLI_{coordinator.room_name}",
@@ -272,6 +284,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             initial_value=0.0,
             device_class="dli",
+            should_restore=False,  # Live measurement sensor - don't restore
         ),
         # PlantTimeSensors
         CustomSensor(
