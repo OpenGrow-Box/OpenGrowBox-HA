@@ -667,7 +667,9 @@ class Light(Device):
                 f"{self.deviceName}: Start SunRise von {self.initVoltage}% bis {self.maxVoltage}%"
             )
 
-            start_voltage = self.initVoltage
+            start_voltage = (
+                self.voltage if self.voltage is not None else self.maxVoltage
+            )
             target_voltage = self.maxVoltage
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10

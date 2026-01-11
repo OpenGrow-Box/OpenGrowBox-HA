@@ -240,7 +240,7 @@ class OGBPremiumIntegration:
     def _setup_event_listeners(self):
         """Setup Home Assistant event listeners."""
         # Authentication events
-        self.hass.bus.async_listen("ogb_premium_devlogin", self._on_prem_dev_login)
+
         self.hass.bus.async_listen("ogb_premium_login", self._on_prem_login)
         self.hass.bus.async_listen("ogb_premium_logout", self._on_prem_logout)
         self.hass.bus.async_listen("ogb_premium_get_profile", self._get_user_profile)
@@ -1178,42 +1178,6 @@ class OGBPremiumIntegration:
             _LOGGER.error(f"❌ {self.room} Error fetching subscription data from API: {e}")
             return {}
 
-    async def _on_prem_dev_login(self, event):
-        """Enhanced dev login handler."""
-        try:
-            if self.room != event.data.get("room"):
-                return
-
-            email = event.data.get("email")
-            ogbAccessToken = event.data.get("ogbAccessToken")
-            ogbBetaToken = event.data.get("ogbBetaToken")
-            event_id = event.data.get("event_id")
-
-            success = await self.ogb_ws._perform_dev_login(
-                email=email,
-                ogbAccessToken=ogbAccessToken,
-                ogbBetaToken=ogbBetaToken,
-                room_id=self.room_id,
-                room_name=self.room,
-                event_id=event_id,
-                auth_callback=self._send_auth_response
-            )
-
-            if success:
-                user_info = self.ogb_ws.get_user_info()
-                self.subscription_data = user_info["subscription_data"]
-                self.user_id = user_info["user_id"]
-                self.is_premium = user_info["is_premium"]
-                self.is_logged_in = user_info["is_logged_in"]
-            else:
-                self.is_premium_selected = False
-                _LOGGER.error(f"❌ {self.room} Premium login failed")
-
-        except Exception as e:
-            self.is_premium_selected = False
-            _LOGGER.error(f"❌ {self.room} Premium login error: {e}")
-        finally:
-            self._login_in_progress = False
 
     async def _on_prem_login(self, event):
         """Enhanced login handler using integrated client."""
@@ -1285,6 +1249,8 @@ class OGBPremiumIntegration:
                 self.is_premium_selected = False
                 _LOGGER.error(f"❌ {self.room} WebSocket connection failed")
                 # Auth response will be sent by the auth callback
+
+            self.event_manager.emit("DataRelease",True)
 
         except Exception as e:
             self.is_premium_selected = False
@@ -1823,28 +1789,6 @@ class OGBPremiumIntegration:
     # GROW DATA
     # =================================================================
 
-    async def _send_ai_learn_data(self, grow_data):
-        """Send grow data to AI learning webhook.
-        
-        Note: This is optional - if the webhook is not available, we just log and continue.
-        """
-        import aiohttp
-        # TODO: Make this configurable or get from API
-        webhook_url = "https://brain.azzitech.io/webhook-test/ogb/ai-learning"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(webhook_url, json=grow_data, timeout=10) as resp:
-                    if resp.status == 200:
-                        _LOGGER.debug("Grow data sent successfully to AI Learning Webhook")
-                        return True
-                    else:
-                        # Don't spam logs - this is optional functionality
-                        _LOGGER.debug(f"AI Learning Webhook returned status: {resp.status}")
-                        return False
-        except Exception as e:
-            # Don't spam logs - webhook might not be available
-            _LOGGER.debug(f"AI Learning Webhook not available: {e}")
-            return False
 
     async def _send_growdata_to_prem_api(self, event):
         """Send grow data to Premium API.
@@ -1935,10 +1879,6 @@ class OGBPremiumIntegration:
                 except:
                     pass
 
-        # Send to AI learning webhook if enabled
-        aiLearningActive = self.data_store.getDeep("controlOptions.aiLearning")
-        if aiLearningActive:
-            await self._send_ai_learn_data(grow_data)
 
         # V1-specific checks
         aes_status = getattr(self.ogb_ws, '_aes_gcm', None) is not None
