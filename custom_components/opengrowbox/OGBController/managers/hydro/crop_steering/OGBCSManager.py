@@ -295,18 +295,22 @@ class OGBCSManager:
             # CRITICAL: Reset debounce so next mode change works immediately
             self._last_mode_change_mode = None
             self._last_mode_change_time = None
-            # CRITICAL: Reset P1 state tracking so next Automatic start irrigates immediately
+            # CRITICAL: Reset P1/P2/P3 state tracking so next Automatic start operates immediately
             self._reset_p1_state_tracking()
+            self._reset_p2_state_tracking()
+            self._reset_p3_state_tracking()
             return
-            
+
         if mode == CSMode.CONFIG:
             _LOGGER.debug(f"{self.room} - CropSteering CONFIG mode - stopping operations")
             await self._force_stop_all()
             # CRITICAL: Reset debounce so next mode change works immediately
             self._last_mode_change_mode = None
             self._last_mode_change_time = None
-            # CRITICAL: Reset P1 state tracking so next Automatic start irrigates immediately
+            # CRITICAL: Reset P1/P2/P3 state tracking so next Automatic start operates immediately
             self._reset_p1_state_tracking()
+            self._reset_p2_state_tracking()
+            self._reset_p3_state_tracking()
             return
 
         # ===== STEP 3: For RUN modes, validate environment =====
@@ -527,6 +531,26 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.p1_irrigation_count", 0)
         self.data_store.setDeep("CropSteering.p1_last_vwc", None)
         self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
+
+    def _reset_p3_state_tracking(self):
+        """Reset P3 state tracking variables.
+
+        Called when entering Config/Disabled mode or when P3 phase is left,
+        so that when P3 starts again, emergency irrigation can start fresh.
+        """
+        _LOGGER.debug(f"{self.room} - Resetting P3 state tracking")
+        self.data_store.setDeep("CropSteering.p3_emergency_count", 0)
+        self.data_store.setDeep("CropSteering.p3_last_emergency_time", None)
+
+    def _reset_p2_state_tracking(self):
+        """Reset P2 state tracking variables.
+
+        Called when entering Config/Disabled mode or when P2 phase is left,
+        so that when P2 starts again, it will check immediately
+        instead of waiting for the remaining interval time.
+        """
+        _LOGGER.debug(f"{self.room} - Resetting P2 state tracking (checks will start fresh)")
+        self.data_store.setDeep("CropSteering.p2_last_check_time", None)
 
     # ==================== MODE PARSING ====================
 
@@ -1429,12 +1453,22 @@ class OGBCSManager:
             # Time for next shot!
             await self._irrigate(duration=shot_duration)
 
-            # Update state
+            # CRITICAL: Check if target reached after irrigation
+            current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+            if current_vwc >= target_max:
+                _LOGGER.info(
+                    f"{self.room} - P1: Target reached after irrigation! "
+                    f"VWC {current_vwc:.1f}% >= {target_max:.1f}% → Switching to P2"
+                )
+                await self._complete_p1_saturation(current_vwc, target_max, success=True)
+                return
+
+            # Update state only if target not yet reached
             p1_irrigation_count += 1
             self.data_store.setDeep(
                 "CropSteering.p1_irrigation_count", p1_irrigation_count
             )
-            self.data_store.setDeep("CropSteering.p1_last_vwc", vwc)
+            self.data_store.setDeep("CropSteering.p1_last_vwc", current_vwc)
             self.data_store.setDeep("CropSteering.p1_last_irrigation_time", now)
 
             # Calculate next shot time
@@ -1445,12 +1479,12 @@ class OGBCSManager:
                 {
                     "Name": self.room,
                     "Type": "CSLOG",
-                    "Message": f"P1 Shot {p1_irrigation_count}/{max_cycles} → VWC: {vwc:.1f}% (target: {target_max:.1f}%) | Duration: {shot_duration}s | Next in: {next_shot_min:.0f}min",
+                    "Message": f"P1 Shot {p1_irrigation_count}/{max_cycles} → VWC: {current_vwc:.1f}% (target: {target_max:.1f}%) | Duration: {shot_duration}s | Next in: {next_shot_min:.0f}min",
                 },
                 haEvent=True,
             )
             _LOGGER.info(
-                f"{self.room} - P1: Shot {p1_irrigation_count}/{max_cycles}, VWC={vwc:.1f}%, duration={shot_duration}s, next in {next_shot_min:.0f}min"
+                f"{self.room} - P1: Shot {p1_irrigation_count}/{max_cycles}, VWC={current_vwc:.1f}%, duration={shot_duration}s, next in {next_shot_min:.0f}min"
             )
         else:
             # Not time yet - log waiting status
@@ -1495,52 +1529,82 @@ class OGBCSManager:
     async def _handle_phase_p2_auto(self, vwc, ec, is_light_on, preset):
         """
         P2: Maintenance phase - Maintain level during light phase
-        WITH STAGE-CHECKER for light change
+        WITH STAGE-CHECKER for light change and user-configurable timing
         """
         # Get USER timing settings for P2
         timing_settings = self._get_automatic_timing_settings("p2")
         shot_duration = timing_settings["ShotDuration"]
-        
-        if is_light_on:
-            # Normal day maintenance
-            
-            # Use calibrated max if available
-            calibrated_max = self.data_store.getDeep(
-                f"CropSteering.Calibration.p1.VWCMax"
+        check_interval_minutes = timing_settings["ShotIntervall"]  # User-configurable check interval
+        check_interval_seconds = check_interval_minutes * 60
+
+        # === P2 State Tracking ===
+        p2_last_check_time = self.data_store.getDeep("CropSteering.p2_last_check_time")
+        now = datetime.now()
+
+        # Initialize on first entry into P2
+        if p2_last_check_time is None:
+            self.data_store.setDeep(
+                "CropSteering.p2_last_check_time",
+                now - timedelta(seconds=check_interval_seconds)  # Allow immediate first check
             )
-            effective_max = (
-                float(calibrated_max) if calibrated_max else preset["VWCMax"]
-            )
-            
-            hold_threshold = effective_max * preset.get("hold_percentage", 0.95)
-            
-            if vwc < hold_threshold:
-                await self._irrigate(duration=shot_duration)
-                await self.event_manager.emit(
-                    "LogForClient",
-                    {
-                        "Name": self.room,
-                        "Type": "CSLOG",
-                        "Message": f"P2 Maintenance: VWC {vwc:.1f}% < Hold {hold_threshold:.1f}% → Irrigation",
-                    },
-                    haEvent=True,
+            p2_last_check_time = now - timedelta(seconds=check_interval_seconds)
+
+        # Check if it's time for P2 maintenance check
+        time_since_last_check = (now - p2_last_check_time).total_seconds()
+
+        if time_since_last_check >= check_interval_seconds:
+            # Time for P2 check - update timestamp
+            self.data_store.setDeep("CropSteering.p2_last_check_time", now)
+
+            if is_light_on:
+                # Normal day maintenance
+
+                # Use calibrated max if available
+                calibrated_max = self.data_store.getDeep(
+                    f"CropSteering.Calibration.p2.VWCMax"
                 )
-                _LOGGER.info(
-                    f"{self.room} - P2: Irrigated (VWC {vwc:.1f}% < {hold_threshold:.1f}%)"
+                effective_max = (
+                    float(calibrated_max) if calibrated_max else preset["VWCMax"]
                 )
+
+                hold_threshold = effective_max * preset.get("hold_percentage", 0.95)
+
+                if vwc < hold_threshold:
+                    await self._irrigate(duration=shot_duration)
+                    await self.event_manager.emit(
+                        "LogForClient",
+                        {
+                            "Name": self.room,
+                            "Type": "CSLOG",
+                            "Message": f"P2 Maintenance: VWC {vwc:.1f}% < Hold {hold_threshold:.1f}% → Irrigation",
+                        },
+                        haEvent=True,
+                    )
+                    _LOGGER.info(
+                        f"{self.room} - P2: Irrigated (VWC {vwc:.1f}% < {hold_threshold:.1f}%)"
+                    )
+                else:
+                    # Debug: Show status in P2
+                    _LOGGER.debug(
+                        f"{self.room} - P2 maintenance: VWC {vwc:.1f}% (hold at {hold_threshold:.1f}%, OK)"
+                    )
             else:
-                # Debug: Show status in P2
-                _LOGGER.debug(
-                    f"{self.room} - P2 maintenance: VWC {vwc:.1f}% (hold at {hold_threshold:.1f}%, OK)"
+                # STAGE-CHECKER: Light is off -> Switch to P3
+                _LOGGER.info(f"{self.room} - P2: Light OFF → Switching to P3")
+                # Reset P2 state tracking before leaving phase
+                self._reset_p2_state_tracking()
+                self.data_store.setDeep("CropSteering.CropPhase", "p3")
+                self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+                self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+                await self._log_phase_change(
+                    "p2", "p3", f"Night begins - Starting VWC: {vwc:.1f}%"
                 )
         else:
-            # STAGE-CHECKER: Light is off -> Switch to P3
-            _LOGGER.info(f"{self.room} - P2: Light OFF → Switching to P3")
-            self.data_store.setDeep("CropSteering.CropPhase", "p3")
-            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
-            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-            await self._log_phase_change(
-                "p2", "p3", f"Night begins - Starting VWC: {vwc:.1f}%"
+            # Not time for check yet - log waiting status
+            time_until_next_check = check_interval_seconds - time_since_last_check
+            _LOGGER.debug(
+                f"{self.room} - P2: Waiting for next check, {time_until_next_check:.0f}s remaining "
+                f"(interval: {check_interval_minutes:.0f}min)"
             )
 
     async def _handle_phase_p3_auto(self, vwc, ec, is_light_on, preset):
@@ -1612,7 +1676,7 @@ class OGBCSManager:
 
             # Emergency irrigation if too dry
             calibrated_max = self.data_store.getDeep(
-                f"CropSteering.Calibration.p1.VWCMax"
+                f"CropSteering.Calibration.p3.VWCMax"
             )
             effective_max = (
                 float(calibrated_max) if calibrated_max else preset["VWCMax"]
@@ -1620,13 +1684,31 @@ class OGBCSManager:
 
             emergency_level = effective_max * preset.get("emergency_threshold", 0.90)
             if vwc < emergency_level:
+                # Get USER timing settings for P3 Emergency irrigation
+                timing_settings = self._get_automatic_timing_settings("p3")
+                max_emergency = timing_settings["ShotSum"]  # User-configurable max shots
+                emergency_shot_duration = timing_settings["ShotDuration"]  # User-configurable duration
+                emergency_interval_minutes = timing_settings["ShotIntervall"]  # User-configurable interval between shots
+                emergency_interval_seconds = emergency_interval_minutes * 60
+
                 p3_emergency_count = (
                     self.data_store.getDeep("CropSteering.p3_emergency_count") or 0
                 )
-                max_emergency = preset.get("max_emergency_shots", 2)
-                emergency_shot_duration = preset.get("irrigation_duration", 30)
-                
-                if p3_emergency_count < max_emergency:
+                p3_last_emergency_time = self.data_store.getDeep("CropSteering.p3_last_emergency_time")
+                now = datetime.now()
+
+                # Initialize emergency state on first emergency
+                if p3_last_emergency_time is None:
+                    self.data_store.setDeep(
+                        "CropSteering.p3_last_emergency_time",
+                        now - timedelta(seconds=emergency_interval_seconds)  # Allow immediate first emergency
+                    )
+                    p3_last_emergency_time = now - timedelta(seconds=emergency_interval_seconds)
+
+                # Check if enough time has passed since last emergency
+                time_since_last_emergency = (now - p3_last_emergency_time).total_seconds()
+
+                if p3_emergency_count < max_emergency and time_since_last_emergency >= emergency_interval_seconds:
                     await self._irrigate(
                         duration=emergency_shot_duration,
                         is_emergency=True,
@@ -1634,17 +1716,18 @@ class OGBCSManager:
                     self.data_store.setDeep(
                         "CropSteering.p3_emergency_count", p3_emergency_count + 1
                     )
+                    self.data_store.setDeep("CropSteering.p3_last_emergency_time", now)
                     await self.event_manager.emit(
                         "LogForClient",
                         {
                             "Name": self.room,
                             "Type": "CSLOG",
-                            "Message": f"P3 Emergency irrigation {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}%",
+                            "Message": f"P3 Emergency irrigation {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s)",
                         },
                         haEvent=True,
                     )
                     _LOGGER.warning(
-                        f"{self.room} - P3: Emergency irrigation {p3_emergency_count + 1}/{max_emergency} (VWC {vwc:.1f}% < {emergency_level:.1f}%)"
+                        f"{self.room} - P3: Emergency irrigation {p3_emergency_count + 1}/{max_emergency} (VWC {vwc:.1f}% < {emergency_level:.1f}%, duration: {emergency_shot_duration}s)"
                     )
                 else:
                     _LOGGER.warning(
@@ -1661,6 +1744,8 @@ class OGBCSManager:
             _LOGGER.info(
                 f"{self.room} - P3: Light ON → Switching to P0 (Dryback was {current_dryback:.1f}%)"
             )
+            # Reset P3 state tracking before leaving phase
+            self._reset_p3_state_tracking()
             self.data_store.setDeep("CropSteering.CropPhase", "p0")
             self.data_store.setDeep(
                 "CropSteering.startNightMoisture", None
