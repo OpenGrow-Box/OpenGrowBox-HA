@@ -107,9 +107,6 @@ class Light(Device):
         self.event_manager.on("resumeSunPhase", self.resume_sun_phases)
         self.event_manager.on("stopSunPhase", self.stop_sun_phases)
         self.event_manager.on("DLIUpdate", self.updateLight)
-        
-        # Listen to own device state changes for immediate schedule enforcement
-        self.event_manager.on("DeviceStateUpdate", self.handle_light_state_change)
 
     def save_voltage(self):
         """Save current voltage to DataStore for persistence across restarts."""
@@ -117,56 +114,7 @@ class Light(Device):
             self.data_store.setDeep(f"devices.{self.deviceName}.lastVoltage", self.voltage)
             _LOGGER.debug(f"{self.deviceName}: Saved voltage {self.voltage}% to DataStore")
 
-    async def handle_light_state_change(self, updateData):
-        """Immediately enforce light schedule when device state changes in HA."""
-        entity_id = updateData.get("entity_id", "")
-        
-        # Only process our own light/switch entities
-        if not any(prefix in entity_id for prefix in ["light.", "switch."]):
-            return
-            
-        # Check if entity belongs to this device
-        my_entities = [e.get("entity_id") for e in self.switches]
-        if entity_id not in my_entities:
-            return
-        
-        # Update parent device state first (use camelCase method name)
-        await super().deviceUpdate(updateData)
-        
-        # Check if OGB light control is enabled
-        ogb_control = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
-        if not ogb_control:
-            return
-        
-        # Get light schedule times
-        light_on_time_str = self.dataStore.getDeep("isPlantDay.lightOnTime")
-        light_off_time_str = self.dataStore.getDeep("isPlantDay.lightOffTime")
-        
-        if not light_on_time_str or not light_off_time_str:
-            return
-        
-        try:
-            from datetime import datetime
-            light_on_time = datetime.strptime(light_on_time_str, "%H:%M:%S").time()
-            light_off_time = datetime.strptime(light_off_time_str, "%H:%M:%S").time()
-            current_time = datetime.now().time()
-            
-            # Calculate if light should be on based on schedule
-            if light_on_time < light_off_time:
-                should_be_on = light_on_time <= current_time < light_off_time
-            else:
-                should_be_on = current_time >= light_on_time or current_time < light_off_time
-            
-            # If state doesn't match schedule, trigger immediate correction
-            if self.isRunning != should_be_on:
-                _LOGGER.warning(
-                    f"{self.deviceName}: Manual override detected! "
-                    f"isRunning={self.isRunning} but schedule says should_be_on={should_be_on}. "
-                    f"Enforcing schedule NOW..."
-                )
-                await self.toggleLight(should_be_on)
-        except Exception as e:
-            _LOGGER.error(f"{self.deviceName}: Error enforcing light schedule: {e}")
+
 
     def __repr__(self):
         return (
@@ -305,22 +253,19 @@ class Light(Device):
         self._apply_plant_stage_minmax(plantStage)
 
     def initialize_voltage(self):
-        """Initialisiert den Voltage auf gespeicherten Wert oder MinVoltage."""
-        if self.islightON:
-            # Try to load saved voltage first
-            saved_voltage = self.data_store.getDeep(f"devices.{self.deviceName}.lastVoltage")
-            if saved_voltage is not None:
-                try:
-                    self.voltage = float(saved_voltage)
-                    _LOGGER.debug(f"{self.deviceName}: Using saved voltage {self.voltage}%")
-                    return
-                except (ValueError, TypeError):
-                    _LOGGER.warning(f"{self.deviceName}: Invalid saved voltage, using default")
+        """Initialisiert den Voltage auf gespeicherten Wert oder initVoltage."""
+        saved_voltage = self.data_store.getDeep(f"devices.{self.deviceName}.lastVoltage")
+        if saved_voltage is not None:
+            try:
+                self.voltage = float(saved_voltage)
+                _LOGGER.debug(f"{self.deviceName}: Restored voltage {self.voltage}% from saved value")
+                return
+            except (ValueError, TypeError):
+                _LOGGER.warning(f"{self.deviceName}: Invalid saved voltage '{saved_voltage}', using default")
 
-            # Fallback to default
-            self.voltage = self.initVoltage
-        else:
-            self.voltage = 0
+        # Fallback: Immer initVoltage verwenden, nicht 0
+        self.voltage = self.initVoltage  # 20%
+        _LOGGER.debug(f"{self.deviceName}: Using initVoltage {self.voltage}%")
 
     def setLightTimes(self):
 
@@ -529,25 +474,25 @@ class Light(Device):
                 now = datetime.now().time()
 
                 # Verbesserte Logging für bessere Diagnose
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: Prüfe Sonnenphasen - Aktuelle Zeit: {now}"
                 )
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: LightOn: {self.islightON}, SunPhaseActive: {self.sunPhaseActive}"
                 )
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: LightOnTime: {self.lightOnTime}, LightOffTime: {self.lightOffTime}"
                 )
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: SunRiseDuration: {self.sunRiseDuration} Sek ({self.sunRiseDuration/60} Min)"
                 )
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: SunSetDuration: {self.sunSetDuration} Sek ({self.sunSetDuration/60} Min)"
                 )
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: Sunrise_phase_active: {self.sunrise_phase_active}, Sunset_phase_active: {self.sunset_phase_active}"
                 )
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: SunPhasePaused: {self.sun_phase_paused}"
                 )
 
@@ -557,13 +502,13 @@ class Light(Device):
                     in_sunrise_window = self._in_window(
                         now, self.lightOnTime, sunRiseDuration_minutes, is_sunset=False
                     )
-                    _LOGGER.debug(
+                    _LOGGER.warning(
                         f"{self.deviceName}: Im SunRisesfenster: {in_sunrise_window}"
                     )
 
                     if in_sunrise_window and self.islightON:
                         if not self.sunrise_phase_active:
-                            _LOGGER.debug(f"{self.deviceName}: Start SunRisesphase")
+                            _LOGGER.warning(f"{self.deviceName}: Start SunRisesphase")
                             self.sunrise_phase_active = True
                             self.start_sunrise_task()
                     elif not in_sunrise_window:
@@ -571,7 +516,7 @@ class Light(Device):
                         if self.sunrise_phase_active and (
                             self.sunrise_task is None or self.sunrise_task.done()
                         ):
-                            _LOGGER.debug(
+                            _LOGGER.warning(
                                 f"{self.deviceName}: SunRisesfenster verlassen und Task beendet - reset Phase"
                             )
                             self.sunrise_phase_active = False
@@ -628,7 +573,7 @@ class Light(Device):
         """Creates a new sunrise task if one isn't already running."""
         if self.sunrise_task is None or self.sunrise_task.done():
             self.sunrise_task = asyncio.create_task(self._run_sunrise())
-            _LOGGER.info(f"{self.deviceName}: Created new sunrise task")
+            _LOGGER.debug(f"{self.deviceName}: Created new sunrise task")
         else:
             _LOGGER.debug(
                 f"{self.deviceName}: Sunrise task already running, not starting a new one"
@@ -648,28 +593,22 @@ class Light(Device):
         """Führt die SunRisessequenz als separate Task aus."""
         try:
             if not self.isDimmable or not self.islightON:
-                _LOGGER.debug(
-                    f"{self.deviceName}: SunRise kann nicht ausgeführt werden - isDimmable: {self.isDimmable}, islightON: {self.islightON}"
-                )
+                _LOGGER.debug(f"{self.deviceName}: SunRise kann nicht ausgeführt werden - isDimmable: {self.isDimmable}, islightON: {self.islightON}")
                 return
 
             if self.maxVoltage is None:
-                _LOGGER.debug(
-                    f"{self.deviceName}: maxVoltage nicht gesetzt. SunRise abgebrochen."
-                )
+                _LOGGER.debug(f"{self.deviceName}: maxVoltage nicht gesetzt. SunRise abgebrochen.")
                 return
+
 
             if self.sun_phase_paused:
                 return
+        
 
             self.sunPhaseActive = True
-            _LOGGER.debug(
-                f"{self.deviceName}: Start SunRise von {self.initVoltage}% bis {self.maxVoltage}%"
-            )
+            _LOGGER.debug(f"{self.deviceName}: Start SunRise von {self.initVoltage}% bis {self.maxVoltage}%")
 
-            start_voltage = (
-                self.voltage if self.voltage is not None else self.maxVoltage
-            )
+            start_voltage = self.initVoltage
             target_voltage = self.maxVoltage
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10
@@ -677,43 +616,24 @@ class Light(Device):
             for i in range(1, 11):
                 # Check if we should continue with sunrise
                 if not self.islightON:
-                    _LOGGER.debug(
-                        f"{self.deviceName}: SunRise abgebrochen - Licht ausgeschaltet"
-                    )
+                    _LOGGER.debug(f"{self.deviceName}: SunRise abgebrochen - Licht ausgeschaltet")
                     break
-
+                
                 # Warten falls pausiert
                 if self.sun_phase_paused:
                     await self._wait_if_paused()
                 else:
                     await asyncio.sleep(step_duration)
-                    next_voltage = min(
-                        start_voltage + (voltage_step * i), target_voltage
-                    )
-                    self.voltage = round(next_voltage, 1)
-                    self.save_voltage()
+                    next_voltage = min(start_voltage + (voltage_step * i), target_voltage)
+                    self.voltage = round(next_voltage,1)
                     message = f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
-                    lightAction = OGBLightAction(
-                        Name=self.inRoom,
-                        Device=self.deviceName,
-                        Type=self.deviceType,
-                        Action="ON",
-                        Message=message,
-                        Voltage=self.voltage,
-                        Dimmable=True,
-                        SunRise=self.sunrise_phase_active,
-                        SunSet=self.sunset_phase_active,
-                    )
-                    await self.event_manager.emit(
-                        "LogForClient", lightAction, haEvent=True
-                    )
-                    _LOGGER.debug(
-                        f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
-                    )
+                    lightAction = OGBLightAction(Name=self.inRoom,Device=self.deviceName,Type=self.deviceType,Action="ON",Message=message,Voltage=self.voltage,Dimmable=True,SunRise=self.sunrise_phase_active,SunSet=self.sunset_phase_active)
+                    await self.eventManager.emit("LogForClient",lightAction,haEvent=True)
+                    _LOGGER.debug(f"{self.deviceName}: SunRise Step {i}: {self.voltage}%")
                     await self.turn_on(brightness_pct=self.voltage)
 
             _LOGGER.debug(f"{self.deviceName}: SunRise finished")
-
+            
         except asyncio.CancelledError:
             _LOGGER.debug(f"{self.deviceName}: SunRise has stopped")
             raise  # Re-raise to properly handle cancellation
@@ -722,15 +642,13 @@ class Light(Device):
         finally:
             # Immer sunPhaseActive zurücksetzen, aber sunrise_phase_active bleibt bis das Fenster verlassen wird
             self.sunPhaseActive = False
-            _LOGGER.debug(
-                f"{self.deviceName}: SunRise Task finished, sunPhaseActive=False"
-            )
+            _LOGGER.debug(f"{self.deviceName}: SunRise Task finished, sunPhaseActive=False")
 
     async def _run_sunset(self):
         """Führt die Sonnenuntergangssequenz als separate Task aus."""
         try:
             if not self.isDimmable or not self.islightON:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.deviceName}: Sonnenuntergang kann nicht ausgeführt werden - isDimmable: {self.isDimmable}, islightON: {self.islightON}"
                 )
                 return
@@ -745,7 +663,7 @@ class Light(Device):
             step_duration = self.sunSetDuration / 10
             voltage_step = (start_voltage - target_voltage) / 10
 
-            _LOGGER.debug(
+            _LOGGER.warning(
                 f"{self.deviceName}: Start SunSet {start_voltage}% bis {target_voltage}%"
             )
 
@@ -802,9 +720,7 @@ class Light(Device):
     ## Actions
     async def toggleLight(self, lightState):
         self.islightON = lightState
-        self.ogbLightControl = self.data_store.getDeep(
-            "controlOptions.lightbyOGBControl"
-        )
+        self.ogbLightControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
 
         if not self.ogbLightControl:
             _LOGGER.info(f"{self.deviceName}: OGB control disabled")
@@ -812,67 +728,27 @@ class Light(Device):
 
         if lightState:
             if not self.isRunning:
-                if self.voltage is None or self.voltage == 0:
-                    if not self.isDimmable:
-                        message = "Turn On"
-                        lightAction = OGBLightAction(
-                            Name=self.inRoom,
-                            Device=self.deviceName,
-                            Type=self.deviceType,
-                            Action="ON",
-                            Message=message,
-                            Voltage=self.voltage,
-                            Dimmable=False,
-                            SunRise=self.sunrise_phase_active,
-                            SunSet=self.sunset_phase_active,
-                        )
-                        await self.event_manager.emit(
-                            "LogForClient", lightAction, haEvent=True
-                        )
-                        await self.turn_on()
-                    else:
-                        if int(float(self.voltage)) > 20:
-                            message = "Turn On"
-                            lightAction = OGBLightAction(
-                                Name=self.inRoom,
-                                Device=self.deviceName,
-                                Type=self.deviceType,
-                                Action="ON",
-                                Message=message,
-                                Voltage=self.voltage,
-                                Dimmable=True,
-                                SunRise=self.sunrise_phase_active,
-                                SunSet=self.sunset_phase_active,
-                            )
-                            await self.event_manager.emit(
-                                "LogForClient", lightAction, haEvent=True
-                            )
-                            await self.turn_on(
-                                brightness_pct=self.voltage if self.isDimmable else None
-                            )
-                        else:
-                            message = "Turn On"
-                            lightAction = OGBLightAction(
-                                Name=self.inRoom,
-                                Device=self.deviceName,
-                                Type=self.deviceType,
-                                Action="ON",
-                                Message=message,
-                                Voltage=self.initVoltage,
-                                Dimmable=True,
-                                SunRise=self.sunrise_phase_active,
-                                SunSet=self.sunset_phase_active,
-                            )
-                            await self.event_manager.emit(
-                                "LogForClient", lightAction, haEvent=True
-                            )
-                            await self.turn_on(
-                                brightness_pct=(
-                                    self.initVoltage if self.isDimmable else None
-                                )
-                            )
-                    self.log_action("Turn ON via toggle with InitValue")
+                if not self.isDimmable:
+                    message = "Turn On"
+                    lightAction = OGBLightAction(
+                        Name=self.inRoom,
+                        Device=self.deviceName,
+                        Type=self.deviceType,
+                        Action="ON",
+                        Message=message,
+                        Voltage=self.voltage,
+                        Dimmable=False,
+                        SunRise=self.sunrise_phase_active,
+                        SunSet=self.sunset_phase_active,
+                    )
+                    await self.event_manager.emit(
+                        "LogForClient", lightAction, haEvent=True
+                    )
+                    await self.turn_on()
                 else:
+                    # Fix: Ensure voltage is set to initVoltage for schedule on
+                    if self.voltage is None or self.voltage == 0:
+                        self.voltage = self.initVoltage  # 20%
                     message = "Turn On"
                     lightAction = OGBLightAction(
                         Name=self.inRoom,
@@ -888,10 +764,8 @@ class Light(Device):
                     await self.event_manager.emit(
                         "LogForClient", lightAction, haEvent=True
                     )
-                    await self.turn_on(
-                        brightness_pct=self.voltage if self.isDimmable else None
-                    )
-                    self.log_action("Turn ON via toggle")
+                    await self.turn_on(brightness_pct=self.voltage)  # Explicitly pass brightness_pct
+                self.log_action("Turn ON via toggle")
         else:
             if self.isRunning:
                 self.voltage = 0
@@ -987,7 +861,6 @@ class Light(Device):
             await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
             await self.turn_on(brightness_pct=new_voltage)
 
-    # region DLI Light control
     async def updateLight(self, data=None):
         """Aktualisiert die Lichtdauer basierend auf der DLI"""
         _LOGGER.debug(f"💡 {self.deviceName}: UpdateLight called")
