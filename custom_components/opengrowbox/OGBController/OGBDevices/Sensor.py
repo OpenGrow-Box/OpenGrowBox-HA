@@ -517,7 +517,7 @@ class Sensor:
                         # Need to UPDATE CO2 Funciton here and rebuild co2 logic
                         await self.event_manager.emit("CO2Check", numeric_value)
 
-                    if sensor_config["sensor_type"] == "light":
+                    if sensor_config["sensor_type"] in ("light", "dli", "ppfd"):
                         if "_lumen" in entity_id:
                             unit = "lumen"
                         else:
