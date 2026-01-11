@@ -42,7 +42,6 @@ class OGBWebSocketConManager:
         )
         # V1 API endpoints
         self.login_url = f"{self.api_url}/api/v1/auth/login"
-        self.dev_login_url = f"{self.api_url}/api/v1/auth/devlogin"
         self.profile_url = f"{self.api_url}/api/v1/auth/profile"
         self.timeout = timeout
         self.ogbevents = eventManager
