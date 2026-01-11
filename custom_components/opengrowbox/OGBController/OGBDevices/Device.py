@@ -649,15 +649,22 @@ class Device:
             percentage = kwargs.get("percentage")
             
             # Validate and convert brightness_pct to float (default to 100 if None)
+            _LOGGER.error(f"{self.deviceName}: turn_on called with brightness_pct={brightness_pct}, type={type(brightness_pct)}")
             if brightness_pct is not None:
+                # Handle list case first
+                if isinstance(brightness_pct, list):
+                    brightness_pct = brightness_pct[0] if brightness_pct else 100
                 try:
                     brightness_pct = float(brightness_pct)
+                    # Clamp to valid range
+                    brightness_pct = max(0, min(100, brightness_pct))
                 except (ValueError, TypeError):
                     _LOGGER.warning(f"{self.deviceName}: Invalid brightness_pct value: {brightness_pct}, using 100")
                     brightness_pct = 100.0
             else:
                 # Default to 100% if not specified
                 brightness_pct = 100.0
+            _LOGGER.error(f"{self.deviceName}: turn_on processed brightness_pct={brightness_pct}")
             
             # Validate and convert percentage to float (default to 100 if None)
             if percentage is not None:
@@ -721,6 +728,14 @@ class Device:
             entity_ids = [switch["entity_id"] for switch in self.switches]
 
             for entity_id in entity_ids:
+                # Validate and fix entity_id if it's a list
+                _LOGGER.error(f"{self.deviceName}: Processing entity_id={entity_id}, type={type(entity_id)}")
+                if isinstance(entity_id, list):
+                    entity_id = entity_id[0] if entity_id else "unknown"
+                if not isinstance(entity_id, str):
+                    entity_id = str(entity_id)
+                _LOGGER.error(f"{self.deviceName}: Using entity_id={entity_id}")
+
                 # Climate einschalten
                 if self.deviceType == "Climate":
                     hvac_mode = kwargs.get("hvac_mode", "heat")
@@ -768,7 +783,9 @@ class Device:
                 # Light einschalten (alle Light device types)
                 elif self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"]:
                     if self.isDimmable:
-                        if self.voltageFromNumber and hasattr(self, 'islightON') and self.islightON:
+                        # Prüfe voltageFromNumber Pfad (wie im Original)
+                        if self.voltageFromNumber:
+                            # Original Pfad für Tuya-Geräte: switch + set_value
                             await self.hass.services.async_call(
                                 domain="switch",
                                 service="turn_on",
@@ -776,9 +793,15 @@ class Device:
                             )
                             await self.set_value(float(brightness_pct/10))
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (via Number).")
+                            _LOGGER.debug(f"{self.deviceName}: Light ON (via Number).")
                             return
                         else:
+                            # Standard Pfad: light.turn_on mit brightness_pct (0-100)
+                            if isinstance(brightness_pct, list):
+                                brightness_pct = brightness_pct[0] if brightness_pct else 100
+                            brightness_pct = max(0, min(100, float(brightness_pct)))
+                            brightness_pct = int(brightness_pct)
+                            _LOGGER.error(f"{self.deviceName}: Calling HA light.turn_on with entity_id={entity_id}, brightness_pct={brightness_pct}")
                             await self.hass.services.async_call(
                                 domain="light",
                                 service="turn_on",
@@ -791,13 +814,14 @@ class Device:
                             _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON ({brightness_pct}%).")
                             return
                     else:
+                        # Nicht-dimmable Lichter
                         await self.hass.services.async_call(
                             domain="switch",
                             service="turn_on",
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = True
-                        _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (Switch).")
+                        _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (non-dimmable).")
                         return
 
                 # Exhaust einschalten
