@@ -1,0 +1,181 @@
+# =====================================================
+# DEVICE TYPES REFERENCE
+# =====================================================
+# Alle verfügbaren Device-Labels für OGB-System
+# Kopieren Sie diese Labels in Ihre device-Konfiguration
+# =====================================================
+
+# LIGHT DEVICES
+# =====================================================
+light_main:
+  labels:
+    - "light"  # Generisches Licht-Device
+  device_type: "Light"
+
+light_far_red:
+  labels:
+    - "light_fr"  # Far-Red Spektrum
+    - "farred"
+  device_type: "LightFarRed"
+
+light_uv:
+  labels:
+    - "light_uv"  # UV-Spektrum
+    - "uvlight"
+  device_type: "LightUV"
+
+light_blue:
+  labels:
+    - "light_blue"  # Blau-Spektrum
+    - "blue_led"
+  device_type: "LightBlue"
+
+light_red:
+  labels:
+    - "light_red"  # Rot-Spektrum
+    - "red_led"
+  device_type: "LightRed"
+
+# CLIMATE DEVICES
+# =====================================================
+heater:
+  labels:
+    - "heater"
+    - "heizung"
+  device_type: "Heater"
+
+cooler:
+  labels:
+    - "cooler"
+    - "kuehler"
+  device_type: "Cooler"
+
+climate_control:
+  labels:
+    - "climate"
+    - "klima"
+  device_type: "Climate"
+
+# HUMIDITY DEVICES
+# =====================================================
+humidifier:
+  labels:
+    - "humidifier"
+    - "befeuchter"
+  device_type: "Humidifier"
+
+dehumidifier:
+  labels:
+    - "dehumidifier"
+    - "entfeuchter"
+  device_type: "Dehumidifier"
+
+# VENTILATION DEVICES
+# =====================================================
+exhaust:
+  labels:
+    - "exhaust"
+    - "abluft"
+  device_type: "Exhaust"
+
+intake:
+  labels:
+    - "intake"
+    - "zuluft"
+  device_type: "Intake"
+
+ventilation:
+  labels:
+    - "vent"
+    - "vents"
+    - "venti"
+    - "ventilation"
+    - "inlet"
+  device_type: "Ventilation"
+
+# CO2 DEVICES
+# =====================================================
+co2:
+  labels:
+    - "co2"
+    - "carbon"
+  device_type: "CO2"
+
+# PUMP DEVICES
+# =====================================================
+pump:
+  labels:
+    - "pump"
+  device_type: "Pump"
+
+# SENSOR DEVICES
+# =====================================================
+sensor_main:
+  labels:
+    - "sensor"
+    - "temperature"
+  device_type: "Sensor"
+
+modbus_device:
+  labels:
+    - "modbus"
+    - "modbus_device"
+    - "modbus_rtu"
+    - "modbus_tcp"
+  device_type: "ModbusDevice"
+
+modbus_sensor:
+  labels:
+    - "modbus_sensor"
+    - "modbus_temp"
+    - "modbus_humidity"
+  device_type: "ModbusSensor"
+
+# SPECIAL DEVICES
+# =====================================================
+fridge:
+  labels:
+    - "fridge"
+    - "kuehlschrank"
+  device_type: "Fridge"
+
+fridge_grow:
+  labels:
+    - "fridgegrow"
+    - "plantalytix"
+  device_type: "FridgeGrow"
+
+generic_switch:
+  labels:
+    - "generic"
+    - "switch"
+  device_type: "Switch"
+
+# =====================================================
+# DEVICE COMBINATION EXAMPLES
+# =====================================================
+# Mehrere Device-Typen in einem Device
+# =====================================================
+sensor_with_duty:
+  labels:
+    - "sensor"
+    - "duty"  # Kann auch DutyCycle-Sensor enthalten
+  device_type: "Sensor"  # Erkannt als Sensor
+
+# =====================================================
+# ENTITY NAMING CONVENTIONS
+# =====================================================
+# Gültige Keywords im Entity-Namen:
+# - "_temperature" -> Temperature-Sensor
+# - "_humidity" -> Humidity-Sensor
+# - "_dewpoint" -> Dewpoint-Sensor
+# - "_duty" -> DutyCycle-Entity
+# - "_voltage" -> Voltage/Intensity-Entity
+# - "_co2" oder "_carbondioxide" -> CO2-Sensor
+# - "_lumen", "_lux", "_illuminance", "_intensity" -> Licht-Intensität
+# - "_moisture" -> Feuchte-Sensor
+# - "_ec" -> EC-Sensor
+# - "_ph" -> pH-Sensor
+# - "_conductivity" -> Leitfähigkeit
+# - "_soil", "_water", "_medium" -> Medium-Sensoren
+# =====================================================
