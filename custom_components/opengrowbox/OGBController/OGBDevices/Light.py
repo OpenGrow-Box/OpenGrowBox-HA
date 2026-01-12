@@ -617,6 +617,13 @@ class Light(Device):
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10
 
+            # Optimierung: Wenn bereits am Ziel oder darüber, kein Dimming nötig
+            if start_voltage is not None and target_voltage is not None and start_voltage >= target_voltage:
+                _LOGGER.info(
+                    f"{self.deviceName}: Sunrise übersprungen - bereits bei {start_voltage}%, Ziel {target_voltage}% erreicht"
+                )
+                return
+
             logging.warning("NOT DEAD")
 
             for i in range(1, 11):
@@ -656,7 +663,7 @@ class Light(Device):
                         f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
                     )
                     # Debug: Check voltage before turn_on
-                    _LOGGER.error(f"{self.deviceName}: Sunrise turn_on with voltage={self.voltage}, type={type(self.voltage)}")
+                    _LOGGER.debug(f"{self.deviceName}: Sunrise turn_on with voltage={self.voltage}, type={type(self.voltage)}")
                     await self.turn_on(brightness_pct=self.voltage)
 
             _LOGGER.debug(f"{self.deviceName}: SunRise finished")
@@ -692,6 +699,15 @@ class Light(Device):
             step_duration = self.sunSetDuration / 10
             voltage_step = (start_voltage - target_voltage) / 10
 
+            # Optimierung: Wenn bereits am Ziel oder darunter, kein Dimming nötig
+            if start_voltage is not None and target_voltage is not None and start_voltage <= target_voltage:
+                _LOGGER.info(
+                    f"{self.deviceName}: Sunset übersprungen - bereits bei {start_voltage}%, Ziel {target_voltage}% erreicht"
+                )
+                self.voltage = 0
+                await self.turn_off(brightness_pct=self.voltage)
+                return
+
             _LOGGER.warning(
                 f"{self.deviceName}: Start SunSet {start_voltage}% bis {target_voltage}%"
             )
@@ -699,7 +715,7 @@ class Light(Device):
             for i in range(1, 11):
                 # Check if we should continue with sunset
                 if not self.islightON:
-                    _LOGGER.error(f"{self.deviceName}: SunSet Stopped - Light is OFF")
+                    _LOGGER.debug(f"{self.deviceName}: SunSet Stopped - Light is OFF")
                     break
 
                 # Warten falls pausiert
@@ -867,7 +883,7 @@ class Light(Device):
             return
 
         if self.vpdLightControl:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"LightDebug-RED: CV:{self.voltage} MaxV:{self.maxVoltage} MinV:{self.minVoltage}  "
             )
             new_voltage = self.change_voltage(increase=False)
@@ -919,20 +935,20 @@ class Light(Device):
         dli_tollerance = 0.05
 
         if self.isDimmable == False:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: Device is not dimmable. DLI Light Control not possible."
             )
             return
         # get current DLI
         selected_lightplan = self.data_store.get("plantType").lower()
         if not selected_lightplan:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: No light plan selected. DLI Light Control not possible."
             )
             return
         plant_stage = self.data_store.get("plantStage").lower()
         if not plant_stage:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: No plant stage selected. DLI Light Control not possible."
             )
             return
@@ -961,7 +977,7 @@ class Light(Device):
                 ).date()
             ).days // 7
         else:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: Invalid plant stage selected. DLI Light Control not possible. Set plant stage to '*Veg' or '*Flower'."
             )
             return
@@ -970,7 +986,7 @@ class Light(Device):
             "Light.plans." + selected_lightplan + "." + plant_stage + ".curve"
         )
         if not light_plan:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: No light curve found for selected plant stage {plant_stage} and light plan {selected_lightplan}."
             )
             return
@@ -983,7 +999,7 @@ class Light(Device):
                 break
 
         if not dli_target_week:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: No DLI target found for week {week}. Using last week's target."
             )
             dli_target_week = light_plan[-1]["DLITarget"]
@@ -1068,7 +1084,7 @@ class Light(Device):
             f"{self.deviceName}: Light min: {light_min}, Light max: {light_max}"
         )
         if not light_min or not light_max:
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"{self.deviceName}: No valid light min max found. No DLI control possible."
             )
             return

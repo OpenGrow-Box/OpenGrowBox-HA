@@ -1067,7 +1067,7 @@ class GrowMedium:
         # Restore breeder bloom days
         if data.get("breeder_bloom_days"):
             medium.breeder_bloom_days = data["breeder_bloom_days"]
-            _LOGGER.warning(f"[{room}] Restored breeder_bloom_days: {medium.breeder_bloom_days}")
+            _LOGGER.debug(f"[{room}] Restored breeder_bloom_days: {medium.breeder_bloom_days}")
 
         # Properties - with safe tuple parsing
         props = data.get("properties", {})
@@ -1085,7 +1085,7 @@ class GrowMedium:
                     return default
             # If it's a corrupted string, return default
             if isinstance(value, str):
-                _LOGGER.warning(f"Corrupted tuple value detected, using default: {default}")
+                _LOGGER.error(f"Corrupted tuple value detected, using default: {default}")
                 return default
             return default
         
@@ -1119,7 +1119,7 @@ class GrowMedium:
             for entity_id in entity_ids:
                 medium.sensor_type_map[entity_id] = sensor_type
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"[{room}] GrowMedium.from_dict COMPLETE: {medium.name} - "
             f"plant_name={medium.plant_name}, breeder_name={medium.breeder_name}, "
             f"registered_sensors={len(medium.registered_sensors)}, sensor_type_map={len(medium.sensor_type_map)}"
