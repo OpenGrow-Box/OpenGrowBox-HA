@@ -268,8 +268,8 @@ class OGBConfigurationManager:
         
         # Debug: Log all incoming entity keys for troubleshooting
         if "crop" in entity_key.lower() or "steering" in entity_key.lower():
-            _LOGGER.warning(f"OGB-Manager {self.room}: CropSteering entity update: {original_key} -> {entity_key}")
-            _LOGGER.warning(f"OGB-Manager {self.room}: Action found: {action is not None}")
+            _LOGGER.debug(f"OGB-Manager {self.room}: CropSteering entity update: {original_key} -> {entity_key}")
+            _LOGGER.debug(f"OGB-Manager {self.room}: Action found: {action is not None}")
         
         if action:
             _LOGGER.debug(f"OGB-Manager {self.room}: Routing {entity_key} to handler")
@@ -282,17 +282,17 @@ class OGBConfigurationManager:
         has_phase = any(f"_p{i}_" in entity_key.lower() for i in range(4))
         is_cs_param = has_cropsteering and has_phase
         
-        _LOGGER.warning(f"OGB-Manager {self.room}: CS param check: key={entity_key}, has_cropsteering={has_cropsteering}, has_phase={has_phase}, is_cs={is_cs_param}")
+        _LOGGER.debug(f"OGB-Manager {self.room}: CS param check: key={entity_key}, has_cropsteering={has_cropsteering}, has_phase={has_phase}, is_cs={is_cs_param}")
         
         if is_cs_param:
-            _LOGGER.warning(f"OGB-Manager {self.room}: ✅ Dynamic CropSteering parameter MATCHED: {entity_key}")
-            _LOGGER.warning(f"OGB-Manager {self.room}: ✅ Data newState: {getattr(data, 'newState', 'N/A')}")
+            _LOGGER.debug(f"OGB-Manager {self.room}: ✅ Dynamic CropSteering parameter MATCHED: {entity_key}")
+            _LOGGER.debug(f"OGB-Manager {self.room}: ✅ Data newState: {getattr(data, 'newState', 'N/A')}")
             asyncio.create_task(self._crop_steering_sets(data, entity_key))
             return True
         
         # Only log if it's a relevant entity we might care about
         if "ogb_" in entity_key.lower():
-            _LOGGER.warning(f"OGB-Manager {self.room}: No action found for {entity_key} (original: {original_key}).")
+            _LOGGER.debug(f"OGB-Manager {self.room}: No action found for {entity_key} (original: {original_key}).")
         return False
 
     # Core control methods
@@ -1272,15 +1272,15 @@ class OGBConfigurationManager:
         when the user changes Hydro.Mode to "Crop-Steering".
         """
         value = data.newState[0]
-        _LOGGER.warning(f"{self.room}: _crop_steering_mode called with value: {value}")
+        _LOGGER.debug(f"{self.room}: _crop_steering_mode called with value: {value}")
         
         # Store the user's mode selection
         self.data_store.setDeep("CropSteering.ActiveMode", value)
-        _LOGGER.warning(f"{self.room}: CropSteering.ActiveMode set to: {value}")
+        _LOGGER.debug(f"{self.room}: CropSteering.ActiveMode set to: {value}")
         
         # Emit event - CastManager/CSManager will check if it should actually run
         await self.event_manager.emit("CropSteeringChanges", data)
-        _LOGGER.warning(f"{self.room}: CropSteeringChanges event emitted for mode: {value}")
+        _LOGGER.debug(f"{self.room}: CropSteeringChanges event emitted for mode: {value}")
 
     async def _crop_steering_phase(self, data):
         """Update CropSteering phase selector.
@@ -1293,7 +1293,7 @@ class OGBConfigurationManager:
         # Store lowercase for consistency
         phase_lower = value.lower() if value else "p0"
         self.data_store.setDeep("CropSteering.CropPhase", phase_lower)
-        _LOGGER.warning(f"{self.room}: Crop Steering phase changed to {phase_lower} (from {value})")
+        _LOGGER.debug(f"{self.room}: Crop Steering phase changed to {phase_lower} (from {value})")
 
     async def _crop_steering_sets(self, data, entity_key=None):
         """Dynamic setter for all Crop Steering parameters.
@@ -1305,7 +1305,7 @@ class OGBConfigurationManager:
         # Use entity_key if provided, otherwise fall back to data.Name
         name = (entity_key or getattr(data, 'Name', '') or '').lower()
         
-        _LOGGER.warning(f"🌱 {self.room}: _crop_steering_sets CALLED - entity_key='{entity_key}', data.Name='{getattr(data, 'Name', 'N/A')}', value={value}")
+        _LOGGER.debug(f"🌱 {self.room}: _crop_steering_sets CALLED - entity_key='{entity_key}', data.Name='{getattr(data, 'Name', 'N/A')}', value={value}")
         
         # Extract phase from parameter name (p0, p1, p2, p3)
         phase = None
@@ -1347,17 +1347,17 @@ class OGBConfigurationManager:
             "irrigation_frequency": ("Substrate", "Irrigation_Frequency"),
         }
         
-        _LOGGER.warning(f"🌱 {self.room}: CS parameter lookup - name='{name}', phase='{phase}', value={value}")
+        _LOGGER.debug(f"🌱 {self.room}: CS parameter lookup - name='{name}', phase='{phase}', value={value}")
         
         for param_key, (soil_path, sub_key) in cs_parameter_mapping.items():
             if param_key in name:
                 path = f"CropSteering.{soil_path}.{phase}.{sub_key}"
                 self.data_store.setDeep(path, value)
-                _LOGGER.warning(f"🌱 {self.room}: ✅ STORED {path} = {value}")
+                _LOGGER.debug(f"🌱 {self.room}: ✅ STORED {path} = {value}")
                 
                 # Verify it was actually stored
                 verify = self.data_store.getDeep(path)
-                _LOGGER.warning(f"🌱 {self.room}: ✅ VERIFY {path} = {verify}")
+                _LOGGER.debug(f"🌱 {self.room}: ✅ VERIFY {path} = {verify}")
                 return
         
         _LOGGER.error(f"⚠️ {self.room}: NO MATCH found for crop steering parameter: {name}")
@@ -1392,7 +1392,7 @@ class OGBConfigurationManager:
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.warning(f"{self.room}: Invalid Far Red mode '{value}', ignoring")
+            _LOGGER.debug(f"{self.room}: Invalid Far Red mode '{value}', ignoring")
             return
         current = self.data_store.getDeep("specialLights.farRed.mode")
         if current != value:
@@ -1443,7 +1443,7 @@ class OGBConfigurationManager:
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.warning(f"{self.room}: Invalid UV mode '{value}', ignoring")
+            _LOGGER.debug(f"{self.room}: Invalid UV mode '{value}', ignoring")
             return
         current = self.data_store.getDeep("specialLights.uv.mode")
         if current != value:
@@ -1503,7 +1503,7 @@ class OGBConfigurationManager:
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.warning(f"{self.room}: Invalid Blue mode '{value}', ignoring")
+            _LOGGER.debug(f"{self.room}: Invalid Blue mode '{value}', ignoring")
             return
         current = self.data_store.getDeep("specialLights.spectrum.blue.mode")
         if current != value:
@@ -1555,7 +1555,7 @@ class OGBConfigurationManager:
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.warning(f"{self.room}: Invalid Red mode '{value}', ignoring")
+            _LOGGER.debug(f"{self.room}: Invalid Red mode '{value}', ignoring")
             return
         current = self.data_store.getDeep("specialLights.spectrum.red.mode")
         if current != value:

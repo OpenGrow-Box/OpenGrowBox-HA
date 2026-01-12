@@ -649,7 +649,7 @@ class Device:
             percentage = kwargs.get("percentage")
             
             # Validate and convert brightness_pct to float (default to 100 if None)
-            _LOGGER.error(f"{self.deviceName}: turn_on called with brightness_pct={brightness_pct}, type={type(brightness_pct)}")
+            _LOGGER.debug(f"{self.deviceName}: turn_on called with brightness_pct={brightness_pct}, type={type(brightness_pct)}")
             if brightness_pct is not None:
                 # Handle list case first
                 if isinstance(brightness_pct, list):
@@ -659,19 +659,19 @@ class Device:
                     # Clamp to valid range
                     brightness_pct = max(0, min(100, brightness_pct))
                 except (ValueError, TypeError):
-                    _LOGGER.warning(f"{self.deviceName}: Invalid brightness_pct value: {brightness_pct}, using 100")
+                    _LOGGER.error(f"{self.deviceName}: Invalid brightness_pct value: {brightness_pct}, using 100")
                     brightness_pct = 100.0
             else:
                 # Default to 100% if not specified
                 brightness_pct = 100.0
-            _LOGGER.error(f"{self.deviceName}: turn_on processed brightness_pct={brightness_pct}")
+            _LOGGER.debug(f"{self.deviceName}: turn_on processed brightness_pct={brightness_pct}")
             
             # Validate and convert percentage to float (default to 100 if None)
             if percentage is not None:
                 try:
                     percentage = float(percentage)
                 except (ValueError, TypeError):
-                    _LOGGER.warning(f"{self.deviceName}: Invalid percentage value: {percentage}, using 100")
+                    _LOGGER.error(f"{self.deviceName}: Invalid percentage value: {percentage}, using 100")
                     percentage = 100.0
             else:
                 # Default to 100% if not specified
@@ -722,19 +722,19 @@ class Device:
 
             # === Standardgeräte ===
             if not self.switches:
-                _LOGGER.error(f"{self.deviceName} has not Switch to Activate or Turn On")
+                _LOGGER.warning(f"{self.deviceName} has not Switch to Activate or Turn On")
                 return
 
             entity_ids = [switch["entity_id"] for switch in self.switches]
 
             for entity_id in entity_ids:
                 # Validate and fix entity_id if it's a list
-                _LOGGER.error(f"{self.deviceName}: Processing entity_id={entity_id}, type={type(entity_id)}")
+                _LOGGER.debug(f"{self.deviceName}: Processing entity_id={entity_id}, type={type(entity_id)}")
                 if isinstance(entity_id, list):
                     entity_id = entity_id[0] if entity_id else "unknown"
                 if not isinstance(entity_id, str):
                     entity_id = str(entity_id)
-                _LOGGER.error(f"{self.deviceName}: Using entity_id={entity_id}")
+                _LOGGER.debug(f"{self.deviceName}: Using entity_id={entity_id}")
 
                 # Climate einschalten
                 if self.deviceType == "Climate":
@@ -801,7 +801,7 @@ class Device:
                                 brightness_pct = brightness_pct[0] if brightness_pct else 100
                             brightness_pct = max(0, min(100, float(brightness_pct)))
                             brightness_pct = int(brightness_pct)
-                            _LOGGER.error(f"{self.deviceName}: Calling HA light.turn_on with entity_id={entity_id}, brightness_pct={brightness_pct}")
+                            _LOGGER.debug(f"{self.deviceName}: Calling HA light.turn_on with entity_id={entity_id}, brightness_pct={brightness_pct}")
                             await self.hass.services.async_call(
                                 domain="light",
                                 service="turn_on",
@@ -1031,7 +1031,7 @@ class Device:
 
             # === Standardgeräte ===
             if not self.switches:
-                _LOGGER.error(f"{self.deviceName} has NO Switches to Turn OFF")
+                _LOGGER.debug(f"{self.deviceName} has NO Switches to Turn OFF")
                 return
 
             entity_ids = [switch["entity_id"] for switch in self.switches]
@@ -1181,7 +1181,7 @@ class Device:
     async def set_value(self, value):
         """Setzt einen numerischen Wert, falls unterstützt und relevant (duty oder voltage)."""
         if not self.options:
-            _LOGGER.error(f"{self.deviceName} unterstützt keine numerischen Werte.")
+            _LOGGER.debug(f"{self.deviceName} unterstützt keine numerischen Werte.")
             return
 
         # Suche erste passende Option mit 'duty' oder 'voltage' in der entity_id
@@ -1209,12 +1209,12 @@ class Device:
                     _LOGGER.error(f"Fehler beim Setzen des Wertes für {self.deviceName}: {e}")
                     return
 
-        _LOGGER.error(f"{self.deviceName} hat keine passende Option mit 'duty' oder 'voltage' in der entity_id.")
+        _LOGGER.warning(f"{self.deviceName} hat keine passende Option mit 'duty' oder 'voltage' in der entity_id.")
 
     async def set_mode(self, mode):
         """Setzt den Mode des Geräts, falls unterstützt."""
         if not self.options:
-            _LOGGER.error(f"{self.deviceName} unterstützt keine Modi.")
+            _LOGGER.warning(f"{self.deviceName} unterstützt keine Modi.")
             return
         try:
             await self.hass.services.async_call(

@@ -76,20 +76,20 @@ class OGBMediumManager:
         """Initialize Medium Manager - load data and emit initial state"""
         # Guard against double initialization
         if self._initialized:
-            _LOGGER.warning(f"[{self.room}] ⚠️ MediumManager.init() called but already initialized! Skipping.")
+            _LOGGER.debug(f"[{self.room}] ⚠️ MediumManager.init() called but already initialized! Skipping.")
             return
         
-        _LOGGER.warning(f"[{self.room}] 🚀 MediumManager.init() STARTING")
+        _LOGGER.debug(f"[{self.room}] 🚀 MediumManager.init() STARTING")
         await self._load_mediums_from_store()
         # Note: Event listeners are already set up in __init__ to avoid race conditions
         
         # Mark as initialized BEFORE processing pending registrations
         self._initialized = True
-        _LOGGER.warning(f"[{self.room}] ✅ MediumManager.init() COMPLETE - {len(self.media)} mediums loaded")
+        _LOGGER.debug(f"[{self.room}] ✅ MediumManager.init() COMPLETE - {len(self.media)} mediums loaded")
         
         # Process any sensor registrations that arrived before init completed
         if self._pending_sensor_registrations:
-            _LOGGER.warning(f"[{self.room}] Processing {len(self._pending_sensor_registrations)} pending sensor registrations")
+            _LOGGER.debug(f"[{self.room}] Processing {len(self._pending_sensor_registrations)} pending sensor registrations")
             for sensor_data in self._pending_sensor_registrations:
                 await self._process_sensor_registration(sensor_data)
             self._pending_sensor_registrations.clear()
@@ -99,7 +99,7 @@ class OGBMediumManager:
         # Emit initial medium and plant data to UI
         await self._emit_initial_data()
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"[{self.room}] Medium Manager FULLY initialized with {len(self.media)} mediums, {len(self._entity_to_medium_index)} registered sensors"
         )
     
@@ -135,7 +135,7 @@ class OGBMediumManager:
         # Finish grow event - complete a grow cycle
         self.event_manager.on("FinishGrow", self._on_finish_grow)
 
-        _LOGGER.warning(f"[{self.room}] Medium Manager: Event listeners registered for MediumChange, RegisterSensorToMedium, MediumSensorUpdate, UpdateMediumPlantDates, RequestMediumPlantsData, PlantStageChange, FinishGrow")
+        _LOGGER.debug(f"[{self.room}] Medium Manager: Event listeners registered for MediumChange, RegisterSensorToMedium, MediumSensorUpdate, UpdateMediumPlantDates, RequestMediumPlantsData, PlantStageChange, FinishGrow")
 
     async def _on_update_plant_dates(self, data: Dict[str, Any]):
         """
@@ -154,8 +154,8 @@ class OGBMediumManager:
             "plant_type": "photoperiodic"
         }
         """
-        _LOGGER.warning(f"[{self.room}] 📥 UpdateMediumPlantDates EVENT RECEIVED: {data}")
-        _LOGGER.warning(f"[{self.room}] 📥 ALL KEYS in data: {list(data.keys())}")
+        _LOGGER.debug(f"[{self.room}] 📥 UpdateMediumPlantDates EVENT RECEIVED: {data}")
+        _LOGGER.debug(f"[{self.room}] 📥 ALL KEYS in data: {list(data.keys())}")
         
         if data.get("room") != self.room:
             _LOGGER.debug(f"[{self.room}] Ignoring event for room: {data.get('room')}")
@@ -165,7 +165,7 @@ class OGBMediumManager:
         medium_index = data.get("medium_index")
         medium_name = data.get("medium_name")
         
-        _LOGGER.warning(f"[{self.room}] Processing update for medium_index={medium_index}, medium_name={medium_name}")
+        _LOGGER.debug(f"[{self.room}] Processing update for medium_index={medium_index}, medium_name={medium_name}")
         
         if medium_index is None and medium_name:
             # Find by name
@@ -191,11 +191,11 @@ class OGBMediumManager:
             None  # Use None instead of "" to not overwrite existing value
         )
         
-        _LOGGER.warning(f"[{self.room}] FIELD MAPPING: breeder_name='{data.get('breeder_name')}', "
+        _LOGGER.debug(f"[{self.room}] FIELD MAPPING: breeder_name='{data.get('breeder_name')}', "
                        f"plant_strain='{data.get('plant_strain')}', strain='{data.get('strain')}' "
                        f"-> RESOLVED breeder_name='{breeder_name}'")
         
-        _LOGGER.warning(f"[{self.room}] Calling update_medium_plant_dates with: "
+        _LOGGER.debug(f"[{self.room}] Calling update_medium_plant_dates with: "
                        f"index={medium_index}, name={data.get('plant_name')}, breeder={breeder_name}")
             
         await self.update_medium_plant_dates(
@@ -232,7 +232,7 @@ class OGBMediumManager:
             "notes": "optional harvest notes"
         }
         """
-        _LOGGER.warning(f"[{self.room}] 🏁 FinishGrow EVENT RECEIVED: {data}")
+        _LOGGER.debug(f"[{self.room}] 🏁 FinishGrow EVENT RECEIVED: {data}")
         
         if data.get("room") != self.room:
             _LOGGER.debug(f"[{self.room}] Ignoring FinishGrow event for room: {data.get('room')}")
@@ -254,7 +254,7 @@ class OGBMediumManager:
         )
         
         if success:
-            _LOGGER.warning(f"[{self.room}] ✅ FinishGrow completed for medium index {medium_index}")
+            _LOGGER.debug(f"[{self.room}] ✅ FinishGrow completed for medium index {medium_index}")
         else:
             _LOGGER.error(f"[{self.room}] ❌ FinishGrow failed for medium index {medium_index}")
 
@@ -271,7 +271,7 @@ class OGBMediumManager:
         }
         """
         try:
-            _LOGGER.warning(f"[{self.room}] RegisterSensorToMedium EVENT RECEIVED: {data}")
+            _LOGGER.debug(f"[{self.room}] RegisterSensorToMedium EVENT RECEIVED: {data}")
             # Only for this room
             if data.get("room") != self.room:
                 _LOGGER.debug(f"[{self.room}] Ignoring - event is for room: {data.get('room')}")
@@ -281,9 +281,9 @@ class OGBMediumManager:
             if not self._initialized:
                 # Limit pending registrations to prevent memory leak (max 100)
                 if len(self._pending_sensor_registrations) >= 100:
-                    _LOGGER.warning(f"[{self.room}] Pending sensor registrations limit reached, dropping oldest")
+                    _LOGGER.debug(f"[{self.room}] Pending sensor registrations limit reached, dropping oldest")
                     self._pending_sensor_registrations.pop(0)
-                _LOGGER.warning(f"[{self.room}] Queueing sensor registration (init not complete): {data.get('entity_id')}")
+                _LOGGER.debug(f"[{self.room}] Queueing sensor registration (init not complete): {data.get('entity_id')}")
                 self._pending_sensor_registrations.append(data)
                 return
             
@@ -309,14 +309,12 @@ class OGBMediumManager:
                     return
                 new_stage = data.get("stage") or data.get("plantStage") or data.get("value")
             else:
-                _LOGGER.warning(f"[{self.room}] Unknown PlantStageChange data format: {type(data)}")
+                _LOGGER.error(f"[{self.room}] Unknown PlantStageChange data format: {type(data)}")
                 return
             
             if not new_stage:
-                _LOGGER.warning(f"[{self.room}] PlantStageChange with no stage value: {data}")
+                _LOGGER.debug(f"[{self.room}] PlantStageChange with no stage value: {data}")
                 return
-            
-            _LOGGER.info(f"[{self.room}] 🌱 Global plantStage changed to: {new_stage}")
             
             # Update all mediums with new stage
             for medium in self.media:
@@ -384,13 +382,13 @@ class OGBMediumManager:
             await medium.register_sensor(sensor_data)
             self._entity_to_medium_index[entity_id] = medium_index
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"[{self.room}] ✅ SENSOR REGISTERED: {entity_id} ({sensor_type}/{context}) -> Medium {medium.name} (Index {medium_index})"
             )
 
             self._save_mediums_to_store()
         else:
-            _LOGGER.warning(
+            _LOGGER.error(
                 f"[{self.room}] ❌ SENSOR REGISTRATION FAILED: Medium index {medium_index} does not exist. "
                 f"Available media: {len(self.media)}. Sensor: {entity_id}, Label: {medium_label}"
             )
@@ -437,24 +435,24 @@ class OGBMediumManager:
             if hasattr(data, '__dict__'):
                 data = vars(data)
             elif not isinstance(data, dict):
-                _LOGGER.warning(f"[{self.room}] Invalid data type in medium sensor update: {type(data)}")
+                _LOGGER.error(f"[{self.room}] Invalid data type in medium sensor update: {type(data)}")
                 return
             
-            _LOGGER.warning(f"[{self.room}] 📊 MediumSensorUpdate RECEIVED: entity={data.get('entity_id')}, type={data.get('sensor_type')}, value={data.get('state') or data.get('last_reading')}")
+            _LOGGER.debug(f"[{self.room}] 📊 MediumSensorUpdate RECEIVED: entity={data.get('entity_id')}, type={data.get('sensor_type')}, value={data.get('state') or data.get('last_reading')}")
 
             # Validate data
             if not data:
-                _LOGGER.warning(f"[{self.room}] Empty data in medium sensor update")
+                _LOGGER.debug(f"[{self.room}] Empty data in medium sensor update")
                 return
 
             entity_id = data.get("entity_id")
             if not entity_id:
-                _LOGGER.warning(f"[{self.room}] No entity_id in medium sensor update")
+                _LOGGER.debug(f"[{self.room}] No entity_id in medium sensor update")
                 return
 
             # Check if sensor is registered
             if entity_id not in self._entity_to_medium_index:
-                _LOGGER.warning(f"[{self.room}] ⚠️ Sensor {entity_id} is NOT registered to any medium. Registered sensors: {list(self._entity_to_medium_index.keys())}")
+                _LOGGER.debug(f"[{self.room}] ⚠️ Sensor {entity_id} is NOT registered to any medium. Registered sensors: {list(self._entity_to_medium_index.keys())}")
                 return
 
             medium_index = self._entity_to_medium_index[entity_id]
@@ -510,7 +508,7 @@ class OGBMediumManager:
         """Load existing mediums from dataStore on startup"""
         stored_mediums = self.data_store.get("growMediums")
         
-        _LOGGER.warning(f"[{self.room}] LOADING mediums from store: {len(stored_mediums) if stored_mediums else 0} found")
+        _LOGGER.debug(f"[{self.room}] LOADING mediums from store: {len(stored_mediums) if stored_mediums else 0} found")
 
         if stored_mediums and len(stored_mediums) > 0:
             self.media = []
@@ -518,7 +516,7 @@ class OGBMediumManager:
             for medium_dict in stored_mediums:
                 try:
                     # Log what we're restoring
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         f"[{self.room}] RESTORING medium: name={medium_dict.get('name')}, "
                         f"plant_name={medium_dict.get('plant_name')}, "
                         f"breeder_name={medium_dict.get('breeder_name') or medium_dict.get('plant_strain')}, "
@@ -536,7 +534,7 @@ class OGBMediumManager:
                     self.media.append(medium)
                     
                     # Verify restoration worked
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         f"[{self.room}] RESTORED medium object: name={medium.name}, "
                         f"plant_name={medium.plant_name}, breeder_name={medium.breeder_name}, "
                         f"breeder_bloom_days={medium.breeder_bloom_days}"
@@ -547,7 +545,7 @@ class OGBMediumManager:
                     for sensor_type, entity_ids in medium.registered_sensors.items():
                         for entity_id in entity_ids:
                             self._entity_to_medium_index[entity_id] = medium_index
-                            _LOGGER.warning(f"[{self.room}] RESTORED sensor mapping: {entity_id} -> medium index {medium_index}")
+                            _LOGGER.debug(f"[{self.room}] RESTORED sensor mapping: {entity_id} -> medium index {medium_index}")
 
                 except Exception as e:
                     _LOGGER.error(
@@ -562,16 +560,16 @@ class OGBMediumManager:
                     for i, m in enumerate(self.media)
                 )
                 if needs_sync:
-                    _LOGGER.warning(f"[{self.room}] Syncing medium names after datastore load")
+                    _LOGGER.debug(f"[{self.room}] Syncing medium names after datastore load")
                     self._sync_medium_names()
                     self._save_mediums_to_store()
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"[{self.room}] Loaded {len(self.media)} mediums from dataStore. "
                 f"Registered sensors: {len(self._entity_to_medium_index)}"
             )
         else:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"[{self.room}] No existing mediums found - creating default medium"
             )
             await self._create_default_medium()
@@ -587,7 +585,7 @@ class OGBMediumManager:
 
     async def _on_new_medium_change(self, data):
         """Called when a new medium setup event is triggered."""
-        _LOGGER.warning(f"[{self.room}] MediumChange EVENT RECEIVED: {data}")
+        _LOGGER.debug(f"[{self.room}] MediumChange EVENT RECEIVED: {data}")
         if not data:
             _LOGGER.debug(f"{self.room}: Received empty medium change data")
             return
@@ -597,21 +595,21 @@ class OGBMediumManager:
             # New format: {"room": "room_name", "medium_type": "SOILx2"}
             event_room = data.get("room")
             if event_room and event_room != self.room:
-                _LOGGER.warning(f"[{self.room}] IGNORING MediumChange for room '{event_room}' (not my room)")
+                _LOGGER.debug(f"[{self.room}] IGNORING MediumChange for room '{event_room}' (not my room)")
                 return
             input_str = data.get("medium_type", "")
-            _LOGGER.warning(f"[{self.room}] Processing MediumChange: {input_str}")
+            _LOGGER.debug(f"[{self.room}] Processing MediumChange: {input_str}")
         elif isinstance(data, str):
             # Legacy format: just the medium type string - DANGEROUS without room check
             # We can't filter by room, so we have to process it (backwards compatibility)
-            _LOGGER.warning(f"[{self.room}] ⚠️ Legacy MediumChange string format (no room filter): {data}")
+            _LOGGER.debug(f"[{self.room}] ⚠️ Legacy MediumChange string format (no room filter): {data}")
             input_str = data
         else:
             _LOGGER.error(f"{self.room}: Invalid medium change data type: {type(data)}")
             return
 
         if not input_str or not input_str.strip():
-            _LOGGER.warning(f"{self.room}: Empty medium_type in data: {data}")
+            _LOGGER.debug(f"{self.room}: Empty medium_type in data: {data}")
             return
 
         try:
@@ -621,7 +619,7 @@ class OGBMediumManager:
             return
 
         if count < 1:
-            _LOGGER.warning(f"{self.room}: Cannot have less than 1 medium, setting count to 1")
+            _LOGGER.debug(f"{self.room}: Cannot have less than 1 medium, setting count to 1")
             count = 1
 
         _LOGGER.info(f"{self.room}: Processing medium change: {base.value} x {count}")
@@ -642,7 +640,7 @@ class OGBMediumManager:
         """Ensure mediums match desired type and count."""
         current_count = len(self.media)
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"[{self.room}] _sync_mediums called: current_type={self.current_medium_type}, "
             f"new_type={new_type}, current_count={current_count}, desired_count={desired_count}"
         )
@@ -656,7 +654,7 @@ class OGBMediumManager:
             # Mediums already exist with correct type - just update current_medium_type
             if self.current_medium_type is None:
                 self.current_medium_type = new_type
-                _LOGGER.warning(f"[{self.room}] Existing mediums match new_type, setting current_medium_type={new_type}")
+                _LOGGER.debug(f"[{self.room}] Existing mediums match new_type, setting current_medium_type={new_type}")
             type_changed = False
         elif self.current_medium_type is None and current_count == 0:
             # No mediums exist, need to create
@@ -666,10 +664,10 @@ class OGBMediumManager:
             if self.current_medium_type and self.current_medium_type.value != new_type.value:
                 type_changed = True
             else:
-                _LOGGER.warning(f"[{self.room}] Type appears same by value, skipping recreate")
+                _LOGGER.debug(f"[{self.room}] Type appears same by value, skipping recreate")
 
         if type_changed:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"[{self.room}] Medium TYPE CHANGED: {self.current_medium_type} -> {new_type} - RECREATING MEDIUMS"
             )
 
@@ -688,7 +686,7 @@ class OGBMediumManager:
             self._entity_to_medium_index.clear()
             self.current_medium_type = new_type
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"[{self.room}]: Medium type changed - cleared {old_sensor_count} sensor mappings"
             )
 
@@ -696,13 +694,13 @@ class OGBMediumManager:
         else:
             if desired_count > current_count:
                 diff = desired_count - current_count
-                _LOGGER.warning(
+                _LOGGER.debug(
                     f"{self.room} Adding {diff} new mediums of type {new_type.value}"
                 )
                 await self._create_mediums(new_type, diff, start_index=current_count)
             elif desired_count < current_count:
                 diff = current_count - desired_count
-                _LOGGER.warning(f"{self.room} Removing {diff} newest mediums")
+                _LOGGER.debug(f"{self.room} Removing {diff} newest mediums")
 
                 # Cleanup sensor mappings for deleted media
                 for i in range(desired_count, current_count):
@@ -768,7 +766,7 @@ class OGBMediumManager:
         
         # Log what we're about to save
         for md in mediums_as_dicts:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"[{self.room}] SAVING medium: name={md.get('name')}, "
                 f"plant_name={md.get('plant_name')}, breeder_name={md.get('breeder_name')}, "
                 f"breeder_bloom_days={md.get('breeder_bloom_days')}"
@@ -781,17 +779,17 @@ class OGBMediumManager:
             
             # Skip save if nothing changed
             if current_hash == self._last_save_hash:
-                _LOGGER.warning(f"[{self.room}] Skipping save - no changes detected (hash match)")
+                _LOGGER.debug(f"[{self.room}] Skipping save - no changes detected (hash match)")
                 return
             
             self._last_save_hash = current_hash
         except Exception as e:
             # If hashing fails, just save anyway
-            _LOGGER.warning(f"[{self.room}] Could not hash data for change detection: {e}")
+            _LOGGER.debug(f"[{self.room}] Could not hash data for change detection: {e}")
         
         self._save_count += 1
         self.data_store.set("growMediums", mediums_as_dicts)
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"[{self.room}] ✅ DATASTORE SAVED (save #{self._save_count}) - {len(mediums_as_dicts)} mediums"
         )
         
@@ -935,7 +933,7 @@ class OGBMediumManager:
         Update plant dates for a specific medium.
         Returns True if update was successful.
         """
-        _LOGGER.warning(f"[{self.room}] 🌱 update_medium_plant_dates called: "
+        _LOGGER.debug(f"[{self.room}] 🌱 update_medium_plant_dates called: "
                        f"index={medium_index}, name={plant_name}, breeder={breeder_name}, "
                        f"stage={plant_stage}, type={plant_type}")
         
@@ -944,22 +942,22 @@ class OGBMediumManager:
             return False
             
         medium = self.media[medium_index]
-        _LOGGER.warning(f"[{self.room}] Found medium: {medium.name}, current breeder={medium.breeder_name}")
+        _LOGGER.debug(f"[{self.room}] Found medium: {medium.name}, current breeder={medium.breeder_name}")
         
         # Update plant name/breeder/type if provided
         if plant_name is not None:
-            _LOGGER.warning(f"[{self.room}] Setting plant_name: {medium.plant_name} -> {plant_name}")
+            _LOGGER.debug(f"[{self.room}] Setting plant_name: {medium.plant_name} -> {plant_name}")
             medium.plant_name = plant_name
         if breeder_name is not None:
-            _LOGGER.warning(f"[{self.room}] Setting breeder_name: {medium.breeder_name} -> {breeder_name}")
+            _LOGGER.debug(f"[{self.room}] Setting breeder_name: {medium.breeder_name} -> {breeder_name}")
             medium.breeder_name = breeder_name
         if plant_type is not None:
-            _LOGGER.warning(f"[{self.room}] Setting plant_type: {medium.plant_type} -> {plant_type}")
+            _LOGGER.debug(f"[{self.room}] Setting plant_type: {medium.plant_type} -> {plant_type}")
             medium.plant_type = plant_type
             
         # Update breeder bloom days if provided
         if breeder_bloom_days is not None:
-            _LOGGER.warning(f"[{self.room}] Setting breeder_bloom_days: {medium.breeder_bloom_days} -> {breeder_bloom_days}")
+            _LOGGER.debug(f"[{self.room}] Setting breeder_bloom_days: {medium.breeder_bloom_days} -> {breeder_bloom_days}")
             medium.breeder_bloom_days = breeder_bloom_days
         
         # Update grow start date
@@ -967,7 +965,7 @@ class OGBMediumManager:
             try:
                 date = datetime.strptime(grow_start, "%Y-%m-%d")
                 await medium.set_grow_start(date)
-                _LOGGER.warning(f"[{self.room}] Set grow_start: {grow_start}")
+                _LOGGER.debug(f"[{self.room}] Set grow_start: {grow_start}")
             except ValueError as e:
                 _LOGGER.error(f"Invalid grow_start date format: {grow_start} - {e}")
                 
@@ -976,23 +974,23 @@ class OGBMediumManager:
             try:
                 date = datetime.strptime(bloom_switch, "%Y-%m-%d")
                 await medium.set_bloom_switch(date)
-                _LOGGER.warning(f"[{self.room}] Set bloom_switch: {bloom_switch}")
+                _LOGGER.debug(f"[{self.room}] Set bloom_switch: {bloom_switch}")
             except ValueError as e:
                 _LOGGER.error(f"Invalid bloom_switch date format: {bloom_switch} - {e}")
                 
         # Update plant stage
         if plant_stage is not None:
             await medium.set_plant_stage(plant_stage)
-            _LOGGER.warning(f"[{self.room}] Set plant_stage: {plant_stage}")
+            _LOGGER.debug(f"[{self.room}] Set plant_stage: {plant_stage}")
         
         # Save changes
         self._save_mediums_to_store()
-        _LOGGER.warning(f"[{self.room}] Medium saved. Current: name={medium.plant_name}, breeder={medium.breeder_name}")
+        _LOGGER.debug(f"[{self.room}] Medium saved. Current: name={medium.plant_name}, breeder={medium.breeder_name}")
         
         # Emit full plants update
         await self.emit_all_plants_update()
         
-        _LOGGER.warning(f"[{self.room}] ✅ Plant dates updated for {medium.name}: name={medium.plant_name}, breeder={medium.breeder_name}")
+        _LOGGER.debug(f"[{self.room}] ✅ Plant dates updated for {medium.name}: name={medium.plant_name}, breeder={medium.breeder_name}")
         return True
 
     async def finish_medium_grow(
@@ -1014,7 +1012,7 @@ class OGBMediumManager:
         
         Returns True if successful, False otherwise.
         """
-        _LOGGER.warning(f"[{self.room}] 🏁 finish_medium_grow called: "
+        _LOGGER.debug(f"[{self.room}] 🏁 finish_medium_grow called: "
                        f"index={medium_index}, plant={plant_name}, breeder={breeder_name}, "
                        f"total_days={total_days}, bloom_days={bloom_days}")
         
@@ -1051,18 +1049,18 @@ class OGBMediumManager:
             "completed_at": datetime.now().isoformat(),
         }
         
-        _LOGGER.warning(f"[{self.room}] 📦 Archiving grow data: {harvest_data}")
+        _LOGGER.debug(f"[{self.room}] 📦 Archiving grow data: {harvest_data}")
         
         # Emit GrowCompleted event for archiving/logging
         # This can be used by premium features to store harvest history
         try:
             await self.event_manager.emit("GrowCompleted", harvest_data, haEvent=True)
-            _LOGGER.warning(f"[{self.room}] ✅ Emitted GrowCompleted event")
+            _LOGGER.debug(f"[{self.room}] ✅ Emitted GrowCompleted event")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to emit GrowCompleted: {e}")
         
         # Reset the medium for a new grow
-        _LOGGER.warning(f"[{self.room}] 🔄 Resetting medium {medium.name} for new grow")
+        _LOGGER.debug(f"[{self.room}] 🔄 Resetting medium {medium.name} for new grow")
         
         # Clear plant-specific data but keep medium type and name
         medium.plant_name = None
@@ -1106,7 +1104,7 @@ class OGBMediumManager:
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to emit GrowFinishNotification: {e}")
         
-        _LOGGER.warning(f"[{self.room}] ✅ Medium {medium.name} reset and ready for new grow")
+        _LOGGER.debug(f"[{self.room}] ✅ Medium {medium.name} reset and ready for new grow")
         return True
 
     # ============================================================
