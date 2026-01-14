@@ -81,11 +81,14 @@ class ClosedActions:
         action_message = "CO2 Maintenance Action"
 
         # CO2 control logic for closed environment
+        _LOGGER.warning(f"CO2 maintenance: current={current_co2}, min={self.co2_target_min}, max={self.co2_target_max}")
         if current_co2 < self.co2_target_min:
             # Increase CO2 - use CO2 injection if available
+            _LOGGER.warning("CO2 below min, injecting")
             await self._inject_co2(capabilities, action_message)
         elif current_co2 > self.co2_target_max:
             # Decrease CO2 - use air recirculation or minimal ventilation
+            _LOGGER.warning("CO2 above max, reducing")
             await self._reduce_co2(capabilities, action_message)
 
         # Emergency high CO2 - force ventilation
@@ -96,12 +99,14 @@ class ClosedActions:
         """Inject CO2 to increase levels."""
         action_map = []
 
+        _LOGGER.warning(f"Inject CO2: canCO2 state={capabilities.get('canCO2', {}).get('state')}")
         if capabilities["canCO2"]["state"]:
             action_map.append(
                 self._create_action("canCO2", "Increase", action_message)
             )
 
         if action_map:
+            _LOGGER.warning("Calling action_manager.checkLimitsAndPublicate for CO2 increase")
             await self.action_manager.checkLimitsAndPublicate(action_map)
 
     async def _reduce_co2(self, capabilities: Dict[str, Any], action_message: str):
