@@ -513,8 +513,6 @@ class Sensor:
                         )
 
                     if sensor_config["sensor_type"] == "co2":
-                        self.data_store.setDeep("tentData.co2Level", numeric_value)
-                        # Need to UPDATE CO2 Funciton here and rebuild co2 logic
                         await self.event_manager.emit("CO2Check", numeric_value)
 
                     if sensor_config["sensor_type"] in ("light", "dli", "ppfd"):

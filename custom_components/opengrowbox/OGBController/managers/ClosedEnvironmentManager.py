@@ -146,7 +146,7 @@ class ClosedEnvironmentManager:
         Create temperature control actions based on ambient-enhanced targets.
         Returns list of OGBActionPublication objects for ActionManager processing.
         """
-        current_temp = self.data_store.getDeep("sensors.temperature")
+        current_temp = self.data_store.getDeep("tentData.temperature")
         actions = []
 
         if current_temp is None:
@@ -172,7 +172,7 @@ class ClosedEnvironmentManager:
         Create humidity control actions based on ambient-enhanced targets.
         Returns list of OGBActionPublication objects for ActionManager processing.
         """
-        current_humidity = self.data_store.getDeep("sensors.humidity")
+        current_humidity = self.data_store.getDeep("tentData.humidity")
         actions = []
 
         if current_humidity is None:

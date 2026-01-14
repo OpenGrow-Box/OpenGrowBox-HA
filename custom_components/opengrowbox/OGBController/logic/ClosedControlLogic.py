@@ -78,7 +78,7 @@ class ClosedControlLogic:
             perfect_max = min(broad_max, perfect_max)
 
             # Get current temperature for control logic
-            current_temp = self.data_store.getDeep("sensors.temperature")
+            current_temp = self.data_store.getDeep("tentData.temperature")
             if current_temp is None:
                 return midpoint  # Default to midpoint if no sensor data
 
@@ -158,7 +158,7 @@ class ClosedControlLogic:
             perfect_max = min(broad_max, perfect_max)
 
             # Get current humidity for control logic
-            current_humidity = self.data_store.getDeep("sensors.humidity")
+            current_humidity = self.data_store.getDeep("tentData.humidity")
             if current_humidity is None:
                 return midpoint  # Default to midpoint if no sensor data
 
@@ -208,7 +208,7 @@ class ClosedControlLogic:
             Temperature adjustment factor in Celsius
         """
         ambient_temp = self.data_store.getDeep("tentData.AmbientTemp")
-        internal_temp = self.data_store.getDeep("sensors.temperature")
+        internal_temp = self.data_store.getDeep("tentData.temperature")
 
         if ambient_temp is None or internal_temp is None:
             return 0.0
@@ -241,7 +241,7 @@ class ClosedControlLogic:
             Humidity adjustment factor as percentage
         """
         ambient_humidity = self.data_store.getDeep("tentData.AmbientHum")
-        internal_humidity = self.data_store.getDeep("sensors.humidity")
+        internal_humidity = self.data_store.getDeep("tentData.humidity")
 
         if ambient_humidity is None or internal_humidity is None:
             return 0.0
