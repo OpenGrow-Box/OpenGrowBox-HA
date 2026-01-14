@@ -239,8 +239,10 @@ class OGBDeviceManager:
                 if detected_type:
                     break
                 
-                # Second pass: Check contains match with priority ordering
+                # Second pass: Check contains match with priority ordering (skip generic Light if special lights exist)
                 for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+                    if device_type in PRIORITY_DEVICE_TYPES:
+                        continue  # Skip special lights, will check all labels next
                     if any(keyword == label_name for keyword in keywords):
                         # Exact keyword match
                         detected_type = device_type
@@ -534,19 +536,15 @@ class OGBDeviceManager:
         
         Special light types (LightFarRed, LightUV, etc.) must be matched
         before generic Light type.
-        
-        Args:
-            labels: List of label dicts with 'name' key
-            
-        Returns:
-            Device type string or "EMPTY" if no match
         """
-        # Priority-ordered list - special types before generic
+        
+        # Priority-ordered list - special types before generic (includes LightSpectrum)
         PRIORITY_DEVICE_TYPES = [
             "LightFarRed",
             "LightUV",
             "LightBlue",
             "LightRed",
+            "LightSpectrum",  # Handles blue/red spectrum lights
         ]
         
         for lbl in labels:
@@ -564,8 +562,14 @@ class OGBDeviceManager:
             for device_type, keywords in DEVICE_TYPE_MAPPING.items():
                 if label_name in keywords:
                     return device_type
-        
-        # Third: Contains matching with priority ordering
+
+            # Check if we have special light labels - if so, don't fall back to generic Light
+            special_light_labels = [lbl.get("name", "").lower() for lbl in labels if lbl.get("name", "").lower() in ["light_blue", "light_red", "light_uv", "light_fr", "light_farred", "light_uvb", "light_uva", "uvlight"]]
+            if any(keyword in special_light_labels for keyword in ["blue", "red", "uv", "uvb", "uva", "farred"]):
+                # Already identified as special light, don't fall back to generic Light
+                return "Light", None  # Return None for detected_label to avoid overwriting
+
+            # Third: Contains matching with priority ordering
         for lbl in labels:
             label_name = lbl.get("name", "").lower()
             if not label_name:

@@ -30,11 +30,18 @@ class Ventilation(Device):
             deviceLabel,
             allLabels,
         )
-        self.minDuty = 10
+        self.minDuty = 0
         self.maxDuty = 100
         self.steps = 5
         self.dutyCycle = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps  # Start at middle, aligned to steps
         self.isDimmable = True
+
+
+        if self.isAcInfinDev:
+            self.steps = 10
+            self.maxDuty = 100
+            self.minDuty = 0
+
         self.isInitialized = False
 
         self.init()

@@ -30,15 +30,16 @@ class Exhaust(Device):
             deviceLabel,
             allLabels,
         )
-        self.minDuty = 20  # Minimaler Duty Cycle
-        self.maxDuty = 100  # Maximaler Duty Cycle
-        self.steps = 5  # DutyCycle Steps
-        self.dutyCycle = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps  # Start at middle, aligned to steps
         self.steps = 5  # DutyCycle Steps
         self.isDimmable = True
         self.isInitialized = False
 
         self.init()
+
+        # Initialize min/max to defaults, will be overridden by user settings in checkMinMax
+        self.minDuty = 0
+        self.maxDuty = 100
+        self.dutyCycle = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps
 
         # Start at middle dutyCycle
         asyncio.create_task(self.turn_on(percentage=self.dutyCycle))

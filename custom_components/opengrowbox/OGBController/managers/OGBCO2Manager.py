@@ -14,17 +14,19 @@ _LOGGER = logging.getLogger(__name__)
 class OGBCO2Manager:
     """Manages CO2 sensor data aggregation for accurate readings."""
 
-    def __init__(self, event_manager, data_store, room):
+    def __init__(self, hass, data_store, event_manager, room):
         """
         Initialize CO2 Manager.
 
         Args:
-            event_manager: Event manager for pub/sub
+            hass: Home Assistant instance
             data_store: Datastore for storing CO2 values
+            event_manager: Event manager for pub/sub
             room: Room name for logging
         """
-        self.event_manager = event_manager
+        self.hass = hass
         self.data_store = data_store
+        self.event_manager = event_manager
         self.room = room
         self.co2_sensors: List[float] = []
         self.max_sensor_count = 5  # Keep last N readings
