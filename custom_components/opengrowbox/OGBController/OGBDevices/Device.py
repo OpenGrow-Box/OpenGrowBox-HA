@@ -31,7 +31,7 @@ class Device:
         
         # Additional attributes for compatibility with modular code
         self.voltage = None
-        self.dutyCycle = 50
+        self.dutyCycle = None  # Don't set default, let subclass/setMinMax determine it
         self.minVoltage = None
         self.maxVoltage = None
         self.minDuty = None
@@ -1378,16 +1378,26 @@ class Device:
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = float(minMaxSets.get("minVoltage"))
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-            # Clamp current voltage without turning on
+            # Clamp current voltage and apply to running device
+            old_voltage = self.voltage
             self.voltage = self.clamp_voltage(self.voltage)
-            _LOGGER.debug(f"{self.deviceName}: Min/max updated, voltage clamped to {self.voltage}%")
+            _LOGGER.debug(f"{self.deviceName}: Min/max updated, voltage clamped from {old_voltage}% to {self.voltage}%")
+            if self.isRunning and old_voltage != self.voltage:
+                await self.turn_on(brightness_pct=self.voltage)
 
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = float(minMaxSets.get("minDuty"))
             self.maxDuty = float(minMaxSets.get("maxDuty"))
-            # Clamp current dutyCycle without turning on
+            # Clamp current dutyCycle and apply to running device
+            old_duty = self.dutyCycle
             self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
-            _LOGGER.debug(f"{self.deviceName}: Min/max updated, dutyCycle clamped to {self.dutyCycle}%")
+            _LOGGER.debug(f"{self.deviceName}: Min/max updated, dutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
+            if self.isRunning:
+                if self.isSpecialDevice:
+                    await self.turn_on(brightness_pct=float(self.dutyCycle))
+                else:
+                    await self.turn_on(percentage=self.dutyCycle)
+                _LOGGER.info(f"{self.deviceName}: Applied clamped dutyCycle {self.dutyCycle}% to running device")
 
     def clamp_voltage(self, value):
         """Clamp voltage to min/max range."""
