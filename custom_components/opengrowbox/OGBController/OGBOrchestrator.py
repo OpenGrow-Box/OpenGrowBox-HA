@@ -51,7 +51,11 @@ class OGBOrchestrator:
         self._loop_count = 0
         self._last_loop_time = 0
         self._avg_loop_time = 0
-        
+
+        # Startup tracking - prevents premature event emission during initialization
+        self._is_starting_up = True
+        self._init_complete_event = asyncio.Event()
+
         _LOGGER.info(f"✅ {self.room} Orchestrator initialized")
     
     def inject_managers(self, **managers):
@@ -59,19 +63,42 @@ class OGBOrchestrator:
         for name, manager in managers.items():
             setattr(self, name, manager)
             _LOGGER.debug(f"Injected {name}: {manager}")
+
+    def mark_initialization_complete(self):
+        """Signal that system initialization is complete and orchestrator can start control loop."""
+        self._is_starting_up = False
+        self._init_complete_event.set()
+        _LOGGER.info(f"✅ {self.room} Orchestrator initialization complete - control loop can now start")
     
     async def start(self):
         """Start the orchestration control loop."""
         if self._is_running:
             _LOGGER.warning(f"{self.room} Orchestrator already running")
             return
-        
+
         self._is_running = True
         self._shutdown_event.clear()
-        self._control_loop_task = asyncio.create_task(self._main_control_loop())
-        
-        _LOGGER.info(f"🚀 {self.room} Orchestrator started")
-    
+
+        # CRITICAL: Start delayed control loop that waits for initialization to complete
+        self._control_loop_task = asyncio.create_task(self._delayed_control_loop_start())
+
+        _LOGGER.info(f"🚀 {self.room} Orchestrator started (waiting for initialization)")
+
+    async def _delayed_control_loop_start(self):
+        """Delay control loop start until system initialization is complete."""
+        _LOGGER.info(f"⏸️ {self.room} Orchestrator waiting for initialization to complete...")
+
+        try:
+            # Wait for initialization complete signal with timeout
+            await asyncio.wait_for(self._init_complete_event.wait(), timeout=120.0)
+            _LOGGER.info(f"✅ {self.room} Orchestrator initialization signal received - starting control loop")
+        except asyncio.TimeoutError:
+            _LOGGER.warning(f"⚠️ {self.room} Orchestrator initialization timeout - starting control loop anyway")
+            # Continue anyway to avoid hanging
+
+        # Now start the actual control loop
+        await self._main_control_loop()
+
     async def stop(self):
         """Stop the orchestration control loop gracefully."""
         if not self._is_running:
@@ -161,14 +188,24 @@ class OGBOrchestrator:
     
     async def _update_sensors(self):
         """Update sensor data from HA."""
+        # Skip if still starting up to prevent premature device actions
+        if self._is_starting_up:
+            _LOGGER.debug(f"⏸️ {self.room} Skipping sensor update during startup")
+            return
+
         # This would integrate with sensor manager if available
         # For now, trigger event
         await self.event_manager.emit("RoomUpdate", True)
     
     async def _calculate_vpd(self):
         """Calculate VPD from current sensor data."""
+        # Skip if still starting up to prevent premature device actions
+        if self._is_starting_up:
+            _LOGGER.debug(f"⏸️ {self.room} Skipping VPD calculation during startup")
+            return
+
         # This would integrate with VPD manager
-        await self.event_manager.emit("VPDCreation", True)
+        #await self.event_manager.emit("VPDCreation", True)
     
     async def _evaluate_mode(self):
         """Evaluate current mode and determine necessary actions.
@@ -190,15 +227,20 @@ class OGBOrchestrator:
         # if self.mode_manager:
         #     tentMode = self.data_store.get("tentMode")
         #     from .data.OGBDataClasses.OGBPublications import OGBModeRunPublication
-        #     runMode = OGBModeRunPublication(currentMode=tentMode)
-        #     await self.event_manager.emit("selectActionMode", runMode)
+        #     tentMode = OGBModeRunPublication(currentMode=tentMode)
+        #     await self.event_manager.emit("selectActionMode", tentMode)
         pass
     
     async def _sync_device_states(self):
         """Sync all device states with Home Assistant."""
         if not self.device_manager:
             return
-        
+
+        tentMode = self.data_store.get("tentMode")
+        if tentMode == "Disabled":
+            _LOGGER.debug(f"⏸️ {self.room} Skipping device state sync - tentMode is Disabled")
+            return
+
         devices = self.data_store.get("devices") or []
         sync_failures = []
         

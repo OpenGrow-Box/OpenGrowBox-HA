@@ -551,6 +551,7 @@ class OGBCSManager:
         """
         _LOGGER.debug(f"{self.room} - Resetting P2 state tracking (checks will start fresh)")
         self.data_store.setDeep("CropSteering.p2_last_check_time", None)
+        self.data_store.setDeep("CropSteering.p2_shot_count", 0)
 
     # ==================== MODE PARSING ====================
 
@@ -1370,7 +1371,7 @@ class OGBCSManager:
         vwc_increase_since_last = vwc - p1_last_vwc
         min_vwc_for_stagnation = max(40.0, preset_vwc_min)  # At least 40% or preset minimum
         
-        if p1_irrigation_count >= 3 and vwc_increase_since_last < 0.5:
+        if p1_irrigation_count >= 3 and vwc_increase_since_last < 1.5:
             if vwc >= min_vwc_for_stagnation:
                 # Legitimate stagnation - block is actually full
                 _LOGGER.info(
@@ -1536,9 +1537,11 @@ class OGBCSManager:
         shot_duration = timing_settings["ShotDuration"]
         check_interval_minutes = timing_settings["ShotIntervall"]  # User-configurable check interval
         check_interval_seconds = check_interval_minutes * 60
+        max_shots = timing_settings["ShotSum"]  # User-configurable max shots
 
         # === P2 State Tracking ===
         p2_last_check_time = self.data_store.getDeep("CropSteering.p2_last_check_time")
+        p2_shot_count = self.data_store.getDeep("CropSteering.p2_shot_count") or 0
         now = datetime.now()
 
         # Initialize on first entry into P2
@@ -1570,7 +1573,22 @@ class OGBCSManager:
                 hold_threshold = effective_max * preset.get("hold_percentage", 0.95)
 
                 if vwc < hold_threshold:
-                    await self._irrigate(duration=shot_duration)
+                    # Check if we've reached max shots limit
+                    if p2_shot_count >= max_shots:
+                        _LOGGER.info(f"{self.room} - P2: Max shots reached ({max_shots}) - skipping irrigation")
+                        await self.event_manager.emit(
+                            "LogForClient",
+                            {
+                                "Name": self.room,
+                                "Type": "CSLOG",
+                                "Message": f"P2 Maintenance: Max shots reached ({max_shots})",
+                            },
+                            haEvent=True,
+                        )
+                    else:
+                        await self._irrigate(duration=shot_duration)
+                        p2_shot_count += 1
+                        self.data_store.setDeep("CropSteering.p2_shot_count", p2_shot_count)
                     await self.event_manager.emit(
                         "LogForClient",
                         {

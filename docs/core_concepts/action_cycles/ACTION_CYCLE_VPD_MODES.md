@@ -102,11 +102,11 @@ if currentVPD != lastVpd:
 
 ```python
 # Emit mode run event to trigger control actions
-tentMode = self.data_store.get("tentMode")
-runMode = OGBModeRunPublication(currentMode=tentMode)
+currentMode = self.data_store.get("tentMode")
+tentMode = OGBModeRunPublication(currentMode=currentMode)
 
 # Trigger mode-specific action selection
-await self.event_manager.emit("selectActionMode", runMode)
+await self.event_manager.emit("selectActionMode", tentMode)
 ```
 
 ## VPD-Perfection Mode Action Cycle

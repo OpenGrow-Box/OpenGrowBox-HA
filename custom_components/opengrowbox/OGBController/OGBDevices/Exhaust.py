@@ -1,5 +1,6 @@
 import logging
 
+import asyncio
 from .Device import Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,13 +30,19 @@ class Exhaust(Device):
             deviceLabel,
             allLabels,
         )
-        self.dutyCycle = 0  # Initialer Duty Cycle
-        self.minDuty = 10  # Minimaler Duty Cycle
+        self.minDuty = 20  # Minimaler Duty Cycle
         self.maxDuty = 100  # Maximaler Duty Cycle
         self.steps = 5  # DutyCycle Steps
+        self.dutyCycle = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps  # Start at middle, aligned to steps
+        self.steps = 5  # DutyCycle Steps
+        self.isDimmable = True
         self.isInitialized = False
 
         self.init()
+
+        # Start at middle dutyCycle
+        asyncio.create_task(self.turn_on(percentage=self.dutyCycle))
+
         ## Events Register
         self.event_manager.on("Increase Exhaust", self.increaseAction)
         self.event_manager.on("Reduce Exhaust", self.reduceAction)

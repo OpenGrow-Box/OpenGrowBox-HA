@@ -668,6 +668,10 @@ class OGBActionManager:
         Args:
             actionMap: List of actions to execute
         """
+        tentMode = self.data_store.get("tentMode") or "VPD Perfection"
+        if tentMode == "Disabled":
+            _LOGGER.info(f"{self.room}: Actions skipped - tent mode is Disabled")
+            return
         _LOGGER.debug(f"{self.room}: Executing {len(actionMap)} validated actions")
 
         # Store previous actions for analytics - API expects specific format
@@ -678,6 +682,11 @@ class OGBActionManager:
         
         # Get current tent mode for controller type
         tentMode = self.data_store.get("tentMode") or "VPD Perfection"
+
+        # Skip actions if tent mode is Disabled
+        if tentMode == "Disabled":
+            _LOGGER.info(f"{self.room}: Actions skipped - tent mode is Disabled")
+            return
 
         # Build action set with all actions from this execution cycle
         # API expects: {device: "exhaust", action: "Increase", priority: "high", reason: "...", controllerType: "VPD-P"}

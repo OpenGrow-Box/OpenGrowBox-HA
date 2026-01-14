@@ -190,7 +190,11 @@ class Light(Device):
                 self.checkPlantStageLightValue()
                 self.checkMinMax(False)
                 if self.voltage == None or self.voltage == 0:
-                    self.initialize_voltage()
+                    if self.minVoltage is not None and self.minVoltage < self.initVoltage:
+                        self.voltage = self.minVoltage
+                        _LOGGER.debug(f"{self.deviceName}: Voltage init to user min {self.voltage}% (lower than init).")
+                    else:
+                        self.initialize_voltage()
                 else:
                     _LOGGER.debug(
                         f"{self.deviceName}: Voltage init done with saved value -> {self.voltage}%."
@@ -463,6 +467,8 @@ class Light(Device):
 
                 # Only apply plant stage defaults if user hasn't set custom min/max
                 self._apply_plant_stage_minmax(plantStage)
+                # Ensure user min/max overrides plant if active
+                self.checkMinMax(False)
 
                 now = datetime.now().time()
 
@@ -499,7 +505,7 @@ class Light(Device):
                         f"{self.deviceName}: Im SunRisesfenster: {in_sunrise_window}"
                     )
 
-                    if in_sunrise_window and self.islightON:
+                    if in_sunrise_window and self.islightON and self.voltage is not None and self.maxVoltage is not None and self.voltage < self.maxVoltage:
                         if not self.sunrise_phase_active:
                             _LOGGER.warning(f"{self.deviceName}: Start SunRisesphase")
                             self.sunrise_phase_active = True
@@ -524,7 +530,7 @@ class Light(Device):
                         f"{self.deviceName}: Im SunSetsfenster: {in_sunset_window}"
                     )
 
-                    if in_sunset_window and self.islightON:
+                    if in_sunset_window and self.islightON and self.voltage is not None and self.minVoltage is not None and self.voltage > self.minVoltage:
                         if not self.sunset_phase_active:
                             _LOGGER.debug(
                                 f"{self.deviceName}: Start Sonnenuntergangsphase"
@@ -608,6 +614,9 @@ class Light(Device):
             self.sunPhaseActive = True
             _LOGGER.warning(
                 f"{self.inRoom} - {self.deviceName}: Start SunRise von {self.initVoltage}% bis {self.maxVoltage}%"
+            )
+            _LOGGER.warning(
+                f"{self.deviceName}: Sunrise values - minVoltage: {self.minVoltage}, maxVoltage: {self.maxVoltage}, current voltage: {self.voltage}"
             )
 
             start_voltage = (
@@ -789,11 +798,21 @@ class Light(Device):
                         "LogForClient", lightAction, haEvent=True
                     )
                     await self.turn_on()
+                    # Activate pending workmode if light is now on
+                    if hasattr(self, 'pendingWorkMode') and self.pendingWorkMode is not None:
+                        self.inWorkMode = self.pendingWorkMode
+                        self.pendingWorkMode = None
+                        _LOGGER.info(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
                 else:
-                    # Fix: Ensure voltage is set to initVoltage for schedule on
+                    # Fix: Ensure voltage is set to minVoltage if lower, else initVoltage
                     if self.voltage is None or self.voltage == 0:
-                        self.voltage = self.initVoltage  # 20%
+                        self.voltage = self.minVoltage if self.minVoltage is not None and self.minVoltage < self.initVoltage else self.initVoltage
                     message = "Turn On"
+                    # Activate pending workmode
+                    if hasattr(self, 'pendingWorkMode') and self.pendingWorkMode is not None:
+                        self.inWorkMode = self.pendingWorkMode
+                        self.pendingWorkMode = None
+                        _LOGGER.info(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
                     lightAction = OGBLightAction(
                         Name=self.inRoom,
                         Device=self.deviceName,
@@ -931,6 +950,10 @@ class Light(Device):
 
     async def updated_light_voltage_by_dli(self, dli):
         """Berechnet die Voltage basierend auf dem DLI"""
+        _LOGGER.warning(f"DLI update called, sunrise_active: {self.sunrise_phase_active}, current dli: {dli}")
+        if self.sunrise_phase_active:
+            _LOGGER.warning("Skipping DLI update during sunrise")
+            return
         calibration_step_size = 1.0  # Constant
         dli_tollerance = 0.05
 

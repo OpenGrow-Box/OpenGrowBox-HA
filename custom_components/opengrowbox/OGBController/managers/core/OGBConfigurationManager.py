@@ -388,7 +388,7 @@ class OGBConfigurationManager:
                 from ...data.OGBDataClasses.OGBPublications import OGBModeRunPublication
                 tent_mode_pub = OGBModeRunPublication(currentMode=value)
                 self.data_store.set("tentMode", value)
-                await self.event_manager.emit("selectActionMode", tent_mode_pub)
+                #await self.event_manager.emit("selectActionMode", tent_mode_pub)
 
                 # Premium mode remapping - handled by premium manager
                 await self.event_manager.emit("PremiumModeChange", value)

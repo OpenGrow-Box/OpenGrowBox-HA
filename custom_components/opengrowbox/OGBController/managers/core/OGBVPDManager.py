@@ -2,7 +2,10 @@ import asyncio
 import logging
 import math
 from datetime import datetime, timezone
-
+from ...utils.calcs import calculate_current_vpd, calculate_avg_value, calculate_dew_point
+from ...utils.sensorUpdater import update_sensor_via_service
+from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
+from ...OGBDevices.Sensor import Sensor
 from ...data.OGBDataClasses.OGBPublications import OGBVPDPublication, OGBModeRunPublication, OGBInitData
 from ...utils.calcs import (calculate_avg_value, calculate_current_vpd,
                           calculate_dew_point)
@@ -39,10 +42,6 @@ class OGBVPDManager:
 
     async def handle_new_vpd(self, data):
         """Handle new VPD data - ORIGINAL IMPLEMENTATION"""
-        from ...utils.calcs import calculate_current_vpd, calculate_avg_value, calculate_dew_point
-        from ...utils.sensorUpdater import update_sensor_via_service
-        from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
-        from ...OGBDevices.Sensor import Sensor
 
         controlOption = self.data_store.get("mainControl")
         if controlOption not in ["HomeAssistant", "Premium"]:
@@ -141,8 +140,8 @@ class OGBVPDManager:
                     except Exception as e:
                         _LOGGER.debug(f"📊 {self.room} VPD analytics submission failed: {e}")
 
-                tentMode = self.data_store.get("tentMode")
-                runMode = OGBModeRunPublication(currentMode=tentMode)
+                currentMode = self.data_store.get("tentMode")
+                tentMode = OGBModeRunPublication(currentMode=currentMode)
 
                 if self.room.lower() == "ambient":
                     _LOGGER.debug(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
@@ -150,7 +149,7 @@ class OGBVPDManager:
                     await self.get_weather_data()
                     return
 
-                await self.event_manager.emit("selectActionMode",runMode)
+                await self.event_manager.emit("",tentMode)
                 await self.event_manager.emit("LogForClient",vpdPub,haEvent=True)
 
                 # GROW DATA - DataRelease is emitted by OGBActionManager.publicationActionHandler()
@@ -283,148 +282,15 @@ class OGBVPDManager:
             return
 
         # Update mode and emit events
-        tentMode = self.data_store.get("tentMode")
-        runMode = OGBModeRunPublication(currentMode=tentMode)
-
-        await self.event_manager.emit("selectActionMode", runMode)
+        currentMode = self.data_store.get("tentMode")
+        tentMode = OGBModeRunPublication(currentMode=currentMode)
+        _LOGGER.debug(
+            f"Action Init for {self.room} with {tentMode} "
+        )
+        await self.event_manager.emit("", tentMode)
         await self.event_manager.emit("LogForClient", vpdPub, haEvent=True)
 
         return vpdPub
-
-    async def handle_vpd_creation(self, data):
-        """Handle VPD creation/update events."""
-        control_option = self.data_store.get("mainControl")
-        if control_option not in ["HomeAssistant", "Premium"]:
-            return
-
-        devices = self.data_store.get("devices")
-        if devices is None or len(devices) == 0:
-            _LOGGER.warning(f"NO Sensors Found to calc VPD in {self.room}")
-            return
-
-        temperatures = []
-        humidities = []
-
-        # Import here to avoid circular imports
-        from ...OGBDevices.Sensor import Sensor
-
-        for dev in devices:
-            # Only process initialized sensor objects
-            if isinstance(dev, Sensor) and getattr(dev, "isInitialized", False):
-                air_context = dev.getSensorsByContext("air")
-
-                has_temp = "temperature" in air_context
-                has_hum = "humidity" in air_context
-
-                if has_temp:
-                    tempSensors = air_context["temperature"]
-                    for t in tempSensors:
-                        try:
-                            value = float(t.get("state"))
-                            name = t.get("entity_id")
-                            label = t.get("label")
-                            temperatures.append(
-                                {"entity_id": name, "value": value, "label": label}
-                            )
-                        except (ValueError, TypeError):
-                            _LOGGER.error(
-                                f"Ungültiger Temperaturwert in {t.get('entity_id')}: {t.get('state')}"
-                            )
-
-                if has_hum:
-                    humSensors = air_context["humidity"]
-                    for h in humSensors:
-                        try:
-                            value = float(h.get("state"))
-                            name = h.get("entity_id")
-                            label = h.get("label")
-                            humidities.append(
-                                {"entity_id": name, "value": value, "label": label}
-                            )
-                        except (ValueError, TypeError):
-                            _LOGGER.error(
-                                f"Ungültiger Feuchtigkeitswert in {h.get('entity_id')}: {h.get('state')}"
-                            )
-
-        _LOGGER.warning(
-            f"{self.room} VPD-CALC VALUES: Temp:{temperatures} --- HUMS:{humidities}"
-        )
-
-        # Convert "unavailable" to None for publications
-        def convert_value(val):
-            return None if val == "unavailable" else val
-
-        # Store work data
-        self.data_store.setDeep("workData.temperature", temperatures)
-        self.data_store.setDeep("workData.humidity", humidities)
-
-        # Calculate averages
-        leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
-        avgTemp = calculate_avg_value(temperatures)
-        self.data_store.setDeep("tentData.temperature", avgTemp)
-
-        avgHum = calculate_avg_value(humidities)
-        self.data_store.setDeep("tentData.humidity", avgHum)
-
-        avgDew = (
-            calculate_dew_point(avgTemp, avgHum)
-            if avgTemp != "unavailable" and avgHum != "unavailable"
-            else "unavailable"
-        )
-        self.data_store.setDeep("tentData.dewpoint", avgDew)
-
-        lastVpd = self.data_store.getDeep("vpd.current")
-        currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
-
-        # Import here to avoid circular imports
-        from ...data.OGBDataClasses.OGBPublications import (OGBEventPublication,
-                                                      OGBInitData)
-
-        if isinstance(data, OGBInitData):
-            _LOGGER.debug(f"OGBInitData erkannt: {data}")
-            return
-        else:
-            # Handle different publication types
-            if currentVPD != lastVpd:
-                self.data_store.setDeep("vpd.current", currentVPD)
-                vpdPub = OGBVPDPublication(
-                    Name=self.room,
-                    VPD=currentVPD,
-                    AvgTemp=convert_value(avgTemp),
-                    AvgHum=convert_value(avgHum),
-                    AvgDew=convert_value(avgDew),
-                )
-                await update_sensor_via_service(self.room, vpdPub, self.hass)
-                _LOGGER.debug(
-                    f"New-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}"
-                )
-
-                # Handle ambient room
-                if self.room.lower() == "ambient":
-                    _LOGGER.debug(
-                        f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}"
-                    )
-                    await self.event_manager.emit("AmbientData", vpdPub, haEvent=True)
-                    await self.get_weather_data()
-                    return
-
-                await self.event_manager.emit(
-                    "selectActionMode", None
-                )  # Mode manager will handle
-                await self.event_manager.emit("LogForClient", vpdPub, haEvent=True)
-
-            else:
-                vpdPub = OGBVPDPublication(
-                    Name=self.room,
-                    VPD=currentVPD,
-                    AvgTemp=convert_value(avgTemp),
-                    AvgHum=convert_value(avgHum),
-                    AvgDew=convert_value(avgDew),
-                )
-                _LOGGER.debug(
-                    f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}"
-                )
-                await update_sensor_via_service(self.room, vpdPub, self.hass)
 
     async def get_weather_data(self):
         """Fetch weather data from Open-Meteo API."""

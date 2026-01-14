@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from .Device import Device
@@ -29,13 +30,17 @@ class Ventilation(Device):
             deviceLabel,
             allLabels,
         )
-        self.dutyCycle = 0
         self.minDuty = 10
         self.maxDuty = 100
         self.steps = 5
+        self.dutyCycle = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps  # Start at middle, aligned to steps
+        self.isDimmable = True
         self.isInitialized = False
 
         self.init()
+
+        # Start at middle dutyCycle
+        asyncio.create_task(self.turn_on(percentage=self.dutyCycle))
 
         # Events registrieren
         self.event_manager.on("Increase Ventilation", self.increaseAction)
