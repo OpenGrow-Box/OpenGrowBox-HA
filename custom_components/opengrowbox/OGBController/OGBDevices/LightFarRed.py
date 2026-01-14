@@ -23,7 +23,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .Device import Device
+from .Light import Light
 from ..data.OGBDataClasses.OGBPublications import OGBLightAction
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class FarRedMode:
     MANUAL = "Manual"          # Only manual control
 
 
-class LightFarRed(Device):
+class LightFarRed(Light):
     """Far Red light device with configurable operation modes."""
 
     def __init__(

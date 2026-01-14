@@ -765,7 +765,7 @@ tent_modes = [
 
 ### Mode Switching Logic
 ```python
-async def selectActionMode(self, data):
+async def (self, data):
     """Select appropriate action mode based on tentMode."""
     tentMode = self.data_store.get("tentMode")
 

@@ -546,7 +546,7 @@ class OGBWebSocketConManager:
             # FIX: Check if authentication already succeeded during connection
             # (the v1:session:confirmed event is emitted immediately by the server)
             if self._auth_success:
-                logging.error(f"✅ {self.ws_room} V1 authentication already confirmed (received during connect)")
+                logging.debug(f"✅ {self.ws_room} V1 authentication already confirmed (received during connect)")
             else:
                 # Wait for V1 authentication confirmation
                 logging.info(f"🔄 {self.ws_room} Waiting for V1 authentication confirmation...")
@@ -945,7 +945,7 @@ class OGBWebSocketConManager:
 
         @self.sio.on('auth_success', namespace=ns)
         async def on_auth_success(data):
-            logging.error(f"🎉 AUTH SUCCESS RECEIVED: {data}")
+            logging.debug(f"🎉 AUTH SUCCESS RECEIVED: {data}")
 
             # Update session data from auth response
             # Server sends: sessionCount, maxSessions (or ogb_sessions, ogb_max_sessions)
@@ -974,8 +974,8 @@ class OGBWebSocketConManager:
                 room_id = data.get("room_id")
                 room_name = data.get("room_name")
 
-                logging.error(f"🎉 {self.ws_room} V1 SESSION CONFIRMED RECEIVED: {data}")
-                logging.error(f"🔍 {self.ws_room} Session ID check: server={session_id}, local={self._session_id}, match={session_id == self._session_id}")
+                logging.debug(f"🎉 {self.ws_room} V1 SESSION CONFIRMED RECEIVED: {data}")
+                logging.debug(f"🔍 {self.ws_room} Session ID check: server={session_id}, local={self._session_id}, match={session_id == self._session_id}")
 
                 # Verify session ID matches what we expect
                 if session_id and session_id == self._session_id:
@@ -990,11 +990,11 @@ class OGBWebSocketConManager:
                     if data.get("maxSessions") or data.get("max_sessions"):
                         self.ogb_max_sessions = data.get("maxSessions") or data.get("max_sessions") or self.ogb_max_sessions
                     
-                    logging.error(f"✅ {self.ws_room} V1 session confirmed - encryption ready (AES-256-GCM) - sessions: {self.ogb_sessions}/{self.ogb_max_sessions}")
+                    logging.debug(f"✅ {self.ws_room} V1 session confirmed - encryption ready (AES-256-GCM) - sessions: {self.ogb_sessions}/{self.ogb_max_sessions}")
 
                     # Call auth callback if not already called by auth_success
                     if self._pending_auth_callback and not self._auth_callback_called:
-                        logging.error(f"🔄 {self.ws_room} Calling stored auth callback after V1 session confirmed")
+                        logging.debug(f"🔄 {self.ws_room} Calling stored auth callback after V1 session confirmed")
                         try:
                             await self._pending_auth_callback(
                                 self._pending_event_id,
@@ -1002,7 +1002,7 @@ class OGBWebSocketConManager:
                                 "V1 session confirmed",
                                 data
                             )
-                            logging.error(f"✅ {self.ws_room} Auth callback called successfully")
+                            logging.debug(f"✅ {self.ws_room} Auth callback called successfully")
                             self._auth_callback_called = True
                         except Exception as e:
                             logging.error(f"❌ {self.ws_room} Error calling auth callback: {e}")

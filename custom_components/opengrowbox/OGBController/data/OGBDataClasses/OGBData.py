@@ -365,10 +365,10 @@ class OGBConf:
     )
     lightPlantStages: Dict[str, LightStage] = field(
         default_factory=lambda: {
-            "Germination": LightStage(min=20, max=30, phase=""),
-            "Clones": LightStage(min=20, max=30, phase=""),
-            "EarlyVeg": LightStage(min=30, max=40, phase=""),
-            "MidVeg": LightStage(min=40, max=45, phase=""),
+            "Germination": LightStage(min=20, max=25, phase=""),
+            "Clones": LightStage(min=20, max=25, phase=""),
+            "EarlyVeg": LightStage(min=25, max=35, phase=""),
+            "MidVeg": LightStage(min=35, max=45, phase=""),
             "LateVeg": LightStage(min=45, max=55, phase=""),
             "EarlyFlower": LightStage(min=70, max=100, phase=""),
             "MidFlower": LightStage(min=70, max=100, phase=""),

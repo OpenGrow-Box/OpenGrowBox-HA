@@ -10,38 +10,38 @@ The system uses a modular architecture with specialized action modules:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           Modular Data Flow                                      │
-│                                                                                  │
-│   Sensor Updates                                                                 │
-│        ↓                                                                         │
+│                           Modular Data Flow                                     │
+│                                                                                 │
+│   Sensor Updates                                                                │
+│        ↓                                                                        │
 │   OGB.py (OpenGrowBox main controller)                                          │
-│        ↓                                                                         │
+│        ↓                                                                        │
 │   OGBMainController → VPD calculation                                           │
-│        ↓                                                                         │
-│   emit("selectActionMode", runMode)                                              │
-│        ↓                                                                         │
+│        ↓                                                                        │
+│   emit("selectActionMode", tentMode)                                            │
+│        ↓                                                                        │
 │   ┌─────────────────────────────────────────────────────────────────────────┐   │
-│   │                      OGBModeManager                                      │   │
-│   │                                                                          │   │
-│   │   selectActionMode() → determines control mode:                          │   │
+│   │                      OGBModeManager                                     │   │
+│   │                                                                         │   │
+│   │   selectActionMode() → determines control mode:                         │   │
 │   │     • VPD Perfection → emit("increase_vpd|reduce_vpd|FineTune_vpd")     │   │
 │   │     • VPD Target → emit("increase_vpd|reduce_vpd|FineTune_vpd")         │   │
 │   │     • AI Control → emit("DataRelease", True) + emit("AIActions", data)  │   │
 │   │     • PID Control → emit("PIDActions", data)                            │   │
 │   │     • MPC Control → emit("MPCActions", data)                            │   │
-│   │     • Drying → drying mode handlers                                      │   │
+│   │     • Drying → drying mode handlers                                     │   │
 │   └────────────────────────────────────┬────────────────────────────────────┘   │
-│                                        ↓                                         │
+│                                        ↓                                        │
 │   ┌─────────────────────────────────────────────────────────────────────────┐   │
-│   │                 actions/OGBActionManager (Base)                          │   │
-│   │                                                                          │   │
-│   │   Event Listeners:                                                       │   │
+│   │                 actions/OGBActionManager (Base)                         │   │
+│   │                                                                         │   │
+│   │   Event Listeners:                                                      │   │
 │   │     • "increase_vpd" → _handle_increase_vpd() → OGBVPDActions           │   │
 │   │     • "reduce_vpd" → _handle_reduce_vpd() → OGBVPDActions               │   │
 │   │     • "FineTune_vpd" → _handle_fine_tune_vpd() → OGBVPDActions          │   │
 │   │     • "PIDActions" → _handle_pid_actions() → OGBPremiumActions          │   │
 │   │     • "MPCActions" → _handle_mpc_actions() → OGBPremiumActions          │   │
-│   │                                                                          │   │
+│   │                                                                         │   │
 │   │   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐         │   │
 │   │   │  OGBVPDActions  │  │OGBDampeningAct. │  │OGBPremiumActions│         │   │
 │   │   │                 │  │                 │  │                 │         │   │
@@ -49,32 +49,32 @@ The system uses a modular architecture with specialized action modules:
 │   │   │ reduce_vpd()    │→ │ dampening()     │  │ MPCActions()    │         │   │
 │   │   │ fine_tune()     │  │                 │  │ AIActions()     │         │   │
 │   │   └────────┬────────┘  └────────┬────────┘  └─────────────────┘         │   │
-│   │            │                    │                                        │   │
-│   │            ↓                    ↓                                        │   │
+│   │            │                    │                                       │   │
+│   │            ↓                    ↓                                       │   │
 │   │   checkLimitsAndPublicate() / checkLimitsAndPublicateWithDampening()    │   │
-│   │            │                                                             │   │
-│   │            ↓                                                             │   │
+│   │            │                                                            │   │
+│   │            ↓                                                            │   │
 │   │   publicationActionHandler() → Device commands                          │   │
-│   │            │                                                             │   │
-│   │            ↓                                                             │   │
+│   │            │                                                            │   │
+│   │            ↓                                                            │   │
 │   │   emit("DataRelease", True) ← PRIMARY TRIGGER                           │   │
 │   └────────────────────────────────────┬────────────────────────────────────┘   │
-│                                        ↓                                         │
+│                                        ↓                                        │
 │   ┌─────────────────────────────────────────────────────────────────────────┐   │
-│   │                      OGBPremManager                                      │   │
-│   │                                                                          │   │
-│   │   Event Listener:                                                        │   │
+│   │                      OGBPremManager                                     │   │
+│   │                                                                         │   │
+│   │   Event Listener:                                                       │   │
 │   │     event_manager.on("DataRelease", _send_growdata_to_prem_api)         │   │
-│   │                                                                          │   │
+│   │                                                                         │   │
 │   │   _send_growdata_to_prem_api():                                         │   │
-│   │     1. Check if user is logged in                                        │   │
+│   │     1. Check if user is logged in                                       │   │
 │   │     2. Check if mainControl == "Premium"                                │   │
 │   │     3. Collect grow data from data_store                                │   │
-│   │     4. Optional: Send to AI learning webhook                             │   │
-│   │     5. Send to Premium API via WebSocket                                 │   │
+│   │     4. Optional: Send to AI learning webhook                            │   │
+│   │     5. Send to Premium API via WebSocket                                │   │
 │   └────────────────────────────────────┬────────────────────────────────────┘   │
-│                                        ↓                                         │
-│                          Premium API (grow-data event)                           │
+│                                        ↓                                        │
+│                          Premium API (grow-data event)                          │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -299,7 +299,7 @@ async def _send_growdata_to_prem_api(self, event):
 VPD Control Flow (Modular):
   Sensor Update → OGBMainController → VPD calculation
        ↓
-  emit("selectActionMode", runMode)
+  emit("selectActionMode", tentMode)
        ↓
   OGBModeManager.selectActionMode() → emit("increase_vpd" | "reduce_vpd")
        ↓
@@ -317,7 +317,7 @@ VPD Control Flow (Modular):
 Premium Control Flow (AI Mode):
   Sensor Update → OGBMainController → VPD calculation
        ↓
-  emit("selectActionMode", runMode)
+  emit("selectActionMode", tentMode)
        ↓
   OGBModeManager.selectActionMode() → handle_premium_modes()
        ↓

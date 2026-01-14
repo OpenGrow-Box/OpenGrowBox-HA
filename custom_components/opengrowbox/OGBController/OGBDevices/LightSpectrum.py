@@ -24,7 +24,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .Device import Device
+from .Light import Light
 from ..data.OGBDataClasses.OGBPublications import OGBLightAction
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class SpectrumMode:
     MANUAL = "Manual"          # Only manual control
 
 
-class LightSpectrum(Device):
+class LightSpectrum(Light):
     """Spectrum light device (Blue or Red channel) with configurable operation modes."""
 
     # Spectrum type constants

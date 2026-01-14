@@ -25,7 +25,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .Device import Device
+from .Light import Light
 from ..data.OGBDataClasses.OGBPublications import OGBLightAction
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class UVMode:
     MANUAL = "Manual"          # Only manual control
 
 
-class LightUV(Device):
+class LightUV(Light):
     """UV light device with configurable operation modes."""
 
     def __init__(

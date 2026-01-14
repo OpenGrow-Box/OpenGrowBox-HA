@@ -1378,7 +1378,7 @@ class OGBPremiumIntegration:
                 if entity_state.state == "Premium":
                     _LOGGER.critical(f"🎉 {self.room} SUCCESSFULLY switched to Premium mode!")
                 else:
-                    _LOGGER.error(f"⚠️ {self.room} Entity state is {entity_state.state}, expected Premium")
+                    _LOGGER.warning(f"⚠️ {self.room} Entity state is {entity_state.state}, expected Premium")
             else:
                 _LOGGER.error(f"❌ {self.room} MainControl entity not found: {entity_id}")
 

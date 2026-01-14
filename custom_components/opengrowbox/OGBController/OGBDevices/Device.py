@@ -371,18 +371,32 @@ class Device:
             _LOGGER.debug(f"{self.deviceName} Device MinMax sets: Max-Duty:{self.maxDuty} Min-Duty:{self.minDuty}")
 
     def initialize_duty_cycle(self):
-        """Initialisiert den Duty Cycle auf 50%, falls nichts anderes vorliegt."""
-        
+        """Initialisiert den Duty Cycle auf die Mitte der min/max Werte, aligned to steps."""
+
+        def calc_middle(min_val, max_val, steps_val):
+            if steps_val <= 0:
+                return (min_val + max_val) // 2
+            range_mid = (max_val - min_val) // 2
+            steps_in_range = range_mid // steps_val
+            return min_val + steps_in_range * steps_val
+
         # Generischer Default
-        self.dutyCycle = 50  
-        
-        if self.isSpecialDevice:
+        if self.minDuty is not None and self.maxDuty is not None:
+            self.dutyCycle = calc_middle(self.minDuty, self.maxDuty, self.steps)
+        else:
             self.dutyCycle = 50
+
+        if self.isSpecialDevice:
+            if self.minDuty is not None and self.maxDuty is not None:
+                self.dutyCycle = calc_middle(self.minDuty, self.maxDuty, self.steps)
+            else:
+                self.dutyCycle = 50
         elif self.isAcInfinDev:
-            self.steps = 10 
+            self.steps = 10
             self.maxDuty = 100
             self.minDuty = 0
-        
+            self.dutyCycle = calc_middle(self.minDuty, self.maxDuty, self.steps)  # 50
+
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle Init to {self.dutyCycle}%.")
       
     # Eval sensor if Intressted in 
@@ -1228,6 +1242,11 @@ class Device:
 
     # Modes for all Devices
     async def WorkMode(self, workmode):
+        # For lights, don't activate workmode if light is off
+        if hasattr(self, 'islightON') and not self.islightON:
+            self.pendingWorkMode = workmode
+            _LOGGER.info(f"{self.deviceName}: WorkMode {workmode} saved, will activate when light turns on")
+            return
         self.inWorkMode = workmode
         if self.inWorkMode:
             if self.isDimmable:
@@ -1235,7 +1254,11 @@ class Device:
                     if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
                         await self.eventManager.emit("pauseSunPhase", False)
                         return
-                    self.voltage = getattr(self, 'initVoltage', 20)
+                    # Use minVoltage if min/max is active, otherwise initVoltage
+                    if hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
+                        self.voltage = self.minVoltage
+                    else:
+                        self.voltage = getattr(self, 'initVoltage', 20)
                     await self.turn_on(brightness_pct=self.voltage) 
                 else:
                     self.dutyCycle = self.minDuty
@@ -1258,22 +1281,28 @@ class Device:
                         await self.eventManager.emit("resumeSunPhase", False)
                         return
                     self.voltage = self.maxVoltage
-                    await self.turn_on(brightness_pct=self.maxVoltage) 
+                    # Return to normal operation: turn on if device was running
+                    if self.isRunning:
+                        await self.turn_on(brightness_pct=self.maxVoltage)
                 else:
                     self.dutyCycle = self.maxDuty
-                    if self.isSpecialDevice:
-                        await self.turn_on(brightness_pct=int(float(self.maxDuty))) 
-                    await self.turn_on(percentage=int(float(self.maxDuty)))
+                    # Return to normal operation: turn on if device was running
+                    if self.isRunning:
+                        if self.isSpecialDevice:
+                            await self.turn_on(brightness_pct=int(float(self.maxDuty)))
+                        await self.turn_on(percentage=int(float(self.maxDuty)))
             else:
                 if self.deviceType == "Light":
-                    return 
+                    return
                 if self.deviceType == "Pump":
                     return
                 if self.deviceType == "Sensor":
-                    return  
+                    return
                 else:
-                    await self.turn_on()
-                              
+                    # Return to normal operation: turn on if device was running
+                    if self.isRunning:
+                        await self.turn_on()
+                             
     # Update Listener
     def deviceUpdater(self):
         deviceEntitiys = self.getEntitys()
@@ -1334,9 +1363,13 @@ class Device:
         _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")  
 
     async def userSetMinMax(self,data):
+        if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
+            _LOGGER.info(f"{self.deviceName}: Cannot change min/max during active sunphase")
+            return
+
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
-        if not self.isDimmable: 
+        if not self.isDimmable:
             return
 
         if not minMaxSets or not minMaxSets.get("active", False):

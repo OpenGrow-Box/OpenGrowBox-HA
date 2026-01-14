@@ -119,9 +119,9 @@ if currentVPD != lastVpd:
             _LOGGER.debug(f"📊 {self.room} VPD analytics failed: {e}")
 
 // Trigger mode-specific processing
-tentMode = self.data_store.get("tentMode")
-runMode = OGBModeRunPublication(currentMode=tentMode)
-await self.event_manager.emit("selectActionMode", runMode)
+currentMode = self.data_store.get("tentMode")
+tentMode = OGBModeRunPublication(currentMode=currentMode)
+await self.event_manager.emit("selectActionMode", tentMode)
 ```
 
 ### 3. VPD Perfection Value Setup

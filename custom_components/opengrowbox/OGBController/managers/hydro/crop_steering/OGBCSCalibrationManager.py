@@ -497,7 +497,13 @@ class OGBCSCalibrationManager:
             # Get VWC readings from advanced sensor
             vwc_data = self.advanced_sensor.getSensorValue("vwc", "soil")
             if vwc_data and len(vwc_data) > 0:
-                return vwc_data[0].get("value")
+                # Calculate average of all sensor readings instead of using only the first
+                values = [sensor.get("value") for sensor in vwc_data if sensor.get("value") is not None]
+                if values:
+                    return sum(values) / len(values)
+                else:
+                    _LOGGER.warning(f"{self.room} - No valid VWC values found in sensor data")
+                    return None
 
             return None
 
