@@ -1369,7 +1369,8 @@ class Device:
 
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
-        if not self.isDimmable:
+        # CO2 devices are switches (not dimmable), allow them to register capabilities
+        if not self.isDimmable and not self.switches:
             return
 
         if not minMaxSets or not minMaxSets.get("active", False):
