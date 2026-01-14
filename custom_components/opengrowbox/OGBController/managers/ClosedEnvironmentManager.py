@@ -131,6 +131,11 @@ class ClosedEnvironmentManager:
             await self.event_manager.emit("checkLimitsAndPublicate", action_map)
             _LOGGER.debug(f"Closed environment actions processed: {len(action_map)} actions")
 
+        # Handle CO2, O2, and air recirculation in closed environment
+        await self.event_manager.emit("maintain_co2", capabilities)
+        await self.event_manager.emit("monitor_o2_safety", capabilities)
+        await self.event_manager.emit("optimize_air_recirculation", capabilities)
+
         # Update control timestamp
         self.last_control_time = datetime.now()
 

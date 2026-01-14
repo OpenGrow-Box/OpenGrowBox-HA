@@ -160,6 +160,10 @@ class OGBModeManager:
                 f"{self.room}: Current VPD ({currentVPD}) is at perfection ({perfectionVPD}). No action required."
             )
 
+        # Always maintain CO2 within ranges if CO2 control is enabled
+        if self.data_store.getDeep("controlOptions.co2Control"):
+            await self.event_manager.emit("maintain_co2", capabilities)
+
     async def handle_targeted_vpd(self):
         """
         Handhabt den Modus 'Targeted VPD' mit Toleranz.

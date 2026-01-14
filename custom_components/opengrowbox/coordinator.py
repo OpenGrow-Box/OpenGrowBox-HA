@@ -240,14 +240,6 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.OGB.orchestrator.mark_initialization_complete()
                 _LOGGER.info(f"✅ {self.room_name}: Orchestrator signaled initialization complete")
 
-            # CRITICAL: Disable sun phase startup protection for all light devices
-            # This prevents premature light activation during startup
-            devices = self.OGB.data_store.get("devices", [])
-            for device in devices:
-                if hasattr(device, 'disable_sun_phase_startup_protection'):
-                    device.disable_sun_phase_startup_protection()
-                    _LOGGER.debug(f"✅ {self.room_name}: Sun phase startup protection disabled for {device.deviceName}")
-
         except Exception as e:
             _LOGGER.error(f"Error during OpenGrowBox initialization: {e}")
         finally:
