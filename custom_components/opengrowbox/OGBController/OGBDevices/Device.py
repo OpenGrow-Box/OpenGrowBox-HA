@@ -1376,14 +1376,18 @@ class Device:
             return
         
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
-            self.minVoltage = float(minMaxSets.get("minVoltage")) 
+            self.minVoltage = float(minMaxSets.get("minVoltage"))
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-            await self.changeMinMaxValues(self.clamp_voltage(self.voltage))
-            
+            # Clamp current voltage without turning on
+            self.voltage = self.clamp_voltage(self.voltage)
+            _LOGGER.debug(f"{self.deviceName}: Min/max updated, voltage clamped to {self.voltage}%")
+
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = float(minMaxSets.get("minDuty"))
             self.maxDuty = float(minMaxSets.get("maxDuty"))
-            await self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
+            # Clamp current dutyCycle without turning on
+            self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+            _LOGGER.debug(f"{self.deviceName}: Min/max updated, dutyCycle clamped to {self.dutyCycle}%")
 
     def clamp_voltage(self, value):
         """Clamp voltage to min/max range."""
