@@ -16,6 +16,7 @@ from ..OGBDSManager import OGBDSManager
 from ..OGBModeManager import OGBModeManager
 from ..OGBFallBackManager import OGBFallBackManager
 from ..OGBNotifyManager import OGBNotificator
+from ..OGBCO2Manager import OGBCO2Manager
 from ...premium.OGBPremiumIntegration import OGBPremiumIntegration
 from ..hydro.OGBCastManager import OGBCastManager
 from ..medium.OGBMediumManager import OGBMediumManager
@@ -126,6 +127,10 @@ class OGBMainController:
         )
 
         self.feed_manager = OGBTankFeedManager(
+            self.hass, self.data_store, self.event_manager, self.room
+        )
+
+        self.co2_manager = OGBCO2Manager(
             self.hass, self.data_store, self.event_manager, self.room
         )
 

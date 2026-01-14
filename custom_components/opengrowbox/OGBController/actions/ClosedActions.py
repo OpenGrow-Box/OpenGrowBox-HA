@@ -73,7 +73,7 @@ class ClosedActions:
         if not co2_control_enabled:
             return
 
-        current_co2 = self.ogb.dataStore.getDeep("sensors.co2")
+        current_co2 = self.ogb.dataStore.getDeep("tentData.co2Level")
         if current_co2 is None:
             _LOGGER.warning(f"CO2 sensor not available for {self.ogb.room}")
             return
@@ -153,10 +153,12 @@ class ClosedActions:
         Args:
             capabilities: Device capabilities and states
         """
-        current_o2 = self.ogb.dataStore.getDeep("sensors.o2")
-        if current_o2 is None:
-            _LOGGER.warning(f"O2 sensor not available for {self.ogb.room}")
-            return
+        # O2 monitoring not implemented - skip for now
+        # current_o2 = self.ogb.dataStore.getDeep("tentData.o2Level")
+        # if current_o2 is None:
+        #     _LOGGER.warning(f"O2 sensor not available for {self.ogb.room}")
+        #     return
+        return
 
         action_message = "O2 Safety Action"
 
@@ -194,7 +196,7 @@ class ClosedActions:
         Args:
             capabilities: Device capabilities and states
         """
-        current_humidity = self.ogb.dataStore.getDeep("sensors.humidity")
+        current_humidity = self.ogb.dataStore.getDeep("tentData.humidity")
         target_humidity = self.ogb.dataStore.getDeep("targets.humidity")
 
         if current_humidity is None or target_humidity is None:
@@ -301,7 +303,7 @@ class ClosedActions:
             return
 
         # Get current temperature
-        current_temp = self.ogb.dataStore.getDeep("sensors.temperature")
+        current_temp = self.ogb.dataStore.getDeep("tentData.temperature")
         if current_temp is None:
             return
 
@@ -363,7 +365,7 @@ class ClosedActions:
             return
 
         # Get current humidity
-        current_humidity = self.ogb.dataStore.getDeep("sensors.humidity")
+        current_humidity = self.ogb.dataStore.getDeep("tentData.humidity")
         if current_humidity is None:
             return
 
@@ -459,12 +461,12 @@ class ClosedActions:
         """
         return {
             "room": self.ogb.room,
-            "co2_current": self.ogb.dataStore.getDeep("sensors.co2"),
+            "co2_current": self.ogb.dataStore.getDeep("tentData.co2Level"),
             "co2_target_min": self.co2_target_min,
             "co2_target_max": self.co2_target_max,
-            "o2_current": self.ogb.dataStore.getDeep("sensors.o2"),
+            "o2_current": None,  # O2 monitoring not implemented
             "o2_emergency_threshold": self.o2_emergency_low,
-            "humidity_current": self.ogb.dataStore.getDeep("sensors.humidity"),
+            "humidity_current": self.ogb.dataStore.getDeep("tentData.humidity"),
             "humidity_target": self.ogb.dataStore.getDeep("targets.humidity"),
             "recirculation_active": self.ogb.dataStore.getDeep("devices.recirculation.state"),
         }

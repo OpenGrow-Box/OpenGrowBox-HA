@@ -360,7 +360,7 @@ class OGBDeviceManager:
             "Generic": GenericSwitch,
             "Sensor": Sensor,
             "Pump": Pump,
-            "C02": CO2,
+            "CO2": CO2,
             "Fridge": Fridge,
             # Modbus devices
             "Modbus": OGBModbusDevice,

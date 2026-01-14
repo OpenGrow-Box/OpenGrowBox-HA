@@ -591,7 +591,6 @@ class Light(Device):
     async def _run_sunrise(self):
         """Führt die SunRisessequenz als separate Task aus."""
 
-        logging.warning("NOT DEAD")
         try:
             if not self.isDimmable or not self.islightON:
                 _LOGGER.warning(
@@ -632,8 +631,6 @@ class Light(Device):
                     f"{self.deviceName}: Sunrise übersprungen - bereits bei {start_voltage}%, Ziel {target_voltage}% erreicht"
                 )
                 return
-
-            logging.warning("NOT DEAD")
 
             for i in range(1, 11):
                 # Check if we should continue with sunrise
