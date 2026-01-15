@@ -63,8 +63,8 @@ class Ventilation(Device):
     def init(self):
         """Initialisiert die Ventilation."""
         if not self.isInitialized:
-            self.checkMinMax(False)  # Enable min/max loading from datastore
-            self.checkForControlValue()
+            self.checkMinMax(False)      # Load min/max from dataStore FIRST
+            self.checkForControlValue()  # THEN load sensor value (clamps to min/max)
 
             if not self.dutyCycle or self.dutyCycle == 0:
                 self.initialize_duty_cycle()

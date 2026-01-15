@@ -42,7 +42,10 @@ class Device:
         self.eventManager.on("DeviceStateUpdate", self.deviceUpdate)        
         self.eventManager.on("WorkModeChange", self.WorkMode)
         self.eventManager.on("SetMinMax", self.userSetMinMax)
-   
+        self.eventManager.on("MinMaxControlDisabled", self.on_minmax_control_disabled)
+        self.eventManager.on("MinMaxControlEnabled", self.on_minmax_control_enabled)
+        self.eventManager.on("LightTimeChanges", self.on_light_time_change)
+    
         self.deviceInit(deviceData)
 
     @property
@@ -361,14 +364,33 @@ class Device:
             return  # Nichts aktiv → nichts tun
 
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
+            old_min = self.minVoltage
+            old_max = self.maxVoltage
             self.minVoltage = minMaxSets.get("minVoltage")
             self.maxVoltage = minMaxSets.get("maxVoltage")
             _LOGGER.debug(f"{self.deviceName} Device MinMax sets: Max-Voltage:{self.maxVoltage} Min-Voltage:{self.minVoltage}")
+            
+            # Clamp voltage to new min/max range
+            if hasattr(self, 'voltage') and self.voltage is not None:
+                old_voltage = self.voltage
+                self.voltage = self.clamp_voltage(self.voltage)
+                _LOGGER.info(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}%")
         
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+            old_min = self.minDuty
+            old_max = self.maxDuty
             self.minDuty = minMaxSets.get("minDuty")
             self.maxDuty = minMaxSets.get("maxDuty")
             _LOGGER.debug(f"{self.deviceName} Device MinMax sets: Max-Duty:{self.maxDuty} Min-Duty:{self.minDuty}")
+            
+            # CRITICAL: Clamp dutyCycle to new min/max range
+            if hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
+                old_duty = self.dutyCycle
+                self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                _LOGGER.info(
+                    f"{self.deviceName}: DutyCycle clamped from {old_duty}% to {self.dutyCycle}% "
+                    f"(was in {old_min}-{old_max}%, now in {self.minDuty}-{self.maxDuty}%)"
+                )
 
     def initialize_duty_cycle(self):
         """Initialisiert den Duty Cycle auf die Mitte der min/max Werte, aligned to steps."""
@@ -625,9 +647,15 @@ class Device:
                 if self.deviceType == "Light":
                     self.voltage = converted_value
                     _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to {self.voltage}%.")
+                    if hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
+                        self.voltage = self.clamp_voltage(self.voltage)
+                        _LOGGER.debug(f"{self.deviceName}: Voltage clamped to {self.voltage}%.")
                 elif self.deviceType in ["Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"]:
                     self.dutyCycle = converted_value
                     _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
+                    if hasattr(self, 'minDuty') and hasattr(self, 'maxDuty') and self.minDuty is not None and self.maxDuty is not None:
+                        self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                        _LOGGER.debug(f"{self.deviceName}: Duty Cycle clamped to {self.dutyCycle}%.")
 
         # Options durchgehen
         for option in self.options:
@@ -646,6 +674,9 @@ class Device:
                     if converted_value is not None:
                         self.voltage = converted_value
                         _LOGGER.debug(f"{self.deviceName}: Voltage set from Options to {self.voltage}%.")
+                        if hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
+                            self.voltage = self.clamp_voltage(self.voltage)
+                            _LOGGER.debug(f"{self.deviceName}: Voltage clamped to {self.voltage}%.")
                         return
                 else:
                     # Für alle anderen Gerätetypen
@@ -654,6 +685,9 @@ class Device:
                     if converted_value is not None:
                         self.dutyCycle = converted_value
                         _LOGGER.debug(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
+                        if hasattr(self, 'minDuty') and hasattr(self, 'maxDuty') and self.minDuty is not None and self.maxDuty is not None:
+                            self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                            _LOGGER.debug(f"{self.deviceName}: Duty Cycle clamped to {self.dutyCycle}%.")
                         return
                 
     async def turn_on(self, **kwargs):
@@ -673,11 +707,15 @@ class Device:
                     # Clamp to valid range
                     brightness_pct = max(0, min(100, brightness_pct))
                 except (ValueError, TypeError):
-                    _LOGGER.error(f"{self.deviceName}: Invalid brightness_pct value: {brightness_pct}, using 100")
-                    brightness_pct = 100.0
+                    _LOGGER.error(f"{self.deviceName}: Invalid brightness_pct value: {brightness_pct}, using device voltage")
+                    brightness_pct = getattr(self, 'voltage', 100)
             else:
-                # Default to 100% if not specified
-                brightness_pct = 100.0
+                # Default: For lights, use current voltage instead of 100%
+                if self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"] and hasattr(self, 'voltage'):
+                    brightness_pct = self.voltage
+                    _LOGGER.debug(f"{self.deviceName}: Using current voltage {brightness_pct}% for turn_on")
+                else:
+                    brightness_pct = 100.0
             _LOGGER.debug(f"{self.deviceName}: turn_on processed brightness_pct={brightness_pct}")
             
             # Validate and convert percentage to float (default to 100 if None)
@@ -685,11 +723,15 @@ class Device:
                 try:
                     percentage = float(percentage)
                 except (ValueError, TypeError):
-                    _LOGGER.error(f"{self.deviceName}: Invalid percentage value: {percentage}, using 100")
-                    percentage = 100.0
+                    _LOGGER.error(f"{self.deviceName}: Invalid percentage value: {percentage}, using device dutyCycle")
+                    percentage = getattr(self, 'dutyCycle', 50)
             else:
-                # Default to 100% if not specified
-                percentage = 100.0
+                # Default: For exhaust/intake/ventilation, use current dutyCycle instead of 100%
+                if self.deviceType in {"Exhaust", "Intake", "Ventilation"} and hasattr(self, 'dutyCycle'):
+                    percentage = self.dutyCycle
+                    _LOGGER.debug(f"{self.deviceName}: Using current dutyCycle {percentage}% for turn_on")
+                else:
+                    percentage = 100.0
 
             # === Sonderfall: AcInfinity Geräte ===
             if self.isAcInfinDev:
@@ -1383,17 +1425,17 @@ class Device:
 
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
-        # CO2 devices are switches (not dimmable), allow them to register capabilities
         if not self.isDimmable and not self.switches:
             return
 
-        if not minMaxSets or not minMaxSets.get("active", False):
+        if not minMaxSets:
             return
+        
+        is_active = minMaxSets.get("active", False)
         
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             self.minVoltage = float(minMaxSets.get("minVoltage"))
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-            # Clamp current voltage and apply to running device
             old_voltage = self.voltage
             self.voltage = self.clamp_voltage(self.voltage)
             _LOGGER.debug(f"{self.deviceName}: Min/max updated, voltage clamped from {old_voltage}% to {self.voltage}%")
@@ -1403,7 +1445,6 @@ class Device:
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = float(minMaxSets.get("minDuty"))
             self.maxDuty = float(minMaxSets.get("maxDuty"))
-            # Clamp current dutyCycle and apply to running device
             old_duty = self.dutyCycle
             self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
             _LOGGER.debug(f"{self.deviceName}: Min/max updated, dutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
@@ -1413,6 +1454,164 @@ class Device:
                 else:
                     await self.turn_on(percentage=self.dutyCycle)
                 _LOGGER.info(f"{self.deviceName}: Applied clamped dutyCycle {self.dutyCycle}% to running device")
+
+    async def on_minmax_control_disabled(self, data):
+        """Reset min/max to defaults when global minMaxControl is disabled.
+        
+        Only applies to: Light, Exhaust, Intake, Ventilation
+        
+        Behavior:
+        - Light: Uses plant stage-based min/max from PlantStageMinMax (Light.py)
+        - Exhaust/Intake/Ventilation: Uses class-defined default values (0-100)
+        
+        IMPORTANT: Only updates running devices. Does NOT turn on devices that are off.
+        """
+        # Only handle for specific device types
+        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
+        if self.deviceType not in minmax_device_types:
+            _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlDisabled")
+            return
+        
+        _LOGGER.info(f"{self.deviceName}: MinMax control disabled - resetting to default values")
+        
+        if self.deviceType == "Light":
+            # For Light devices, use plant stage-based min/max from PlantStageMinMax
+            plant_stage = self.data_store.get("plantStage") or "LateFlower"
+            
+            # Import PlantStageMinMax from Light class if available
+            if hasattr(self, 'PlantStageMinMax') and plant_stage in self.PlantStageMinMax:
+                stage_minmax = self.PlantStageMinMax[plant_stage]
+                old_min = self.minVoltage
+                old_max = self.maxVoltage
+                self.minVoltage = stage_minmax["min"]
+                self.maxVoltage = stage_minmax["max"]
+                _LOGGER.info(
+                    f"{self.deviceName}: Using {plant_stage} min/max: "
+                    f"min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%"
+                )
+            else:
+                # Fallback: use initVoltage and 100
+                self.minVoltage = getattr(self, 'initVoltage', 20)
+                self.maxVoltage = 100
+                _LOGGER.warning(
+                    f"{self.deviceName}: No PlantStageMinMax found for '{plant_stage}', "
+                    f"using fallback: min={self.minVoltage}%, max={self.maxVoltage}%"
+                )
+            
+            # Only update running devices - don't turn on devices that are off
+            if self.isRunning and hasattr(self, 'voltage') and self.voltage is not None:
+                old_voltage = self.voltage
+                # Un-clamp: reset to initVoltage
+                self.voltage = self.initVoltage
+                _LOGGER.info(f"{self.deviceName}: Running - voltage reset from {old_voltage}% to {self.voltage}%")
+                await self.turn_on(brightness_pct=self.voltage)
+            else:
+                _LOGGER.info(f"{self.deviceName}: Not running - min/max reset, voltage unchanged at {getattr(self, 'voltage', 'N/A')}%")
+        
+        elif self.deviceType in {"Exhaust", "Intake", "Ventilation"}:
+            old_min = self.minDuty
+            old_max = self.maxDuty
+            
+            if self.deviceType == "Ventilation":
+                self.minDuty = 85
+                self.maxDuty = 100
+            else:
+                self.minDuty = 10
+                self.maxDuty = 95
+            
+            _LOGGER.info(
+                f"{self.deviceName}: Resetting min/max: "
+                f"min={old_min}→{self.minDuty}, max={old_max}→{self.maxDuty}"
+            )
+            
+            # Only update running devices - don't turn on devices that are off
+            if self.isRunning and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
+                old_duty = self.dutyCycle
+                # Calculate midpoint of new range
+                midpoint = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps
+                self.dutyCycle = midpoint
+                _LOGGER.info(f"{self.deviceName}: Running - dutyCycle reset from {old_duty}% to {self.dutyCycle}%")
+                if self.isSpecialDevice:
+                    await self.turn_on(brightness_pct=float(self.dutyCycle))
+                else:
+                    await self.turn_on(percentage=self.dutyCycle)
+            else:
+                _LOGGER.info(f"{self.deviceName}: Not running - min/max reset, dutyCycle unchanged at {getattr(self, 'dutyCycle', 'N/A')}%")
+
+    async def on_minmax_control_enabled(self, data):
+        """Restore user-defined min/max values when global minMaxControl is enabled.
+        
+        Only applies to: Light, Exhaust, Intake, Ventilation
+        
+        Behavior:
+        - Reads device-specific min/max from dataStore DeviceMinMax.{deviceType}
+        - Clamps current voltage/dutyCycle to valid range
+        - Updates running device with clamped value
+        
+        IMPORTANT: Only updates running devices. Does NOT turn on devices that are off.
+        """
+        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
+        if self.deviceType not in minmax_device_types:
+            _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlEnabled")
+            return
+        
+        _LOGGER.info(f"{self.deviceName}: MinMax control enabled - restoring user-defined min/max values")
+        
+        minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
+        
+        if self.deviceType == "Light":
+            if minMaxSets and minMaxSets.get("active", False):
+                if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
+                    old_min = self.minVoltage
+                    old_max = self.maxVoltage
+                    self.minVoltage = float(minMaxSets.get("minVoltage"))
+                    self.maxVoltage = float(minMaxSets.get("maxVoltage"))
+                    _LOGGER.info(
+                        f"{self.deviceName}: Restored min/max: "
+                        f"min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%"
+                    )
+                    
+                    if self.isRunning and hasattr(self, 'voltage') and self.voltage is not None:
+                        old_voltage = self.voltage
+                        self.voltage = self.clamp_voltage(self.voltage)
+                        _LOGGER.info(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}%")
+                        await self.turn_on(brightness_pct=self.voltage)
+                else:
+                    _LOGGER.warning(f"{self.deviceName}: No min/max values found in dataStore")
+            else:
+                _LOGGER.info(f"{self.deviceName}: Device-specific minmax not active, using defaults")
+        
+        elif self.deviceType in {"Exhaust", "Intake", "Ventilation"}:
+            if minMaxSets and minMaxSets.get("active", False):
+                if "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+                    old_min = self.minDuty
+                    old_max = self.maxDuty
+                    self.minDuty = float(minMaxSets.get("minDuty"))
+                    self.maxDuty = float(minMaxSets.get("maxDuty"))
+                    _LOGGER.info(
+                        f"{self.deviceName}: Restored min/max: "
+                        f"min={old_min}→{self.minDuty}, max={old_max}→{self.maxDuty}"
+                    )
+                    
+                    if self.isRunning and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
+                        old_duty = self.dutyCycle
+                        self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                        _LOGGER.info(f"{self.deviceName}: DutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
+                        if self.isSpecialDevice:
+                            await self.turn_on(brightness_pct=float(self.dutyCycle))
+                        else:
+                            await self.turn_on(percentage=self.dutyCycle)
+                else:
+                    _LOGGER.warning(f"{self.deviceName}: No min/max values found in dataStore")
+            else:
+                _LOGGER.info(f"{self.deviceName}: Device-specific minmax not active, using defaults")
+
+    async def on_light_time_change(self, data):
+        """Handle light time changes - reload settings and adjust schedule."""
+        _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        # Subclasses can override this to handle time changes specifically
+        # Default behavior: just log it
+        pass
 
     def clamp_voltage(self, value):
         """Clamp voltage to min/max range."""
@@ -1433,11 +1632,17 @@ class Device:
     
             if self.deviceType == "Light":
                 if self.isDimmable:
-                    self.voltage = newValue
-                    await self.turn_on(brightness_pct=newValue)
+                    # Clamp to min/max range
+                    clamped_value = self.clamp_voltage(newValue)
+                    self.voltage = clamped_value
+                    _LOGGER.info(f"{self.deviceName}: Voltage set to {clamped_value}% (was {newValue}%)")
+                    await self.turn_on(brightness_pct=clamped_value)
             else:
-                self.dutyCycle = newValue
+                # Clamp to min/max range for duty cycle devices
+                clamped_value = self.clamp_duty_cycle(newValue)
+                self.dutyCycle = clamped_value
+                _LOGGER.info(f"{self.deviceName}: DutyCycle set to {clamped_value}% (was {newValue}%)")
                 if self.isSpecialDevice:
-                    await self.turn_on(brightness_pct=float(newValue))
+                    await self.turn_on(brightness_pct=float(clamped_value))
                 else:
-                    await self.turn_on(percentage=newValue)
+                    await self.turn_on(percentage=clamped_value)

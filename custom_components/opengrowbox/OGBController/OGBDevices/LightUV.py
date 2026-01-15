@@ -241,7 +241,19 @@ class LightUV(Light):
             await self._check_schedule_window()
 
     async def _check_schedule_window(self):
-        """Check if we're in a UV activation window (Schedule mode)."""
+        """Check if we're in a UV activation window (Schedule mode).
+        
+        UV Behavior:
+        - Uses relative schedule: starts after delay, ends before stop
+        - Default: 2 hours (120 min) after light on, 2 hours (120 min) before light off
+        - Can be customized via delayAfterStartMinutes and stopBeforeEndMinutes
+        
+        Default behavior:
+        - If light is 07:00-22:00:
+          - UV starts at: 07:00 + 120min = 09:00
+          - UV ends at: 22:00 - 120min = 20:00
+          - UV window: 09:00-20:00 (11 hours total)
+        """
         # CRITICAL: Check if enabled first
         if not getattr(self, 'enabled', True):
             _LOGGER.debug(f"{self.deviceName}: Schedule check skipped (disabled)")
@@ -272,30 +284,43 @@ class LightUV(Light):
             else:
                 light_off_dt += timedelta(days=1)
         
-        # Calculate UV window
-        uv_start = light_on_dt + timedelta(minutes=self.delay_after_start_minutes)
-        uv_end = light_off_dt - timedelta(minutes=self.stop_before_end_minutes)
+        # Calculate UV window based on delay/stop relative to light times
+        # Default: 120 min (2 hours) after light on, 120 min before light off
+        delay_minutes = getattr(self, 'delay_after_start_minutes', 120)
+        stop_minutes = getattr(self, 'stop_before_end_minutes', 120)
+        
+        uv_start = light_on_dt + timedelta(minutes=delay_minutes)
+        uv_end = light_off_dt - timedelta(minutes=stop_minutes)
         
         # Check max duration limit
-        max_duration_dt = timedelta(hours=self.max_duration_hours)
-        if (uv_end - uv_start) > max_duration_dt:
-            # Center the UV window
-            total_light_duration = light_off_dt - light_on_dt
-            center = light_on_dt + (total_light_duration / 2)
+        max_duration_hours = getattr(self, 'max_duration_hours', 6)
+        max_duration_dt = timedelta(hours=max_duration_hours)
+        light_duration = (light_off_dt - light_on_dt).total_seconds() / 60  # in minutes
+        
+        if (uv_end - uv_start).total_seconds() > max_duration_dt.total_seconds():
+            # Calculate center of the allowed UV window within light period
+            # UV window should be: delay_minutes after start to stop_minutes before end
+            available_start = light_on_dt + timedelta(minutes=delay_minutes)
+            available_end = light_off_dt - timedelta(minutes=stop_minutes)
+            available_duration = (available_end - available_start).total_seconds() / 2  # Split remaining time
+            
+            center = available_start + timedelta(seconds=available_duration)
             uv_start = center - (max_duration_dt / 2)
             uv_end = center + (max_duration_dt / 2)
         
         in_uv_window = uv_start <= now <= uv_end
         
         # Check if we've hit daily exposure limit
-        max_daily_minutes = self.max_duration_hours * 60
-        exposure_limit_reached = self.daily_exposure_minutes >= max_daily_minutes
+        max_daily_minutes = max_duration_hours * 60
+        daily_exposure = getattr(self, 'daily_exposure_minutes', 0)
+        exposure_limit_reached = daily_exposure >= max_daily_minutes
         
-        _LOGGER.debug(
+        _LOGGER.info(
             f"{self.deviceName}: UV check - Now: {now.strftime('%H:%M')}, "
+            f"Light: {self.lightOnTime}-{self.lightOffTime}, "
+            f"Delay: {delay_minutes}min, StopBefore: {stop_minutes}min, "
             f"Window: {uv_start.strftime('%H:%M')}-{uv_end.strftime('%H:%M')}, "
-            f"InWindow: {in_uv_window}, DailyExposure: {self.daily_exposure_minutes}min, "
-            f"LimitReached: {exposure_limit_reached}"
+            f"InWindow: {in_uv_window}, DailyExposure: {daily_exposure}min/{max_daily_minutes}min"
         )
         
         # Determine if we should be ON or OFF
@@ -304,7 +329,7 @@ class LightUV(Light):
                 await self._activate_uv('schedule')
             else:
                 # Track exposure time
-                self.daily_exposure_minutes += 1
+                self.daily_exposure_minutes = daily_exposure + 1
         else:
             if self.is_uv_active:
                 reason = "Exposure limit reached" if exposure_limit_reached else "Outside UV window"
@@ -376,8 +401,16 @@ class LightUV(Light):
         await self.turn_off()
 
     async def _on_light_time_change(self, data):
-        """Handle main light schedule changes."""
+        """Handle main light schedule changes - reload settings and restart scheduler."""
         _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        
+        # CRITICAL: Stop existing scheduler before reloading
+        if self._schedule_task and not self._schedule_task.done():
+            _LOGGER.info(f"{self.deviceName}: Stopping scheduler for time change reload")
+            self._schedule_task.cancel()
+            self._schedule_task = None
+        
+        # Reload settings - this will restart scheduler if needed
         self._load_settings()
 
     async def _on_main_light_toggle(self, lightState):
