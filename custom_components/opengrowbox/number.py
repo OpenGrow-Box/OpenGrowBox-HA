@@ -937,7 +937,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_Light_Volt_Min_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            min_value=0,
+            min_value=20,
             max_value=100,
             step=1,
             unit="%",

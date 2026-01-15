@@ -547,8 +547,16 @@ class LightSpectrum(Light):
         await self.turn_off()
 
     async def _on_light_time_change(self, data):
-        """Handle main light schedule changes."""
+        """Handle main light schedule changes - reload settings and restart scheduler."""
         _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        
+        # CRITICAL: Stop existing scheduler before reloading
+        if self._schedule_task and not self._schedule_task.done():
+            _LOGGER.info(f"{self.deviceName}: Stopping scheduler for time change reload")
+            self._schedule_task.cancel()
+            self._schedule_task = None
+        
+        # Reload settings - this will restart scheduler if needed
         self._load_settings()
 
     async def _on_main_light_toggle(self, lightState):

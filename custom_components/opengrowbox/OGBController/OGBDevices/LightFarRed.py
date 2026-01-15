@@ -79,6 +79,7 @@ class LightFarRed(Light):
         # State tracking
         self.is_fr_active = False
         self.current_phase: Optional[str] = None  # 'start', 'end', 'always_on', or None
+        self.current_intensity = 0.0  # Current intensity for ramping (0-100%)
         
         # Light schedule reference
         self.lightOnTime = None
@@ -284,7 +285,16 @@ class LightFarRed(Light):
             await self._check_schedule_windows()
 
     async def _check_schedule_windows(self):
-        """Check if we're in a Far Red activation window (Schedule mode)."""
+        """Check if we're in a Far Red activation window (Schedule mode).
+        
+        FarRed behavior:
+        - Starts 7.5 min BEFORE main lights (ramp 0→100%)
+        - Runs 7.5 min WITH main lights (100%)
+        - Starts 7.5 min BEFORE lights off (ramp 100→0%)
+        - Runs 7.5 min AFTER lights off (0%)
+        
+        Total windows: 15 min each, centered on light on/off times
+        """
         # CRITICAL: Check if enabled first
         if not getattr(self, 'enabled', True):
             _LOGGER.debug(f"{self.deviceName}: Schedule check skipped (disabled)")
@@ -310,34 +320,90 @@ class LightFarRed(Light):
             else:
                 light_off_dt += timedelta(days=1)
         
-        # Start window: lightOnTime to lightOnTime + start_duration
-        start_window_begin = light_on_dt
-        start_window_end = light_on_dt + timedelta(minutes=self.start_duration_minutes)
+        # FarRed windows: 7.5 min before + 7.5 min after (total 15 min each)
+        # Start window: centered on lightOnTime
+        half_start_duration = timedelta(minutes=self.start_duration_minutes / 2)  # 7.5 min
+        start_window_begin = light_on_dt - half_start_duration
+        start_window_end = light_on_dt + half_start_duration
         
-        # End window: lightOffTime - end_duration to lightOffTime
-        end_window_begin = light_off_dt - timedelta(minutes=self.end_duration_minutes)
-        end_window_end = light_off_dt
+        # End window: centered on lightOffTime
+        half_end_duration = timedelta(minutes=self.end_duration_minutes / 2)  # 7.5 min
+        end_window_begin = light_off_dt - half_end_duration
+        end_window_end = light_off_dt + half_end_duration
         
         in_start_window = start_window_begin <= now <= start_window_end
         in_end_window = end_window_begin <= now <= end_window_end
         
-        _LOGGER.debug(
+        # Calculate intensity based on position in window (ramp 0→100% or 100→0%)
+        current_intensity = 0
+        is_ramping = False
+        ramp_direction = None  # 'up' or 'down'
+        
+        if in_start_window:
+            # Ramp UP: 0% at start, 100% at middle/end
+            window_duration = (start_window_end - start_window_begin).total_seconds()
+            elapsed = (now - start_window_begin).total_seconds()
+            progress = elapsed / window_duration  # 0.0 to 1.0
+            current_intensity = min(100, max(0, progress * 100))
+            is_ramping = True
+            ramp_direction = 'up'
+        elif in_end_window:
+            # Ramp DOWN: 100% at start, 0% at middle/end
+            window_duration = (end_window_end - end_window_begin).total_seconds()
+            elapsed = (now - end_window_begin).total_seconds()
+            progress = elapsed / window_duration  # 0.0 to 1.0
+            current_intensity = min(100, max(0, (1 - progress) * 100))
+            is_ramping = True
+            ramp_direction = 'down'
+        
+        _LOGGER.info(
             f"{self.deviceName}: Time check - Now: {now.strftime('%H:%M:%S')}, "
-            f"StartWindow: {start_window_begin.strftime('%H:%M')}-{start_window_end.strftime('%H:%M')}, "
-            f"EndWindow: {end_window_begin.strftime('%H:%M')}-{end_window_end.strftime('%H:%M')}, "
-            f"InStart: {in_start_window}, InEnd: {in_end_window}"
+            f"StartWindow: {start_window_begin.strftime('%H:%M')}-{start_window_end.strftime('%H:%M')} ({half_start_duration}), "
+            f"EndWindow: {end_window_begin.strftime('%H:%M')}-{end_window_end.strftime('%H:%M')} ({half_end_duration}), "
+            f"InStart: {in_start_window}, InEnd: {in_end_window}, "
+            f"Intensity: {current_intensity:.1f}%, Ramping: {is_ramping} ({ramp_direction})"
         )
         
-        # Determine if we should be ON or OFF
-        if in_start_window and self.islightON:
-            if not self.is_fr_active or self.current_phase != 'start':
-                await self._activate_far_red('start')
-        elif in_end_window and self.islightON:
-            if not self.is_fr_active or self.current_phase != 'end':
-                await self._activate_far_red('end')
+        # Activation logic: Only activate if not already active at this intensity
+        if is_ramping:
+            if not self.is_fr_active or abs(self.current_intensity - current_intensity) > 5:
+                # Need to activate or adjust intensity
+                await self._activate_far_red_with_intensity(current_intensity, ramp_direction)
         else:
+            # Outside all windows, ensure FarRed is off
             if self.is_fr_active:
-                await self._deactivate_far_red()
+                await self._deactivate_far_red("Outside schedule windows")
+        
+    async def _activate_far_red_with_intensity(self, intensity: float, direction: Optional[str] = None):
+        """Activate Far Red light with specific intensity and ramping direction.
+        
+        Args:
+            intensity: Target intensity (0-100%)
+            direction: 'up' for ramping up, 'down' for ramping down
+        """
+        self.current_intensity = intensity
+        self.current_phase = direction  # 'up' or 'down'
+        self.is_fr_active = True
+        
+        message = f"FarRed activated - {intensity:.1f}% ({direction} ramping)"
+        _LOGGER.info(f"{self.deviceName}: {message}")
+        
+        # Create action log
+        lightAction = OGBLightAction(
+            Name=self.inRoom,
+            Device=self.deviceName,
+            Type="LightFarRed",
+            Action="ON",
+            Message=message,
+            Voltage=int(intensity),
+            Dimmable=False,
+            SunRise=False,
+            SunSet=False,
+        )
+        await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+        
+        # Turn on the light
+        await self.turn_on()
 
     async def _activate_far_red(self, phase: str):
         """Activate Far Red light for the specified phase."""
@@ -409,8 +475,16 @@ class LightFarRed(Light):
         await self.turn_off()
 
     async def _on_light_time_change(self, data):
-        """Handle main light schedule changes."""
+        """Handle main light schedule changes - reload settings and restart scheduler."""
         _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        
+        # CRITICAL: Stop existing scheduler before reloading
+        if self._schedule_task and not self._schedule_task.done():
+            _LOGGER.info(f"{self.deviceName}: Stopping scheduler for time change reload")
+            self._schedule_task.cancel()
+            self._schedule_task = None
+        
+        # Reload settings - this will restart scheduler if needed
         self._load_settings()
 
     async def _on_main_light_toggle(self, lightState):
