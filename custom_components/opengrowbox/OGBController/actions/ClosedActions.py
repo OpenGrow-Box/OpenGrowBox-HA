@@ -256,7 +256,7 @@ class ClosedActions:
         # Base recirculation for CO2 distribution
         action_map = []
 
-        if capabilities["canRecirculate"]["state"]:
+        if "canRecirculate" in capabilities and capabilities["canRecirculate"]["state"]:
             action_map.append(
                 self._create_action("canRecirculate", "Optimize", action_message)
             )
@@ -264,7 +264,7 @@ class ClosedActions:
         # Additional recirculation based on temperature gradients
         temp_gradient = self._calculate_temp_gradient()
         if temp_gradient > 2.0:  # Significant temperature difference
-            if capabilities["canRecirculate"]["state"]:
+            if "canRecirculate" in capabilities and capabilities["canRecirculate"]["state"]:
                 action_map.append(
                     self._create_action("canRecirculate", "Increase", action_message)
                 )

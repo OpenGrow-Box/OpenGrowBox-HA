@@ -115,10 +115,6 @@ class ClosedEnvironmentManager:
         temp_target = await self.control_logic.calculate_optimal_temperature_target()
         humidity_target = await self.control_logic.calculate_optimal_humidity_target()
 
-        # Store targets for reference (using standard datastore paths)
-        self.data_store.setDeep("targets.temperature", temp_target)
-        self.data_store.setDeep("targets.humidity", humidity_target)
-
         # Create action publications and process through ActionManager (for Premium API compatibility)
         action_map = []
         if temp_target is not None:

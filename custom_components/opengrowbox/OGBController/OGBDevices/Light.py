@@ -769,6 +769,14 @@ class Light(Device):
 
     ## Actions
     async def toggleLight(self, lightState):
+        """Toggle the light based on schedule."""
+        # CRITICAL: Special light types should NOT respond to this method
+        # They have their own dedicated scheduling logic in their respective classes
+        special_light_types = {"LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}
+        if self.deviceType in special_light_types:
+            _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring base toggleLight - using dedicated scheduling")
+            return
+
         self.islightON = lightState
         self.ogbLightControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
 

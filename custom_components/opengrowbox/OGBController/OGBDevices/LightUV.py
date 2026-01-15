@@ -74,6 +74,10 @@ class LightUV(Light):
         self.stop_before_end_minutes = 120    # Stop 2 hours before lights off
         self.max_duration_hours = 6           # Maximum UV exposure per day
         self.intensity_percent = 100          # UV intensity (if dimmable)
+
+        # New midday scheduling features
+        self.midday_start_time = "12:00"      # Start midday period (preset options)
+        self.midday_end_time = "14:00"        # End midday period (preset options)
         
         # State tracking
         self.is_uv_active = False
@@ -125,21 +129,60 @@ class LightUV(Light):
             
             # Get UV specific settings (with defaults)
             uv_settings = self.data_store.getDeep("specialLights.uv") or {}
+            
+            # CRITICAL: Check enabled setting FIRST - this controls whether light operates
+            self.enabled = uv_settings.get("enabled", True)  # Default to enabled for backward compatibility
+            
+            # Get mode setting - this determines behavior
             self.mode = uv_settings.get("mode", UVMode.SCHEDULE)
             self.delay_after_start_minutes = uv_settings.get("delayAfterStartMinutes", 120)
             self.stop_before_end_minutes = uv_settings.get("stopBeforeEndMinutes", 120)
             self.max_duration_hours = uv_settings.get("maxDurationHours", 6)
             self.intensity_percent = uv_settings.get("intensity", 100)
+
+            # New midday scheduling features (with defaults)
+            self.midday_start_time = uv_settings.get("middayStartTime", "12:00")
+            self.midday_end_time = uv_settings.get("middayEndTime", "14:00")
             
             _LOGGER.info(
                 f"{self.deviceName}: UV settings loaded - "
-                f"Mode: {self.mode}, "
+                f"Enabled: {self.enabled}, Mode: {self.mode}, "
                 f"Delay: {self.delay_after_start_minutes}min, StopBefore: {self.stop_before_end_minutes}min, "
-                f"MaxDuration: {self.max_duration_hours}h, Intensity: {self.intensity_percent}%"
+                f"MaxDuration: {self.max_duration_hours}h, Intensity: {self.intensity_percent}%, "
+                f"Midday: {self.midday_start_time}-{self.midday_end_time}, "
+                f"LightOn: {self.lightOnTime}, LightOff: {self.lightOffTime}"
             )
+            
+            # CRITICAL: Stop any existing scheduler before deciding to start a new one
+            if self._schedule_task and not self._schedule_task.done():
+                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before reload")
+                self._schedule_task.cancel()
+                self._schedule_task = None
+            
+            # Only start scheduler if enabled AND mode is Schedule
+            if self.enabled and self.mode == UVMode.SCHEDULE:
+                _LOGGER.info(f"{self.deviceName}: UV enabled={self.enabled}, mode={self.mode} - Starting scheduler")
+                self._start_scheduler()
+            else:
+                _LOGGER.info(
+                    f"{self.deviceName}: UV NOT starting scheduler - "
+                    f"enabled={self.enabled} (type: {type(self.enabled).__name__}), "
+                    f"mode={self.mode}"
+                )
+                # Ensure light is off if not enabled or not in schedule mode
+                if not self.enabled or self.mode == UVMode.ALWAYS_OFF:
+                    _LOGGER.info(f"{self.deviceName}: UV disabled or Always Off - ensuring light is off")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
+            
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
+
+    async def WorkMode(self, workmode):
+        """Override WorkMode - UV uses dedicated scheduling, not WorkMode system."""
+        _LOGGER.debug(f"{self.deviceName}: Ignoring WorkMode {workmode}, using dedicated UV scheduling")
+        # Do NOT call super().WorkMode() - we handle our own scheduling
 
     def _start_scheduler(self):
         """Start the periodic scheduler for UV timing."""
@@ -199,6 +242,14 @@ class LightUV(Light):
 
     async def _check_schedule_window(self):
         """Check if we're in a UV activation window (Schedule mode)."""
+        # CRITICAL: Check if enabled first
+        if not getattr(self, 'enabled', True):
+            _LOGGER.debug(f"{self.deviceName}: Schedule check skipped (disabled)")
+            # Ensure we're off if disabled
+            if self.is_uv_active:
+                await self._deactivate_uv("Disabled")
+            return
+
         if not self.lightOnTime or not self.lightOffTime:
             return
             
@@ -330,19 +381,57 @@ class LightUV(Light):
         self._load_settings()
 
     async def _on_main_light_toggle(self, lightState):
-        """Handle main light toggle events."""
-        self.islightON = lightState
-        
-        if not lightState:
-            # Main lights going off - deactivate if active
-            if self.is_uv_active:
-                await self._deactivate_uv("Main lights off")
-        elif self.mode == UVMode.ALWAYS_ON:
-            # Main lights coming on and we're in Always On mode - activate
-            if not self.is_uv_active:
-                await self._activate_uv('always_on')
-        
-        _LOGGER.debug(f"{self.deviceName}: Main light toggled to {lightState}")
+        """Handle main light toggle events with intelligent filtering."""
+        # CRITICAL: Check if enabled FIRST
+        if not getattr(self, 'enabled', True):
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight (disabled)")
+            return
+
+        # Handle both old format (boolean) and new format (dict with target_devices)
+        target_state = lightState
+        is_targeted = True
+
+        if isinstance(lightState, dict):
+            # New format: {"state": True/False, "target_devices": ["device1", "device2"]}
+            target_state = lightState.get("state", False)
+            target_devices = lightState.get("target_devices", [])
+            # Check if this device is in the target list
+            is_targeted = not target_devices or self.deviceName in target_devices
+
+        self.islightON = target_state
+
+        # If this device is not targeted, ignore the event completely
+        if not is_targeted:
+            _LOGGER.debug(f"{self.deviceName}: Not targeted by toggleLight event, ignoring")
+            return
+
+        # CRITICAL: Only respond to ToggleLight if mode is ALWAYS_ON
+        # If mode is SCHEDULE, our scheduler handles timing - ignore ToggleLight
+        # If mode is ALWAYS_OFF or MANUAL, never respond to ToggleLight
+        if self.mode == UVMode.SCHEDULE:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Schedule mode (using dedicated scheduling)")
+            return
+
+        if self.mode == UVMode.ALWAYS_OFF:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Always Off mode")
+            return
+
+        if self.mode == UVMode.MANUAL:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Manual mode")
+            return
+
+        # Mode is ALWAYS_ON - respond to main light toggle
+        if self.mode == UVMode.ALWAYS_ON:
+            if not target_state:
+                # Main lights going off - deactivate UV
+                if self.is_uv_active:
+                    await self._deactivate_uv("Main lights off (Always On mode)")
+            else:
+                # Main lights coming on - activate UV
+                if not self.is_uv_active:
+                    await self._activate_uv('always_on')
+
+        _LOGGER.debug(f"{self.deviceName}: Main light toggled to {target_state} (mode={self.mode})")
 
     async def _on_settings_update(self, data):
         """Handle UV settings updates from UI."""
@@ -390,6 +479,14 @@ class LightUV(Light):
                 settings_changed = True
             if "intensity" in data:
                 self.intensity_percent = data["intensity"]
+                settings_changed = True
+
+            # Update midday scheduling settings
+            if "middayStartTime" in data:
+                self.midday_start_time = data["middayStartTime"]
+                settings_changed = True
+            if "middayEndTime" in data:
+                self.midday_end_time = data["middayEndTime"]
                 settings_changed = True
                 
             if settings_changed:

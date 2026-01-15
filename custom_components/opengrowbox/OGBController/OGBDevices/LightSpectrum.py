@@ -87,6 +87,13 @@ class LightSpectrum(Light):
             self.morning_intensity = 30
             self.midday_intensity = 60
             self.evening_intensity = 80
+
+        # New smart scheduling features (enabled by default)
+        self.smart_start_enabled = True   # Use 15 min before main lights
+        self.smart_end_enabled = True     # Use 15 min after main lights
+
+        # User-controlled intensity ratios (0-100%)
+        self.always_on_intensity = 50     # Default for Always On mode
         
         # Always On mode intensity
         self.always_on_intensity = 100
@@ -227,12 +234,20 @@ class LightSpectrum(Light):
             # Get spectrum-specific settings
             spectrum_settings = self.data_store.getDeep(f"specialLights.spectrum.{self.spectrum_type}") or {}
             
+            # CRITICAL: Check enabled setting FIRST - this controls whether light operates
+            self.enabled = spectrum_settings.get("enabled", True)  # Default to enabled for backward compatibility
+            
+            # Get mode setting - this determines behavior
             self.mode = spectrum_settings.get("mode", SpectrumMode.SCHEDULE)
             self.morning_intensity = spectrum_settings.get("morningIntensity", self.morning_intensity)
             self.midday_intensity = spectrum_settings.get("middayIntensity", self.midday_intensity)
             self.evening_intensity = spectrum_settings.get("eveningIntensity", self.evening_intensity)
             self.always_on_intensity = spectrum_settings.get("alwaysOnIntensity", 100)
             self.smooth_transitions = spectrum_settings.get("smoothTransitions", True)
+
+            # New smart scheduling features (enabled by default)
+            self.smart_start_enabled = spectrum_settings.get("smartStartEnabled", True)
+            self.smart_end_enabled = spectrum_settings.get("smartEndEnabled", True)
             
             # Adjust based on plant stage (only in Schedule mode)
             if self.mode == SpectrumMode.SCHEDULE:
@@ -240,13 +255,38 @@ class LightSpectrum(Light):
             
             _LOGGER.info(
                 f"{self.deviceName}: {self.spectrum_type.upper()} spectrum settings loaded - "
-                f"Mode: {self.mode}, "
+                f"Enabled: {self.enabled}, Mode: {self.mode}, "
                 f"Morning: {self.morning_intensity}%, Midday: {self.midday_intensity}%, "
                 f"Evening: {self.evening_intensity}%"
             )
             
+            # CRITICAL: Stop any existing scheduler before deciding to start a new one
+            if self._schedule_task and not self._schedule_task.done():
+                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before reload")
+                self._schedule_task.cancel()
+                self._schedule_task = None
+            
+            # Only start scheduler if enabled AND mode is Schedule
+            if self.enabled and self.mode == SpectrumMode.SCHEDULE:
+                _LOGGER.info(f"{self.deviceName}: {self.spectrum_type.upper()} enabled={self.enabled}, mode={self.mode} - Starting scheduler")
+                self._start_scheduler()
+            else:
+                _LOGGER.info(
+                    f"{self.deviceName}: {self.spectrum_type.upper()} NOT starting scheduler - "
+                    f"enabled={self.enabled} (type: {type(self.enabled).__name__}), "
+                    f"mode={self.mode}"
+                )
+                # Ensure light is off if not enabled or not in schedule mode
+                if not self.enabled or self.mode == SpectrumMode.ALWAYS_OFF:
+                    _LOGGER.info(f"{self.deviceName}: {self.spectrum_type.upper()} disabled or Always Off - ensuring light is off")
+            
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
+
+    async def WorkMode(self, workmode):
+        """Override WorkMode - Spectrum lights use dedicated scheduling, not WorkMode system."""
+        _LOGGER.debug(f"{self.deviceName}: Ignoring WorkMode {workmode}, using dedicated {self.spectrum_type.upper()} scheduling")
+        # Do NOT call super().WorkMode() - we handle our own scheduling
 
     def _adjust_for_plant_stage(self):
         """Adjust intensity profiles based on current plant stage (Schedule mode only)."""
@@ -298,6 +338,14 @@ class LightSpectrum(Light):
 
     async def _check_activation_conditions(self):
         """Check if spectrum should be ON or OFF based on current mode."""
+        
+        # CRITICAL: Check if enabled first
+        if not getattr(self, 'enabled', True):
+            _LOGGER.debug(f"{self.deviceName}: Schedule check skipped (disabled)")
+            # Ensure we're off if disabled
+            if self.is_spectrum_active:
+                await self._deactivate_spectrum("Disabled")
+            return
         
         # Mode: Always Off - never activate automatically
         if self.mode == SpectrumMode.ALWAYS_OFF:
@@ -504,19 +552,57 @@ class LightSpectrum(Light):
         self._load_settings()
 
     async def _on_main_light_toggle(self, lightState):
-        """Handle main light toggle events."""
-        self.islightON = lightState
-        
-        if not lightState:
-            # Main lights going off - deactivate if active
-            if self.is_spectrum_active:
-                await self._deactivate_spectrum("Main lights off")
-        elif self.mode == SpectrumMode.ALWAYS_ON:
-            # Main lights coming on and we're in Always On mode - activate
-            if not self.is_spectrum_active:
-                await self._activate_spectrum(self.always_on_intensity, 'always_on')
-        
-        _LOGGER.debug(f"{self.deviceName}: Main light toggled to {lightState}")
+        """Handle main light toggle events with intelligent filtering."""
+        # CRITICAL: Check if enabled FIRST
+        if not getattr(self, 'enabled', True):
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight (disabled)")
+            return
+
+        # Handle both old format (boolean) and new format (dict with target_devices)
+        target_state = lightState
+        is_targeted = True
+
+        if isinstance(lightState, dict):
+            # New format: {"state": True/False, "target_devices": ["device1", "device2"]}
+            target_state = lightState.get("state", False)
+            target_devices = lightState.get("target_devices", [])
+            # Check if this device is in the target list
+            is_targeted = not target_devices or self.deviceName in target_devices
+
+        self.islightON = target_state
+
+        # If this device is not targeted, ignore the event completely
+        if not is_targeted:
+            _LOGGER.debug(f"{self.deviceName}: Not targeted by toggleLight event, ignoring")
+            return
+
+        # CRITICAL: Only respond to ToggleLight if mode is ALWAYS_ON
+        # If mode is SCHEDULE, our scheduler handles timing - ignore ToggleLight
+        # If mode is ALWAYS_OFF or MANUAL, never respond to ToggleLight
+        if self.mode == SpectrumMode.SCHEDULE:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Schedule mode (using dedicated scheduling)")
+            return
+
+        if self.mode == SpectrumMode.ALWAYS_OFF:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Always Off mode")
+            return
+
+        if self.mode == SpectrumMode.MANUAL:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Manual mode")
+            return
+
+        # Mode is ALWAYS_ON - respond to main light toggle
+        if self.mode == SpectrumMode.ALWAYS_ON:
+            if not target_state:
+                # Main lights going off - deactivate spectrum
+                if self.is_spectrum_active:
+                    await self._deactivate_spectrum("Main lights off (Always On mode)")
+            else:
+                # Main lights coming on - activate spectrum
+                if not self.is_spectrum_active:
+                    await self._activate_spectrum(self.always_on_intensity, 'always_on')
+
+        _LOGGER.debug(f"{self.deviceName}: Main light toggled to {target_state} (mode={self.mode})")
 
     async def _on_plant_stage_change(self, data):
         """Handle plant stage changes - adjust spectrum profile (Schedule mode only)."""
@@ -578,6 +664,14 @@ class LightSpectrum(Light):
             settings_changed = True
         if "smoothTransitions" in spectrum_data:
             self.smooth_transitions = spectrum_data["smoothTransitions"]
+            settings_changed = True
+
+        # Update smart scheduling features
+        if "smartStartEnabled" in spectrum_data:
+            self.smart_start_enabled = spectrum_data["smartStartEnabled"]
+            settings_changed = True
+        if "smartEndEnabled" in spectrum_data:
+            self.smart_end_enabled = spectrum_data["smartEndEnabled"]
             settings_changed = True
                 
         if settings_changed:

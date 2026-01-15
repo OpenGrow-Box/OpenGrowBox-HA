@@ -124,6 +124,10 @@ class OpenGrowBox:
         self.mediumManager = self.main_controller.medium_manager
         self.medium_manager = self.main_controller.medium_manager
 
+        # CO2 Manager - CRITICAL: This was missing and caused CO2 devices to not initialize properly
+        self.co2Manager = self.main_controller.co2_manager
+        self.co2_manager = self.main_controller.co2_manager
+
         # Inject config_manager into main_controller for entity routing
         self.main_controller.config_manager = self.config_manager
 
@@ -136,7 +140,8 @@ class OpenGrowBox:
             mode_manager=self.main_controller.mode_manager,
             action_manager=self.main_controller.action_manager,
             feed_manager=self.main_controller.feed_manager,
-            vpd_manager=self.vpd_manager
+            vpd_manager=self.vpd_manager,
+            co2_manager=self.main_controller.co2_manager
         )
 
     async def _manager_wrapper(self, entity):

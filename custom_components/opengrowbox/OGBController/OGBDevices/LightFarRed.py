@@ -71,6 +71,10 @@ class LightFarRed(Light):
         self.start_duration_minutes = 15  # Duration at start of light cycle
         self.end_duration_minutes = 15    # Duration at end of light cycle
         self.intensity = 100              # Brightness percentage
+
+        # Smart scheduling features (new)
+        self.smart_start_enabled = True   # Use 15 min before main lights
+        self.smart_end_enabled = True     # Use 15 min after main lights
         
         # State tracking
         self.is_fr_active = False
@@ -179,21 +183,58 @@ class LightFarRed(Light):
             
             # Get Far Red specific settings (with defaults)
             fr_settings = self.data_store.getDeep("specialLights.farRed") or {}
+            
+            # CRITICAL: Check enabled setting FIRST - this controls whether light operates
+            self.enabled = fr_settings.get("enabled", True)  # Default to enabled for backward compatibility
+            
+            # Get mode setting - this determines behavior
             self.mode = fr_settings.get("mode", FarRedMode.SCHEDULE)
             self.start_duration_minutes = fr_settings.get("startDurationMinutes", 15)
             self.end_duration_minutes = fr_settings.get("endDurationMinutes", 15)
             self.intensity = fr_settings.get("intensity", 100)
+
+            # New smart scheduling features (enabled by default)
+            self.smart_start_enabled = fr_settings.get("smartStartEnabled", True)
+            self.smart_end_enabled = fr_settings.get("smartEndEnabled", True)
             
             _LOGGER.info(
                 f"{self.deviceName}: FarRed settings loaded - "
-                f"Mode: {self.mode}, "
+                f"Enabled: {self.enabled}, Mode: {self.mode}, "
                 f"Start: {self.start_duration_minutes}min, End: {self.end_duration_minutes}min, "
                 f"Intensity: {self.intensity}%, "
                 f"LightOn: {self.lightOnTime}, LightOff: {self.lightOffTime}"
             )
             
+            # CRITICAL: Stop any existing scheduler before deciding to start a new one
+            if self._schedule_task and not self._schedule_task.done():
+                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before reload")
+                self._schedule_task.cancel()
+                self._schedule_task = None
+            
+            # Only start scheduler if enabled AND mode is Schedule
+            if self.enabled and self.mode == FarRedMode.SCHEDULE:
+                _LOGGER.info(f"{self.deviceName}: FarRed enabled={self.enabled}, mode={self.mode} - Starting scheduler")
+                self._start_scheduler()
+            else:
+                _LOGGER.info(
+                    f"{self.deviceName}: FarRed NOT starting scheduler - "
+                    f"enabled={self.enabled} (type: {type(self.enabled).__name__}), "
+                    f"mode={self.mode}"
+                )
+                # Ensure light is off if not enabled or not in schedule mode
+                if not self.enabled or self.mode == FarRedMode.ALWAYS_OFF:
+                    _LOGGER.info(f"{self.deviceName}: FarRed disabled or Always Off - ensuring light is off")
+            
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
+            
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
+
+    async def WorkMode(self, workmode):
+        """Override WorkMode - FarRed uses dedicated scheduling, not WorkMode system."""
+        _LOGGER.debug(f"{self.deviceName}: Ignoring WorkMode {workmode}, using dedicated FarRed scheduling")
+        # Do NOT call super().WorkMode() - we handle our own scheduling
 
     def _start_scheduler(self):
         """Start the periodic scheduler for Far Red timing."""
@@ -244,6 +285,14 @@ class LightFarRed(Light):
 
     async def _check_schedule_windows(self):
         """Check if we're in a Far Red activation window (Schedule mode)."""
+        # CRITICAL: Check if enabled first
+        if not getattr(self, 'enabled', True):
+            _LOGGER.debug(f"{self.deviceName}: Schedule check skipped (disabled)")
+            # Ensure we're off if disabled
+            if self.is_fr_active:
+                await self._deactivate_far_red("Disabled")
+            return
+
         if not self.lightOnTime or not self.lightOffTime:
             return
             
@@ -365,19 +414,57 @@ class LightFarRed(Light):
         self._load_settings()
 
     async def _on_main_light_toggle(self, lightState):
-        """Handle main light toggle events."""
-        self.islightON = lightState
-        
-        if not lightState:
-            # Main lights going off - if we're active, deactivate
-            if self.is_fr_active:
-                await self._deactivate_far_red()
-        elif self.mode == FarRedMode.ALWAYS_ON:
-            # Main lights coming on and we're in Always On mode - activate
-            if not self.is_fr_active:
-                await self._activate_far_red('always_on')
-        
-        _LOGGER.debug(f"{self.deviceName}: Main light toggled to {lightState}")
+        """Handle main light toggle events with intelligent filtering."""
+        # CRITICAL: Check if enabled FIRST
+        if not getattr(self, 'enabled', True):
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight (disabled)")
+            return
+
+        # Handle both old format (boolean) and new format (dict with target_devices)
+        target_state = lightState
+        is_targeted = True
+
+        if isinstance(lightState, dict):
+            # New format: {"state": True/False, "target_devices": ["device1", "device2"]}
+            target_state = lightState.get("state", False)
+            target_devices = lightState.get("target_devices", [])
+            # Check if this device is in the target list
+            is_targeted = not target_devices or self.deviceName in target_devices
+
+        self.islightON = target_state
+
+        # If this device is not targeted, ignore the event completely
+        if not is_targeted:
+            _LOGGER.debug(f"{self.deviceName}: Not targeted by toggleLight event, ignoring")
+            return
+
+        # CRITICAL: Only respond to ToggleLight if mode is ALWAYS_ON
+        # If mode is SCHEDULE, our scheduler handles timing - ignore ToggleLight
+        # If mode is ALWAYS_OFF or MANUAL, never respond to ToggleLight
+        if self.mode == FarRedMode.SCHEDULE:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Schedule mode (using dedicated scheduling)")
+            return
+
+        if self.mode == FarRedMode.ALWAYS_OFF:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Always Off mode")
+            return
+
+        if self.mode == FarRedMode.MANUAL:
+            _LOGGER.debug(f"{self.deviceName}: Ignoring toggleLight in Manual mode")
+            return
+
+        # Mode is ALWAYS_ON - respond to main light toggle
+        if self.mode == FarRedMode.ALWAYS_ON:
+            if not target_state:
+                # Main lights going off - deactivate FarRed
+                if self.is_fr_active:
+                    await self._deactivate_far_red("Main lights off (Always On mode)")
+            else:
+                # Main lights coming on - activate FarRed
+                if not self.is_fr_active:
+                    await self._activate_far_red('always_on')
+
+        _LOGGER.debug(f"{self.deviceName}: Main light toggled to {target_state} (mode={self.mode})")
 
     async def _on_settings_update(self, data):
         """Handle Far Red settings updates from UI."""
@@ -422,6 +509,14 @@ class LightFarRed(Light):
                 settings_changed = True
             if "intensity" in data:
                 self.intensity = data["intensity"]
+                settings_changed = True
+
+            # Update smart scheduling features
+            if "smartStartEnabled" in data:
+                self.smart_start_enabled = data["smartStartEnabled"]
+                settings_changed = True
+            if "smartEndEnabled" in data:
+                self.smart_end_enabled = data["smartEndEnabled"]
                 settings_changed = True
                 
             if settings_changed:

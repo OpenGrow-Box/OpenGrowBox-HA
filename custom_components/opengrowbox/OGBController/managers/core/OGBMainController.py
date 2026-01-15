@@ -350,8 +350,28 @@ class OGBMainController:
             f"{self.room}: Light status checked and updated for {self.room} - Light status is {light_should_be_on}"
         )
 
-        # Always emit toggleLight event - Light device will handle deduplication
-        await self.event_manager.emit("toggleLight", light_should_be_on)
+        # Emit toggleLight event ONLY for normal Light devices (exclude special lights)
+        # Special lights (LightFarRed, LightUV, LightBlue, LightRed, LightSpectrum) use their own scheduling
+        special_light_types = {"LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}
+        normal_light_devices = []
+
+        # Get all registered devices and filter for normal lights only
+        if hasattr(self, 'device_manager') and hasattr(self.device_manager, 'devices'):
+            for device_name, device in self.device_manager.devices.items():
+                device_type = getattr(device, 'deviceType', None) or getattr(device, 'device_type', None)
+                if device_type == "Light" and device_name not in special_light_types:
+                    normal_light_devices.append(device_name)
+
+        # Emit targeted toggle event only to normal lights
+        if normal_light_devices:
+            await self.event_manager.emit("toggleLight", {
+                "state": light_should_be_on,
+                "target_devices": normal_light_devices
+            })
+            _LOGGER.debug(f"{self.room}: Toggled {len(normal_light_devices)} normal lights to {light_should_be_on}")
+        else:
+            # Fallback: emit to all lights if no devices filtered (for backward compatibility)
+            await self.event_manager.emit("toggleLight", light_should_be_on)
 
     async def manager(self, data):
         """Route configuration updates to appropriate handlers via ConfigurationManager."""

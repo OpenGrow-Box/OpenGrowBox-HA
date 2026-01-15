@@ -67,10 +67,10 @@ DEVICE_TYPE_MAPPING = {
     "Cooler": ["cooler", "kuehler"],
     "Climate": ["climate", "klima"],
     # Special light types - must be checked BEFORE generic Light
-    "LightFarRed": ["light_fr", "light_farred", "farred", "far_red"],
-    "LightUV": ["light_uv", "light_uvb", "light_uva", "uvlight"],
-    "LightBlue": ["light_blue", "blue_led", "bluelight"],
-    "LightRed": ["light_red", "red_led", "redlight"],
+    "LightFarRed": ["light_fr", "light_farred", "farred", "far_red", "farredlight", "far-red-light", "lightfarred"],
+    "LightUV": ["light_uv", "light_uvb", "light_uva", "uvlight", "uvlight", "uv-light", "lightuv"],
+    "LightBlue": ["light_blue", "blue_led", "bluelight", "bluelight", "blue-light", "lightblue"],
+    "LightRed": ["light_red", "red_led", "redlight", "redlight", "red-light", "lightred"],
     # Generic light - checked last
     "Light": ["light", "lamp", "led"],
     "CO2": ["co2", "carbon"],
