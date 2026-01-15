@@ -179,14 +179,14 @@ class OGBConf:
         default_factory=lambda: {
             # Far Red light settings (start/end of day timing)
             "farRed": {
-                "enabled": True,
+                "enabled": False,
                 "startDurationMinutes": 15,   # Duration at START of light cycle
                 "endDurationMinutes": 15,     # Duration at END of light cycle
                 "intensity": 100,             # Intensity percentage (if dimmable)
             },
             # UV light settings (mid-day timing)
             "uv": {
-                "enabled": True,
+                "enabled": False,
                 "delayAfterStartMinutes": 120,  # Wait after lights on before UV starts
                 "stopBeforeEndMinutes": 120,    # Stop before lights off
                 "maxDurationHours": 6,          # Maximum UV exposure per day
@@ -195,13 +195,13 @@ class OGBConf:
             # Spectrum lights (blue/red intensity curves)
             "spectrum": {
                 "blue": {
-                    "enabled": True,
+                    "enabled": False,
                     "morningBoostPercent": 100,   # Higher blue in morning
                     "eveningReducePercent": 50,   # Lower blue in evening
                     "transitionMinutes": 60,      # Transition duration
                 },
                 "red": {
-                    "enabled": True,
+                    "enabled": False,
                     "morningReducePercent": 70,   # Lower red in morning
                     "eveningBoostPercent": 100,   # Higher red in evening
                     "transitionMinutes": 60,      # Transition duration

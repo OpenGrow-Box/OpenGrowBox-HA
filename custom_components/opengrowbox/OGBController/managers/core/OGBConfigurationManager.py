@@ -225,6 +225,8 @@ class OGBConfigurationManager:
             f"ogb_light_farred_start_duration_{self.room.lower()}": self._update_farred_start_duration,
             f"ogb_light_farred_end_duration_{self.room.lower()}": self._update_farred_end_duration,
             f"ogb_light_farred_intensity_{self.room.lower()}": self._update_farred_intensity,
+            f"ogb_light_farred_smart_start_{self.room.lower()}": self._update_farred_smart_start,
+            f"ogb_light_farred_smart_end_{self.room.lower()}": self._update_farred_smart_end,
             
             # Special Lights - UV
             f"ogb_light_uv_enabled_{self.room.lower()}": self._update_uv_enabled,
@@ -233,6 +235,8 @@ class OGBConfigurationManager:
             f"ogb_light_uv_stop_before_end_{self.room.lower()}": self._update_uv_stop_before_end,
             f"ogb_light_uv_max_duration_{self.room.lower()}": self._update_uv_max_duration,
             f"ogb_light_uv_intensity_{self.room.lower()}": self._update_uv_intensity,
+            f"ogb_light_uv_midday_start_{self.room.lower()}": self._update_uv_midday_start,
+            f"ogb_light_uv_midday_end_{self.room.lower()}": self._update_uv_midday_end,
             
             # Special Lights - Spectrum (Blue)
             f"ogb_light_blue_enabled_{self.room.lower()}": self._update_blue_enabled,
@@ -1428,6 +1432,24 @@ class OGBConfigurationManager:
             await self.event_manager.emit("FarRedSettingsUpdate", {"intensity": value})
             _LOGGER.info(f"{self.room}: Far Red intensity = {value}%")
 
+    async def _update_farred_smart_start(self, data):
+        """Enable/disable smart Far Red start (15 min before main lights)."""
+        value = self._string_to_bool(data.newState[0])
+        current = self.data_store.getDeep("specialLights.farRed.smartStartEnabled")
+        if current != value:
+            self.data_store.setDeep("specialLights.farRed.smartStartEnabled", value)
+            await self.event_manager.emit("FarRedSettingsUpdate", {"smartStartEnabled": value})
+            _LOGGER.info(f"{self.room}: Far Red smart start = {value}")
+
+    async def _update_farred_smart_end(self, data):
+        """Enable/disable smart Far Red end (15 min after main lights)."""
+        value = self._string_to_bool(data.newState[0])
+        current = self.data_store.getDeep("specialLights.farRed.smartEndEnabled")
+        if current != value:
+            self.data_store.setDeep("specialLights.farRed.smartEndEnabled", value)
+            await self.event_manager.emit("FarRedSettingsUpdate", {"smartEndEnabled": value})
+            _LOGGER.info(f"{self.room}: Far Red smart end = {value}")
+
     # --- UV Light Settings ---
     async def _update_uv_enabled(self, data):
         """Update UV light enabled state."""
@@ -1487,6 +1509,32 @@ class OGBConfigurationManager:
             self.data_store.setDeep("specialLights.uv.intensity", value)
             await self.event_manager.emit("UVSettingsUpdate", {"intensity": value})
             _LOGGER.info(f"{self.room}: UV intensity = {value}%")
+
+    async def _update_uv_midday_start(self, data):
+        """Set UV midday start time (preset options)."""
+        value = data.newState[0]
+        valid_times = ["11:00", "11:30", "12:00", "12:30", "13:00"]
+        if value not in valid_times:
+            _LOGGER.debug(f"{self.room}: Invalid UV midday start time '{value}', ignoring")
+            return
+        current = self.data_store.getDeep("specialLights.uv.middayStartTime")
+        if current != value:
+            self.data_store.setDeep("specialLights.uv.middayStartTime", value)
+            await self.event_manager.emit("UVSettingsUpdate", {"middayStartTime": value})
+            _LOGGER.info(f"{self.room}: UV midday start = {value}")
+
+    async def _update_uv_midday_end(self, data):
+        """Set UV midday end time (preset options)."""
+        value = data.newState[0]
+        valid_times = ["13:00", "13:30", "14:00", "14:30", "15:00"]
+        if value not in valid_times:
+            _LOGGER.debug(f"{self.room}: Invalid UV midday end time '{value}', ignoring")
+            return
+        current = self.data_store.getDeep("specialLights.uv.middayEndTime")
+        if current != value:
+            self.data_store.setDeep("specialLights.uv.middayEndTime", value)
+            await self.event_manager.emit("UVSettingsUpdate", {"middayEndTime": value})
+            _LOGGER.info(f"{self.room}: UV midday end = {value}")
 
     # --- Blue Spectrum Light Settings ---
     async def _update_blue_enabled(self, data):

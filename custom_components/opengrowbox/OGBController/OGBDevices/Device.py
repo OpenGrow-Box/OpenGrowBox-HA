@@ -238,7 +238,7 @@ class Device:
         for entity in entitys:
             entity_id = entity.get("entity_id", "")
             for sensor_type in sensor_groups.keys():
-                if sensor_type in entity_id:
+                if sensor_type in entity_id and entity_id.startswith("sensor."):
                     sensor_groups[sensor_type].append(entity)
                     used_entities.add(entity_id)
                     _LOGGER.debug(f"[{self.deviceName}] Found {sensor_type} entity: {entity_id}")
@@ -557,7 +557,7 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","humdifier","dehumidifier","heater","cooler"]
+        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","humdifier","dehumidifier","heater","cooler","co2"]
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
@@ -1242,8 +1242,18 @@ class Device:
 
     # Modes for all Devices
     async def WorkMode(self, workmode):
+        # Special light types that should NOT respond to WorkMode automatic activation
+        # These lights have their own dedicated scheduling logic
+        special_light_types = {
+            "LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"
+        }
+
         # For lights, don't activate workmode if light is off
         if hasattr(self, 'islightON') and not self.islightON:
+            # Special lights should not save pending workmode - they control themselves
+            if self.deviceType in special_light_types:
+                _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring WorkMode, using dedicated scheduling")
+                return
             self.pendingWorkMode = workmode
             _LOGGER.info(f"{self.deviceName}: WorkMode {workmode} saved, will activate when light turns on")
             return
@@ -1259,11 +1269,15 @@ class Device:
                         self.voltage = self.minVoltage
                     else:
                         self.voltage = getattr(self, 'initVoltage', 20)
-                    await self.turn_on(brightness_pct=self.voltage) 
+                    await self.turn_on(brightness_pct=self.voltage)
+                # Special lights should not respond to WorkMode - they use their own scheduling
+                elif self.deviceType in special_light_types:
+                    _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring WorkMode, using dedicated scheduling")
+                    return
                 else:
                     self.dutyCycle = self.minDuty
                     if self.isSpecialDevice:
-                        await self.turn_on(brightness_pct=int(float(self.minDuty))) 
+                        await self.turn_on(brightness_pct=int(float(self.minDuty)))
                     await self.turn_on(percentage=int(float(self.minDuty)))
             else:
                 if self.deviceType == "Light":

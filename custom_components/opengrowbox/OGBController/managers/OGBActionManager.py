@@ -464,7 +464,7 @@ class OGBActionManager:
         if self.closed_actions:
             await self.closed_actions.maintain_co2(capabilities)
         else:
-            _LOGGER.error(f"{self.room}: closed_actions not initialized")
+            _LOGGER.warning(f"{self.room}: closed_actions not initialized, skipping CO2 maintenance")
 
     async def _handle_monitor_o2_safety(self, capabilities):
         """Handle O2 safety monitoring requests."""

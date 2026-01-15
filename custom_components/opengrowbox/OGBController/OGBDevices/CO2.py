@@ -38,6 +38,21 @@ class CO2(Device):
         self.event_manager.on("Increase CO2", self.increaseAction)
         self.event_manager.on("Reduce CO2", self.reduceAction)
 
+        _LOGGER.info(f"CO2 Device {self.deviceName} initialized with {len(self.switches)} switches, {len(self.sensors)} sensors, {len(self.options)} options")
+
+    def deviceInit(self, entitys):
+        """Override deviceInit to add CO2-specific debugging."""
+        _LOGGER.info(f"CO2 Device {self.deviceName} starting initialization with {len(entitys)} entities")
+        for entity in entitys:
+            entity_id = entity.get("entity_id", "unknown")
+            entity_value = entity.get("value", "unknown")
+            _LOGGER.debug(f"CO2 Device {self.deviceName} processing entity: {entity_id} = {entity_value}")
+
+        # Call parent initialization
+        super().deviceInit(entitys)
+
+        _LOGGER.info(f"CO2 Device {self.deviceName} initialization complete. isInitialized: {self.isInitialized}, switches: {len(self.switches)}, sensors: {len(self.sensors)}")
+
     # Actions Helpers
     async def handleNewCO2Value(self, co2Publication):
         self.log_action(f" Check  {co2Publication} ")
