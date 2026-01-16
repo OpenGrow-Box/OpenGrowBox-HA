@@ -190,9 +190,9 @@ class Light(Device):
                 self.checkPlantStageLightValue()
                 self.checkMinMax(False)
                 if self.voltage == None or self.voltage == 0:
-                    if self.minVoltage is not None and self.minVoltage < self.initVoltage:
+                    if self.minVoltage is not None:
                         self.voltage = self.minVoltage
-                        _LOGGER.debug(f"{self.deviceName}: Voltage init to user min {self.voltage}% (lower than init).")
+                        _LOGGER.debug(f"{self.deviceName}: Voltage init to minVoltage {self.voltage}%.")
                     else:
                         self.initialize_voltage()
                 else:
@@ -809,9 +809,12 @@ class Light(Device):
                         self.pendingWorkMode = None
                         _LOGGER.info(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
                 else:
-                    # Fix: Ensure voltage is set to minVoltage if lower, else initVoltage
+                    # Ensure voltage is set based on min/max settings or plant stage defaults
                     if self.voltage is None or self.voltage == 0:
-                        self.voltage = self.minVoltage if self.minVoltage is not None and self.minVoltage < self.initVoltage else self.initVoltage
+                        if self.minVoltage is not None:
+                            self.voltage = self.minVoltage
+                        else:
+                            self.voltage = self.initVoltage
                     message = "Turn On"
                     # Activate pending workmode
                     if hasattr(self, 'pendingWorkMode') and self.pendingWorkMode is not None:
