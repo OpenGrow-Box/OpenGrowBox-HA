@@ -28,7 +28,7 @@ class ClosedEnvironmentManager:
     sealed chambers using ambient data for intelligent temperature and humidity management.
     """
 
-    def __init__(self, data_store, event_manager, room, hass):
+    def __init__(self, data_store, event_manager, room, hass, action_manager=None):
         """
         Initialize the closed environment manager.
 
@@ -37,11 +37,13 @@ class ClosedEnvironmentManager:
             event_manager: Reference to the event manager
             room: Room identifier
             hass: Home Assistant instance
+            action_manager: Reference to the action manager (optional)
         """
         self.data_store = data_store
         self.event_manager = event_manager
         self.room = room
         self.hass = hass
+        self.action_manager = action_manager
 
         # Control logic engine
         self.control_logic = ClosedControlLogic(data_store, room)
@@ -123,8 +125,11 @@ class ClosedEnvironmentManager:
             action_map.extend(await self._create_humidity_actions(capabilities, humidity_target))
 
         if action_map:
-            # Use ActionManager to process actions (creates Premium API output)
-            await self.event_manager.emit("checkLimitsAndPublicate", action_map)
+            # Use ActionManager to process actions
+            if self.action_manager:
+                await self.action_manager.checkLimitsAndPublicate(action_map)
+            else:
+                _LOGGER.warning(f"{self.room}: action_manager not available, actions skipped")
             _LOGGER.debug(f"Closed environment actions processed: {len(action_map)} actions")
 
         # Handle CO2, O2, and air recirculation in closed environment

@@ -160,6 +160,11 @@ class OGBVPDActions:
         current_vpd = self.ogb.dataStore.getDeep("vpd.current")
         perfection_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
 
+        # Validate VPD values before calculation
+        if current_vpd is None or perfection_vpd is None:
+            _LOGGER.warning(f"{self.ogb.room}: VPD values not available for fine-tuning (current={current_vpd}, perfect={perfection_vpd})")
+            return
+
         # Calculate delta and round to two decimal places
         delta = round(perfection_vpd - current_vpd, 2)
 

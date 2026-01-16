@@ -41,7 +41,7 @@ class OGBConf:
             "ec_current": 0,
             "tds_current": 0,
             "oxi_current": 0,
-            "sal_current:": 0,
+            "sal_current": 0,
             "current_temp": 0,
             "min_temp": 0,
             "max_temp": 0,
@@ -575,7 +575,7 @@ class OGBConf:
                 "effect": 1.5,
                 "sideEffect": {},
             },
-            "Dehumidifer": {
+            "Dehumidifier": {
                 "type": "humidity",
                 "cap": "canDehumidify",
                 "direction": "increase",

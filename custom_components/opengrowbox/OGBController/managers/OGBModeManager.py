@@ -25,7 +25,6 @@ class OGBModeManager:
         self.room = room
         self.data_store = dataStore
         self.event_manager = event_manager
-        self.event_manager = event_manager  # Also provide snake_case version
         self.isInitialized = False
 
         self.CropSteeringManager = OGBCSManager(hass, dataStore, self.event_manager, room)
@@ -193,7 +192,7 @@ class OGBModeManager:
             max_vpd = targetedVPD + tolerance_value
 
             # Verfügbare Capabilities abrufen
-            capabilities = self.data_store.getDeep("capabilities")
+            capabilities = self.data_store.get("capabilities")
 
             # VPD steuern basierend auf der Toleranz
             if currentVPD < min_vpd:

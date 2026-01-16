@@ -122,7 +122,7 @@ class DryingActions:
         _LOGGER.debug(f"{self.name} Run Drying '5 Day Dry'")
 
         tentData = self.data_store.get("tentData")
-        vpdTolerance = self.data_store.get("vpd.tolerance") or 3  # %
+        vpdTolerance = self.data_store.getDeep("vpd.tolerance") or 3  # %
         capabilities = self.data_store.getDeep("capabilities")
 
         current_phase = self.get_current_phase(phaseConfig)
