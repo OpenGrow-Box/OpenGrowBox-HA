@@ -714,6 +714,10 @@ class Device:
                 if self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"] and hasattr(self, 'voltage'):
                     brightness_pct = self.voltage
                     _LOGGER.debug(f"{self.deviceName}: Using current voltage {brightness_pct}% for turn_on")
+                # For special exhausts (light type entities), use current dutyCycle
+                elif self.isSpecialDevice and hasattr(self, 'dutyCycle'):
+                    brightness_pct = self.dutyCycle
+                    _LOGGER.debug(f"{self.deviceName}: Using current dutyCycle {brightness_pct}% for turn_on")
                 else:
                     brightness_pct = 100.0
             _LOGGER.debug(f"{self.deviceName}: turn_on processed brightness_pct={brightness_pct}")
