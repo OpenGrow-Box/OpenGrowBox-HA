@@ -711,11 +711,11 @@ class Device:
                     brightness_pct = getattr(self, 'voltage', 100)
             else:
                 # Default: For lights, use current voltage instead of 100%
-                if self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"] and hasattr(self, 'voltage'):
+                if self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"] and hasattr(self, 'voltage') and self.voltage is not None:
                     brightness_pct = self.voltage
                     _LOGGER.debug(f"{self.deviceName}: Using current voltage {brightness_pct}% for turn_on")
                 # For special exhausts (light type entities), use current dutyCycle
-                elif self.isSpecialDevice and hasattr(self, 'dutyCycle'):
+                elif self.isSpecialDevice and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
                     brightness_pct = self.dutyCycle
                     _LOGGER.debug(f"{self.deviceName}: Using current dutyCycle {brightness_pct}% for turn_on")
                 else:
@@ -731,7 +731,7 @@ class Device:
                     percentage = getattr(self, 'dutyCycle', 50)
             else:
                 # Default: For exhaust/intake/ventilation, use current dutyCycle instead of 100%
-                if self.deviceType in {"Exhaust", "Intake", "Ventilation"} and hasattr(self, 'dutyCycle'):
+                if self.deviceType in {"Exhaust", "Intake", "Ventilation"} and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
                     percentage = self.dutyCycle
                     _LOGGER.debug(f"{self.deviceName}: Using current dutyCycle {percentage}% for turn_on")
                 else:
