@@ -154,19 +154,19 @@ class ClosedActions:
             capabilities: Device capabilities and states
         """
         # O2 monitoring not implemented - skip for now
+        # TODO: Implement O2 monitoring when O2 sensor is available
         # current_o2 = self.ogb.dataStore.getDeep("tentData.o2Level")
         # if current_o2 is None:
         #     _LOGGER.warning(f"O2 sensor not available for {self.ogb.room}")
         #     return
+        # 
+        # action_message = "O2 Safety Action"
+        # # Emergency O2 low - immediate ventilation
+        # if current_o2 < self.o2_emergency_low:
+        #     await self._emergency_o2_ventilation(capabilities, action_message)
+        # elif current_o2 < self.o2_warning_low:
+        #     _LOGGER.warning(f"Low O2 warning in {self.ogb.room}: {current_o2}%")
         return
-
-        action_message = "O2 Safety Action"
-
-        # Emergency O2 low - immediate ventilation
-        if current_o2 < self.o2_emergency_low:
-            await self._emergency_o2_ventilation(capabilities, action_message)
-        elif current_o2 < self.o2_warning_low:
-            _LOGGER.warning(f"Low O2 warning in {self.ogb.room}: {current_o2}%")
 
     async def _emergency_o2_ventilation(self, capabilities: Dict[str, Any], action_message: str):
         """Emergency O2 ventilation for dangerously low levels."""

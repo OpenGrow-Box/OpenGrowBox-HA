@@ -126,6 +126,10 @@ class OGBMainController:
             self.hass, self.data_store, self.event_manager, self.room
         )
 
+        # Pass action_manager to closedEnvironmentManager after both are created
+        if hasattr(self.mode_manager, 'closedEnvironmentManager'):
+            self.mode_manager.closedEnvironmentManager.action_manager = self.action_manager
+
         self.feed_manager = OGBTankFeedManager(
             self.hass, self.data_store, self.event_manager, self.room
         )
