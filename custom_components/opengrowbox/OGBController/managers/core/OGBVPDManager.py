@@ -149,7 +149,7 @@ class OGBVPDManager:
                     await self.get_weather_data()
                     return
 
-                await self.event_manager.emit("",tentMode)
+                await self.event_manager.emit("selectActionMode",tentMode)
                 await self.event_manager.emit("LogForClient",vpdPub,haEvent=True)
 
                 # GROW DATA - DataRelease is emitted by OGBActionManager.publicationActionHandler()
@@ -287,7 +287,7 @@ class OGBVPDManager:
         _LOGGER.debug(
             f"Action Init for {self.room} with {tentMode} "
         )
-        await self.event_manager.emit("", tentMode)
+        await self.event_manager.emit("selectActionMode", tentMode)
         await self.event_manager.emit("LogForClient", vpdPub, haEvent=True)
 
         return vpdPub
