@@ -17,10 +17,8 @@ from ..OGBDevices.LightFarRed import LightFarRed
 from ..OGBDevices.LightUV import LightUV
 from ..OGBDevices.LightSpectrum import LightBlue, LightRed
 from ..OGBDevices.ModbusDevice import OGBModbusDevice
-from ..OGBDevices.ModbusSensor import ModbusSensor
-from ..OGBDevices.FridgeGrow import FridgeGrowDevice
 from ..OGBDevices.Pump import Pump
-from ..OGBDevices.Sensor import Sensor
+from ..OGBDevices.FridgeGrow.FridgeGrowDevice import FridgeGrowDevice
 from ..OGBDevices.Ventilation import Ventilation
 from ..data.OGBParams.OGBParams import CAP_MAPPING, DEVICE_TYPE_MAPPING
 
@@ -343,6 +341,14 @@ class OGBDeviceManager:
 
     def get_device_class(self, device_type):
         """Geräteklasse erhalten."""
+        if device_type == "Sensor":
+            from ..OGBDevices.Sensor import Sensor
+            return Sensor
+        if device_type in ("ModbusSensor", "Modbus", "ModbusDevice"):
+            from ..OGBDevices.ModbusSensor import ModbusSensor
+            return ModbusSensor
+        
+        # Klassen ohne zyklische Abhängigkeiten
         device_classes = {
             "Humidifier": Humidifier,
             "Dehumidifier": Dehumidifier,
@@ -351,25 +357,19 @@ class OGBDeviceManager:
             "Ventilation": Ventilation,
             "Heater": Heater,
             "Cooler": Cooler,
-            # Special light types (must be before generic Light)
             "LightFarRed": LightFarRed,
             "LightUV": LightUV,
             "LightBlue": LightBlue,
             "LightRed": LightRed,
-            # Generic light
             "Light": Light,
             "Climate": Climate,
             "Generic": GenericSwitch,
-            "Sensor": Sensor,
-            "Pump": Pump,
             "CO2": CO2,
             "Fridge": Fridge,
-            # Modbus devices
             "Modbus": OGBModbusDevice,
             "ModbusDevice": OGBModbusDevice,
-            "ModbusSensor": ModbusSensor,
-            # FridgeGrow / Plantalytix devices
             "FridgeGrow": FridgeGrowDevice,
+            "Pump": Pump,
         }
         return device_classes.get(device_type, Device)
 

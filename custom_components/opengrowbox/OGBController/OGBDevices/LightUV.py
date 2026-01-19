@@ -1,6 +1,8 @@
 """
 OpenGrowBox UV Light Device
 
+LABEL: lightuv
+
 UV lights (UVA/UVB) are used for:
 - Stress response triggering (trichome/resin production)
 - Pathogen control
@@ -98,12 +100,70 @@ class LightUV(Light):
 
         # Initialize UV specific settings
         self._load_settings()
-        self._start_scheduler()
 
-        # Register event handlers
+        # Register event handlers FIRST (before scheduler starts)
+        # This ensures we don't miss any events emitted during startup
         self.event_manager.on("LightTimeChanges", self._on_light_time_change)
         self.event_manager.on("toggleLight", self._on_main_light_toggle)
         self.event_manager.on("UVSettingsUpdate", self._on_settings_update)
+
+        # Validate entity availability
+        self._validate_entity_availability()
+
+        # Scheduler is started in _load_settings() when enabled=True
+        # Don't start here to avoid duplicate scheduler starts
+
+    def _validate_entity_availability(self):
+        """
+        Validate that the light entity is available in Home Assistant.
+        If switches list is empty, log warning and attempt to find the entity.
+        """
+        if not self.switches:
+            _LOGGER.warning(
+                f"{self.deviceName}: No switches/entities found! "
+                f"The UV light entity may be unavailable or not correctly labeled. "
+                f"Please ensure the entity exists in Home Assistant and has the correct label "
+                f"(light_uv, uv, ultraviolet)."
+            )
+            if self.hass:
+                possible_entity_ids = [
+                    f"light.{self.deviceName}",
+                    f"light.{self.deviceName.lower()}",
+                    f"light.{self.deviceName.replace(' ', '_').lower()}",
+                    f"switch.{self.deviceName}",
+                    f"switch.{self.deviceName.lower()}",
+                ]
+                
+                for entity_id in possible_entity_ids:
+                    state = self.hass.states.get(entity_id)
+                    if state and state.state not in ("unavailable", "unknown", None):
+                        _LOGGER.info(
+                            f"{self.deviceName}: Found entity '{entity_id}' in HA. "
+                            f"Adding to switches list."
+                        )
+                        self.switches.append({
+                            "entity_id": entity_id,
+                            "value": state.state,
+                            "platform": "recovered"
+                        })
+                        self.isRunning = state.state == "on"
+                        return
+                
+                _LOGGER.error(
+                    f"{self.deviceName}: Could not find any valid entity in Home Assistant. "
+                    f"Tried: {possible_entity_ids}. "
+                    f"Please check that your UV light device exists and is correctly configured."
+                )
+        else:
+            for switch in self.switches:
+                entity_id = switch.get("entity_id")
+                if self.hass and entity_id:
+                    state = self.hass.states.get(entity_id)
+                    if state and state.state in ("unavailable", "unknown"):
+                        _LOGGER.warning(
+                            f"{self.deviceName}: Entity '{entity_id}' is currently {state.state}. "
+                            f"The device may not respond to commands until it becomes available."
+                        )
 
     def __repr__(self):
         return (
@@ -159,10 +219,10 @@ class LightUV(Light):
                 self._schedule_task.cancel()
                 self._schedule_task = None
             
-            # Only start scheduler if enabled AND mode is Schedule
+            # Only start scheduler if enabled AND mode is Schedule - use immediate check
             if self.enabled and self.mode == UVMode.SCHEDULE:
-                _LOGGER.info(f"{self.deviceName}: UV enabled={self.enabled}, mode={self.mode} - Starting scheduler")
-                self._start_scheduler()
+                _LOGGER.info(f"{self.deviceName}: UV enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
+                asyncio.create_task(self._start_scheduler_with_immediate_check())
             else:
                 _LOGGER.info(
                     f"{self.deviceName}: UV NOT starting scheduler - "
@@ -172,9 +232,6 @@ class LightUV(Light):
                 # Ensure light is off if not enabled or not in schedule mode
                 if not self.enabled or self.mode == UVMode.ALWAYS_OFF:
                     _LOGGER.info(f"{self.deviceName}: UV disabled or Always Off - ensuring light is off")
-            
-        except Exception as e:
-            _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
@@ -192,10 +249,42 @@ class LightUV(Light):
         self._schedule_task = asyncio.create_task(self._schedule_loop())
         _LOGGER.info(f"{self.deviceName}: UV scheduler started")
 
+    async def _start_scheduler_with_immediate_check(self):
+        """Start the scheduler and run an immediate check without waiting.
+        
+        This ensures UV can activate immediately if we're already in a window,
+        without waiting for the first sleep cycle to complete.
+        """
+        _LOGGER.info(f"{self.deviceName}: Starting scheduler with immediate check")
+        
+        # Run immediate check first (no wait)
+        try:
+            _LOGGER.info(f"{self.deviceName}: Running immediate activation check")
+            await self._check_activation_conditions()
+            self._check_daily_reset()
+            _LOGGER.info(f"{self.deviceName}: Immediate check completed")
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: Immediate check error: {e}")
+            import traceback
+            _LOGGER.error(traceback.format_exc())
+        
+        # Then start the periodic scheduler
+        self._start_scheduler()
+
+    async def _on_sunrise_window_status(self, data):
+        """UV has its own scheduling - ignore sunrise window events from main light."""
+        pass
+
+    async def _on_sunset_window_status(self, data):
+        """UV has its own scheduling - ignore sunset window events from main light."""
+        pass
+
     async def _schedule_loop(self):
         """Main scheduling loop - checks every minute for activation conditions."""
+        _LOGGER.info(f"{self.deviceName}: UV scheduler loop started")
         while True:
             try:
+                _LOGGER.debug(f"{self.deviceName}: UV scheduler tick - running check")
                 await self._check_activation_conditions()
                 self._check_daily_reset()
             except Exception as e:
@@ -336,10 +425,10 @@ class LightUV(Light):
                 await self._deactivate_uv(reason)
 
     async def _activate_uv(self, phase: str):
-        """Activate UV light."""
+        """Activate UV light with ramp-up."""
         if self.is_uv_active and self.current_phase == phase:
             return
-            
+        
         self.is_uv_active = True
         self.current_phase = phase
         
@@ -351,26 +440,42 @@ class LightUV(Light):
         
         _LOGGER.info(f"{self.deviceName}: {message}")
         
-        # Create action log
-        lightAction = OGBLightAction(
-            Name=self.inRoom,
-            Device=self.deviceName,
-            Type="LightUV",
-            Action="ON",
-            Message=message,
-            Voltage=self.intensity_percent,
-            Dimmable=self.isDimmable,
-            SunRise=False,
-            SunSet=False,
-        )
-        await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
-        
-        # Turn on the light
+        # Ramp up to target intensity over transition time (default 60 seconds)
         if self.isDimmable:
-            await self.turn_on(brightness_pct=self.intensity_percent)
+            transition_seconds = getattr(self, 'transition_seconds', 60)
+            await self._ramp_to_intensity(self.intensity_percent, transition_seconds)
         else:
+            # Non-dimmable: just turn on
             await self.turn_on()
-
+    
+    async def _ramp_to_intensity(self, target_percent: int, duration_seconds: int):
+        """Ramp UV light to target intensity over specified duration."""
+        # UV starts at 20% (initVoltage) regardless of current voltage
+        start_voltage = getattr(self, 'initVoltage', 20)
+        target_voltage = target_percent
+        
+        if start_voltage == target_voltage:
+            _LOGGER.debug(f"{self.deviceName}: Already at target intensity {target_percent}%, skipping ramp")
+            await self.turn_on()
+            return
+        
+        steps = 10
+        step_duration = duration_seconds / steps
+        voltage_step = (target_voltage - start_voltage) / steps
+        
+        _LOGGER.info(
+            f"{self.deviceName}: Ramping UV from {start_voltage}% to {target_voltage}% "
+            f"over {duration_seconds}s ({steps} steps, {step_duration:.1f}s per step)"
+        )
+        
+        for i in range(1, steps + 1):
+            next_voltage = round(start_voltage + (voltage_step * i), 1)
+            _LOGGER.debug(f"{self.deviceName}: UV ramp step {i}/{steps}: {next_voltage}%")
+            await self.turn_on(brightness_pct=next_voltage)
+            await asyncio.sleep(step_duration)
+        
+        _LOGGER.info(f"{self.deviceName}: UV ramp complete at {target_percent}%")
+    
     async def _deactivate_uv(self, reason: str = ""):
         """Deactivate UV light."""
         if not self.is_uv_active:

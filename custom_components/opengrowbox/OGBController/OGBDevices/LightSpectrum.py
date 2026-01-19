@@ -1,6 +1,9 @@
 """
 OpenGrowBox Spectrum Light Device (Blue/Red channels)
 
+LABEL: lightblue -> BLUE LIGHT
+LABEL: lightred -> RED LIGHT
+
 Spectrum lights allow control of individual color channels:
 - Blue light: Promotes vegetative growth, compact plants
 - Red light: Promotes flowering, stretching
@@ -125,16 +128,19 @@ class LightSpectrum(Light):
 
         # Initialize Spectrum specific settings
         self._load_settings()
-        self._start_scheduler()
 
-        # Validate entity availability
-        self._validate_entity_availability()
-        
-        # Register event handlers
+        # Register event handlers FIRST (before scheduler starts)
+        # This ensures we don't miss any events emitted during startup
         self.event_manager.on("LightTimeChanges", self._on_light_time_change)
         self.event_manager.on("toggleLight", self._on_main_light_toggle)
         self.event_manager.on("PlantStageChange", self._on_plant_stage_change)
         self.event_manager.on("SpectrumSettingsUpdate", self._on_settings_update)
+
+        # Validate entity availability
+        self._validate_entity_availability()
+
+        # Scheduler is started in _load_settings() when enabled=True
+        # Don't start here to avoid duplicate scheduler starts
 
     def _determine_spectrum_type(self, device_type: str, device_label: str) -> str:
         """Determine if this is a blue or red spectrum light."""
@@ -266,10 +272,10 @@ class LightSpectrum(Light):
                 self._schedule_task.cancel()
                 self._schedule_task = None
             
-            # Only start scheduler if enabled AND mode is Schedule
+            # Only start scheduler if enabled AND mode is Schedule - use immediate check
             if self.enabled and self.mode == SpectrumMode.SCHEDULE:
-                _LOGGER.info(f"{self.deviceName}: {self.spectrum_type.upper()} enabled={self.enabled}, mode={self.mode} - Starting scheduler")
-                self._start_scheduler()
+                _LOGGER.info(f"{self.deviceName}: {self.spectrum_type.upper()} enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
+                self._start_scheduler_with_immediate_check()
             else:
                 _LOGGER.info(
                     f"{self.deviceName}: {self.spectrum_type.upper()} NOT starting scheduler - "
@@ -319,6 +325,57 @@ class LightSpectrum(Light):
             
         self._schedule_task = asyncio.create_task(self._schedule_loop())
         _LOGGER.info(f"{self.deviceName}: Spectrum scheduler started")
+
+    async def _start_scheduler_with_immediate_check(self):
+        """Start the scheduler and run an immediate check without waiting.
+        
+        This ensures Spectrum can activate immediately if we're already in a window,
+        without waiting for the first sleep cycle to complete.
+        """
+        _LOGGER.info(f"{self.deviceName}: Starting scheduler with immediate check")
+        
+        # Run immediate check first (no wait)
+        try:
+            await self._check_activation_conditions()
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: Immediate check error: {e}")
+        
+        # Then start the periodic scheduler
+        self._start_scheduler()
+
+    async def _on_sunrise_window_status(self, data):
+        """Spectrum lights respond to sunrise only if enabled and in Schedule mode.
+        
+        This allows Blue/Red lights to use sunrise ramping when configured,
+        while still using their own dedicated scheduling for morning/evening phases.
+        """
+        # Only respond if enabled AND in Schedule mode
+        if not getattr(self, 'enabled', True) or self.mode != SpectrumMode.SCHEDULE:
+            _LOGGER.debug(
+                f"{self.deviceName}: Ignoring sunrise event - enabled={getattr(self, 'enabled', True)}, "
+                f"mode={self.mode}"
+            )
+            return
+        
+        # Call the parent's sunrise handler
+        await super()._on_sunrise_window_status(data)
+
+    async def _on_sunset_window_status(self, data):
+        """Spectrum lights respond to sunset only if enabled and in Schedule mode.
+        
+        This allows Blue/Red lights to use sunset ramping when configured,
+        while still using their own dedicated scheduling for morning/evening phases.
+        """
+        # Only respond if enabled AND in Schedule mode
+        if not getattr(self, 'enabled', True) or self.mode != SpectrumMode.SCHEDULE:
+            _LOGGER.debug(
+                f"{self.deviceName}: Ignoring sunset event - enabled={getattr(self, 'enabled', True)}, "
+                f"mode={self.mode}"
+            )
+            return
+        
+        # Call the parent's sunset handler
+        await super()._on_sunset_window_status(data)
 
     async def _schedule_loop(self):
         """Main scheduling loop - checks and adjusts intensity."""
@@ -495,11 +552,11 @@ class LightSpectrum(Light):
         )
         await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
-        # Turn on the light
+        # Turn on the light with intensity
         if self.isDimmable:
             await self.turn_on(brightness_pct=intensity)
         else:
-            await self.turn_on()
+            await self.turn_on(brightness_pct=intensity)
 
     async def _adjust_intensity(self, intensity: int, phase: str):
         """Adjust spectrum intensity."""

@@ -74,7 +74,7 @@ DEVICE_TYPE_MAPPING = {
     # Generic light - checked last
     "Light": ["light", "lamp", "led"],
     "CO2": ["co2", "carbon"],
-    "Pump": ["pump"],
+    "Pump": ["pump", "dripper", "feedsystem", "tank"],
     "Switch": ["generic", "switch"],
     "Fridge": ["fridge", "kuehlschrank"],
     # Modbus devices

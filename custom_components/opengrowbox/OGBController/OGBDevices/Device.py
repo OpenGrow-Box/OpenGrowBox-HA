@@ -1,10 +1,12 @@
 import logging
 import asyncio
-from .Sensor import Sensor
 
 _LOGGER = logging.getLogger(__name__)
 
 class Device:
+    # Optional class attributes - may be set by subclasses
+    PlantStageMinMax = None  # type: ignore - Set by Light.py subclass
+
     def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
         self.hass = hass
         self.eventManager = eventManager
@@ -36,6 +38,7 @@ class Device:
         self.maxVoltage = None
         self.minDuty = None
         self.maxDuty = None
+        self.is_minmax_active = False  # Track if MinMax control is active for this device
         self.voltageFromNumber = False
         
         # EVENTS
@@ -207,8 +210,8 @@ class Device:
         self.identifySwitchesAndSensors(clean_entitys)
         self.identifyIfRunningState()
         self.identifDimmable()
-        self.checkForControlValue()
         self.checkMinMax(False)
+        self.checkForControlValue()
         self.identifyCapabilities()
         if(self.initialization == True):
             self.deviceUpdater()
@@ -259,6 +262,7 @@ class Device:
             )
 
             try:
+                from .Sensor import Sensor
                 # Pass device's labels to remapped sensors so medium_label can be detected
                 new_sensor = Sensor(
                     sensor_name,
@@ -353,43 +357,48 @@ class Device:
             updated = await update_entity_value(self.sensors, entity_id, new_value)
             if updated:
                 _LOGGER.debug(f"{self.deviceName} OGB sensor updated: {entity_id}")
-        
+            
     def checkMinMax(self,data):
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
         if not self.isDimmable: 
             return
 
-        if not minMaxSets or not minMaxSets.get("active", False):
-            return  # Nichts aktiv → nichts tun
+        # Guard against None
+        if minMaxSets is None:
+            self.is_minmax_active = False
+            return
 
+        # Check if minmax is active - used for clamping logic
+        is_active = minMaxSets.get("active", False)
+        self.is_minmax_active = is_active
+        
+        # Load device-specific values ALWAYS (like original version)
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
-            old_min = self.minVoltage
-            old_max = self.maxVoltage
             self.minVoltage = minMaxSets.get("minVoltage")
             self.maxVoltage = minMaxSets.get("maxVoltage")
-            _LOGGER.debug(f"{self.deviceName} Device MinMax sets: Max-Voltage:{self.maxVoltage} Min-Voltage:{self.minVoltage}")
-            
-            # Clamp voltage to new min/max range
+            _LOGGER.debug(f"{self.deviceName}: Loaded min/max voltage: {self.minVoltage}-{self.maxVoltage}")
+
+        if "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+            self.minDuty = minMaxSets.get("minDuty")
+            self.maxDuty = minMaxSets.get("maxDuty")
+            _LOGGER.debug(f"{self.deviceName}: Loaded min/max duty: {self.minDuty}-{self.maxDuty}")
+
+        # Clamp voltage to min/max range
+        if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
             if hasattr(self, 'voltage') and self.voltage is not None:
                 old_voltage = self.voltage
                 self.voltage = self.clamp_voltage(self.voltage)
                 _LOGGER.info(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}%")
-        
-        elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
-            old_min = self.minDuty
-            old_max = self.maxDuty
-            self.minDuty = minMaxSets.get("minDuty")
-            self.maxDuty = minMaxSets.get("maxDuty")
-            _LOGGER.debug(f"{self.deviceName} Device MinMax sets: Max-Duty:{self.maxDuty} Min-Duty:{self.minDuty}")
-            
-            # CRITICAL: Clamp dutyCycle to new min/max range
+
+        # Clamp dutyCycle to min/max range
+        if "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             if hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
                 old_duty = self.dutyCycle
-                self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                self.dutyCycle = max(self.minDuty, min(self.maxDuty, self.dutyCycle))
                 _LOGGER.info(
                     f"{self.deviceName}: DutyCycle clamped from {old_duty}% to {self.dutyCycle}% "
-                    f"(was in {old_min}-{old_max}%, now in {self.minDuty}-{self.maxDuty}%)"
+                    f"(range: {self.minDuty}-{self.maxDuty}%)"
                 )
 
     def initialize_duty_cycle(self):
@@ -579,7 +588,7 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","humdifier","dehumidifier","heater","cooler","co2"]
+        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","lightfarred","lightuv","lightblue","lightred","humdifier","dehumidifier","heater","cooler","co2"]
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
@@ -599,6 +608,11 @@ class Device:
 
     def checkForControlValue(self):
         """Findet und aktualisiert den Duty Cycle oder den Voltage-Wert basierend to Gerätetyp und Daten."""
+        # Skip if we're actively controlling the device (e.g., turn_on just ran)
+        if getattr(self, '_in_active_control', False):
+            _LOGGER.debug(f"{self.deviceName}: Skipping checkForControlValue - device is under active control")
+            return
+        
         if not self.isDimmable:
             _LOGGER.debug(f"{self.deviceName}: is not Dimmable ")
             return
@@ -647,15 +661,21 @@ class Device:
                 if self.deviceType == "Light":
                     self.voltage = converted_value
                     _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to {self.voltage}%.")
+                    # Always clamp voltage if minVoltage or maxVoltage are set
                     if hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
-                        self.voltage = self.clamp_voltage(self.voltage)
-                        _LOGGER.debug(f"{self.deviceName}: Voltage clamped to {self.voltage}%.")
+                        if self.minVoltage > 0 or self.maxVoltage < 100:
+                            old_voltage = self.voltage
+                            self.voltage = self.clamp_voltage(self.voltage)
+                            _LOGGER.debug(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}%.")
                 elif self.deviceType in ["Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"]:
                     self.dutyCycle = converted_value
                     _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
+                    # Always clamp dutyCycle if minDuty and maxDuty are set
                     if hasattr(self, 'minDuty') and hasattr(self, 'maxDuty') and self.minDuty is not None and self.maxDuty is not None:
-                        self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
-                        _LOGGER.debug(f"{self.deviceName}: Duty Cycle clamped to {self.dutyCycle}%.")
+                        if self.minDuty > 0 or self.maxDuty < 100:
+                            old_duty = self.dutyCycle
+                            self.dutyCycle = max(self.minDuty, min(self.maxDuty, self.dutyCycle))
+                            _LOGGER.debug(f"{self.deviceName}: Duty Cycle clamped from {old_duty}% to {self.dutyCycle}%.")
 
         # Options durchgehen
         for option in self.options:
@@ -674,7 +694,7 @@ class Device:
                     if converted_value is not None:
                         self.voltage = converted_value
                         _LOGGER.debug(f"{self.deviceName}: Voltage set from Options to {self.voltage}%.")
-                        if hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
+                        if self.is_minmax_active and hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
                             self.voltage = self.clamp_voltage(self.voltage)
                             _LOGGER.debug(f"{self.deviceName}: Voltage clamped to {self.voltage}%.")
                         return
@@ -685,14 +705,59 @@ class Device:
                     if converted_value is not None:
                         self.dutyCycle = converted_value
                         _LOGGER.debug(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
-                        if hasattr(self, 'minDuty') and hasattr(self, 'maxDuty') and self.minDuty is not None and self.maxDuty is not None:
-                            self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                        if self.is_minmax_active and hasattr(self, 'minDuty') and hasattr(self, 'maxDuty') and self.minDuty is not None and self.maxDuty is not None:
+                            self.dutyCycle = max(self.minDuty, min(self.maxDuty, self.dutyCycle))
                             _LOGGER.debug(f"{self.deviceName}: Duty Cycle clamped to {self.dutyCycle}%.")
                         return
                 
+    def _is_device_online(self) -> bool:
+        """Check if the device entity is available (not 'unavailable' or 'unknown').
+        
+        Returns True if:
+        - Device has no switches (no entity to check)
+        - All switch entities have a valid state (not unavailable/unknown)
+        
+        Returns False if any switch entity is offline.
+        """
+        if not self.switches:
+            return True  # No switches to check
+        
+        for switch in self.switches:
+            entity_id = switch.get("entity_id")
+            if entity_id and self.hass:
+                state = self.hass.states.get(entity_id)
+                if state:
+                    if state.state in ("unavailable", "unknown", "None"):
+                        _LOGGER.debug(f"{self.deviceName}: Entity {entity_id} is {state.state}, device considered offline")
+                        return False
+        return True
+
     async def turn_on(self, **kwargs):
         """Schaltet das Gerät ein."""
+        import time
+        
+        # Flag to prevent sensor from overwriting our control value
+        self._in_active_control = True
+        
         try:
+            # Check if device is online before proceeding
+            if not self._is_device_online():
+                _LOGGER.warning(f"{self.deviceName}: Cannot turn on - device is offline/unavailable")
+                self._in_active_control = False
+                return
+            
+            # Rate limiting for all devices to prevent rapid successive calls
+            # Prevents device timeout and improves system stability
+            now = time.time()
+            last_call = getattr(self, '_last_turn_on_time', 0)
+            
+            # 3 second cooldown for all turn_on calls
+            if now - last_call < 3.0:
+                _LOGGER.debug(f"{self.deviceName}: turn_on skipped - too rapid ({now - last_call:.2f}s since last call)")
+                return
+            
+            self._last_turn_on_time = now
+            
             brightness_pct = kwargs.get("brightness_pct")
             percentage = kwargs.get("percentage")
             
@@ -1044,6 +1109,8 @@ class Device:
 
         except Exception as e:
             _LOGGER.error(f"Error TurnON -> {self.deviceName}: {e}")
+        finally:
+            self._in_active_control = False
 
     async def turn_off(self, **kwargs):
         """Schaltet das Gerät aus."""
@@ -1127,25 +1194,17 @@ class Device:
                 # Light ausschalten
                 elif self.deviceType == "Light":
                     if self.isDimmable:
-                        if self.voltageFromNumber and hasattr(self, 'islightON') and not self.islightON:
-                            await self.hass.services.async_call(
-                                domain="switch",
-                                service="turn_off",
-                                service_data={"entity_id": entity_id},
-                            )
-                            self.isRunning = False
-                            await self.set_value(0)
-                            _LOGGER.debug(f"{self.deviceName}: Light OFF (Number-Voltage).")
-                            return
-                        else:
-                            await self.hass.services.async_call(
-                                domain="light",
-                                service="turn_off",
-                                service_data={"entity_id": entity_id},
-                            )
-                            self.isRunning = False
-                            _LOGGER.debug(f"{self.deviceName}: Light OFF.")
-                            return
+                        # For dimmable lights, use brightness_pct=0 to turn off
+                        await self.hass.services.async_call(
+                            domain="light",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        # Reset voltage to 0 for dimmable lights
+                        self.voltage = 0
+                        _LOGGER.debug(f"{self.deviceName}: Light OFF (dimmable).")
+                        return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1429,35 +1488,36 @@ class Device:
 
         minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
 
-        if not self.isDimmable and not self.switches:
+        if not self.isDimmable: 
             return
 
-        if not minMaxSets:
+        if not minMaxSets or not minMaxSets.get("active", False):
             return
-        
-        is_active = minMaxSets.get("active", False)
         
         if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
-            self.minVoltage = float(minMaxSets.get("minVoltage"))
+            self.minVoltage = float(minMaxSets.get("minVoltage")) 
             self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-            old_voltage = self.voltage
-            self.voltage = self.clamp_voltage(self.voltage)
-            _LOGGER.debug(f"{self.deviceName}: Min/max updated, voltage clamped from {old_voltage}% to {self.voltage}%")
-            if self.isRunning and old_voltage != self.voltage:
-                await self.turn_on(brightness_pct=self.voltage)
-
+            await self.changeMinMaxValues(self.clamp_voltage(self.voltage))
+            
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             self.minDuty = float(minMaxSets.get("minDuty"))
             self.maxDuty = float(minMaxSets.get("maxDuty"))
-            old_duty = self.dutyCycle
-            self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
-            _LOGGER.debug(f"{self.deviceName}: Min/max updated, dutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
-            if self.isRunning:
+            await self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
+        
+    async def changeMinMaxValues(self, newValue):
+        if self.isDimmable:
+            _LOGGER.debug(f"{self.deviceName}: as Type:{self.deviceType} NewValue: {newValue}")
+    
+            if self.deviceType == "Light":
+                if self.isDimmable:
+                    self.voltage = newValue
+                    await self.turn_on(brightness_pct=newValue)
+            else:
+                self.dutyCycle = newValue
                 if self.isSpecialDevice:
-                    await self.turn_on(brightness_pct=float(self.dutyCycle))
+                    await self.turn_on(brightness_pct=float(newValue))
                 else:
-                    await self.turn_on(percentage=self.dutyCycle)
-                _LOGGER.info(f"{self.deviceName}: Applied clamped dutyCycle {self.dutyCycle}% to running device")
+                    await self.turn_on(percentage=newValue)
 
     async def on_minmax_control_disabled(self, data):
         """Reset min/max to defaults when global minMaxControl is disabled.
@@ -1516,17 +1576,24 @@ class Device:
             old_min = self.minDuty
             old_max = self.maxDuty
             
-            if self.deviceType == "Ventilation":
-                self.minDuty = 85
-                self.maxDuty = 100
+            # Check if device-specific values exist in data store
+            minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
+            if minMaxSets and minMaxSets.get("active"):
+                # User has set device-specific values - preserve them
+                self.minDuty = minMaxSets.get("minDuty", old_min)
+                self.maxDuty = minMaxSets.get("maxDuty", old_max)
+                _LOGGER.info(
+                    f"{self.deviceName}: Device-specific min/max active, preserving values: "
+                    f"min={self.minDuty}, max={self.maxDuty}"
+                )
             else:
-                self.minDuty = 10
-                self.maxDuty = 95
-            
-            _LOGGER.info(
-                f"{self.deviceName}: Resetting min/max: "
-                f"min={old_min}→{self.minDuty}, max={old_max}→{self.maxDuty}"
-            )
+                # No device-specific values - use class defaults
+                self.minDuty = getattr(self, 'minDuty', 0)
+                self.maxDuty = getattr(self, 'maxDuty', 100)
+                _LOGGER.info(
+                    f"{self.deviceName}: Resetting min/max to defaults: "
+                    f"min={old_min}→{self.minDuty}, max={old_max}→{self.maxDuty}"
+                )
             
             # Only update running devices - don't turn on devices that are off
             if self.isRunning and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
@@ -1599,7 +1666,7 @@ class Device:
                     
                     if self.isRunning and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
                         old_duty = self.dutyCycle
-                        self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                        self.dutyCycle = max(self.minDuty, min(self.maxDuty, self.dutyCycle))
                         _LOGGER.info(f"{self.deviceName}: DutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
                         if self.isSpecialDevice:
                             await self.turn_on(brightness_pct=float(self.dutyCycle))
@@ -1625,9 +1692,14 @@ class Device:
 
     def clamp_duty_cycle(self, value):
         """Clamp duty cycle to min/max range."""
-        if self.minDuty is not None and self.maxDuty is not None:
-            return max(self.minDuty, min(self.maxDuty, value or 0))
-        return value
+        if value is None:
+            return 50  # Default fallback
+        
+        min_duty = float(self.minDuty) if self.minDuty is not None else 0
+        max_duty = float(self.maxDuty) if self.maxDuty is not None else 100
+        
+        clamped = max(min_duty, min(max_duty, value))
+        return int(clamped)
 
     async def changeMinMaxValues(self,newValue):
         if self.isDimmable:
@@ -1643,7 +1715,7 @@ class Device:
                     await self.turn_on(brightness_pct=clamped_value)
             else:
                 # Clamp to min/max range for duty cycle devices
-                clamped_value = self.clamp_duty_cycle(newValue)
+                clamped_value = max(self.minDuty, min(self.maxDuty, newValue))
                 self.dutyCycle = clamped_value
                 _LOGGER.info(f"{self.deviceName}: DutyCycle set to {clamped_value}% (was {newValue}%)")
                 if self.isSpecialDevice:

@@ -331,9 +331,10 @@ class OGBConsoleManager:
         for device in devices:
             response += f"\n📱 {device.deviceName} ({device.deviceType})\n"
             response += f"   Running: {'Yes' if device.isRunning else 'No'}\n"
-            response += f"   Dimmable: {'Yes' if device.isDimmable else 'No'}\n"
+            is_dimmable = getattr(device, 'isDimmable', False)
+            response += f"   Dimmable: {'Yes' if is_dimmable else 'No'}\n"
 
-            if device.isDimmable:
+            if is_dimmable:
                 if hasattr(device, "voltage") and device.voltage is not None:
                     response += f"   Voltage: {device.voltage}%\n"
                 if hasattr(device, "dutyCycle") and device.dutyCycle is not None:

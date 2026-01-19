@@ -9,10 +9,10 @@ The OpenGrowBox integration supports specialized light control beyond standard o
 | Type | Label | Purpose | Timing Behavior |
 |------|-------|---------|-----------------|
 | **Normal** | `light` | Main grow light | Full light cycle (existing behavior) |
-| **Far Red** | `light_fr` | Phytochrome control | Start + End of light cycle only |
-| **UV** | `light_uv` | Stress response | Middle of light cycle only |
-| **Blue Spectrum** | `light_blue` | Vegetative growth | Variable intensity throughout day |
-| **Red Spectrum** | `light_red` | Flowering promotion | Variable intensity throughout day |
+| **Far Red** | `lightfarred` | Phytochrome control | Start + End of light cycle only |
+| **UV** | `lightuv` | Stress response | Middle of light cycle only |
+| **Blue Spectrum** | `lightblue` | Vegetative growth | Variable intensity throughout day |
+| **Red Spectrum** | `lightred` | Flowering promotion | Variable intensity throughout day |
 
 ---
 
@@ -50,10 +50,10 @@ Each special light type has a corresponding select entity in Home Assistant:
 | Light Type | Label to Add |
 |------------|--------------|
 | Main grow light | `light` |
-| Far Red LED bar | `light_fr` or `light_farred` |
-| UV/UVB light | `light_uv` or `light_uvb` or `light_uva` |
-| Blue spectrum channel | `light_blue` |
-| Red spectrum channel | `light_red` |
+| Far Red LED bar | `lightfarred` (or `light_fr`, `light_farred`, `farred`, `far_red`, `farredlight`) |
+| UV/UVB light | `lightuv` (or `light_uv`, `light_uvb`, `light_uva`, `uvlight`, `uv-light`) |
+| Blue spectrum channel | `lightblue` (or `light_blue`, `blue_led`, `bluelight`, `blue-light`) |
+| Red spectrum channel | `lightred` (or `light_red`, `red_led`, `redlight`, `red-light`) |
 
 ### Step 2: Restart Home Assistant
 
@@ -77,6 +77,27 @@ By default, all special lights use **Schedule** mode. To change:
    - **Always On** - Continuous operation with main lights
    - **Always Off** - Disabled
    - **Manual** - No automatic control
+
+### Important: Special Lights Have Independent Scheduling
+
+Special lights (FarRed, UV, Blue, Red) operate **independently** from the main light's sunrise/sunset transitions. They do not follow the main light's gradual ramp-up/ramp-down behavior.
+
+| Light Type | Sunrise/Sunset Behavior |
+|------------|------------------------|
+| Main Light | ✓ Follows sunrise/sunset transitions |
+| Far Red | ✗ Uses own start/end window scheduling |
+| UV | ✗ Uses own midday window scheduling |
+| Blue/Red | Only if enabled + Schedule mode |
+
+This means:
+- **Far Red** activates for its configured duration at lights-on and lights-off, not during sunrise ramp
+- **UV** activates during the middle of the light cycle, not during sunrise/sunset
+- **Blue/Red** follow their own morning/midday/evening intensity profiles
+
+**Example log when spectrum light ignores sunrise (disabled or not in Schedule mode):**
+```
+devredlight: Ignoring sunrise event - enabled=False, mode=Schedule
+```
 
 ---
 
@@ -465,10 +486,10 @@ For clones and seedlings that benefit from high blue light:
 ### Light Not Detected as Special Type
 
 1. Verify the label is exactly correct (case-insensitive):
-   - `light_fr`, `light_farred`, `farred`, `far_red`
-   - `light_uv`, `light_uvb`, `light_uva`, `uvlight`
-   - `light_blue`, `blue_led`, `bluelight`
-   - `light_red`, `red_led`, `redlight`
+   - `lightfarred`, `light_fr`, `light_farred`, `farred`, `far_red`, `farredlight`
+   - `lightuv`, `light_uv`, `light_uvb`, `light_uva`, `uvlight`, `uv-light`
+   - `lightblue`, `light_blue`, `blue_led`, `bluelight`, `blue-light`
+   - `lightred`, `light_red`, `red_led`, `redlight`, `red-light`
 
 2. Check logs for device identification:
    ```
@@ -562,10 +583,10 @@ This error occurs when OGB cannot find or communicate with the light entity. Com
 ```
 Devices:
 +-- main_light (label: light)           -> Normal 12/12 schedule
-+-- farred_bar (label: light_fr)        -> Mode: Always On (continuous FR)
-+-- uv_panel (label: light_uv)          -> Mode: Schedule (4h mid-cycle)
-+-- blue_channel (label: light_blue)    -> Mode: Schedule (morning-heavy)
-+-- red_channel (label: light_red)      -> Mode: Schedule (evening-heavy)
++-- farred_bar (label: lightfarred)     -> Mode: Always On (continuous FR)
++-- uv_panel (label: lightuv)           -> Mode: Schedule (4h mid-cycle)
++-- blue_channel (label: lightblue)     -> Mode: Schedule (morning-heavy)
++-- red_channel (label: lightred)       -> Mode: Schedule (evening-heavy)
 
 Timeline (12h light cycle, 06:00-18:00):
 06:00 - Main ON, FarRed ON (Always On), Blue 80%, Red 30%
@@ -601,6 +622,14 @@ number.py                  # Duration/intensity number entities
 ---
 
 ## Changelog
+
+### v1.6.0 - Independent Special Light Scheduling
+- Special lights (FarRed, UV, Blue, Red) now have **independent scheduling** from main light sunrise/sunset
+- **FarRed and UV** no longer respond to sunrise/sunset window events - they use their own dedicated scheduling
+- **Blue/Red spectrum** only respond to sunrise/sunset if enabled=True AND mode=Schedule
+- Fixed label documentation: correct labels are `lightfarred`, `lightuv`, `lightblue`, `lightred`
+- Added troubleshooting section for sunrise/sunset behavior
+- Updated example setup with correct labels
 
 ### v1.5.1 - Entity Validation Improvements
 - Added `_validate_entity_availability()` method to all special light classes

@@ -456,7 +456,7 @@ class OGBWebSocketConManager:
             # FIRST: Validate and auto-request session data before building headers
             # This MUST happen before header construction to avoid "None" values
             if not self._session_id or not self._session_key:
-                logging.warning(f"⚠️ {self.ws_room} No session data, requesting new session key...")
+                logging.debug(f"⚠️ {self.ws_room} No session data, requesting new session key...")
                 session_data = await self._request_session_key()
                 if not session_data:
                     logging.error(f"❌ {self.ws_room} Failed to get session key for V1 connection")
@@ -499,13 +499,13 @@ class OGBWebSocketConManager:
             self._v1_namespace = '/v1/websocket'  # Store for later emits
 
             # V1 Debug: Log connection details
-            logging.warning(f"🔗 {self.ws_room} Connecting to V1 WebSocket: {base_url} namespace: {self._v1_namespace} with plan: {actual_plan}")
-            logging.warning(f"🔐 {self.ws_room} V1 AUTH HEADERS: {auth_headers}")
-            logging.warning(f"🎯 {self.ws_room} Session ID: {auth_headers.get('ogb-session-id', 'MISSING')}")
-            logging.warning(f"🏷️ {self.ws_room} Client ID: {auth_headers.get('ogb-client', 'MISSING')}")
-            logging.warning(f"📊 {self.ws_room} User ID: {auth_headers.get('ogb-user-id', 'MISSING')}")
+            logging.debug(f"🔗 {self.ws_room} Connecting to V1 WebSocket: {base_url} namespace: {self._v1_namespace} with plan: {actual_plan}")
+            logging.debug(f"🔐 {self.ws_room} V1 AUTH HEADERS: {auth_headers}")
+            logging.debug(f"🎯 {self.ws_room} Session ID: {auth_headers.get('ogb-session-id', 'MISSING')}")
+            logging.debug(f"🏷️ {self.ws_room} Client ID: {auth_headers.get('ogb-client', 'MISSING')}")
+            logging.debug(f"📊 {self.ws_room} User ID: {auth_headers.get('ogb-user-id', 'MISSING')}")
 
-            logging.warning(f"✅ {self.ws_room} Session ready for V1 auth: {self._session_id[:8]}...")
+            logging.debug(f"✅ {self.ws_room} Session ready for V1 auth: {self._session_id[:8]}...")
 
             # Transport configuration - websocket first, fallback to polling
             transports = ["websocket", "polling"]
@@ -520,7 +520,7 @@ class OGBWebSocketConManager:
 
             # Connect with timeout
             # Socket.IO namespace connection: connect to BASE URL with namespaces parameter
-            logging.warning(f"🔗 {self.ws_room} Starting V1 WebSocket connect to namespace {self._v1_namespace}...")
+            logging.debug(f"🔗 {self.ws_room} Starting V1 WebSocket connect to namespace {self._v1_namespace}...")
             await asyncio.wait_for(
                 self.sio.connect(
                     base_url,  # HTTP URL - Socket.IO handles WS upgrade
@@ -531,7 +531,7 @@ class OGBWebSocketConManager:
                 ),
                 timeout=self.timeout * 2,
             )
-            logging.warning(f"🔗 {self.ws_room} WebSocket connect call completed, connected={self.sio.connected}")
+            logging.debug(f"🔗 {self.ws_room} WebSocket connect call completed, connected={self.sio.connected}")
 
             # Wait for connection stabilization
             await asyncio.sleep(0.5)
@@ -622,7 +622,7 @@ class OGBWebSocketConManager:
                 "room_name": self.ws_room,
             }
 
-            logging.warning(f"🔑 {self.ws_room} Requesting new session key")
+            logging.debug(f"🔑 {self.ws_room} Requesting new session key")
 
             timeout_config = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout_config) as session:
@@ -720,7 +720,7 @@ class OGBWebSocketConManager:
         """Establish session from authenticated data (for other rooms)"""
         try:
             async with self._connection_lock:
-                logging.warning(
+                logging.debug(
                     f"🔐 {self.ws_room} Establishing session from auth data  {auth_data}"
                 )
 
@@ -759,7 +759,7 @@ class OGBWebSocketConManager:
                     return False
 
                 # Connect WebSocket
-                logging.warning(f"🔗 {self.ws_room} Connecting WebSocket with session_id={self._session_id}")
+                logging.debug(f"🔗 {self.ws_room} Connecting WebSocket with session_id={self._session_id}")
                 if not await self._connect_websocket():
                     logging.error(f"❌ {self.ws_room} WebSocket connection failed")
                     return False
@@ -767,7 +767,7 @@ class OGBWebSocketConManager:
                 # Start keep-alive
                 await self._start_keepalive()
 
-                logging.warning(f"✅ {self.ws_room} Session established from auth data - authenticated={self.authenticated}, ws_connected={self.ws_connected}")
+                logging.debug(f"✅ {self.ws_room} Session established from auth data - authenticated={self.authenticated}, ws_connected={self.ws_connected}")
                 return True
 
         except Exception as e:
@@ -1275,7 +1275,7 @@ class OGBWebSocketConManager:
             """Debug ALL events received from V1 server"""
             logging.warning(f"📨 {self.ws_room} V1 EVENT RECEIVED: {event} -> {args}")
             if 'auth' in event.lower() or 'session' in event.lower() or 'v1' in event.lower() or 'error' in event.lower():
-                logging.error(f"🚨 {self.ws_room} AUTH/ERROR EVENT: {event} -> {args}")  # Make error events visible
+                logging.debug(f"🚨 {self.ws_room} AUTH/ERROR EVENT: {event} -> {args}")  # Make error events visible
 
         # Mark handlers as registered (prevent duplicate registration)
         self._handlers_registered = True

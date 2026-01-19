@@ -21,9 +21,9 @@ class LightSpectrum:
 ```
 
 #### 3. Specialized Light Controllers
-- **LightUV**: UV spectrum control
-- **LightFarRed**: Far-red spectrum enhancement
-- **LightBlue/LightRed**: Primary spectrum control
+- **LightUV**: UV spectrum control (independent scheduling)
+- **LightFarRed**: Far-red spectrum enhancement (independent scheduling)
+- **LightBlue/LightRed**: Primary spectrum control (follows main light only in Schedule mode)
 
 ## Lighting Fundamentals
 

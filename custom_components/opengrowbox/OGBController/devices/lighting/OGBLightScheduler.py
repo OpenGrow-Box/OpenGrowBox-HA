@@ -74,17 +74,40 @@ class OGBLightScheduler:
         self.light_on_time = parse_to_time(light_on)
         self.light_off_time = parse_to_time(light_off)
 
-        sun_rise = self.data_store.getDeep("isPlantDay.sunRiseTime")
-        sun_set = self.data_store.getDeep("isPlantDay.sunSetTime")
+        # Sun rise/set duration - read from data store, default to 300 seconds (5 min)
+        # Format is "HH:MM:SS" (e.g., "00:05:00" = 5 min, "00:15:00" = 15 min)
+        def parse_to_duration(dstr):
+            if not dstr or dstr == "" or dstr == "00:00:00":
+                return 300  # Default 5 minutes
+            try:
+                # Parse as time and convert to seconds
+                dt = datetime.strptime(dstr, "%H:%M:%S")
+                return dt.hour * 3600 + dt.minute * 60 + dt.second
+            except Exception as e:
+                _LOGGER.error(f"{self.device_name}: Error Parsing Duration '{dstr}': {e}")
+                return 300  # Default 5 minutes
 
-        # Modified to return 0 instead of empty string for invalid durations
-        def parse_if_valid(time_str):
-            if time_str and time_str != "00:00:00":
-                return self.parse_time_sec(time_str)
-            return 0  # Return 0 instead of empty string
+        sun_rise_duration = self.data_store.getDeep("isPlantDay.sun_rise_duration")
+        sun_set_duration = self.data_store.getDeep("isPlantDay.sun_set_duration")
 
-        self.sun_rise_duration = parse_if_valid(sun_rise)
-        self.sun_set_duration = parse_if_valid(sun_set)
+        _LOGGER.debug(f"{self.device_name}: sun_rise_duration from data_store = {sun_rise_duration}")
+        _LOGGER.debug(f"{self.device_name}: sun_set_duration from data_store = {sun_set_duration}")
+
+        # Support both formats: time string "HH:MM:SS" or numeric seconds or None
+        if sun_rise_duration is None:
+            self.sun_rise_duration = 300  # Default 5 min
+            _LOGGER.debug(f"{self.device_name}: Using default sun_rise_duration = 300")
+        elif isinstance(sun_rise_duration, (int, float)):
+            self.sun_rise_duration = int(sun_rise_duration)
+        else:
+            self.sun_rise_duration = parse_to_duration(str(sun_rise_duration))
+
+        if sun_set_duration is None:
+            self.sun_set_duration = 300  # Default 5 min
+        elif isinstance(sun_set_duration, (int, float)):
+            self.sun_set_duration = int(sun_set_duration)
+        else:
+            self.sun_set_duration = parse_to_duration(str(sun_set_duration))
 
         self.is_scheduled = self.data_store.getDeep("isPlantDay.islightON")
 
@@ -149,12 +172,12 @@ class OGBLightScheduler:
             return 0
 
     def update_sun_rise_time(self, time_str):
-        """Update sunrise duration."""
-        self.sun_rise_duration = self.parse_time_sec(time_str)
+        """Update sunrise duration - uses fixed 15 minute default."""
+        pass  # Duration is now fixed at 900 seconds (15 minutes)
 
     def update_sun_set_time(self, time_str):
-        """Update sunset duration."""
-        self.sun_set_duration = self.parse_time_sec(time_str)
+        """Update sunset duration - uses fixed 15 minute default."""
+        pass  # Duration is now fixed at 900 seconds (15 minutes)
 
     def _in_window(self, current, target, duration_minutes, is_sunset=False):
         """Check if current time is within the window for SunRise/SunSet.
@@ -197,20 +220,18 @@ class OGBLightScheduler:
                 # Normal case (no midnight crossing)
                 return start_minutes <= current_minutes <= end_minutes
         else:
-            # For SunRise: Window AFTER the target time (add offset) - original logic
-            start_minutes = target_minutes
-            end_minutes = target_minutes + duration_minutes
+            # For SunRise: Window BEFORE the target time (subtract offset)
+            start_minutes = target_minutes - duration_minutes
+            end_minutes = target_minutes
 
             # Check normal case (no midnight crossing)
-            if end_minutes < 24 * 60:  # Ends before midnight
+            if start_minutes >= 0:  # Starts after midnight
                 return start_minutes <= current_minutes <= end_minutes
             else:
-                # Time window crosses midnight into next day
-                end_minutes_wrapped = end_minutes % (
-                    24 * 60
-                )  # Modulo for minutes after midnight
-                return (start_minutes <= current_minutes < 24 * 60) or (
-                    0 <= current_minutes <= end_minutes_wrapped
+                # Time window crosses midnight into previous day
+                start_minutes_wrapped = start_minutes + (24 * 60)
+                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
+                    0 <= current_minutes <= end_minutes
                 )
 
     async def periodic_sun_phase_check(self):
