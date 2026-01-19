@@ -923,9 +923,9 @@ class OGBPremiumIntegration:
         self.is_primary_auth_room = is_primary_auth_room
         
         # DEBUG: Log what's in the state
-        _LOGGER.warning(f"🔍 {self.room} State keys: {list(state_data.keys())}")
-        _LOGGER.warning(f"🔍 {self.room} ogb_login_email in state: {repr(state_data.get('ogb_login_email'))}")
-        _LOGGER.warning(f"🔍 {self.room} ogb_login_token in state: {bool(state_data.get('ogb_login_token'))}")
+        _LOGGER.debug(f"🔍 {self.room} State keys: {list(state_data.keys())}")
+        _LOGGER.debug(f"🔍 {self.room} ogb_login_email in state: {repr(state_data.get('ogb_login_email'))}")
+        _LOGGER.debug(f"🔍 {self.room} ogb_login_token in state: {bool(state_data.get('ogb_login_token'))}")
 
         # Initialize feature manager with restored subscription data
         if self.subscription_data:

@@ -43,16 +43,18 @@ class Dehumidifier(Device):
 
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
-
-        min_duty = float(self.minDuty)
-        max_duty = float(self.maxDuty)
+        if duty_cycle is None:
+            _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle called with None, using default 50%")
+            duty_cycle = 50
+        
+        min_duty = float(self.minDuty) if self.minDuty is not None else 0
+        max_duty = float(self.maxDuty) if self.maxDuty is not None else 100
         duty_cycle = float(duty_cycle)
-
+        
         clamped_value = max(min_duty, min(max_duty, duty_cycle))
-
         clamped_value = int(clamped_value)
-
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt.")
+        
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt (range: {min_duty}-{max_duty}%)")
         return clamped_value
 
     def change_duty_cycle(self, increase=True):

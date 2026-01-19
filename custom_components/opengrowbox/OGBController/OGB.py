@@ -314,9 +314,9 @@ class OpenGrowBox:
 
         # Set default sun times
         if not self.data_store.getDeep("isPlantDay.sunRiseTime"):
-            self.data_store.setDeep("isPlantDay.sunRiseTime", "07:00:00")
+            self.data_store.setDeep("isPlantDay.sunRiseTime", "00:00:00")
         if not self.data_store.getDeep("isPlantDay.sunSetTime"):
-            self.data_store.setDeep("isPlantDay.sunSetTime", "19:00:00")
+            self.data_store.setDeep("isPlantDay.sunSetTime", "00:00:00")
 
         # Set default plant phase
         if not self.data_store.getDeep("isPlantDay.plantPhase"):

@@ -1,6 +1,8 @@
 """
 OpenGrowBox Far Red Light Device
 
+LABEL: lightfarred
+
 Far Red lights are used for:
 - Initiating the Emerson effect at start of light cycle
 - Accelerating phytochrome conversion (Pfr -> Pr) at end of light cycle
@@ -80,6 +82,7 @@ class LightFarRed(Light):
         self.is_fr_active = False
         self.current_phase: Optional[str] = None  # 'start', 'end', 'always_on', or None
         self.current_intensity = 0.0  # Current intensity for ramping (0-100%)
+        self._last_processed_intensity = None  # Last intensity sent to device
         
         # Light schedule reference
         self.lightOnTime = None
@@ -90,20 +93,26 @@ class LightFarRed(Light):
         self._schedule_task = None
         self._turn_off_task = None
         
+        # Lock to prevent duplicate scheduler tasks
+        self._scheduler_lock = asyncio.Lock()
+        
         # Initialize parent class first (important for Device inheritance)
         self.init()
 
         # Initialize FarRed specific settings
         self._load_settings()
-        self._start_scheduler()
+
+        # Register event handlers FIRST (before scheduler starts)
+        # This ensures we don't miss any events emitted during startup
+        self.event_manager.on("LightTimeChanges", self._on_light_time_change)
+        self.event_manager.on("toggleLight", self._on_main_light_toggle)
+        self.event_manager.on("FarRedSettingsUpdate", self._on_settings_update)
 
         # Validate entity availability
         self._validate_entity_availability()
 
-        # Register event handlers
-        self.event_manager.on("LightTimeChanges", self._on_light_time_change)
-        self.event_manager.on("toggleLight", self._on_main_light_toggle)
-        self.event_manager.on("FarRedSettingsUpdate", self._on_settings_update)
+        # Scheduler is started in _load_settings() when enabled=True
+        # Don't start here to avoid duplicate scheduler starts
 
     def __repr__(self):
         return (
@@ -185,13 +194,26 @@ class LightFarRed(Light):
             # Get Far Red specific settings (with defaults)
             fr_settings = self.data_store.getDeep("specialLights.farRed") or {}
             
+            # Also read directly from the path that OGBConfigurationManager uses
+            direct_start = self.data_store.getDeep("specialLights.farRed.startDurationMinutes")
+            direct_end = self.data_store.getDeep("specialLights.farRed.endDurationMinutes")
+            
+            _LOGGER.debug(f"{self.deviceName}: Raw fr_settings from datastore: {fr_settings}")
+            _LOGGER.debug(f"{self.deviceName}: Direct startDurationMinutes: {direct_start}")
+            _LOGGER.debug(f"{self.deviceName}: Direct endDurationMinutes: {direct_end}")
+            
+            # Use direct values if available, otherwise fall back to fr_settings dict
+            self.start_duration_minutes = direct_start if direct_start is not None else fr_settings.get("startDurationMinutes", 15)
+            self.end_duration_minutes = direct_end if direct_end is not None else fr_settings.get("endDurationMinutes", 15)
+            
             # CRITICAL: Check enabled setting FIRST - this controls whether light operates
             self.enabled = fr_settings.get("enabled", True)  # Default to enabled for backward compatibility
             
             # Get mode setting - this determines behavior
             self.mode = fr_settings.get("mode", FarRedMode.SCHEDULE)
-            self.start_duration_minutes = fr_settings.get("startDurationMinutes", 15)
-            self.end_duration_minutes = fr_settings.get("endDurationMinutes", 15)
+            # start_duration_minutes and end_duration_minutes already set above (lines 206-207)
+            
+            # Intensity from data store or default
             self.intensity = fr_settings.get("intensity", 100)
 
             # New smart scheduling features (enabled by default)
@@ -206,28 +228,17 @@ class LightFarRed(Light):
                 f"LightOn: {self.lightOnTime}, LightOff: {self.lightOffTime}"
             )
             
-            # CRITICAL: Stop any existing scheduler before deciding to start a new one
-            if self._schedule_task and not self._schedule_task.done():
-                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before reload")
-                self._schedule_task.cancel()
-                self._schedule_task = None
-            
             # Only start scheduler if enabled AND mode is Schedule
             if self.enabled and self.mode == FarRedMode.SCHEDULE:
-                _LOGGER.info(f"{self.deviceName}: FarRed enabled={self.enabled}, mode={self.mode} - Starting scheduler")
-                self._start_scheduler()
+                _LOGGER.info(f"{self.deviceName}: FarRed enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
+                asyncio.create_task(self._start_scheduler_with_immediate_check())
             else:
-                _LOGGER.info(
-                    f"{self.deviceName}: FarRed NOT starting scheduler - "
-                    f"enabled={self.enabled} (type: {type(self.enabled).__name__}), "
-                    f"mode={self.mode}"
-                )
-                # Ensure light is off if not enabled or not in schedule mode
-                if not self.enabled or self.mode == FarRedMode.ALWAYS_OFF:
-                    _LOGGER.info(f"{self.deviceName}: FarRed disabled or Always Off - ensuring light is off")
-            
-        except Exception as e:
-            _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
+                # If disabled, ensure FarRed is off and scheduler is not running
+                if self.is_fr_active:
+                    _LOGGER.info(f"{self.deviceName}: FarRed disabled, deactivating...")
+                    asyncio.create_task(self._deactivate_far_red("Disabled"))
+                else:
+                    _LOGGER.info(f"{self.deviceName}: FarRed disabled, scheduler not started")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
@@ -237,16 +248,49 @@ class LightFarRed(Light):
         _LOGGER.debug(f"{self.deviceName}: Ignoring WorkMode {workmode}, using dedicated FarRed scheduling")
         # Do NOT call super().WorkMode() - we handle our own scheduling
 
-    def _start_scheduler(self):
-        """Start the periodic scheduler for Far Red timing."""
-        if self._schedule_task and not self._schedule_task.done():
-            return
+    async def _start_scheduler(self):
+        """Start the periodic scheduler for Far Red timing. Uses _restart_scheduler for safety."""
+        await self._restart_scheduler()
+
+    async def _start_scheduler_with_immediate_check(self):
+        """Start the scheduler.
+        
+        Note: Removed immediate check to prevent race conditions with the periodic scheduler.
+        The first check will happen after 10 seconds when _schedule_loop runs.
+        """
+        _LOGGER.info(f"{self.deviceName}: Starting scheduler")
+        await self._restart_scheduler()
+
+    async def _restart_scheduler(self):
+        """Safely restart the scheduler with lock protection."""
+        async with self._scheduler_lock:
+            if self._schedule_task and not self._schedule_task.done():
+                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before restart")
+                self._schedule_task.cancel()
+                try:
+                    await asyncio.wait_for(self._schedule_task, timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                self._schedule_task = None
             
-        self._schedule_task = asyncio.create_task(self._schedule_loop())
-        _LOGGER.info(f"{self.deviceName}: Far Red scheduler started")
+            if self.enabled and self.mode == FarRedMode.SCHEDULE:
+                self._schedule_task = asyncio.create_task(self._schedule_loop())
+                _LOGGER.info(f"{self.deviceName}: Far Red scheduler restarted")
+            elif not self.enabled or self.mode == FarRedMode.ALWAYS_OFF:
+                if self.is_fr_active:
+                    await self._deactivate_far_red()
+                _LOGGER.info(f"{self.deviceName}: FarRed not restarting - enabled={self.enabled}, mode={self.mode}")
+
+    async def _on_sunrise_window_status(self, data):
+        """FarRed has its own scheduling - ignore sunrise window events from main light."""
+        pass
+
+    async def _on_sunset_window_status(self, data):
+        """FarRed has its own scheduling - ignore sunset window events from main light."""
+        pass
 
     async def _schedule_loop(self):
-        """Main scheduling loop - checks every 30 seconds for activation conditions."""
+        """Main scheduling loop - checks every 10 seconds for activation conditions."""
         while True:
             try:
                 await self._check_activation_conditions()
@@ -255,7 +299,7 @@ class LightFarRed(Light):
                 import traceback
                 _LOGGER.error(traceback.format_exc())
             
-            await asyncio.sleep(30)  # Check every 30 seconds for responsiveness
+            await asyncio.sleep(10)  # Check every 10 seconds for smoother ramping
 
     async def _check_activation_conditions(self):
         """Check if Far Red should be ON or OFF based on current mode."""
@@ -320,58 +364,161 @@ class LightFarRed(Light):
             else:
                 light_off_dt += timedelta(days=1)
         
-        # FarRed windows: 7.5 min before + 7.5 min after (total 15 min each)
-        # Start window: centered on lightOnTime
+        # FarRed windows are centered on light_on/off times
+        # Start window: 7.5 min before + 7.5 min after = 15 min total, ends at light_on_time
+        # End window: 7.5 min before + 7.5 min after = 15 min total, ends at light_off_time
+        
+        # Start window: centered on lightOnTime (ramp 50%→100%)
         half_start_duration = timedelta(minutes=self.start_duration_minutes / 2)  # 7.5 min
         start_window_begin = light_on_dt - half_start_duration
-        start_window_end = light_on_dt + half_start_duration
+        start_window_end = light_on_dt  # Ends exactly at light_on_time
         
-        # End window: centered on lightOffTime
+        # End window: centered on lightOffTime (ramp 100%→0%)
         half_end_duration = timedelta(minutes=self.end_duration_minutes / 2)  # 7.5 min
         end_window_begin = light_off_dt - half_end_duration
-        end_window_end = light_off_dt + half_end_duration
+        end_window_end = light_off_dt  # Ends exactly at light_off_time
         
         in_start_window = start_window_begin <= now <= start_window_end
         in_end_window = end_window_begin <= now <= end_window_end
         
-        # Calculate intensity based on position in window (ramp 0→100% or 100→0%)
-        current_intensity = 0
-        is_ramping = False
-        ramp_direction = None  # 'up' or 'down'
         
-        if in_start_window:
-            # Ramp UP: 0% at start, 100% at middle/end
-            window_duration = (start_window_end - start_window_begin).total_seconds()
+        # FarRed Phase Schedule:
+        # Phase 1: 0-7.5 min VOR light_on: 20% → 50%
+        # Phase 2: 7.5-15 min NACH light_on: 50% → 100%
+        # PAUSE: Dazwischen (AUS)
+        # Phase 3: 0-7.5 min VOR light_off: 100% → 50%
+        # Phase 4: 7.5-15 min NACH light_off: 50% → 20%
+        
+        current_intensity = 20
+        is_ramping = False
+        ramp_direction = None
+        
+        # Calculate window boundaries
+        start_window_begin = light_on_dt - half_start_duration
+        phase_2_end = light_on_dt + half_start_duration
+        end_window_begin = light_off_dt - half_end_duration
+        end_window_end = light_off_dt + half_end_duration
+        
+        if now < start_window_begin:
+            # Before Phase 1: off (standby at 20%)
+            current_intensity = 20
+            is_ramping = False
+            ramp_direction = None
+        elif now < light_on_dt:
+            # Phase 1: 20% → 50% (erste Hälfte von start_duration)
             elapsed = (now - start_window_begin).total_seconds()
-            progress = elapsed / window_duration  # 0.0 to 1.0
-            current_intensity = min(100, max(0, progress * 100))
+            progress = min(elapsed / half_start_duration.total_seconds(), 1.0)
+            current_intensity = 20 + (progress * 30)  # 20% → 50%
             is_ramping = True
             ramp_direction = 'up'
-        elif in_end_window:
-            # Ramp DOWN: 100% at start, 0% at middle/end
-            window_duration = (end_window_end - end_window_begin).total_seconds()
+        elif now < phase_2_end:
+            # Phase 2: 50% → 100% (zweite Hälfte von start_duration)
+            elapsed = (now - light_on_dt).total_seconds()
+            progress = min(elapsed / half_start_duration.total_seconds(), 1.0)
+            current_intensity = 50 + (progress * 50)
+            # Ensure 100% is reached on the last scheduler tick before Phase 2 ends
+            # If next tick would be after Phase 2 ends, force 100%
+            if (now + timedelta(seconds=10)) >= phase_2_end:
+                current_intensity = 100
+            is_ramping = True
+            ramp_direction = 'up'
+        elif now < end_window_begin:
+            # PAUSE: Dazwischen - FarRed ist AUS
+            current_intensity = 20
+            is_ramping = False
+            ramp_direction = None
+        elif now < light_off_dt:
+            # Phase 3: 100% → 50% (erste Hälfte von end_duration)
             elapsed = (now - end_window_begin).total_seconds()
-            progress = elapsed / window_duration  # 0.0 to 1.0
-            current_intensity = min(100, max(0, (1 - progress) * 100))
+            progress = min(elapsed / half_end_duration.total_seconds(), 1.0)
+            current_intensity = 100 - (progress * 50)  # 100% → 50%
             is_ramping = True
             ramp_direction = 'down'
+        elif now < end_window_end:
+            # Phase 4: 50% → 20% (zweite Hälfte von end_duration)
+            elapsed = (now - light_off_dt).total_seconds()
+            progress = min(elapsed / half_end_duration.total_seconds(), 1.0)
+            current_intensity = 50 - (progress * 30)  # 50% → 20%
+            is_ramping = True
+            ramp_direction = 'down'
+        else:
+            # After Phase 4: off
+            current_intensity = 20
+            is_ramping = False
+            ramp_direction = None
         
         _LOGGER.info(
             f"{self.deviceName}: Time check - Now: {now.strftime('%H:%M:%S')}, "
-            f"StartWindow: {start_window_begin.strftime('%H:%M')}-{start_window_end.strftime('%H:%M')} ({half_start_duration}), "
-            f"EndWindow: {end_window_begin.strftime('%H:%M')}-{end_window_end.strftime('%H:%M')} ({half_end_duration}), "
-            f"InStart: {in_start_window}, InEnd: {in_end_window}, "
+            f"LightOn: {self.lightOnTime}, LightOff: {self.lightOffTime}, "
+            f"InStart: {now < light_on_dt}, InMid: {light_on_dt <= now < end_window_begin}, InEnd: {end_window_begin <= now < end_window_end}, "
             f"Intensity: {current_intensity:.1f}%, Ramping: {is_ramping} ({ramp_direction})"
         )
         
-        # Activation logic: Only activate if not already active at this intensity
-        if is_ramping:
-            if not self.is_fr_active or abs(self.current_intensity - current_intensity) > 5:
-                # Need to activate or adjust intensity
-                await self._activate_far_red_with_intensity(current_intensity, ramp_direction)
-        else:
-            # Outside all windows, ensure FarRed is off
+        # Track if we were previously active (before this calculation)
+        was_previously_active = self.is_fr_active
+        last_processed = getattr(self, '_last_processed_intensity', 0)
+        
+        # Phase detection - order matters for if-elif chain!
+        phase_2_end = light_on_dt + half_start_duration
+        
+        in_phase_1 = start_window_begin <= now < light_on_dt
+        in_phase_2 = light_on_dt <= now < phase_2_end
+        in_pause = phase_2_end <= now < end_window_begin
+        in_phase_3 = end_window_begin <= now < light_off_dt
+        in_phase_4 = light_off_dt <= now < end_window_end
+        
+        # Calculate what intensity the device SHOULD be at
+        target_intensity = current_intensity
+        
+        # Calculate progress for Phase 2 (needed for activation logic)
+        phase_2_progress = 0.0
+        if now >= light_on_dt:
+            elapsed = (now - light_on_dt).total_seconds()
+            phase_2_progress = min(elapsed / half_start_duration.total_seconds(), 1.0)
+        
+        # Check if we're at the end of Phase 2 or in PAUSE
+        # Use time-based check to ensure we catch the transition
+        time_until_phase_2_end = (phase_2_end - now).total_seconds() if phase_2_end > now else 0
+        
+        # Activation logic - use small threshold for smooth ramping
+        if in_phase_1:
+            # Phase 1: 20% → 50% - activate if first time or significant change
+            if not was_previously_active or abs(last_processed - target_intensity) > 0.2:
+                self._last_processed_intensity = target_intensity
+                await self._activate_far_red_with_intensity(target_intensity, ramp_direction)
+        elif in_phase_2:
+            # Phase 2: 50% → 100% - ramping up
+            # Always activate with target intensity (including final 100%)
+            if not was_previously_active or abs(last_processed - target_intensity) > 0.2:
+                self._last_processed_intensity = target_intensity
+                await self._activate_far_red_with_intensity(target_intensity, ramp_direction)
+            
+            # Check if Phase 2 is ending (within last 20 seconds)
+            # This ensures we turn off after reaching 100%
+            if time_until_phase_2_end <= 20 and target_intensity >= 99.5:
+                _LOGGER.info(f"{self.deviceName}: Phase 2 ending at {target_intensity:.1f}%, will deactivate after current tick")
+                # Schedule deactivation after this tick completes
+                asyncio.create_task(self._delayed_deactivate(5, "Phase 2 complete"))
+
+        elif in_pause:
+            # PAUSE: FarRed ist AUS - ensure it's off
+            # If we just came from Phase 2 at 100%, deactivate now
             if self.is_fr_active:
+                await self._deactivate_far_red("Pause before Phase 3")
+        elif in_phase_3:
+            # Phase 3: 100% → 50% - activate to reach target intensity
+            # Don't check was_previously_active - activate based on target intensity
+            if abs(last_processed - target_intensity) > 0.2:
+                self._last_processed_intensity = target_intensity
+                await self._activate_far_red_with_intensity(target_intensity, ramp_direction)
+        elif in_phase_4:
+            # Phase 4: Update intensity for ramping
+            if was_previously_active and abs(last_processed - target_intensity) > 0.2:
+                self._last_processed_intensity = target_intensity
+                await self._activate_far_red_with_intensity(target_intensity, ramp_direction)
+        else:
+            # Outside all windows: ensure FarRed is off
+            if was_previously_active:
                 await self._deactivate_far_red("Outside schedule windows")
         
     async def _activate_far_red_with_intensity(self, intensity: float, direction: Optional[str] = None):
@@ -402,8 +549,9 @@ class LightFarRed(Light):
         )
         await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
-        # Turn on the light
-        await self.turn_on()
+        # Turn on the light with intensity - round properly and cap at 100%
+        display_intensity = min(100, round(intensity))
+        await self.turn_on(brightness_pct=display_intensity)
 
     async def _activate_far_red(self, phase: str):
         """Activate Far Red light for the specified phase."""
@@ -435,20 +583,25 @@ class LightFarRed(Light):
         )
         await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
-        # Turn on the light
-        await self.turn_on()
+        # Turn on the light with intensity
+        await self.turn_on(brightness_pct=int(self.intensity))
 
-    async def _deactivate_far_red(self):
-        """Deactivate Far Red light."""
+    async def _deactivate_far_red(self, reason: Optional[str] = None):
+        """Deactivate Far Red light - uses direct HA service call to bypass any issues."""
         if not self.is_fr_active:
+            _LOGGER.debug(f"{self.deviceName}: Already inactive, skipping deactivate")
             return
             
         previous_phase = self.current_phase
         self.is_fr_active = False
         self.current_phase = None
+        self.current_intensity = 0.0
+        self._last_processed_intensity = None  # Reset to prevent reactivation
         
-        # Create descriptive message based on previous phase
-        if previous_phase == 'always_on':
+        # Use provided reason or generate from phase
+        if reason:
+            message = f"FarRed deactivated: {reason}"
+        elif previous_phase == 'always_on':
             message = "FarRed deactivated (main lights off)"
         elif previous_phase:
             message = f"FarRed {previous_phase.upper()} phase ended"
@@ -471,21 +624,58 @@ class LightFarRed(Light):
         )
         await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
-        # Turn off the light
-        await self.turn_off()
+        # Turn off the light using direct HA service call - bypasses any internal logic
+        entity_id = None
+        if self.switches:
+            for switch in self.switches:
+                eid = switch.get("entity_id", "")
+                if "light." in eid:
+                    entity_id = eid
+                    break
+        
+        if entity_id:
+            try:
+                # Direct HA call to turn off - bypasses all internal logic
+                await self.hass.services.async_call(
+                    domain="light",
+                    service="turn_off",
+                    service_data={"entity_id": entity_id},
+                )
+                _LOGGER.info(f"{self.deviceName}: FarRed turned off via direct HA call")
+            except Exception as e:
+                _LOGGER.error(f"{self.deviceName}: Direct HA turn_off failed: {e}")
+                # Fallback: try turning on with 0%
+                try:
+                    await self.hass.services.async_call(
+                        domain="light",
+                        service="turn_on",
+                        service_data={"entity_id": entity_id, "brightness_pct": 0},
+                    )
+                    _LOGGER.info(f"{self.deviceName}: FarRed turned off via fallback (brightness_pct=0)")
+                except Exception as e2:
+                    _LOGGER.error(f"{self.deviceName}: Fallback also failed: {e2}")
+        else:
+            _LOGGER.warning(f"{self.deviceName}: No light entity found in switches, trying turn_off()")
+            try:
+                await self.turn_off()
+            except Exception as e:
+                _LOGGER.error(f"{self.deviceName}: turn_off() also failed: {e}")
+        
+        # Ensure voltage is reset
+        if hasattr(self, 'voltage'):
+            self.voltage = 0
+
+    async def _delayed_deactivate(self, delay_seconds: float, reason: str):
+        """Schedule FarRed deactivation after a delay - ensures 100% is applied before turning off."""
+        await asyncio.sleep(delay_seconds)
+        await self._deactivate_far_red(reason)
 
     async def _on_light_time_change(self, data):
         """Handle main light schedule changes - reload settings and restart scheduler."""
         _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
         
-        # CRITICAL: Stop existing scheduler before reloading
-        if self._schedule_task and not self._schedule_task.done():
-            _LOGGER.info(f"{self.deviceName}: Stopping scheduler for time change reload")
-            self._schedule_task.cancel()
-            self._schedule_task = None
-        
-        # Reload settings - this will restart scheduler if needed
-        self._load_settings()
+        # Use _restart_scheduler for safe scheduler restart with lock protection
+        await self._restart_scheduler()
 
     async def _on_main_light_toggle(self, lightState):
         """Handle main light toggle events with intelligent filtering."""
@@ -630,5 +820,5 @@ class LightFarRed(Light):
             self._turn_off_task.cancel()
             try:
                 await self._turn_off_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, TypeError):
                 pass

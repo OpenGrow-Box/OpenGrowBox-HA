@@ -439,24 +439,6 @@ class OGBMainController:
             self.data_store.set("mainControl", "HomeAssistant")
             _LOGGER.info(f"🔧 Set mainControl to 'HomeAssistant' for room {self.room}")
 
-        # Set default light times to prevent parsing errors
-        if not self.data_store.getDeep("isPlantDay.lightOnTime"):
-            self.data_store.setDeep("isPlantDay.lightOnTime", "06:00:00")
-        if not self.data_store.getDeep("isPlantDay.lightOffTime"):
-            self.data_store.setDeep("isPlantDay.lightOffTime", "22:00:00")
-
-        # Set default sun times
-        if not self.data_store.getDeep("isPlantDay.sunRiseTime"):
-            self.data_store.setDeep("isPlantDay.sunRiseTime", "07:00:00")
-        if not self.data_store.getDeep("isPlantDay.sunSetTime"):
-            self.data_store.setDeep("isPlantDay.sunSetTime", "19:00:00")
-
-        # Set default plant phase and VPD settings
-        if not self.data_store.getDeep("isPlantDay.plantPhase"):
-            self.data_store.setDeep("isPlantDay.plantPhase", "veg")
-        if not self.data_store.get("vpdDetermination"):
-            self.data_store.set("vpdDetermination", "LIVE")
-
         _LOGGER.info(f"🔧 Initialized default data store values for room {self.room}")
 
     async def _handle_outsite_data(self, event):

@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from ...utils.calcs import calculate_current_vpd, calculate_avg_value, calculate_dew_point
 from ...utils.sensorUpdater import update_sensor_via_service
 from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
-from ...OGBDevices.Sensor import Sensor
 from ...data.OGBDataClasses.OGBPublications import OGBVPDPublication, OGBModeRunPublication, OGBInitData
 from ...utils.calcs import (calculate_avg_value, calculate_current_vpd,
                           calculate_dew_point)
@@ -58,7 +57,7 @@ class OGBVPDManager:
 
         for dev in devices:
             # Nur initialisierte Sensor-Objekte prüfen
-            if isinstance(dev, Sensor) and getattr(dev, "isInitialized", False):
+            if hasattr(dev, 'sensorReadings') and dev.isInitialized:
                 air_context = dev.getSensorsByContext("air")
 
                 has_temp = "temperature" in air_context
@@ -184,13 +183,9 @@ class OGBVPDManager:
 
         temperatures = []
         humidities = []
-
-        # Import here to avoid circular imports
-        from ...OGBDevices.Sensor import Sensor
-
         for dev in devices:
             # Only process initialized sensor objects
-            if isinstance(dev, Sensor) and getattr(dev, "isInitialized", False):
+            if hasattr(dev, 'sensorReadings') and dev.isInitialized:
                 air_context = dev.getSensorsByContext("air")
 
                 has_temp = "temperature" in air_context

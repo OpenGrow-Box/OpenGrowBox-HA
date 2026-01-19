@@ -1089,9 +1089,12 @@ class OGBConfigurationManager:
 
         if "min" in name:
             self.data_store.setDeep(min_path, float(value))
+            # Aktiviere MinMax wenn min oder max gesetzt wird
+            self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
             _LOGGER.info(f"{self.room}: Set {device_type.lower()} min {('duty' if device_type != 'Light' else 'voltage')} = {value}")
         elif "max" in name:
             self.data_store.setDeep(max_path, float(value))
+            self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
             _LOGGER.info(f"{self.room}: Set {device_type.lower()} max {('duty' if device_type != 'Light' else 'voltage')} = {value}")
 
         min_val = self.data_store.getDeep(min_path)
