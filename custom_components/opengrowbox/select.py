@@ -197,7 +197,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_TentMode_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            options=["VPD Perfection", "VPD Target", "Closed Environment", "Drying", "Disabled"],
+            options=["VPD Perfection", "VPD Target", "Closed Environment","Ultra Instinct","Drying", "Disabled"],
             initial_value="Disabled",
         ),
         CustomSelect(

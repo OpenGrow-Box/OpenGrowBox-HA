@@ -334,7 +334,8 @@ class Light(Device):
     def initialize_voltage(self):
         """Initialisiert den Voltage auf MinVoltage."""
         if self.islightON:
-            self.voltage = self.initVoltage
+            if self.voltage == None or self.voltage == 0:
+                self.voltage = self.initVoltage
         else:
             self.voltage = 0
         _LOGGER.debug(f"{self.deviceName}: initialize_voltage -> islightON={self.islightON}, voltage={self.voltage}%")
@@ -871,7 +872,7 @@ class Light(Device):
                     # Only use minVoltage if it's explicitly set (> 0), otherwise use initVoltage
                     if self.voltage is None or self.voltage == 0:
                         if self.minVoltage is not None and self.minVoltage > 0:
-                            self.voltage = self.minVoltage
+                            self.voltage = self.initVoltage
                         else:
                             self.voltage = self.initVoltage
                     message = "Turn On"
