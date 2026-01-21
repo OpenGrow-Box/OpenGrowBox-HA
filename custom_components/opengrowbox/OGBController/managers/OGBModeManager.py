@@ -32,6 +32,9 @@ class OGBModeManager:
         # Closed Environment Manager for ambient-enhanced control
         self.closedEnvironmentManager = ClosedEnvironmentManager(dataStore, self.event_manager, room, hass)
 
+        # Ultra Instinct Manager - lazy initialization (only when mode is selected)
+        self.ultraInstinctManager = None
+
         # Drying Actions for drying mode handling
         self.dryingActions = DryingActions(dataStore, self.event_manager, room)
 
@@ -88,6 +91,8 @@ class OGBModeManager:
             await self.handle_premium_modes(False)
         elif tentMode == "Closed Environment":
             await self.handle_closed_environment()
+        elif tentMode == "Ultra Instinct":
+            await self.handle_ultra_instinct()
         elif tentMode == "Disabled":
             await self.handle_disabled_mode()
 
@@ -116,6 +121,28 @@ class OGBModeManager:
         # Log mode activation
         await self.event_manager.emit(
             "LogForClient", {"Name": self.room, "Mode": "Closed Environment"}
+        )
+
+    async def handle_ultra_instinct(self):
+        """
+        Handhabt den Modus 'Ultra Instinct' für adaptive Multi-Variable Steuerung.
+        Advanced mode with intelligent optimization and adaptive learning.
+        """
+        _LOGGER.info(f"ModeManager: {self.room} Modus 'Ultra Instinct' aktiviert.")
+
+        # Lazy initialization - only create when needed
+        if self.ultraInstinctManager is None:
+            from .UltraInstinctManager import UltraInstinctManager
+            self.ultraInstinctManager = UltraInstinctManager(
+                self.data_store, self.event_manager, self.room, self.hass
+            )
+
+        # Start the Ultra Instinct control manager
+        await self.ultraInstinctManager.start_control()
+
+        # Log mode activation
+        await self.event_manager.emit(
+            "LogForClient", {"Name": self.room, "Mode": "Ultra Instinct"}
         )
 
     ## VPD Modes
