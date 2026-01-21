@@ -118,20 +118,34 @@ class DryingActions:
         for action, _ in finalActionMap.items():
             await self.event_manager.emit(action, None)
 
-        # Send summary to client in OGBActionManager format
+        # Send summary to client in OGBActionManager format with action map
         if finalActionMap:
-            action_str = ", ".join(finalActionMap.keys())
-            message = f"Drying actions: {action_str}"
+            # Build action list like OGBActionManager does
+            action_list = []
+            for action_key in finalActionMap.keys():
+                parts = action_key.split(" ", 1)
+                device = parts[1] if len(parts) > 1 else action_key
+                action_type = parts[0] if len(parts) > 1 else ""
+                action_list.append({
+                    "device": device,
+                    "action": action_type,
+                    "reason": f"Drying - {action_key}",
+                    "priority": "medium"
+                })
+            
+            message = f"Drying: {', '.join(finalActionMap.keys())}"
             await self.event_manager.emit("LogForClient", {
                 "Name": self.room,
                 "Action": "Drying",
-                "Message": message
+                "Message": message,
+                "actions": action_list
             }, haEvent=True)
         else:
             await self.event_manager.emit("LogForClient", {
                 "Name": self.room,
                 "Action": "Drying",
-                "Message": "No actions needed - conditions within tolerance"
+                "Message": "No actions needed - conditions within tolerance",
+                "actions": []
             }, haEvent=True)
 
     async def handle_5DayDry(self, phaseConfig: Dict[str, Any]) -> None:
@@ -172,16 +186,19 @@ class DryingActions:
 
         delta = Dry5DaysVPD - target_vpd
 
+        action_list = []
         if abs(delta) > vpdTolerance:
             if delta < 0:
                 _LOGGER.debug(
                     f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} < Target {target_vpd:.2f} → Increase VPD"
                 )
+                action_list = [{"device": "VPD", "action": "Increase", "reason": "Drying - VPD too low", "priority": "medium"}]
                 await self.event_manager.emit("increase_vpd", capabilities)
             else:
                 _LOGGER.debug(
                     f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} > Target {target_vpd:.2f} → Reduce VPD"
                 )
+                action_list = [{"device": "VPD", "action": "Reduce", "reason": "Drying - VPD too high", "priority": "medium"}]
                 await self.event_manager.emit("reduce_vpd", capabilities)
         else:
             _LOGGER.debug(
@@ -198,7 +215,8 @@ class DryingActions:
         await self.event_manager.emit("LogForClient", {
             "Name": self.room,
             "Action": "Drying",
-            "Message": f"5DayDry VPD: Current {current_vpd_str}, Target {target_vpd}, Action: {action_taken or 'None'}"
+            "Message": f"5DayDry VPD: Current {current_vpd_str}, Target {target_vpd}, Action: {action_taken or 'None'}",
+            "actions": action_list
         }, haEvent=True)
 
     async def handle_DewBased(self, phaseConfig: Dict[str, Any]) -> None:
@@ -256,7 +274,14 @@ class DryingActions:
         )
 
         if abs(dew_diff) > dewPointTolerance or vp_low or vp_high:
+            action_list = []
             if dew_diff < -dewPointTolerance or vp_low:
+                action_list = [
+                    {"device": "Humidifier", "action": "Increase", "reason": "Drying - Too dry", "priority": "medium"},
+                    {"device": "Dehumidifier", "action": "Reduce", "reason": "Drying - Too dry", "priority": "medium"},
+                    {"device": "Exhaust", "action": "Reduce", "reason": "Drying - Too dry", "priority": "medium"},
+                    {"device": "Ventilation", "action": "Increase", "reason": "Drying - Too dry", "priority": "medium"},
+                ]
                 await self.event_manager.emit("Increase Humidifier", None)
                 await self.event_manager.emit("Reduce Dehumidifier", None)
                 await self.event_manager.emit("Reduce Exhaust", None)
@@ -265,6 +290,12 @@ class DryingActions:
                     f"{self.room}: Too dry. Humidify ↑, Dehumidifier ↓, Exhaust ↓, Ventilation ↑"
                 )
             elif dew_diff > dewPointTolerance or vp_high:
+                action_list = [
+                    {"device": "Dehumidifier", "action": "Increase", "reason": "Drying - Too humid", "priority": "medium"},
+                    {"device": "Humidifier", "action": "Reduce", "reason": "Drying - Too humid", "priority": "medium"},
+                    {"device": "Exhaust", "action": "Increase", "reason": "Drying - Too humid", "priority": "medium"},
+                    {"device": "Ventilation", "action": "Increase", "reason": "Drying - Too humid", "priority": "medium"},
+                ]
                 await self.event_manager.emit("Increase Dehumidifier", None)
                 await self.event_manager.emit("Reduce Humidifier", None)
                 await self.event_manager.emit("Increase Exhaust", None)
@@ -273,6 +304,7 @@ class DryingActions:
                     f"{self.room}: Too humid. Dehumidify ↑, Humidifier ↓, Exhaust ↑, Ventilation ↑"
                 )
         else:
+            action_list = []
             await self.event_manager.emit("Reduce Humidifier", None)
             await self.event_manager.emit("Reduce Dehumidifier", None)
             await self.event_manager.emit("Reduce Exhaust", None)
@@ -291,10 +323,12 @@ class DryingActions:
         else:
             action_taken = "Idle"
         
+        message = f"DewBased: DewPoint {currentDewPoint:.2f}, Target {targetDewPoint}, Action: {action_taken}"
         await self.event_manager.emit("LogForClient", {
             "Name": self.room,
             "Action": "Drying",
-            "Message": f"DewBased: DewPoint {currentDewPoint:.2f}, Target {targetDewPoint}, Action: {action_taken}"
+            "Message": message,
+            "actions": action_list
         }, haEvent=True)
 
     def get_current_phase(self, phaseConfig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
