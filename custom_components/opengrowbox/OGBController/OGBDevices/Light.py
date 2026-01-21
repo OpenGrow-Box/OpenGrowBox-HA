@@ -72,8 +72,8 @@ class Light(Device):
             "MidVeg": {"min": 40, "max": 50},
             "LateVeg": {"min": 50, "max": 65},
             "EarlyFlower": {"min": 65, "max": 80},
-            "MidFlower": {"min": 80, "max": 100},
-            "LateFlower": {"min": 80, "max": 100},
+            "MidFlower": {"min": 65, "max": 90},
+            "LateFlower": {"min": 65, "max": 100},
         }
 
         self.sunrise_phase_active = False
@@ -627,19 +627,20 @@ class Light(Device):
                 sunrise_target = self.maxVoltage if self.maxVoltage is not None else 100
                 voltage_source = "initVoltage/maxVoltage"
 
-            self.sunPhaseActive = True
-            _LOGGER.warning(
-                f"{self.inRoom} - {self.deviceName}: Start SunRise von {self.voltage}% bis {sunrise_target}% ({voltage_source})"
-            )
-            _LOGGER.warning(
-                f"{self.deviceName}: Sunrise values - start: {self.voltage}, target: {sunrise_target}, source: {voltage_source}"
-            )
-
             # Start from initVoltage (20%), NOT current voltage!
             # This ensures sunrise always starts from the minimum regardless of previous state
             start_voltage = self.initVoltage if hasattr(self, 'initVoltage') else 20
             target_voltage = sunrise_target
             step_duration = float(self.sunRiseDuration or 0) / 10
+            
+            # Log with correct start voltage (initVoltage = 20%, not self.voltage)
+            self.sunPhaseActive = True
+            _LOGGER.warning(
+                f"{self.inRoom} - {self.deviceName}: Start SunRise von {start_voltage}% bis {target_voltage}% ({voltage_source})"
+            )
+            _LOGGER.warning(
+                f"{self.deviceName}: Sunrise values - start: {start_voltage}, target: {target_voltage}, source: {voltage_source}"
+            )
 
             # Optimierung: Wenn bereits am Ziel oder darüber, kein Dimming nötig
             if start_voltage >= target_voltage:

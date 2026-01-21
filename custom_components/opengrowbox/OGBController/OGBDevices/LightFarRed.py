@@ -83,6 +83,7 @@ class LightFarRed(Light):
         self.current_phase: Optional[str] = None  # 'start', 'end', 'always_on', or None
         self.current_intensity = 0.0  # Current intensity for ramping (0-100%)
         self._last_processed_intensity = None  # Last intensity sent to device
+        self._last_logged_intensity = None  # Last intensity logged to client
         
         # Light schedule reference
         self.lightOnTime = None
@@ -541,22 +542,37 @@ class LightFarRed(Light):
         self.current_phase = direction  # 'up' or 'down'
         self.is_fr_active = True
         
-        message = f"FarRed activated - {intensity:.1f}% ({direction} ramping)"
-        _LOGGER.info(f"{self.deviceName}: {message}")
+        # Only emit LogForClient when intensity changes significantly (>= 5%) or direction changes
+        should_log = False
+        if self._last_logged_intensity is None:
+            should_log = True  # First time
+        elif abs(intensity - self._last_logged_intensity) >= 5:
+            should_log = True  # Significant change
+        elif direction != getattr(self, '_last_logged_direction', None) and intensity > 10:
+            should_log = True  # Direction change with meaningful intensity
         
-        # Create action log
-        lightAction = OGBLightAction(
-            Name=self.inRoom,
-            Device=self.deviceName,
-            Type="LightFarRed",
-            Action="ON",
-            Message=message,
-            Voltage=int(intensity),
-            Dimmable=False,
-            SunRise=False,
-            SunSet=False,
-        )
-        await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+        if should_log:
+            self._last_logged_intensity = intensity
+            self._last_logged_direction = direction
+            
+            message = f"FarRed activated - {intensity:.1f}% ({direction} ramping)"
+            _LOGGER.info(f"{self.deviceName}: {message}")
+            
+            # Create action log
+            lightAction = OGBLightAction(
+                Name=self.inRoom,
+                Device=self.deviceName,
+                Type="LightFarRed",
+                Action="ON",
+                Message=message,
+                Voltage=int(intensity),
+                Dimmable=False,
+                SunRise=False,
+                SunSet=False,
+            )
+            await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+        else:
+            _LOGGER.debug(f"{self.deviceName}: Skipping LogForClient - intensity change too small ({intensity:.1f}%, last: {self._last_logged_intensity})")
         
         # Turn on the light with intensity - respect maxVoltage like UV does
         max_voltage = self.maxVoltage if self.maxVoltage is not None else 100
@@ -567,31 +583,34 @@ class LightFarRed(Light):
         """Activate Far Red light for the specified phase."""
         if self.is_fr_active and self.current_phase == phase:
             return  # Already active in this phase
-            
+        
         self.current_phase = phase
         self.is_fr_active = True
         
-        # Create descriptive message based on phase
-        if phase == 'always_on':
-            message = f"FarRed activated (Always On mode)"
-        else:
-            message = f"FarRed {phase.upper()} phase activated"
-        
-        _LOGGER.info(f"{self.deviceName}: {message}")
-        
-        # Create action log
-        lightAction = OGBLightAction(
-            Name=self.inRoom,
-            Device=self.deviceName,
-            Type="LightFarRed",
-            Action="ON",
-            Message=message,
-            Voltage=self.intensity,
-            Dimmable=False,
-            SunRise=False,
-            SunSet=False,
-        )
-        await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+        # Only log if this is a new state
+        if self._last_logged_intensity is None or self._last_logged_intensity < 5:
+            # Create descriptive message based on phase
+            if phase == 'always_on':
+                message = f"FarRed activated (Always On mode)"
+            else:
+                message = f"FarRed {phase.upper()} phase activated"
+            
+            _LOGGER.info(f"{self.deviceName}: {message}")
+            
+            # Create action log
+            lightAction = OGBLightAction(
+                Name=self.inRoom,
+                Device=self.deviceName,
+                Type="LightFarRed",
+                Action="ON",
+                Message=message,
+                Voltage=self.intensity,
+                Dimmable=False,
+                SunRise=False,
+                SunSet=False,
+            )
+            await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+            self._last_logged_intensity = self.intensity
         
         # Turn on the light with intensity - respect maxVoltage
         max_voltage = self.maxVoltage if self.maxVoltage is not None else 100
@@ -609,6 +628,7 @@ class LightFarRed(Light):
         self.current_phase = None
         self.current_intensity = 0.0
         self._last_processed_intensity = 0  # Reset to prevent reactivation
+        self._last_logged_intensity = None  # Reset to allow new activation log
         
         # Use provided reason or generate from phase
         if reason:
