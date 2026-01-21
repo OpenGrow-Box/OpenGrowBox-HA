@@ -856,6 +856,7 @@ class OGBActionManager:
             'VPD Perfection': 'VPD-P',
             'VPD Target': 'VPD-T',
             'Closed Environment': 'CLOSED',
+            'Ultra Instinct': 'ULTRA',
             'Drying': 'DRY',
             'Disabled': 'OFF',
             # Premium API control modes

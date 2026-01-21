@@ -213,8 +213,11 @@ class LightFarRed(Light):
             self.mode = fr_settings.get("mode", FarRedMode.SCHEDULE)
             # start_duration_minutes and end_duration_minutes already set above (lines 206-207)
             
-            # Intensity from data store or default
-            self.intensity = fr_settings.get("intensity", 100)
+            # Intensity from data store or default - respect maxVoltage like UV does
+            max_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+            raw_intensity = fr_settings.get("intensity", 100)
+            self.intensity = min(max_voltage, raw_intensity)
+            _LOGGER.debug(f"{self.deviceName}: FarRed intensity {raw_intensity}% clamped to maxVoltage {max_voltage}% -> {self.intensity}%")
 
             # New smart scheduling features (enabled by default)
             self.smart_start_enabled = fr_settings.get("smartStartEnabled", True)
@@ -454,9 +457,15 @@ class LightFarRed(Light):
             f"Intensity: {current_intensity:.1f}%, Ramping: {is_ramping} ({ramp_direction})"
         )
         
+        # Clamp intensity to maxVoltage - respect user settings like UV does
+        max_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+        current_intensity = min(max_voltage, current_intensity)
+        
         # Track if we were previously active (before this calculation)
         was_previously_active = self.is_fr_active
-        last_processed = getattr(self, '_last_processed_intensity', 0)
+        # Handle None explicitly - getattr default doesn't apply if attribute is None
+        last_processed_raw = getattr(self, '_last_processed_intensity', 0)
+        last_processed = last_processed_raw if last_processed_raw is not None else 0
         
         # Phase detection - order matters for if-elif chain!
         phase_2_end = light_on_dt + half_start_duration
@@ -549,8 +558,9 @@ class LightFarRed(Light):
         )
         await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
-        # Turn on the light with intensity - round properly and cap at 100%
-        display_intensity = min(100, round(intensity))
+        # Turn on the light with intensity - respect maxVoltage like UV does
+        max_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+        display_intensity = min(max_voltage, round(intensity))
         await self.turn_on(brightness_pct=display_intensity)
 
     async def _activate_far_red(self, phase: str):
@@ -583,8 +593,10 @@ class LightFarRed(Light):
         )
         await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
-        # Turn on the light with intensity
-        await self.turn_on(brightness_pct=int(self.intensity))
+        # Turn on the light with intensity - respect maxVoltage
+        max_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+        display_intensity = min(max_voltage, self.intensity)
+        await self.turn_on(brightness_pct=int(display_intensity))
 
     async def _deactivate_far_red(self, reason: Optional[str] = None):
         """Deactivate Far Red light - uses direct HA service call to bypass any issues."""
@@ -596,7 +608,7 @@ class LightFarRed(Light):
         self.is_fr_active = False
         self.current_phase = None
         self.current_intensity = 0.0
-        self._last_processed_intensity = None  # Reset to prevent reactivation
+        self._last_processed_intensity = 0  # Reset to prevent reactivation
         
         # Use provided reason or generate from phase
         if reason:

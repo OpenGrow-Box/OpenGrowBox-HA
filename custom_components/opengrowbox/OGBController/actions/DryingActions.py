@@ -30,6 +30,8 @@ class DryingActions:
         Routes to specific drying algorithms based on current mode.
         """
         currentDryMode = self.data_store.getDeep("drying.currentDryMode")
+        
+        _LOGGER.warning(f"{self.name}: handle_drying called, currentDryMode={currentDryMode}")
 
         # Check if start time exists, if not set it
         mode_start_time = self.data_store.getDeep("drying.mode_start_time")
@@ -48,7 +50,7 @@ class DryingActions:
         elif currentDryMode == "NO-Dry":
             return None
         else:
-            _LOGGER.debug(f"{self.name} Unknown DryMode Received")
+            _LOGGER.debug(f"{self.name} Unknown DryMode Received: {currentDryMode}")
             return None
 
     def start_drying_mode(self, mode_name: str) -> None:
@@ -68,6 +70,8 @@ class DryingActions:
         """
         _LOGGER.warning(f"{self.name} Run Drying 'El Classico'")
         tentData = self.data_store.get("tentData")
+        
+        _LOGGER.warning(f"{self.name}: tentData={tentData}")
 
         tempTolerance = 1
         humTolerance = 2
@@ -78,6 +82,8 @@ class DryingActions:
         if current_phase is None:
             _LOGGER.error(f"{self.name}: Could not determine current phase")
             return
+
+        _LOGGER.warning(f"{self.name}: current_phase={current_phase}")
 
         temp_ok = (
             abs(tentData["temperature"] - current_phase["targetTemp"]) <= tempTolerance
@@ -105,15 +111,28 @@ class DryingActions:
                     finalActionMap["Reduce Exhaust"] = True
                 else:
                     finalActionMap["Increase Dehumidifier"] = True
-                    finalActionMap["Increase Ventilation"] = True
-                    finalActionMap["Increase Exhaust"] = True
+
+        _LOGGER.warning(f"{self.name}: ElClassico finalActionMap={finalActionMap}")
 
         # Emit all actions in the map
-        for action in finalActionMap.keys():
+        for action, _ in finalActionMap.items():
             await self.event_manager.emit(action, None)
 
-        # Send summary to client
-        await self.event_manager.emit("LogForClient", finalActionMap, haEvent=True)
+        # Send summary to client in OGBActionManager format
+        if finalActionMap:
+            action_str = ", ".join(finalActionMap.keys())
+            message = f"Drying actions: {action_str}"
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Action": "Drying",
+                "Message": message
+            }, haEvent=True)
+        else:
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Action": "Drying",
+                "Message": "No actions needed - conditions within tolerance"
+            }, haEvent=True)
 
     async def handle_5DayDry(self, phaseConfig: Dict[str, Any]) -> None:
         """
@@ -168,6 +187,19 @@ class DryingActions:
             _LOGGER.debug(
                 f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} within tolerance (±{vpdTolerance}) → No action"
             )
+        
+        # Emit LogForClient for UI
+        action_taken = None
+        if abs(delta) > vpdTolerance:
+            action_taken = "Increase VPD" if delta < 0 else "Reduce VPD"
+        
+        current_vpd_str = f"{Dry5DaysVPD:.2f}" if Dry5DaysVPD else "N/A"
+        
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "Action": "Drying",
+            "Message": f"5DayDry VPD: Current {current_vpd_str}, Target {target_vpd}, Action: {action_taken or 'None'}"
+        }, haEvent=True)
 
     async def handle_DewBased(self, phaseConfig: Dict[str, Any]) -> None:
         """
@@ -248,10 +280,29 @@ class DryingActions:
             _LOGGER.debug(
                 f"{self.room}: Dew Point {currentDewPoint:.2f} within ±{dewPointTolerance} → All systems idle"
             )
+        
+        # Emit LogForClient for UI
+        action_taken = None
+        if abs(dew_diff) > dewPointTolerance or vp_low or vp_high:
+            if dew_diff < -dewPointTolerance or vp_low:
+                action_taken = "Too dry - Humidify"
+            elif dew_diff > dewPointTolerance or vp_high:
+                action_taken = "Too humid - Dehumidify"
+        else:
+            action_taken = "Idle"
+        
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "Action": "Drying",
+            "Message": f"DewBased: DewPoint {currentDewPoint:.2f}, Target {targetDewPoint}, Action: {action_taken}"
+        }, haEvent=True)
 
     def get_current_phase(self, phaseConfig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Determine the current drying phase based on elapsed time.
+        
+        Supports the DataStore structure with phases as:
+        - "start", "halfTime", "endTime" keys with durationHours
         """
         if not phaseConfig:
             return None
@@ -262,11 +313,35 @@ class DryingActions:
 
         elapsed_seconds = (datetime.now() - mode_start_time).total_seconds()
 
-        for phase in phaseConfig.get("phases", []):
-            start_time = phase.get("startTime", 0)
-            end_time = phase.get("endTime", float('inf'))
+        # Check for phases under "phase" key (new structure)
+        phases_dict = phaseConfig.get("phase", {})
+        if not phases_dict:
+            # Fallback to old "phases" array structure
+            phases_list = phaseConfig.get("phases", [])
+            for phase in phases_list:
+                start_time = phase.get("startTime", 0)
+                end_time = phase.get("endTime", float('inf'))
+                if start_time <= elapsed_seconds < end_time:
+                    return phase
+            return None
 
-            if start_time <= elapsed_seconds < end_time:
+        # New structure: phases are "start", "halfTime", "endTime" with durationHours
+        phase_order = ["start", "halfTime", "endTime"]
+        accumulated_time = 0
+
+        for phase_name in phase_order:
+            if phase_name not in phases_dict:
+                continue
+
+            phase = phases_dict[phase_name]
+            duration_hours = phase.get("durationHours", 0)
+            duration_seconds = duration_hours * 3600
+
+            if accumulated_time <= elapsed_seconds < accumulated_time + duration_seconds:
+                # Add timing info to the phase
+                phase["phase_name"] = phase_name
                 return phase
+
+            accumulated_time += duration_seconds
 
         return None

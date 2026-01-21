@@ -187,8 +187,8 @@ class OGBConf:
             # UV light settings (mid-day timing)
             "uv": {
                 "enabled": False,
-                "delayAfterStartMinutes": 120,  # Wait after lights on before UV starts
-                "stopBeforeEndMinutes": 120,    # Stop before lights off
+                "delayAfterStartMinutes": 160,  # Wait after lights on before UV starts
+                "stopBeforeEndMinutes": 160,    # Stop before lights off
                 "maxDurationHours": 6,          # Maximum UV exposure per day
                 "intensity": 100,               # Intensity percentage (if dimmable)
             },

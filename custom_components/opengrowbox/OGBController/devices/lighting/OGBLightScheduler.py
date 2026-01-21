@@ -36,9 +36,9 @@ class OGBLightScheduler:
             "EarlyVeg": {"min": 30, "max": 40},
             "MidVeg": {"min": 40, "max": 50},
             "LateVeg": {"min": 50, "max": 65},
-            "EarlyFlower": {"min": 65, "max": 80},
-            "MidFlower": {"min": 80, "max": 100},
-            "LateFlower": {"min": 80, "max": 100},
+            "EarlyFlower": {"min": 70, "max": 100},
+            "MidFlower": {"min": 70, "max": 100},
+            "LateFlower": {"min": 70, "max": 100},
         }
 
         self.last_day_reset = datetime.now().date()
@@ -134,6 +134,14 @@ class OGBLightScheduler:
             self.data_store.getDeep("isPlantDay.lightOffTime")
         )
 
+        # Also refresh sun durations from DataStore
+        self._refresh_sun_durations()
+        _LOGGER.debug(
+            f"{self.device_name}: Light times updated - "
+            f"LightOn:{self.light_on_time} LightOff:{self.light_off_time} "
+            f"SunRise:{self.sun_rise_duration} SunSet:{self.sun_set_duration}"
+        )
+
     async def set_plant_stage_light(self, plant_stage_data):
         """Adjust light settings based on plant stage.
 
@@ -172,12 +180,46 @@ class OGBLightScheduler:
             return 0
 
     def update_sun_rise_time(self, time_str):
-        """Update sunrise duration - uses fixed 15 minute default."""
-        pass  # Duration is now fixed at 900 seconds (15 minutes)
+        """Update sun rise duration from DataStore when times change."""
+        self._refresh_sun_durations()
+        _LOGGER.debug(f"{self.device_name}: SunRise duration refreshed to {self.sun_rise_duration}s")
 
     def update_sun_set_time(self, time_str):
-        """Update sunset duration - uses fixed 15 minute default."""
-        pass  # Duration is now fixed at 900 seconds (15 minutes)
+        """Update sun set duration from DataStore when times change."""
+        self._refresh_sun_durations()
+        _LOGGER.debug(f"{self.device_name}: SunSet duration refreshed to {self.sun_set_duration}s")
+
+    def _refresh_sun_durations(self):
+        """Refresh sun rise/set durations from DataStore."""
+        sun_rise_duration = self.data_store.getDeep("isPlantDay.sun_rise_duration")
+        sun_set_duration = self.data_store.getDeep("isPlantDay.sun_set_duration")
+
+        _LOGGER.debug(f"{self.device_name}: _refresh_sun_durations - sun_rise={sun_rise_duration}, sun_set={sun_set_duration}")
+
+        def parse_to_duration(dstr):
+            if not dstr or dstr == "" or dstr == "00:00:00":
+                return 300  # Default 5 minutes
+            try:
+                dt = datetime.strptime(dstr, "%H:%M:%S")
+                return dt.hour * 3600 + dt.minute * 60 + dt.second
+            except Exception as e:
+                _LOGGER.error(f"{self.device_name}: Error Parsing Duration '{dstr}': {e}")
+                return 300
+
+        # Support both formats: time string "HH:MM:SS" or numeric seconds or None
+        if sun_rise_duration is None:
+            self.sun_rise_duration = 300
+        elif isinstance(sun_rise_duration, (int, float)):
+            self.sun_rise_duration = int(sun_rise_duration)
+        else:
+            self.sun_rise_duration = parse_to_duration(str(sun_rise_duration))
+
+        if sun_set_duration is None:
+            self.sun_set_duration = 300
+        elif isinstance(sun_set_duration, (int, float)):
+            self.sun_set_duration = int(sun_set_duration)
+        else:
+            self.sun_set_duration = parse_to_duration(str(sun_set_duration))
 
     def _in_window(self, current, target, duration_minutes, is_sunset=False):
         """Check if current time is within the window for SunRise/SunSet.
