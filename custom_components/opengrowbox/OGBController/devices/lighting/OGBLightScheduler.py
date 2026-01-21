@@ -46,8 +46,6 @@ class OGBLightScheduler:
     def initialize_scheduler(self):
         """Initialize the light scheduler."""
         self.set_light_times()
-        # Start periodic sun phase check
-        asyncio.create_task(self.periodic_sun_phase_check())
 
         # Register event listeners
         self.event_manager.on("SunRiseTimeUpdates", self.update_sun_rise_time)

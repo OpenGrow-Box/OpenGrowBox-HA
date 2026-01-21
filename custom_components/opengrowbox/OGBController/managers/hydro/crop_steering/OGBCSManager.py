@@ -50,7 +50,7 @@ class OGBCSManager:
 
         self.blockCheckIntervall = 300  # 5 minutes
         self.max_irrigation_attempts = 5
-        self.stability_tolerance = 0.1
+        self.stability_tolerance = 0.1.5
 
         # Single task for any CS operation
         self._main_task = None
@@ -1296,7 +1296,7 @@ class OGBCSManager:
             return
         
         # Check if calibrated max value already exists
-        # IMPORTANT: Only use calibrated value if it's REASONABLE (> 40% and > preset VWCMin)
+        # IMPORTANT: Only use calibrated value if it's REASONABLE (> 25% and > preset VWCMin)
         calibrated_max = self.data_store.getDeep(f"CropSteering.Calibration.p1.VWCMax")
         preset_vwc_max = preset.get("VWCMax", 70)
         preset_vwc_min = preset.get("VWCMin", 55)
@@ -1305,15 +1305,15 @@ class OGBCSManager:
         # A calibrated value of 19% when preset is 65% is clearly wrong - auto-reset it
         use_calibrated = (
             calibrated_max is not None 
-            and calibrated_max > 40 
+            and calibrated_max > 25
             and calibrated_max > preset_vwc_min
         )
         
-        # AUTO-RESET: If calibrated value is clearly wrong (< 40% or < preset min), clear it
+        # AUTO-RESET: If calibrated value is clearly wrong (< 25% or < preset min), clear it
         if calibrated_max is not None and not use_calibrated:
             _LOGGER.warning(
                 f"{self.room} - P1: BAD CALIBRATION VALUE DETECTED! "
-                f"calibrated={calibrated_max}% is invalid (< 40 or < preset_min={preset_vwc_min}). "
+                f"calibrated={calibrated_max}% is invalid (< 25 or < preset_min={preset_vwc_min}). "
                 f"RESETTING to use preset value {preset_vwc_max}%"
             )
             self.data_store.setDeep("CropSteering.Calibration.p1.VWCMax", None)
@@ -1366,10 +1366,10 @@ class OGBCSManager:
             return
 
         # === 2. Stagnation detected? ===
-        # CRITICAL: Only accept stagnation as "block full" if VWC is at least 40%!
-        # A stagnation at 19% means there's a problem (sensor issue, no water, etc.), not that the block is full.
+        # CRITICAL: Only accept stagnation as "block full" if VWC is at least 25%!
+        # A stagnation at 15% means there's a problem (sensor issue, no water, etc.), not that the block is full.
         vwc_increase_since_last = vwc - p1_last_vwc
-        min_vwc_for_stagnation = max(40.0, preset_vwc_min)  # At least 40% or preset minimum
+        min_vwc_for_stagnation = max(25.0, preset_vwc_min)  # At least 25% or preset minimum
         
         if p1_irrigation_count >= 3 and vwc_increase_since_last < 1.5:
             if vwc >= min_vwc_for_stagnation:

@@ -118,7 +118,7 @@ class DryingActions:
         for action, _ in finalActionMap.items():
             await self.event_manager.emit(action, None)
 
-        # Send summary to client in OGBActionManager format with action map
+        # Send summary to client with message and device actions
         if finalActionMap:
             # Build action list like OGBActionManager does
             action_list = []
@@ -133,7 +133,22 @@ class DryingActions:
                     "priority": "medium"
                 })
             
-            message = f"Drying: {', '.join(finalActionMap.keys())}"
+            # Build message with context
+            # Determine action context from what we're doing
+            if any("Humidifier" in a and "Increase" in a for a in finalActionMap.keys()):
+                context_msg = "Too dry - Humidify"
+            elif any("Dehumidifier" in a and "Increase" in a for a in finalActionMap.keys()):
+                context_msg = "Too humid - Dehumidify"
+            elif any("Exhaust" in a and "Increase" in a for a in finalActionMap.keys()):
+                context_msg = "Temp/Humidity too high - Exhaust"
+            elif any("Heater" in a and "Increase" in a for a in finalActionMap.keys()):
+                context_msg = "Too cold - Heating"
+            elif any("Cooler" in a and "Increase" in a for a in finalActionMap.keys()):
+                context_msg = "Too hot - Cooling"
+            else:
+                context_msg = "Adjusting environment"
+            
+            message = f"{context_msg}: {', '.join(finalActionMap.keys())}"
             await self.event_manager.emit("LogForClient", {
                 "Name": self.room,
                 "Action": "Drying",
@@ -313,17 +328,16 @@ class DryingActions:
                 f"{self.room}: Dew Point {currentDewPoint:.2f} within ±{dewPointTolerance} → All systems idle"
             )
         
-        # Emit LogForClient for UI
-        action_taken = None
+        # Emit LogForClient for UI with context message
         if abs(dew_diff) > dewPointTolerance or vp_low or vp_high:
             if dew_diff < -dewPointTolerance or vp_low:
-                action_taken = "Too dry - Humidify"
+                context_msg = "Too dry - Humidify"
             elif dew_diff > dewPointTolerance or vp_high:
-                action_taken = "Too humid - Dehumidify"
+                context_msg = "Too humid - Dehumidify"
         else:
-            action_taken = "Idle"
+            context_msg = "Idle - within tolerance"
         
-        message = f"DewBased: DewPoint {currentDewPoint:.2f}, Target {targetDewPoint}, Action: {action_taken}"
+        message = f"DewBased: {context_msg} (DewPoint {currentDewPoint:.1f}°C → Target {targetDewPoint:.1f}°C)"
         await self.event_manager.emit("LogForClient", {
             "Name": self.room,
             "Action": "Drying",
