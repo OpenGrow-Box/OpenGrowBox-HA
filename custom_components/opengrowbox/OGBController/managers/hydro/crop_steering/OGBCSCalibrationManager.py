@@ -46,7 +46,7 @@ class OGBCSCalibrationManager:
         # Calibration settings
         self.calibration_readings = []
         self.calibration_threshold = 2
-        self.stability_tolerance = 0.5
+        self.stability_tolerance = 1.5
         self.max_irrigation_attempts = 5
         self.block_check_interval = 120
 

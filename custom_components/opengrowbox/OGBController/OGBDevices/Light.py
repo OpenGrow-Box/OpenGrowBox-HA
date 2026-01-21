@@ -87,9 +87,8 @@ class Light(Device):
 
         self.init()
 
-        # Listen for sun phase events from OGBLightScheduler (single source of truth)
-        self.event_manager.on("SunRiseWindowStatus", self._on_sunrise_window_status)
-        self.event_manager.on("SunSetWindowStatus", self._on_sunset_window_status)
+        # SunPhaseListener
+        asyncio.create_task(self.periodic_sun_phase_check())
 
         ## Events Register
         self.event_manager.on("SunRiseTimeUpdates", self.updateSunRiseTime)
@@ -105,80 +104,6 @@ class Light(Device):
         self.event_manager.on("resumeSunPhase", self.resume_sun_phases)
         self.event_manager.on("stopSunPhase", self.stop_sun_phases)
         self.event_manager.on("DLIUpdate", self.updateLight)
-
-    async def _on_sunrise_window_status(self, data):
-        """Handle sunrise window status events from OGBLightScheduler."""
-        if not self.isDimmable:
-            return
-        
-        in_window = data.get("in_window", False)
-        
-        # Debounce: Ignore duplicate events within 500ms
-        now = datetime.now()
-        if hasattr(self, '_last_sunrise_event_time'):
-            time_since_last = (now - self._last_sunrise_event_time).total_seconds() * 1000
-            if time_since_last < 500 and in_window:
-                _LOGGER.debug(
-                    f"{self.deviceName}: Ignoring duplicate SunRise event ({time_since_last:.1f}ms)"
-                )
-                return
-        
-        self._last_sunrise_event_time = now
-        
-        _LOGGER.info(
-            f"{self.deviceName}: Received SunRiseWindowStatus - in_window: {in_window}, islightON: {self.islightON}"
-        )
-        
-        if in_window:
-            # Set flag BEFORE creating task - prevents duplicate listeners on same event
-            if self.sunrise_phase_active:
-                _LOGGER.debug(f"{self.deviceName}: Sunrise already active, skipping")
-                return
-            
-            _LOGGER.info(f"{self.deviceName}: Starting sunrise phase (islightON={self.islightON})")
-            self.sunrise_phase_active = True  # Set FIRST - blocks duplicate events
-            self.start_sunrise_task()
-        else:
-            if self.sunrise_phase_active and (self.sunrise_task is None or self.sunrise_task.done()):
-                _LOGGER.debug(f"{self.deviceName}: Sunrise window exited, resetting phase")
-                self.sunrise_phase_active = False
-
-    async def _on_sunset_window_status(self, data):
-        """Handle sunset window status events from OGBLightScheduler."""
-        if not self.isDimmable:
-            return
-        
-        in_window = data.get("in_window", False)
-        
-        # Debounce: Ignore duplicate events within 500ms
-        now = datetime.now()
-        if hasattr(self, '_last_sunset_event_time'):
-            time_since_last = (now - self._last_sunset_event_time).total_seconds() * 1000
-            if time_since_last < 500 and in_window:
-                _LOGGER.debug(
-                    f"{self.deviceName}: Ignoring duplicate SunSet event ({time_since_last:.1f}ms)"
-                )
-                return
-        
-        self._last_sunset_event_time = now
-        
-        _LOGGER.debug(
-            f"{self.deviceName}: Received SunSetWindowStatus - in_window: {in_window}, islightON: {self.islightON}"
-        )
-        
-        if in_window:
-            # Set flag BEFORE creating task - prevents duplicate listeners on same event
-            if self.sunset_phase_active:
-                _LOGGER.debug(f"{self.deviceName}: Sunset already active, skipping")
-                return
-            
-            _LOGGER.info(f"{self.deviceName}: Starting sunset phase (islightON={self.islightON})")
-            self.sunset_phase_active = True  # Set FIRST - blocks duplicate events
-            self.start_sunset_task()
-        else:
-            if self.sunset_phase_active and (self.sunset_task is None or self.sunset_task.done()):
-                _LOGGER.debug(f"{self.deviceName}: Sunset window exited, resetting phase")
-                self.sunset_phase_active = False
 
 
     def __repr__(self):
@@ -501,17 +426,75 @@ class Light(Device):
                     0 <= current_minutes <= end_minutes
                 )
 
+    # SunPhases
     async def periodic_sun_phase_check(self):
-        """Legacy method - sun phase now controlled by OGBLightScheduler events.
+        special_light_types = {"LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}
+        if self.deviceType in special_light_types:
+            _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) skipping periodic_sun_phase_check - using dedicated scheduling")
+            return
         
-        Kept for backward compatibility, but sun phase control is now event-driven.
-        Only performs daily phase reset check.
-        """
+        if not self.isDimmable:
+            return
+        
+        if self.sun_phase_paused:
+            return
+        
         while True:
             try:
                 self._check_should_reset_phases()
+                
+                plantStage = self.dataStore.get("plantStage")
+                self.currentPlantStage = plantStage
+                
+                if plantStage in self.PlantStageMinMax:
+                    percentRange = self.PlantStageMinMax[plantStage]
+                    self.minVoltage = percentRange["min"]
+                    self.maxVoltage = percentRange["max"]
+                    
+                now = datetime.now().time()
+                
+                _LOGGER.debug(f"{self.deviceName}: Checking sun phases - Current time: {now}")
+                _LOGGER.debug(f"{self.deviceName}: LightOn: {self.islightON}, SunPhaseActive: {self.sunPhaseActive}")
+                _LOGGER.debug(f"{self.deviceName}: LightOnTime: {self.lightOnTime}, LightOffTime: {self.lightOffTime}")
+                _LOGGER.debug(f"{self.deviceName}: SunRiseDuration: {self.sunRiseDuration} sec ({self.sunRiseDuration/60} min)")
+                _LOGGER.debug(f"{self.deviceName}: SunSetDuration: {self.sunSetDuration} sec ({self.sunSetDuration/60} min)")
+                _LOGGER.debug(f"{self.deviceName}: Sunrise_phase_active: {self.sunrise_phase_active}, Sunset_phase_active: {self.sunset_phase_active}")
+                _LOGGER.debug(f"{self.deviceName}: SunPhasePaused: {self.sun_phase_paused}")
+                
+                if self.sunRiseDuration and not self.sun_phase_paused:
+                    sunRiseDuration_minutes = self.sunRiseDuration / 60
+                    in_sunrise_window = self._in_window(now, self.lightOnTime, sunRiseDuration_minutes, is_sunset=False)
+                    _LOGGER.debug(f"{self.deviceName}: In sunrise window: {in_sunrise_window}")
+                    
+                    if in_sunrise_window and self.islightON:
+                        if not self.sunrise_phase_active:
+                            _LOGGER.debug(f"{self.deviceName}: Starting sunrise phase")
+                            self.sunrise_phase_active = True
+                            self.start_sunrise_task()
+                    elif not in_sunrise_window:
+                        if self.sunrise_phase_active and (self.sunrise_task is None or self.sunrise_task.done()):
+                            _LOGGER.debug(f"{self.deviceName}: Sunrise window exited and task finished - resetting phase")
+                            self.sunrise_phase_active = False
+                
+                if self.sunSetDuration and not self.sun_phase_paused:
+                    sunSetDuration_minutes = self.sunSetDuration / 60
+                    in_sunset_window = self._in_window(now, self.lightOffTime, sunSetDuration_minutes, is_sunset=True)
+                    _LOGGER.debug(f"{self.deviceName}: In sunset window: {in_sunset_window}")
+                    
+                    if in_sunset_window and self.islightON:
+                        if not self.sunset_phase_active:
+                            _LOGGER.debug(f"{self.deviceName}: Starting sunset phase")
+                            self.sunset_phase_active = True
+                            self.start_sunset_task()
+                    elif not in_sunset_window:
+                        if self.sunset_phase_active and (self.sunset_task is None or self.sunset_task.done()):
+                            _LOGGER.debug(f"{self.deviceName}: Sunset window exited and task finished - resetting phase")
+                            self.sunset_phase_active = False
+                            
             except Exception as e:
-                _LOGGER.error(f"{self.deviceName}: Error in legacy sun phase check: {e}")
+                _LOGGER.error(f"{self.deviceName} sun-phase error: {e}")
+                import traceback
+                _LOGGER.error(traceback.format_exc())
             await asyncio.sleep(60)
 
     def _check_should_reset_phases(self):
