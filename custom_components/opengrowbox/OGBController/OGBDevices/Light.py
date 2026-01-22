@@ -171,14 +171,28 @@ class Light(Device):
             self.setLightTimes()
 
             if self.isDimmable:
-                # 1. Read sensor value FIRST (like original 1.4.1.7)
-                self.checkForControlValue()
+                # 1. Try to restore voltage from entity state (most reliable after restart)
+                if hasattr(self, 'hass') and self.hass:
+                    for entity in self.switches:
+                        entity_id = entity.get("entity_id")
+                        if entity_id:
+                            state = self.hass.states.get(entity_id)
+                            if state and state.state == "on":
+                                brightness = state.attributes.get("brightness")
+                                if brightness is not None:
+                                    self.voltage = round(brightness / 2.55)  # Convert 0-255 to 0-100
+                                    _LOGGER.debug(f"{self.deviceName}: Restored voltage from entity state: {self.voltage}%")
+                                    break
                 
-                # 2. Set plant stage min/max values
+                # 2. Read sensor value as fallback
+                if self.voltage is None or self.voltage == 0:
+                    self.checkForControlValue()
+                
+                # 3. Set plant stage min/max values
                 self.checkPlantStageLightValue()
                 self.checkMinMax(False)
                 
-                # 3. Initialize voltage ONLY if voltage is 0/None
+                # 4. Initialize voltage ONLY if voltage is still 0/None
                 if self.voltage == 0 or self.voltage is None:
                     self.initialize_voltage()
 
