@@ -170,13 +170,25 @@ class DryingActions:
         _LOGGER.debug(f"{self.name} Run Drying '5 Day Dry'")
 
         tentData = self.data_store.get("tentData")
-        vpdTolerance = self.data_store.getDeep("vpd.tolerance") or 3  # %
+        vpdTolerance = float(self.data_store.getDeep("vpd.tolerance") or 3) / 100.0  # Convert % to decimal (e.g., 10% → 0.1)
         capabilities = self.data_store.getDeep("capabilities")
+
+        _LOGGER.debug(f"{self.name}: 5DayDry phaseConfig keys = {list(phaseConfig.keys()) if phaseConfig else None}")
 
         current_phase = self.get_current_phase(phaseConfig)
 
+        _LOGGER.debug(f"{self.name}: 5DayDry current_phase = {current_phase}")
+
         if current_phase is None:
-            _LOGGER.error(f"{self.name}: Could not determine current phase")
+            mode_start_time = self.data_store.getDeep("drying.mode_start_time")
+            phase_data = self.data_store.getDeep(f"drying.modes.5DayDry")
+            _LOGGER.error(f"{self.name}: Could not determine current phase - mode_start_time={mode_start_time}, phaseConfig={phaseConfig}, 5DayDry_config={phase_data}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Action": "Drying",
+                "Message": "5DayDry: No active phase - check mode start time",
+                "actions": []
+            }, haEvent=True)
             return
 
         current_temp = tentData["temperature"] if "temperature" in tentData else None
@@ -217,7 +229,7 @@ class DryingActions:
                 await self.event_manager.emit("reduce_vpd", capabilities)
         else:
             _LOGGER.debug(
-                f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} within tolerance (±{vpdTolerance}) → No action"
+                f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} within tolerance (±{vpdTolerance*100:.1f}%) → No action"
             )
         
         # Emit LogForClient for UI
@@ -353,17 +365,23 @@ class DryingActions:
         - "start", "halfTime", "endTime" keys with durationHours
         """
         if not phaseConfig:
+            _LOGGER.debug(f"{self.name}: get_current_phase - phaseConfig is None or empty")
             return None
 
         mode_start_time = self.data_store.getDeep("drying.mode_start_time")
         if mode_start_time is None:
+            _LOGGER.debug(f"{self.name}: get_current_phase - mode_start_time is None")
             return None
+
+        _LOGGER.debug(f"{self.name}: get_current_phase - mode_start_time={mode_start_time}")
 
         mode_start_time_dt = datetime.fromisoformat(mode_start_time) if isinstance(mode_start_time, str) else mode_start_time
         elapsed_seconds = (datetime.now() - mode_start_time_dt).total_seconds()
+        _LOGGER.debug(f"{self.name}: get_current_phase - elapsed_seconds={elapsed_seconds:.0f}")
 
         # Check for phases under "phase" key (new structure)
         phases_dict = phaseConfig.get("phase", {})
+        _LOGGER.debug(f"{self.name}: get_current_phase - phases_dict={phases_dict}")
         if not phases_dict:
             # Fallback to old "phases" array structure
             phases_list = phaseConfig.get("phases", [])
