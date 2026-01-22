@@ -573,13 +573,36 @@ class Light(Device):
             if self.sun_phase_paused:
                 return
 
+            # Calculate sunrise target voltage with correct priority:
+            # 1. User MinMax (if DeviceMinMax.active = True)
+            # 2. Plant Stage (if User MinMax is not active)
+            # 3. Fallback to maxVoltage
+            is_minmax_active = getattr(self, 'is_minmax_active', False)
+            plantStage = self.data_store.get("plantStage")
+            
+            if is_minmax_active:
+                user_max = self.maxVoltage if self.maxVoltage is not None else 100
+                if plantStage and plantStage in self.PlantStageMinMax:
+                    plant_max = self.PlantStageMinMax[plantStage]["max"]
+                    target_voltage = max(user_max, plant_max)
+                    voltage_source = f"User MinMax (max of User={user_max} and PlantStage={plant_max})"
+                else:
+                    target_voltage = user_max
+                    voltage_source = "User MinMax"
+            elif plantStage and plantStage in self.PlantStageMinMax:
+                plant_range = self.PlantStageMinMax[plantStage]
+                target_voltage = plant_range["max"]
+                voltage_source = f"Plant Stage ({plantStage})"
+            else:
+                target_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+                voltage_source = "maxVoltage"
+
             start_voltage = self.initVoltage
-            target_voltage = self.maxVoltage
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10
             
             self.sunPhaseActive = True
-            _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% bis {target_voltage}%")
+            _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% bis {target_voltage}% ({voltage_source})")
 
             for i in range(1, 11):
                 if not self.islightON:
