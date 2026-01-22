@@ -313,6 +313,11 @@ class Light(Device):
         return max(min_v, min(max_v, v))
 
     async def setPlanStageLight(self, plantStageData):
+        special_light_types = {"LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}
+        if self.deviceType in special_light_types:
+            _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring setPlanStageLight - using dedicated scheduling")
+            return
+        
         if not self.isDimmable:
             return None
 
