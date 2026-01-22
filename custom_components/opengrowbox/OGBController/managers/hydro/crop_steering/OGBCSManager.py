@@ -50,7 +50,7 @@ class OGBCSManager:
 
         self.blockCheckIntervall = 300  # 5 minutes
         self.max_irrigation_attempts = 5
-        self.stability_tolerance = 0.1.5
+        self.stability_tolerance = 1.5
 
         # Single task for any CS operation
         self._main_task = None
