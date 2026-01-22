@@ -359,7 +359,8 @@ class DryingActions:
         if mode_start_time is None:
             return None
 
-        elapsed_seconds = (datetime.now() - mode_start_time).total_seconds()
+        mode_start_time_dt = datetime.fromisoformat(mode_start_time) if isinstance(mode_start_time, str) else mode_start_time
+        elapsed_seconds = (datetime.now() - mode_start_time_dt).total_seconds()
 
         # Check for phases under "phase" key (new structure)
         phases_dict = phaseConfig.get("phase", {})
