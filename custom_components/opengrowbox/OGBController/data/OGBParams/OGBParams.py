@@ -9,6 +9,7 @@ RELEVANT_PREFIXES = (
     "text.",
     "humidifier.",
     "fan.",
+    "camera.",
 )
 RELEVANT_KEYWORDS = (
     "_temperature",
@@ -74,6 +75,7 @@ DEVICE_TYPE_MAPPING = {
     # Generic light - checked last
     "Light": ["light", "lamp", "led"],
     "CO2": ["co2", "carbon"],
+    "Camera": ["camera", "webcam", "cam", "view", "monitor"],
     "Pump": ["pump", "dripper", "feedsystem", "tank"],
     "Switch": ["generic", "switch"],
     "Fridge": ["fridge", "kuehlschrank"],

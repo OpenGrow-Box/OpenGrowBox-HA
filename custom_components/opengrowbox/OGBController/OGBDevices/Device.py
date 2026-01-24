@@ -25,6 +25,7 @@ class Device:
         self.room = inRoom  # Backwards compatibility alias
         self.switches = []
         self.options = []
+        self.cameras = []  # Camera entities category
         self.sensors = []
         self.ogbsettings = []
         self.initialization = False
@@ -65,6 +66,11 @@ class Device:
     def sensor_count(self) -> int:
         """Gibt die Anzahl aller Sensoren zurück."""
         return len(self.sensors)
+
+    @property
+    def camera_count(self) -> int:
+        """Gibt die Anzahl der Kameras zurück."""
+        return len(self.cameras)
 
     def __iter__(self):
         return iter(self.__dict__.items())
@@ -186,12 +192,12 @@ class Device:
 
     def getEntitys(self):
         """
-        Liefert eine Liste aller Entitäten der Sensoren, Optionen, Schalter und OGB-Einstellungen.
+        Liefert eine Liste aller Entitäten der Sensoren, Optionen, Schalter, Kameras und OGB-Einstellungen.
         Erwartet, dass die Objekte Dictionaries mit dem Schlüssel 'entity_id' sind.
         """
         entityList = []
         # Iteriere durch die Entitäten in allen Kategorien
-        for group in [self.sensors, self.options, self.switches, self.ogbsettings]:
+        for group in [self.sensors, self.options, self.switches, self.cameras, self.ogbsettings]:
             if group:  # Überprüfen, ob die Gruppe nicht None ist
                 for entity in group:   
                     # Überprüfe, ob 'entity_id' im Dictionary vorhanden ist
@@ -471,7 +477,11 @@ class Device:
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
                     continue
-                        
+
+                if entityID.startswith("camera."):
+                    self.cameras.append(entity)
+                    continue
+
                 if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.")):
                     self.switches.append(entity)
                 elif entityID.startswith(("select.", "number.","date.", "text.", "time.")):

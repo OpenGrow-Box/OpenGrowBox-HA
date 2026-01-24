@@ -17,6 +17,7 @@ from ..OGBDevices.LightFarRed import LightFarRed
 from ..OGBDevices.LightUV import LightUV
 from ..OGBDevices.LightSpectrum import LightBlue, LightRed
 from ..OGBDevices.ModbusDevice import OGBModbusDevice
+from ..OGBDevices.OGBCamera import OGBCamera
 from ..OGBDevices.Pump import Pump
 from ..OGBDevices.FridgeGrow.FridgeGrowDevice import FridgeGrowDevice
 from ..OGBDevices.Ventilation import Ventilation
@@ -365,6 +366,7 @@ class OGBDeviceManager:
             "Climate": Climate,
             "Generic": GenericSwitch,
             "CO2": CO2,
+            "Camera": OGBCamera,
             "Fridge": Fridge,
             "Modbus": OGBModbusDevice,
             "ModbusDevice": OGBModbusDevice,
