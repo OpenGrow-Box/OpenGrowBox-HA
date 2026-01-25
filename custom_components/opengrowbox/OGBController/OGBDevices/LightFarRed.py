@@ -609,7 +609,7 @@ class LightFarRed(Light):
                 SunRise=False,
                 SunSet=False,
             )
-            await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+            #await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
             self._last_logged_intensity = self.intensity
         
         # Turn on the light with intensity - respect maxVoltage
@@ -654,7 +654,7 @@ class LightFarRed(Light):
             SunRise=False,
             SunSet=False,
         )
-        await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+        #await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
         
         # Turn off the light using direct HA service call - bypasses any internal logic
         entity_id = None

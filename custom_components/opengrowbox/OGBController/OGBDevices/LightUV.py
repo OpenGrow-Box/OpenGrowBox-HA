@@ -315,14 +315,17 @@ class LightUV(Light):
         if self.mode == UVMode.MANUAL:
             return
         
-        # Mode: Always On - ON whenever main lights are ON
+        # Mode: Always On - ON whenever main lights are ON (but NOT during sunrise/sunset)
         if self.mode == UVMode.ALWAYS_ON:
-            if self.islightON:
+            # Check if main light is in sunrise or sunset phase - UV must be OFF during transitions
+            sun_phase_active = getattr(self, 'sunPhaseActive', False)
+            if self.islightON and not sun_phase_active:
                 if not self.is_uv_active:
                     await self._activate_uv('always_on')
             else:
                 if self.is_uv_active:
-                    await self._deactivate_uv("Main lights off")
+                    reason = "Main lights off" if not self.islightON else "Sun phase active"
+                    await self._deactivate_uv(reason)
             return
         
         # Mode: Schedule - original mid-day window logic
@@ -354,9 +357,12 @@ class LightUV(Light):
         if not self.lightOnTime or not self.lightOffTime:
             return
             
-        if not self.islightON:
+        # Check if main light is in sunrise or sunset phase - UV must be OFF during transitions
+        sun_phase_active = getattr(self, 'sunPhaseActive', False)
+        if not self.islightON or sun_phase_active:
             if self.is_uv_active:
-                await self._deactivate_uv("Main lights off")
+                reason = "Main lights off" if not self.islightON else "Sun phase active"
+                await self._deactivate_uv(reason)
             return
             
         now = datetime.now()

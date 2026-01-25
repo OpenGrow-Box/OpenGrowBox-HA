@@ -210,8 +210,8 @@ class Device:
         self.identifySwitchesAndSensors(clean_entitys)
         self.identifyIfRunningState()
         self.identifDimmable()
-        self.checkMinMax(False)
         self.checkForControlValue()
+        self.checkMinMax(False)
         self.identifyCapabilities()
         if(self.initialization == True):
             self.deviceUpdater()
