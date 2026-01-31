@@ -1,13 +1,14 @@
 import asyncio
 import logging
 
+from ..OGBDevices.Device import Device
 from ..OGBDevices.Climate import Climate
 from ..OGBDevices.CO2 import CO2
 from ..OGBDevices.Cooler import Cooler
 from ..OGBDevices.Dehumidifier import Dehumidifier
-from ..OGBDevices.Device import Device
 from ..OGBDevices.Exhaust import Exhaust
 from ..OGBDevices.Fridge import Fridge
+from ..OGBDevices.Camera import Camera
 from ..OGBDevices.GenericSwitch import GenericSwitch
 from ..OGBDevices.Heater import Heater
 from ..OGBDevices.Humidifier import Humidifier
@@ -365,6 +366,7 @@ class OGBDeviceManager:
             "Climate": Climate,
             "Generic": GenericSwitch,
             "CO2": CO2,
+            "Camera": Camera,
             "Fridge": Fridge,
             "Modbus": OGBModbusDevice,
             "ModbusDevice": OGBModbusDevice,

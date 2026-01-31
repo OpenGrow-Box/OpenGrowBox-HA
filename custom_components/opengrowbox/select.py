@@ -230,13 +230,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             initial_value="LIVE",
         ),
         # Ambient
-        CustomSelect(
-            f"OGB_AmbientControl_{coordinator.room_name}",
-            coordinator.room_name,
-            coordinator,
-            options=["YES", "NO"],
-            initial_value="NO",
-        ),
+        #CustomSelect(
+        #    f"OGB_AmbientControl_{coordinator.room_name}",
+        #    coordinator.room_name,
+        #    coordinator,
+        #    options=["YES", "NO"],
+        #    initial_value="NO",
+        #),
         ##Notifications
         CustomSelect(
             f"OGB_Notifications_{coordinator.room_name}",

@@ -47,7 +47,7 @@ class Device:
         self.eventManager.on("SetMinMax", self.userSetMinMax)
         self.eventManager.on("MinMaxControlDisabled", self.on_minmax_control_disabled)
         self.eventManager.on("MinMaxControlEnabled", self.on_minmax_control_enabled)
-        self.eventManager.on("LightTimeChanges", self.on_light_time_change)
+
     
         self.deviceInit(deviceData)
 
@@ -98,7 +98,6 @@ class Device:
             f"Device(name='{self.deviceName}', type='{self.deviceType}', room='{self.inRoom}', "
             f"switches={self.switch_count}, options={self.option_count}, sensors={sensor_count}{flags_str})"
         )
-
 
     def __str__(self):
         """Detaillierte, lesbare Darstellung für Nutzer."""
@@ -474,7 +473,7 @@ class Device:
                         
                 if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.")):
                     self.switches.append(entity)
-                elif entityID.startswith(("select.", "number.","date.", "text.", "time.")):
+                elif entityID.startswith(("select.", "number.","date.", "text.", "time.","camera.")):
                     self.options.append(entity)
                 elif entityID.startswith("sensor."):
                     if self.evalSensors(entityID):
@@ -1373,7 +1372,7 @@ class Device:
                     if hasattr(self, 'minVoltage') and hasattr(self, 'maxVoltage') and self.minVoltage is not None and self.maxVoltage is not None:
                         self.voltage = self.minVoltage
                     else:
-                        self.voltage = getattr(self, 'initVoltage', 20)
+                        self.voltage = self.initVoltage
                     await self.turn_on(brightness_pct=self.voltage)
                 # Special lights should not respond to WorkMode - they use their own scheduling
                 elif self.deviceType in special_light_types:
@@ -1676,13 +1675,6 @@ class Device:
                     _LOGGER.warning(f"{self.deviceName}: No min/max values found in dataStore")
             else:
                 _LOGGER.info(f"{self.deviceName}: Device-specific minmax not active, using defaults")
-
-    async def on_light_time_change(self, data):
-        """Handle light time changes - reload settings and adjust schedule."""
-        _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
-        # Subclasses can override this to handle time changes specifically
-        # Default behavior: just log it
-        pass
 
     def clamp_voltage(self, value):
         """Clamp voltage to min/max range."""

@@ -358,10 +358,23 @@ class LightUV(Light):
             return
             
         # Check if main light is in sunrise or sunset phase - UV must be OFF during transitions
+        # Use both methods for maximum reliability
         sun_phase_active = getattr(self, 'sunPhaseActive', False)
-        if not self.islightON or sun_phase_active:
+        
+        # Additional check: Look for main light states in data store
+        main_light_sun_phase = self.data_store.getDeep("isPlantDay.sunPhaseActive") or False
+        main_light_state = self.data_store.getDeep("isPlantDay.islightON") or False
+        
+        # UV must be off if ANY of these conditions are met
+        if not main_light_state or sun_phase_active or main_light_sun_phase:
             if self.is_uv_active:
-                reason = "Main lights off" if not self.islightON else "Sun phase active"
+                reason = "Main lights off"
+                if not main_light_state:
+                    reason = "Main lights off"
+                elif sun_phase_active:
+                    reason = "Sun phase active"
+                elif main_light_sun_phase:
+                    reason = "Sun phase active"
                 await self._deactivate_uv(reason)
             return
             
@@ -542,6 +555,7 @@ class LightUV(Light):
             # Check if this device is in the target list
             is_targeted = not target_devices or self.deviceName in target_devices
 
+        # Store the main light state for UV scheduling
         self.islightON = target_state
 
         # If this device is not targeted, ignore the event completely

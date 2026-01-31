@@ -152,6 +152,11 @@ class OGBDSManager:
                         f"breeder_name={m.get('breeder_name') or m.get('plant_strain')}, breeder_bloom_days={m.get('breeder_bloom_days')}"
                     )
             
+            # Load plantsView (timelapse config) if present - critical for Camera
+            if "plantsView" in data:
+                plants_view = data["plantsView"]
+                _LOGGER.warning(f"[{self.room}] Found plantsView in saved state: {plants_view}")
+            
             # Load all data into datastore
             for key, value in data.items():
                 self.data_store.set(key, value)
@@ -180,6 +185,7 @@ class OGBDSManager:
 
     async def saveState(self, data):
         """Speichert den vollständigen aktuellen State."""
+        _LOGGER.warning(f"[{self.room}] RECEIVED SaveState event: {data}")
         try:
             state = self.data_store.getFullState()
             
@@ -227,7 +233,7 @@ class OGBDSManager:
                 _LOGGER.warning(f"⚠️ Saving simplified state instead")
 
             await asyncio.to_thread(self._sync_save, json_string)
-            _LOGGER.debug(f"✅ DataStore saved to {self.storage_path}")
+            _LOGGER.warning(f"[{self.room}] ✅ DataStore saved to {self.storage_path}")
 
         except Exception as e:
             _LOGGER.error(f"❌ Failed to save DataStore: {e}")
@@ -274,6 +280,17 @@ class OGBDSManager:
                 sanitized_mediums.append(medium)
             
             state["growMediums"] = sanitized_mediums
+        
+        # Ensure plantsView is present for Camera timelapse config
+        if "plantsView" not in state:
+            _LOGGER.warning(f"[{self.room}] Adding default plantsView to state")
+            state["plantsView"] = {
+                "isTimeLapseActive": False,
+                "TimeLapseIntervall": "",
+                "StartDate": "",
+                "EndDate": "",
+                "OutPutFormat": "",
+            }
         
         return state
 

@@ -291,6 +291,15 @@ class OGBConf:
             "generativeWeek": 0,
         }
     )
+    plantsView: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "isTimeLapseActive": False,
+            "TimeLapseIntervall": 300,
+            "StartDate": "",
+            "EndDate": "",
+            "OutPutFormat": "",
+        }
+    )
     plantStages: Dict[str, Dict[str, Any]] = field(
         default_factory=lambda: {
             "Germination": {
