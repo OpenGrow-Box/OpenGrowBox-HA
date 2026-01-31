@@ -977,7 +977,7 @@ class Device:
                     elif self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
-                            service="set_percentage",
+                            service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
                                 "percentage": percentage,
@@ -1023,7 +1023,7 @@ class Device:
                     elif self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
-                            service="set_percentage",
+                            service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
                                 "percentage": percentage,
@@ -1055,7 +1055,7 @@ class Device:
                     elif self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
-                            service="set_percentage",
+                            service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
                                 "percentage": percentage,
@@ -1077,7 +1077,7 @@ class Device:
                     if self.isDimmable:
                         await self.hass.services.async_call(
                             domain="fan",
-                            service="set_percentage",
+                            service="turn_on",
                             service_data={
                                 "entity_id": entity_id,
                                 "percentage": percentage,
@@ -1180,16 +1180,50 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: HVAC-Mode OFF.")
                     return
 
-                # Humidifier ausschalten
+                # Humidifier einschalten
                 elif self.deviceType == "Humidifier":
-                    await self.hass.services.async_call(
-                        domain="switch",
-                        service="turn_off",
-                        service_data={"entity_id": entity_id},
-                    )
-                    self.isRunning = False
-                    _LOGGER.debug(f"{self.deviceName}: Humidifier OFF.")
-                    return
+                    # NEW: Handle fan.* entities (hardware controllers like Growmore)
+                    if entity_id.startswith("fan."):
+                        if self.isDimmable and percentage is not None:
+                            await self.hass.services.async_call(
+                                domain="fan",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "percentage": percentage,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Humidifier (fan) ON at {percentage}%.")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="fan",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Humidifier (fan) ON.")
+                            return
+                    # EXISTING: Handle humidifier.* and switch.* entities
+                    elif hasattr(self, 'realHumidifierClass') and self.realHumidifierClass:
+                        await self.hass.services.async_call(
+                            domain="humidifier",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = True
+                        _LOGGER.debug(f"{self.deviceName}: Humidifier (humidifier domain) ON.")
+                        return
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = True
+                        _LOGGER.debug(f"{self.deviceName}: Humidifier (switch) ON.")
+                        return
 
                 # Light ausschalten
                 elif self.deviceType == "Light":
