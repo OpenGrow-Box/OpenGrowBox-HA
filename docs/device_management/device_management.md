@@ -19,6 +19,7 @@ class OGBDeviceManager:
 - **Light**: Lighting control with spectrum management
 - **Pump**: Irrigation and nutrient pumps
 - **Sensor**: Environmental monitoring devices
+- **Camera**: Live viewing, timelapse recording, and daily snapshots
 - **Exhaust/Intake**: Ventilation systems
 - **Heater/Cooler**: Temperature control devices
 - **FridgeGrow**: Plantalytix/FridgeGrow device integration
@@ -255,6 +256,13 @@ CAPABILITY_MAPPING = {
     "canIrrigate": "Irrigation control",
     "canMeasure": "Measurement capability",
 
+    # Camera
+    "canStream": "Live video streaming capability",
+    "canCapture": "Single image capture capability",
+    "canTimelapse": "Timelapse recording capability",
+    "canDailySnapshot": "Scheduled daily snapshot capability",
+    "canGenerateVideo": "MP4 video generation capability",
+
     # Ventilation
     "canExhaust": "Exhaust fan control",
     "canIntake": "Intake fan control",
@@ -279,6 +287,7 @@ DEVICE_TYPE_MAPPING = {
     "Light": ["canLight", "canSpectrum"],
     "Pump": ["canPump", "canIrrigate"],
     "Sensor": ["canSense", "canMeasureTemp", "canMeasureHum"],
+    "Camera": ["canStream", "canCapture", "canTimelapse", "canDailySnapshot", "canGenerateVideo"],
     "Exhaust": ["canExhaust", "canVentilate"],
     "Heater": ["canHeat"],
     "Humidifier": ["canHumidify"],
@@ -821,6 +830,7 @@ if not device.modbus_client.is_socket_open():
 - ✅ **Lighting**: Spectrum and DLI management
 - ✅ **Pumps**: Irrigation and nutrient delivery
 - ✅ **Sensors**: Environmental monitoring
+- ✅ **Cameras**: Live viewing, timelapse recording, and daily snapshots
 - ✅ **Ventilation**: Exhaust and intake control
 - ✅ **Heating/Cooling**: Temperature management
 - ✅ **Humidity**: Humidification and dehumidification
