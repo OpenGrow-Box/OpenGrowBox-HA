@@ -234,6 +234,10 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             _LOGGER.info(f"🎉 {self.room_name}: OpenGrowBox initialization completed!")
 
+            # Enable DeviceUpdater to manage devices going forward
+            if hasattr(self.OGB, 'deviceManager') and self.OGB.deviceManager:
+                self.OGB.deviceManager.set_initialization_complete()
+
             # CRITICAL: Signal orchestrator that initialization is complete
             # This allows the orchestrator's control loop to start safely
             if hasattr(self.OGB, 'orchestrator') and self.OGB.orchestrator:
