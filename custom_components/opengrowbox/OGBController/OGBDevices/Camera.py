@@ -316,7 +316,7 @@ class Camera(Device):
             end_dt: timezone-aware datetime for when timelapse should end
         """
         plants_view = self.dataStore.get("plantsView") or {}
-        interval_sec = int(plants_view.get("TimeLapseIntervall", "30") or "30")
+        interval_sec = int(plants_view.get("TimeLapseIntervall", "900") or "900")
 
         # Store the dates
         self.tl_start_time = start_dt
@@ -379,6 +379,7 @@ class Camera(Device):
             "is_recording": True,
             "image_count": self.tl_image_count,
             "start_time": start_dt.isoformat(),
+            "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
         }, haEvent=True)
 
     async def _schedule_timelapse_start(self, start_dt, end_dt):
@@ -419,6 +420,7 @@ class Camera(Device):
             "is_scheduled": True,
             "scheduled_start": start_dt.isoformat(),
             "scheduled_end": end_dt.isoformat(),
+            "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
         }, haEvent=True)
 
     async def startTL(self, resume=False):
@@ -551,6 +553,7 @@ class Camera(Device):
                         "is_recording": True,
                         "image_count": self.tl_image_count,
                         "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
+                        "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
                     }, haEvent=True)
                 
                 # Trigger state save occasionally? 
@@ -595,6 +598,7 @@ class Camera(Device):
             "is_recording": False,
             "image_count": self.tl_image_count,
             "start_time": None,
+            "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
         }, haEvent=True)
 
         await self.event_manager.emit("TimelapseCompleted", {
@@ -1074,7 +1078,7 @@ class Camera(Device):
             plants_view = self.dataStore.get("plantsView") or {}
             tl_config = {
                 "isTimeLapseActive": plants_view.get("isTimeLapseActive", False),
-                "TimeLapseIntervall": plants_view.get("TimeLapseIntervall", "30"),
+                "TimeLapseIntervall": plants_view.get("TimeLapseIntervall", "900"),
                 "StartDate": plants_view.get("StartDate", ""),
                 "EndDate": plants_view.get("EndDate", ""),
                 "OutPutFormat": plants_view.get("OutPutFormat", "mp4"),
@@ -1122,7 +1126,7 @@ class Camera(Device):
                 "device_name": camera_entity_id or self.deviceName,
                 "storage_path": timelapse_path,
                 "current_config": {
-                    "interval": tl_config.get("TimeLapseIntervall", "30"),
+                    "interval": tl_config.get("TimeLapseIntervall", "900"),
                     "duration": tl_config.get("duration", 3600),
                     "image_path": tl_config.get("image_path", timelapse_path),
                     "StartDate": tl_config.get("StartDate", ""),
@@ -1135,6 +1139,7 @@ class Camera(Device):
                 "tl_active": is_recording_active,
                 "tl_start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
                 "tl_image_count": self.tl_image_count,
+                "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
             }
             
             # Emit response event
@@ -1166,7 +1171,7 @@ class Camera(Device):
             plants_view = self.dataStore.get("plantsView") or {}
             plants_view.update({
                 "isTimeLapseActive": new_config.get("isTimeLapseActive", False),
-                "TimeLapseIntervall": str(new_config.get("interval", "30")),
+                "TimeLapseIntervall": str(new_config.get("interval", "900")),
                 "StartDate": new_config.get("startDate", ""),
                 "EndDate": new_config.get("endDate", ""),
                 "OutPutFormat": new_config.get("format", "mp4"),
@@ -1251,8 +1256,11 @@ class Camera(Device):
             # Get parameters
             start_date = event_data.get("start_date")
             end_date = event_data.get("end_date")
-            interval = event_data.get("interval", 30)  # seconds between frames
             output_format = event_data.get("format", "mp4")
+
+            # Read interval from plantsView
+            plants_view = self.dataStore.get("plantsView") or {}
+            interval = int(plants_view.get("TimeLapseIntervall", "900") or "900")
 
             # Start generation in background task and store reference for cleanup
             self.tl_generation_task = asyncio.create_task(
@@ -1275,14 +1283,30 @@ class Camera(Device):
     async def _handle_get_timelapse_status(self, event):
         """Handle opengrowbox_get_timelapse_status event from frontend."""
         try:
+            _LOGGER.info(f"{self.deviceName}: timelapse Event <Event opengrowbox_get_timelapse_status[L]: device_name={event.data.get('device_name')}>")
+
             event_data = event.data
             device_name = event_data.get("device_name")
-            
+
             # Only respond if this event is for this camera
             if device_name != self.camera_entity_id:
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected: {self.camera_entity_id}, got: {device_name})")
                 return
-            
-            # Emit current status
+
+            _LOGGER.info(f"{self.deviceName}: Sending CameraRecordingStatus with last_capture_time: {self.last_capture_time}")
+
+            # Emit current status via CameraRecordingStatus (frontend subscribes to this)
+            # This ensures the frontend gets the accurate last_capture_time for countdown timer
+            await self.event_manager.emit("CameraRecordingStatus", {
+                "room": self.inRoom,
+                "camera_entity": self.camera_entity_id,
+                "is_recording": self.tl_active,
+                "image_count": self.tl_image_count,
+                "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
+                "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            }, haEvent=True)
+
+            # Also emit TimelapseStatusResponse for any other listeners
             await self.event_manager.emit("TimelapseStatusResponse", {
                 "device_name": self.camera_entity_id,
                 "tl_active": self.tl_active,
@@ -1292,7 +1316,7 @@ class Camera(Device):
                 "generation_progress": getattr(self, 'tl_generation_progress', 0),
                 "generation_status": getattr(self, 'tl_generation_status', 'idle'),
             }, haEvent=True)
-            
+
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling get timelapse status: {e}")
 
@@ -1305,14 +1329,10 @@ class Camera(Device):
             # Only respond if this event is for this camera
             if device_name != self.camera_entity_id:
                 return
-            
-            # Get interval from event or use default
-            interval = event_data.get("interval", 30)
-            
-            # Update config temporarily (startTL reads from dataStore)
+
+            # Read interval from plantsView
             plants_view = self.dataStore.get("plantsView") or {}
-            plants_view["TimeLapseIntervall"] = str(interval)
-            self.dataStore.set("plantsView", plants_view)
+            interval = int(plants_view.get("TimeLapseIntervall", "900") or "900")
 
             # Start timelapse recording
             await self.startTL()
