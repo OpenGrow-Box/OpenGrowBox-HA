@@ -50,11 +50,11 @@ class OGBFeedLogicManager:
         self.data_store = data_store
         self.event_manager = event_manager
 
-        # Feeding settings - adjusted for smaller, more frequent doses
-        self.feed_check_interval = 300  # 5 minutes
-        self.emergency_feed_threshold = 0.15  # 15% deviation triggers emergency
-        self.max_daily_feeds = 12  # Maximum feeds per day (increased)
-        self.min_feed_interval = 1800  # 30 minutes between feeds (reduced from 2 hours)
+        # Feeding settings - conservative approach to avoid over-feeding
+        self.feed_check_interval = 900  # 15 minutes between checks
+        self.emergency_feed_threshold = 0.25  # 25% deviation triggers emergency (was 15%)
+        self.max_daily_feeds = 6  # Maximum feeds per day (reduced from 12)
+        self.min_feed_interval = 3600  # 60 minutes between feeds (increased from 30 min)
 
         # Feed state tracking
         self.last_feed_time = None
@@ -322,14 +322,14 @@ class OGBFeedLogicManager:
         deviation = abs(current_ec - target_ec) / target_ec
 
         # Dead zone - don't adjust for small deviations
-        if deviation < 0.03:  # 3% tolerance
+        if deviation < 0.08:  # 8% tolerance (increased from 3%)
             return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
 
         # Proportional dosing: more deviation = more nutrients
-        # Base dose for 5% deviation = 2.5ml per nutrient type
-        base_dose_per_5_percent = 2.5
+        # Base dose for 5% deviation = 1.5ml per nutrient type (reduced from 2.5ml)
+        base_dose_per_5_percent = 1.5
         dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
-        nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 10.0)  # Cap at 10ml
+        nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at 5ml (reduced from 10ml)
 
         return {
             'nutrients_needed': True,
@@ -354,7 +354,7 @@ class OGBFeedLogicManager:
         deviation = current_ph - target_ph
 
         # Dead zone - don't adjust for small deviations
-        if abs(deviation) < 0.1:  # 0.1 pH tolerance
+        if abs(deviation) < 0.2:  # 0.2 pH tolerance (increased from 0.1)
             return {
                 'ph_down_needed': False,
                 'ph_up_needed': False,
@@ -363,10 +363,10 @@ class OGBFeedLogicManager:
             }
 
         # Proportional dosing: more deviation = more pH adjustment
-        # Base dose for 0.2 pH deviation = 1.0ml
-        base_dose_per_0_2_ph = 1.0
+        # Base dose for 0.2 pH deviation = 0.5ml (reduced from 1.0ml)
+        base_dose_per_0_2_ph = 0.5
         dose_multiplier = abs(deviation) / 0.2
-        ph_dose_ml = min(base_dose_per_0_2_ph * dose_multiplier, 3.0)  # Cap at 3ml
+        ph_dose_ml = min(base_dose_per_0_2_ph * dose_multiplier, 1.5)  # Cap at 1.5ml (reduced from 3ml)
 
         if deviation > 0:  # pH too high, need pH down
             return {
@@ -429,12 +429,12 @@ class OGBFeedLogicManager:
 
         deviation = abs(current_ec - target_ec) / target_ec
 
-        # Emergency threshold (10% deviation)
+        # Emergency threshold (25% deviation - increased from 10%)
         if deviation >= self.emergency_feed_threshold:
             return True
 
-        # Normal adjustment threshold (5% deviation)
-        if deviation >= 0.05:
+        # Normal adjustment threshold (8% deviation - increased from 5%)
+        if deviation >= 0.08:
             return True
 
         return False
@@ -457,8 +457,8 @@ class OGBFeedLogicManager:
 
         deviation = abs(current_ph - target_ph)
 
-        # pH tolerance is tighter (±0.2)
-        if deviation >= 0.2:
+        # pH tolerance is tighter (±0.3 - increased from ±0.2)
+        if deviation >= 0.3:
             return True
 
         return False

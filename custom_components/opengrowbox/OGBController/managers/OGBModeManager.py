@@ -32,9 +32,6 @@ class OGBModeManager:
         # Closed Environment Manager for ambient-enhanced control
         self.closedEnvironmentManager = ClosedEnvironmentManager(dataStore, self.event_manager, room, hass)
 
-        # Ultra Instinct Manager - lazy initialization (only when mode is selected)
-        self.ultraInstinctManager = None
-
         # Drying Actions for drying mode handling
         self.dryingActions = DryingActions(dataStore, self.event_manager, room)
 
@@ -91,8 +88,6 @@ class OGBModeManager:
             await self.handle_premium_modes(False)
         elif tentMode == "Closed Environment":
             await self.handle_closed_environment()
-        elif tentMode == "Ultra Instinct":
-            await self.handle_ultra_instinct()
         elif tentMode == "Disabled":
             await self.handle_disabled_mode()
 
@@ -110,39 +105,17 @@ class OGBModeManager:
 
     async def handle_closed_environment(self):
         """
-        Handhabt den Modus 'Closed Environment' für sealed grow chambers.
-        Uses ambient-enhanced control similar to VPD perfection.
+        Handhabt den Modus 'Closed Environment' für sealed grow chambers (stateless).
+        Executes one control cycle with ambient-enhanced logic.
         """
-        _LOGGER.info(f"ModeManager: {self.room} Modus 'Closed Environment' aktiviert.")
+        _LOGGER.debug(f"ModeManager: {self.room} executing Closed Environment cycle")
 
-        # Start the closed environment control manager
-        await self.closedEnvironmentManager.start_control()
+        # Execute single control cycle (stateless like VPD Perfection)
+        await self.closedEnvironmentManager.execute_cycle()
 
         # Log mode activation
         await self.event_manager.emit(
             "LogForClient", {"Name": self.room, "Mode": "Closed Environment"}
-        )
-
-    async def handle_ultra_instinct(self):
-        """
-        Handhabt den Modus 'Ultra Instinct' für adaptive Multi-Variable Steuerung.
-        Advanced mode with intelligent optimization and adaptive learning.
-        """
-        _LOGGER.info(f"ModeManager: {self.room} Modus 'Ultra Instinct' aktiviert.")
-
-        # Lazy initialization - only create when needed
-        if self.ultraInstinctManager is None:
-            from .UltraInstinctManager import UltraInstinctManager
-            self.ultraInstinctManager = UltraInstinctManager(
-                self.data_store, self.event_manager, self.room, self.hass
-            )
-
-        # Start the Ultra Instinct control manager
-        await self.ultraInstinctManager.start_control()
-
-        # Log mode activation
-        await self.event_manager.emit(
-            "LogForClient", {"Name": self.room, "Mode": "Ultra Instinct"}
         )
 
     ## VPD Modes
@@ -176,7 +149,7 @@ class OGBModeManager:
                 f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD."
             )
             await self.event_manager.emit("reduce_vpd", capabilities)
-        elif currentVPD != perfectionVPD:
+        elif abs(currentVPD - perfectionVPD) > 0.01:
             _LOGGER.debug(
                 f"{self.room}: Current VPD ({currentVPD}) is within range but not at perfection ({perfectionVPD}). Fine-tuning."
             )
@@ -232,7 +205,7 @@ class OGBModeManager:
                     f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD."
                 )
                 await self.event_manager.emit("reduce_vpd", capabilities)
-            elif currentVPD != targetedVPD:
+            elif abs(currentVPD - targetedVPD) > 0.01:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is within range but not at Targeted ({targetedVPD}). Fine-tuning."
                 )

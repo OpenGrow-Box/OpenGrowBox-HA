@@ -34,9 +34,8 @@ class OGBDeviceManager:
         self.regListener = regListener
         self.data_store = dataStore
         self.event_manager = event_manager
-        self.event_manager = event_manager  # Also provide snake_case version
+
         self.is_initialized = False
-        self._initialization_complete = False  # Prevent DeviceUpdater from setting up devices during initial startup
         self._devicerefresh_task: asyncio.Task | None = None
         self.init()
 
@@ -113,25 +112,12 @@ class OGBDeviceManager:
 
         _LOGGER.debug(f"Device:->{identified_device} identification Success")
 
-        devices = self.data_store.get("devices") or []
 
-        # Check if device with same name already exists - replace it instead of duplicating
-        existing_device_index = None
-        for i, existing_device in enumerate(devices):
-            if hasattr(existing_device, 'deviceName') and existing_device.deviceName == identified_device.deviceName:
-                existing_device_index = i
-                break
-
-        if existing_device_index is not None:
-            # Replace existing device with updated one
-            _LOGGER.info(f"Replacing existing device: {identified_device.deviceName}")
-            devices[existing_device_index] = identified_device
-        else:
-            # Add new device
-            devices.append(identified_device)
-
+        devices = self.data_store.get("devices")
+        devices.append(identified_device)
         self.data_store.set("devices", devices)
-        _LOGGER.info(f"{'Updated' if existing_device_index is not None else 'Added'} device: {identified_device.deviceName}")
+
+        _LOGGER.info(f"Added new device From List: {identified_device}")
         return identified_device
 
     async def removeDevice(self, deviceName: str):
@@ -391,10 +377,6 @@ class OGBDeviceManager:
         }
         return device_classes.get(device_type, Device)
 
-    def set_initialization_complete(self):
-        """Mark initialization as complete, enabling DeviceUpdater to manage devices."""
-        self._initialization_complete = True
-        _LOGGER.info(f"{self.room}: Device initialization complete, DeviceUpdater now active")
 
     async def DeviceUpdater(self):
         controlOption = self.data_store.get("mainControl")
@@ -484,14 +466,10 @@ class OGBDeviceManager:
                 await self.setupDevice(device)
 
         if newDevices:
-            # Only setup devices if initialization is complete (coordinator.startOGB has finished)
-            if self._initialization_complete:
-                _LOGGER.warning(f"Found {len(newDevices)} new devices, initializing...")
-                for device in newDevices:
-                    _LOGGER.debug(f"Registering new device: {device}")
-                    await self.setupDevice(device)
-            else:
-                _LOGGER.debug(f"Found {len(newDevices)} new devices during initialization, skipping (coordinator will handle)")
+            _LOGGER.warning(f"Found {len(newDevices)} new devices, initializing...")
+            for device in newDevices:
+                _LOGGER.debug(f"Registering new device: {device}")
+                await self.setupDevice(device)
         else:
             _LOGGER.warning("Device-Check: No new devices found.")
 

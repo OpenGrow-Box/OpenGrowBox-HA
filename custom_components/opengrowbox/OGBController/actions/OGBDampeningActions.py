@@ -557,9 +557,15 @@ class OGBDampeningActions:
                     continue
 
             elif capability == "canCool" and action_type == "Reduce":
-                # Reducing cooling (less cooling) is appropriate when temp is high
-                # This increases VPD by allowing temperature to rise
-                pass  # Allow this action
+                # Only reduce cooling if temp is not critically high
+                # Safety check: Don't reduce cooling when temp is above safe threshold
+                if current_temp >= max_temp - 1.0:  # Within 1°C of max temp
+                    _LOGGER.debug(
+                        f"{self.ogb.room}: Blocking cooler reduction - "
+                        f"temp {current_temp}°C too close to max {max_temp}°C"
+                    )
+                    continue
+                # Otherwise allow: Reducing cooling increases VPD by allowing temp to rise
 
             # Apply humidity buffer zones
             elif capability == "canHumidify" and action_type == "Increase":
@@ -650,7 +656,7 @@ class OGBDampeningActions:
         if abs(temp_dev) > 1.0:  # Significant temperature deviation
             if vpd_status in ["critical", "high"]:
                 # Urgent temperature correction
-                temp_actions = self._create_temperature_correction_actions(temp_dev, priority="high")
+                temp_actions = self._create_temperature_correction_actions(temp_dev, priority="high", vpd_status=vpd_status)
                 enhanced.extend(temp_actions)
 
         # Humidity deviation handling based on VPD status
@@ -779,10 +785,16 @@ class OGBDampeningActions:
 
         return actions
 
-    def _create_temperature_correction_actions(self, temp_dev, priority="medium"):
+    def _create_temperature_correction_actions(self, temp_dev, priority="medium", vpd_status="medium"):
         """Create temperature correction actions.
         
         Only creates actions for capabilities that actually exist.
+        Respects VPD status to avoid conflicting actions (e.g., heating when VPD is too high).
+        
+        Args:
+            temp_dev: Temperature deviation from target
+            priority: Action priority (low, medium, high, emergency)
+            vpd_status: Current VPD status (low, medium, high, critical) to prevent conflicting actions
         """
         actions = []
         caps = self.ogb.dataStore.get("capabilities") or {}
@@ -792,6 +804,7 @@ class OGBDampeningActions:
 
         if temp_dev > 0:  # Too hot - need cooling
             if caps.get("canCool", {}).get("state"):
+                # Cooling is generally safe for all VPD states (reduces both temp and humidity)
                 actions.append(OGBActionPublication(
                     capability="canCool",
                     action="Increase",
@@ -801,13 +814,21 @@ class OGBDampeningActions:
                 ))
         else:  # Too cold - need heating
             if caps.get("canHeat", {}).get("state"):
-                actions.append(OGBActionPublication(
-                    capability="canHeat",
-                    action="Increase",
-                    Name=self.ogb.room,
-                    message=f"Temperature correction (deviation: {temp_dev:.1f}°C)",
-                    priority=priority
-                ))
+                # CRITICAL FIX: Never heat when VPD is already too high!
+                # Heating increases temperature which increases VPD further
+                if vpd_status not in ["high", "critical"]:
+                    actions.append(OGBActionPublication(
+                        capability="canHeat",
+                        action="Increase",
+                        Name=self.ogb.room,
+                        message=f"Temperature correction (deviation: {temp_dev:.1f}°C)",
+                        priority=priority
+                    ))
+                else:
+                    _LOGGER.debug(
+                        f"{self.ogb.room}: Skipping heater increase - VPD is {vpd_status} "
+                        f"(temp deviation: {temp_dev:.1f}°C). Heating would worsen VPD."
+                    )
 
         return actions
 
@@ -920,7 +941,7 @@ class OGBDampeningActions:
                 resolved_actions.extend(actions)
             else:
                 # Select highest priority action
-                priority_order = {"high": 1, "medium": 2, "low": 3}
+                priority_order = {"emergency": 0, "high": 1, "medium": 2, "low": 3}
                 best_action = min(
                     actions,
                     key=lambda x: priority_order.get(

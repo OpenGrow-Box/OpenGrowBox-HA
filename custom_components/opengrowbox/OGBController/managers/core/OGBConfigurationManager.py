@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 
 from ...utils.calcs import calculate_perfect_vpd
-from ...utils.sensorUpdater import _update_specific_sensor
+from ...utils.sensorUpdater import _update_specific_number, _update_specific_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -363,7 +363,7 @@ class OGBConfigurationManager:
                 value in ["MidFlower", "LateFlower"]
                 or current_stage in ["MidFlower", "LateFlower"]
             ):
-                await _update_specific_sensor(
+                await _update_specific_number(
                     "ogb_humidityweight_", self.room, float(1.25), self.hass
                 )
 

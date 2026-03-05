@@ -218,6 +218,21 @@ class Device:
             self.initialization = False
             self.isInitialized = True
             logging.warning(f"Device: {self.deviceName} Initialization done {self}")
+            
+            # Emit DeviceInitialized event for FallBackManager monitoring
+            # Schedule async emit since deviceInit is not async
+            asyncio.create_task(
+                self.eventManager.emit(
+                    "DeviceInitialized",
+                    {
+                        "entity_id": f"device.{self.deviceName}",
+                        "device_type": self.deviceType,
+                        "device_name": self.deviceName,
+                        "context": getattr(self, 'deviceLabel', 'unknown'),
+                        "room": self.inRoom,
+                    },
+                )
+            )
         else:
             raise Exception(f"Device could not be Initialized {self.deviceName}")
 
@@ -379,8 +394,10 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: Loaded min/max voltage: {self.minVoltage}-{self.maxVoltage}")
 
         if "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
-            self.minDuty = minMaxSets.get("minDuty")
-            self.maxDuty = minMaxSets.get("maxDuty")
+            min_duty_val = minMaxSets.get("minDuty")
+            max_duty_val = minMaxSets.get("maxDuty")
+            self.minDuty = float(min_duty_val) if min_duty_val is not None else 0
+            self.maxDuty = float(max_duty_val) if max_duty_val is not None else 100
             _LOGGER.debug(f"{self.deviceName}: Loaded min/max duty: {self.minDuty}-{self.maxDuty}")
 
         # Clamp voltage to min/max range
@@ -1579,8 +1596,10 @@ class Device:
             minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
             if minMaxSets and minMaxSets.get("active"):
                 # User has set device-specific values - preserve them
-                self.minDuty = minMaxSets.get("minDuty", old_min)
-                self.maxDuty = minMaxSets.get("maxDuty", old_max)
+                min_duty_val = minMaxSets.get("minDuty", old_min)
+                max_duty_val = minMaxSets.get("maxDuty", old_max)
+                self.minDuty = float(min_duty_val) if min_duty_val is not None else 0
+                self.maxDuty = float(max_duty_val) if max_duty_val is not None else 100
                 _LOGGER.info(
                     f"{self.deviceName}: Device-specific min/max active, preserving values: "
                     f"min={self.minDuty}, max={self.maxDuty}"

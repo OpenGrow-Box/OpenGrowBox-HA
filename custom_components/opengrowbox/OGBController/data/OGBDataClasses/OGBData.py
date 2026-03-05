@@ -278,6 +278,7 @@ class OGBConf:
             "co2ppm": {"target": 0, "current": 400, "minPPM": 400, "maxPPM": 1800},
             "weights": {"temp": 0, "hum": 0, "defaultValue": 1},
             "minmax": {"minTemp": 0, "maxTemp": 0, "minHum": 0, "maxHum": 0},
+            "closedEnvironment": {"ambientInfluenceStrength": 0.3},
         }
     )
     isPlantDay: Dict[str, Any] = field(
@@ -384,7 +385,6 @@ class OGBConf:
             "LateFlower": LightStage(min=70, max=100, phase=""),
         }
     )
-
     lightLedTyes: Dict[str, Any] = field(
         default_factory=lambda: {
             "fullspektrum_grow": 15,
@@ -398,7 +398,6 @@ class OGBConf:
             "manual": 0,
         }
     )
-
     # Premium subscription data (from API login)
     # Contains: plan_name, features, limits, usage
     subscriptionData: Dict[str, Any] = field(
@@ -409,7 +408,6 @@ class OGBConf:
             "usage": {},
         }
     )
-
     weather: Dict[str, Any] = field(
         default_factory=lambda: {
             "temperature": None,

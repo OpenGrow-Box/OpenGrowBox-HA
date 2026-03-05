@@ -53,17 +53,26 @@ class PumpCalibration:
             measured_time: Time in seconds to dispense target volume
             target_volume: Target volume in ml
         """
-        if measured_time > 0:
+        if measured_time > 0 and measured_time < 120:  # Max 2 minutes for safety
+            old_factor = self.calibration_factor if self.is_calibrated else 0.5  # Default 0.5 ml/s
             self.calibration_factor = target_volume / measured_time  # ml per second
             self.last_calibration = datetime.now()
             self.is_calibrated = True
-            self.accuracy_score = min(
-                100.0, (target_volume / (measured_time * self.calibration_factor)) * 100
-            )
+            
+            # Calculate accuracy: how close was the measurement to expected time
+            expected_time = target_volume / old_factor if old_factor > 0 else target_volume / 0.5
+            if expected_time > 0:
+                time_ratio = measured_time / expected_time
+                # Accuracy: 100% = perfect match, <100% = faster than expected, >100% = slower
+                self.accuracy_score = min(100.0, max(0.0, (1.0 / time_ratio) * 100.0))
+            else:
+                self.accuracy_score = 100.0
+                
             self.measured_time = measured_time
 
             _LOGGER.info(
-                f"Pump {self.pump_type} calibrated: {self.calibration_factor:.2f} ml/s, accuracy: {self.accuracy_score:.1f}%"
+                f"Pump {self.pump_type} calibrated: {self.calibration_factor:.2f} ml/s, "
+                f"accuracy: {self.accuracy_score:.1f}% (expected: {expected_time:.1f}s, measured: {measured_time:.1f}s)"
             )
 
     def is_calibration_valid(self) -> bool:
@@ -174,6 +183,10 @@ class OGBFeedCalibrationManager:
             "switch.feedpump_b",
             "switch.feedpump_c",
             "switch.feedpump_w",
+            "switch.feedpump_x",
+            "switch.feedpump_y",
+            "switch.feedpump_pp",
+            "switch.feedpump_pm",
         ]
 
         for pump_type in pump_types:

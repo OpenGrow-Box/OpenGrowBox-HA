@@ -55,41 +55,41 @@ class OGBVPDActions:
         action_map = []
 
         # Build action map for VPD increase
-        if capabilities["canExhaust"]["state"]:
+        if capabilities.get("canExhaust", {}).get("state", False):
             action_map.append(
                 self._create_action("canExhaust", "Increase", action_message)
             )
-        if capabilities["canIntake"]["state"]:
+        if capabilities.get("canIntake", {}).get("state", False):
             action_map.append(
                 self._create_action("canIntake", "Reduce", action_message)
             )
-        if capabilities["canVentilate"]["state"]:
+        if capabilities.get("canVentilate", {}).get("state", False):
             action_map.append(
                 self._create_action("canVentilate", "Increase", action_message)
             )
-        if capabilities["canHumidify"]["state"]:
+        if capabilities.get("canHumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canHumidify", "Reduce", action_message)
             )
-        if capabilities["canDehumidify"]["state"]:
+        if capabilities.get("canDehumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canDehumidify", "Increase", action_message)
             )
-        if capabilities["canHeat"]["state"]:
+        if capabilities.get("canHeat", {}).get("state", False):
             action_map.append(
                 self._create_action("canHeat", "Increase", action_message)
 
             )
-        if capabilities["canCool"]["state"]:
+        if capabilities.get("canCool", {}).get("state", False):
             action_map.append(self._create_action("canCool", "Reduce", action_message))
-        if capabilities["canClimate"]["state"]:
+        if capabilities.get("canClimate", {}).get("state", False):
             action_map.append(self._create_action("canClimate", "Eval", action_message))
         # Check CO2 control switch for VPD-based CO2 actions
         co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities["canCO2"]["state"] and co2_control_enabled:
+        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Increase", action_message))
 
-        if vpd_light_control == True and capabilities["canLight"]["state"]:
+        if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
                 self._create_action("canLight", "Increase", action_message)
             )
@@ -109,40 +109,40 @@ class OGBVPDActions:
         action_map = []
 
         # Build action map for VPD reduction
-        if capabilities["canExhaust"]["state"]:
+        if capabilities.get("canExhaust", {}).get("state", False):
             action_map.append(
                 self._create_action("canExhaust", "Reduce", action_message)
             )
-        if capabilities["canIntake"]["state"]:
+        if capabilities.get("canIntake", {}).get("state", False):
             action_map.append(
                 self._create_action("canIntake", "Increase", action_message)
             )
-        if capabilities["canVentilate"]["state"]:
+        if capabilities.get("canVentilate", {}).get("state", False):
             action_map.append(
                 self._create_action("canVentilate", "Reduce", action_message)
             )
-        if capabilities["canHumidify"]["state"]:
+        if capabilities.get("canHumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canHumidify", "Increase", action_message)
             )
-        if capabilities["canDehumidify"]["state"]:
+        if capabilities.get("canDehumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canDehumidify", "Reduce", action_message)
             )
-        if capabilities["canHeat"]["state"]:
+        if capabilities.get("canHeat", {}).get("state", False):
             action_map.append(self._create_action("canHeat", "Reduce", action_message))
-        if capabilities["canCool"]["state"]:
+        if capabilities.get("canCool", {}).get("state", False):
             action_map.append(
                 self._create_action("canCool", "Increase", action_message)
             )
-        if capabilities["canClimate"]["state"]:
+        if capabilities.get("canClimate", {}).get("state", False):
             action_map.append(self._create_action("canClimate", "Eval", action_message))
         # Check CO2 control switch for VPD-based CO2 actions
         co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities["canCO2"]["state"] and co2_control_enabled:
+        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Reduce", action_message))
 
-        if vpd_light_control == True and capabilities["canLight"]["state"]:
+        if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
                 self._create_action("canLight", "Reduce", action_message)
             )
@@ -189,53 +189,63 @@ class OGBVPDActions:
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
         action_message = "VPD-Increase Action"
 
-        # NEW BUFFER CHECK
-        tent_data = self.ogb.dataStore.get("tentData")
-        current_temp = tent_data["temperature"]
-        max_temp = tent_data["maxTemp"]
-        min_temp = tent_data["minTemp"]
+        # BUFFER CHECK with Null safety
+        tent_data = self.ogb.dataStore.get("tentData") or {}
+        current_temp = tent_data.get("temperature")
+        max_temp = tent_data.get("maxTemp")
+        min_temp = tent_data.get("minTemp")
 
         heater_buffer = 2.0
         cooler_buffer = 2.0
-        heater_cutoff_temp = max_temp - heater_buffer
-        cooler_cutoff_temp = min_temp + cooler_buffer
+        heater_cutoff_temp = max_temp - heater_buffer if max_temp is not None else None
+        cooler_cutoff_temp = min_temp + cooler_buffer if min_temp is not None else None
 
         action_map = []
 
-        # Build action map (same as increase_vpd but with dampening)
-        if capabilities["canExhaust"]["state"]:
+        # Build action map with buffer checks
+        if capabilities.get("canExhaust", {}).get("state", False):
             action_map.append(
                 self._create_action("canExhaust", "Increase", action_message)
             )
-        if capabilities["canIntake"]["state"]:
+        if capabilities.get("canIntake", {}).get("state", False):
             action_map.append(
                 self._create_action("canIntake", "Reduce", action_message)
             )
-        if capabilities["canVentilate"]["state"]:
+        if capabilities.get("canVentilate", {}).get("state", False):
             action_map.append(
                 self._create_action("canVentilate", "Increase", action_message)
             )
-        if capabilities["canHumidify"]["state"]:
+        if capabilities.get("canHumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canHumidify", "Reduce", action_message)
             )
-        if capabilities["canDehumidify"]["state"]:
+        if capabilities.get("canDehumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canDehumidify", "Increase", action_message)
             )
-        if capabilities["canHeat"]["state"]:
-            action_map.append(
-                self._create_action("canHeat", "Increase", action_message)
-            )
-        if capabilities["canCool"]["state"]:
-            action_map.append(self._create_action("canCool", "Reduce", action_message))
-        if capabilities["canClimate"]["state"]:
+        # Apply buffer: Only heat if temp is below heater cutoff
+        if capabilities.get("canHeat", {}).get("state", False):
+            if current_temp is None or heater_cutoff_temp is None or current_temp < heater_cutoff_temp:
+                action_map.append(
+                    self._create_action("canHeat", "Increase", action_message)
+                )
+            else:
+                _LOGGER.debug(f"{self.ogb.room}: Skipping heater increase - temp {current_temp}°C >= cutoff {heater_cutoff_temp}°C")
+        # Apply buffer: Only cool if temp is above cooler cutoff  
+        if capabilities.get("canCool", {}).get("state", False):
+            if current_temp is None or cooler_cutoff_temp is None or current_temp > cooler_cutoff_temp:
+                action_map.append(self._create_action("canCool", "Reduce", action_message))
+            else:
+                _LOGGER.debug(f"{self.ogb.room}: Skipping cooler reduce - temp {current_temp}°C <= cutoff {cooler_cutoff_temp}°C")
+        if capabilities.get("canClimate", {}).get("state", False):
             action_map.append(self._create_action("canClimate", "Eval", action_message))
-        if capabilities["canCO2"]["state"]:
+        # CO2 Control check (Bug #8 fix)
+        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Increase", action_message))
 
         if vpd_light_control == True:
-            if capabilities["canLight"]["state"]:
+            if capabilities.get("canLight", {}).get("state", False):
                 action_map.append(
                     self._create_action("canLight", "Increase", action_message)
                 )
@@ -255,39 +265,41 @@ class OGBVPDActions:
         action_map = []
 
         # Build action map for VPD reduction with dampening
-        if capabilities["canExhaust"]["state"]:
+        if capabilities.get("canExhaust", {}).get("state", False):
             action_map.append(
                 self._create_action("canExhaust", "Reduce", action_message)
             )
-        if capabilities["canIntake"]["state"]:
+        if capabilities.get("canIntake", {}).get("state", False):
             action_map.append(
                 self._create_action("canIntake", "Increase", action_message)
             )
-        if capabilities["canVentilate"]["state"]:
+        if capabilities.get("canVentilate", {}).get("state", False):
             action_map.append(
                 self._create_action("canVentilate", "Reduce", action_message)
             )
-        if capabilities["canHumidify"]["state"]:
+        if capabilities.get("canHumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canHumidify", "Increase", action_message)
             )
-        if capabilities["canDehumidify"]["state"]:
+        if capabilities.get("canDehumidify", {}).get("state", False):
             action_map.append(
                 self._create_action("canDehumidify", "Reduce", action_message)
             )
-        if capabilities["canHeat"]["state"]:
+        if capabilities.get("canHeat", {}).get("state", False):
             action_map.append(self._create_action("canHeat", "Reduce", action_message))
-        if capabilities["canCool"]["state"]:
+        if capabilities.get("canCool", {}).get("state", False):
             action_map.append(
                 self._create_action("canCool", "Increase", action_message)
             )
-        if capabilities["canClimate"]["state"]:
+        if capabilities.get("canClimate", {}).get("state", False):
             action_map.append(self._create_action("canClimate", "Eval", action_message))
-        if capabilities["canCO2"]["state"]:
+        # CO2 Control check (Bug #8 fix)
+        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Reduce", action_message))
 
         if vpd_light_control == True:
-            if capabilities["canLight"]["state"]:
+            if capabilities.get("canLight", {}).get("state", False):
                 action_map.append(
                     self._create_action("canLight", "Reduce", action_message)
                 )
@@ -304,6 +316,11 @@ class OGBVPDActions:
         # Get current VPD values
         current_vpd = self.ogb.dataStore.getDeep("vpd.current")
         perfection_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
+
+        # Validate VPD values before calculation (Bug #2 fix)
+        if current_vpd is None or perfection_vpd is None:
+            _LOGGER.warning(f"{self.ogb.room}: VPD values not available for fine-tuning (current={current_vpd}, perfect={perfection_vpd})")
+            return
 
         # Calculate delta and round to two decimal places
         delta = round(perfection_vpd - current_vpd, 2)

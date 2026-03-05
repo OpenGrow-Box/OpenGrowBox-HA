@@ -48,65 +48,25 @@ class ClosedEnvironmentManager:
         # Control logic engine
         self.control_logic = ClosedControlLogic(data_store, room)
 
-        # Control parameters
-        self.control_active = False
-        self.ambient_influence_strength = 0.3  # 30% ambient influence by default
-        self.update_interval = 60  # seconds
-
-        # Control state
-        self.last_control_time = None
-        self.control_task: Optional[asyncio.Task] = None
-
-        # Register event handlers
-        self.event_manager.on("closed_environment_cycle", self._handle_control_cycle)
-        self.event_manager.on("ambient_data_updated", self._handle_ambient_update)
+        # Control parameters (stateless - no background loop)
+        # Load from controlOptionData (like co2ppm, weights, etc.)
+        self.ambient_influence_strength = self.data_store.getDeep(
+            "controlOptionData.closedEnvironment.ambientInfluenceStrength", 0.3
+        )  # 30% ambient influence by default
 
         _LOGGER.info(f"Closed Environment Manager initialized for {room}")
 
-    async def start_control(self):
+    async def execute_cycle(self):
         """
-        Start the closed environment control loop.
+        Execute a complete closed environment control cycle (stateless).
+        Called once per cycle when Closed Environment mode is active.
         """
-        if self.control_active:
+        # Check if we're in Closed Environment mode
+        tent_mode = self.data_store.get("tentMode")
+        if tent_mode != "Closed Environment":
+            _LOGGER.debug(f"{self.room}: Not in Closed Environment mode (current: {tent_mode}), skipping")
             return
 
-        self.control_active = True
-        self.control_task = asyncio.create_task(self._control_loop())
-        _LOGGER.info(f"Closed environment control started for {self.room}")
-
-    async def stop_control(self):
-        """
-        Stop the closed environment control loop.
-        """
-        self.control_active = False
-
-        if self.control_task:
-            self.control_task.cancel()
-            try:
-                await self.control_task
-            except asyncio.CancelledError:
-                pass
-
-        _LOGGER.info(f"Closed environment control stopped for {self.room}")
-
-    async def _control_loop(self):
-        """
-        Main control loop for closed environment management.
-        Runs similar to VPD perfection but with ambient-enhanced logic.
-        """
-        while self.control_active:
-            try:
-                await self._execute_control_cycle()
-                await asyncio.sleep(self.update_interval)
-
-            except Exception as e:
-                _LOGGER.error(f"Error in closed environment control loop for {self.room}: {e}")
-                await asyncio.sleep(30)  # Back off on errors
-
-    async def _execute_control_cycle(self):
-        """
-        Execute a complete closed environment control cycle.
-        """
         # Get current conditions
         capabilities = self.data_store.getDeep("capabilities")
         if not capabilities:
@@ -136,9 +96,6 @@ class ClosedEnvironmentManager:
         await self.event_manager.emit("maintain_co2", capabilities)
         await self.event_manager.emit("monitor_o2_safety", capabilities)
         await self.event_manager.emit("optimize_air_recirculation", capabilities)
-
-        # Update control timestamp
-        self.last_control_time = datetime.now()
 
         _LOGGER.debug(f"Closed environment cycle completed for {self.room}")
 
@@ -203,32 +160,17 @@ class ClosedEnvironmentManager:
 
         return actions
 
-    async def _handle_control_cycle(self, capabilities: Dict[str, Any]):
-        """
-        Handle manual control cycle requests.
-        """
-        await self._execute_control_cycle()
-
-    async def _handle_ambient_update(self, data: Dict[str, Any]):
-        """
-        Handle ambient data updates for immediate control adjustments.
-        """
-        _LOGGER.debug(f"Ambient data updated for {self.room}, triggering control cycle")
-        await self._execute_control_cycle()
-
     def get_control_status(self) -> Dict[str, Any]:
         """
-        Get current closed environment control status.
+        Get current closed environment control status (stateless).
 
         Returns:
             Dictionary with control status information
         """
         return {
             "room": self.room,
-            "control_active": self.control_active,
+            "mode": self.data_store.get("tentMode"),
             "ambient_influence_strength": self.ambient_influence_strength,
-            "update_interval": self.update_interval,
-            "last_control_time": self.last_control_time.isoformat() if self.last_control_time else None,
             "current_targets": {
                 "temperature": self.data_store.getDeep("targets.temperature"),
                 "humidity": self.data_store.getDeep("targets.humidity"),
@@ -247,11 +189,12 @@ class ClosedEnvironmentManager:
             strength: Influence strength (0.0 to 1.0)
         """
         self.ambient_influence_strength = max(0.0, min(1.0, strength))
+        # Persist to data_store for stateless operation (in controlOptionData like other settings)
+        self.data_store.setDeep("controlOptionData.closedEnvironment.ambientInfluenceStrength", self.ambient_influence_strength)
         _LOGGER.info(f"Ambient influence strength set to {self.ambient_influence_strength} for {self.room}")
 
     async def emergency_stop(self):
         """
-        Emergency stop of all closed environment control.
+        Emergency stop of all closed environment control (stateless - just logs warning).
         """
-        await self.stop_control()
-        _LOGGER.warning(f"Emergency stop initiated for closed environment control in {self.room}")
+        _LOGGER.warning(f"Emergency stop noted for closed environment control in {self.room} (stateless mode)")
