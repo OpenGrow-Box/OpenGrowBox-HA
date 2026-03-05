@@ -62,35 +62,39 @@ The system uses **proportional dosing** to deliver precise nutrient amounts base
 #### Dead Zone Logic
 ```python
 # Prevent unnecessary micro-adjustments
-if abs(deviation) < 0.03:  # 3% EC tolerance
+if abs(deviation) < 0.08:  # 8% EC tolerance (conservative)
     return {'nutrients_needed': False}
 
-if abs(deviation) < 0.1:   # 0.1 pH tolerance
+if abs(deviation) < 0.2:   # 0.2 pH tolerance (conservative)
     return {'ph_down_needed': False}
 ```
 
 #### Proportional Dose Calculation
 ```python
-# Scale dose amount with deviation severity
-base_dose_per_5_percent = 2.5  # ml per nutrient type
+# Scale dose amount with deviation severity (conservative dosing)
+base_dose_per_5_percent = 1.5  # ml per nutrient type (reduced for safety)
 dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
-nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 10.0)
+nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at 5ml
 ```
 
-#### Adjustment Examples
-| Deviation | Old System | New Proportional |
-|-----------|------------|------------------|
-| EC 2% | No action | No action (dead zone) |
-| EC 5% | Full 5ml dose | 2.5ml dose |
-| EC 10% | Full 5ml dose | 5.0ml dose |
-| pH 0.1 | No action | No action (dead zone) |
-| pH 0.3 | Full pH dose | 1.5ml pH adjuster |
+#### Adjustment Examples (Conservative Settings)
+| Deviation | System Response | Dose Amount |
+|-----------|----------------|-------------|
+| EC < 8% | No action (dead zone) | 0ml |
+| EC 8% | Small correction | 1.2ml per nutrient |
+| EC 15% | Medium correction | 2.25ml per nutrient |
+| EC 25%+ | Maximum correction | 5.0ml per nutrient (cap) |
+| pH < 0.2 | No action (dead zone) | 0ml |
+| pH 0.3 | Small correction | 0.75ml pH adjuster |
+| pH 0.5 | Medium correction | 1.25ml pH adjuster |
+| pH 0.6+ | Maximum correction | 1.5ml pH adjuster (cap) |
 
-### Feeding Frequency Optimization
+### Feeding Frequency (Conservative Settings)
 
-- **Checks**: Every 10 minutes (reduced from 5 minutes)
-- **Actual Dosing**: Every 30+ minutes (increased safety margin)
-- **Daily Limit**: 12 doses maximum (allows frequent small adjustments)
+- **Sensor Check Interval**: Every 15 minutes
+- **Minimum Dosing Interval**: 60 minutes between doses
+- **Daily Limit**: Maximum 6 doses per day
+- **Emergency Threshold**: 25% deviation triggers immediate correction
 
 ## Hydroponic Modes
 
@@ -249,13 +253,13 @@ def _calculate_ph_adjustment(self, current_ph: Optional[float], target_ph: float
     deviation = current_ph - target_ph
 
     # Dead zone - don't adjust for small deviations
-    if abs(deviation) < 0.1:  # 0.1 pH tolerance
+    if abs(deviation) < 0.2:  # 0.2 pH tolerance (increased from 0.1)
         return {'ph_down_needed': False, 'ph_up_needed': False}
 
     # Proportional dosing: more deviation = more pH adjustment
-    base_dose_per_0_2_ph = 1.0  # ml for 0.2 pH deviation
+    base_dose_per_0_2_ph = 0.5  # ml for 0.2 pH deviation (reduced from 1.0)
     dose_multiplier = abs(deviation) / 0.2
-    ph_dose_ml = min(base_dose_per_0_2_ph * dose_multiplier, 3.0)  # Cap at 3ml
+    ph_dose_ml = min(base_dose_per_0_2_ph * dose_multiplier, 1.5)  # Cap at 1.5ml
 
     if deviation > 0:  # pH too high
         return {
@@ -301,13 +305,13 @@ def _calculate_ec_adjustment(self, current_ec: Optional[float], target_ec: float
     deviation = abs(current_ec - target_ec) / target_ec
 
     # Dead zone - don't adjust for small deviations
-    if deviation < 0.03:  # 3% tolerance
+    if deviation < 0.08:  # 8% tolerance (increased from 3%)
         return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
 
     # Proportional dosing: more deviation = more nutrients
-    base_dose_per_5_percent = 2.5  # ml per nutrient type for 5% deviation
+    base_dose_per_5_percent = 1.5  # ml per nutrient type for 5% deviation (reduced from 2.5)
     dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
-    nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 10.0)  # Cap at 10ml
+    nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at 5ml (reduced from 10ml)
 
     return {
         'nutrients_needed': True,
@@ -409,17 +413,32 @@ def calculate_feeding_volume(self, plant_stage: str, plant_count: int) -> float:
 class PumpCalibration:
     """Advanced pump calibration with accuracy tracking."""
     pump_type: str
-    calibration_factor: float = 1.0
+    calibration_factor: float = 0.5  # ml per second (default flow rate)
     last_calibration: Optional[datetime] = None
     is_calibrated: bool = False
-    accuracy_score: float = 0.0  # Percentage accuracy
+    accuracy_score: float = 0.0  # Percentage accuracy (0-100)
     test_volume: float = 10.0  # ml calibration test volume
+    measured_time: float = 0.0  # seconds measured during calibration
 
     def calculate_adjustment(self) -> float:
-        """Calculate flow rate adjustment factor."""
+        """Calculate flow rate (ml/s) for dosing time calculation."""
         if not self.is_calibrated or self.calibration_factor <= 0:
-            return 1.0
+            return 0.5  # Default: 0.5 ml/s
         return self.calibration_factor
+
+    def update_calibration(self, measured_time: float, target_volume: float = 10.0):
+        """Update calibration with new measurement."""
+        if measured_time > 0 and measured_time < 120:  # Safety: max 2 minutes
+            old_factor = self.calibration_factor if self.is_calibrated else 0.5
+            self.calibration_factor = target_volume / measured_time  # ml/s
+            self.last_calibration = datetime.now()
+            self.is_calibrated = True
+            
+            # Calculate accuracy: compare expected vs measured time
+            expected_time = target_volume / old_factor
+            time_ratio = measured_time / expected_time
+            self.accuracy_score = min(100.0, max(0.0, (1.0 / time_ratio) * 100))
+            self.measured_time = measured_time
 
     def is_calibration_valid(self) -> bool:
         """Check if calibration is still valid (30 days)."""
@@ -429,19 +448,42 @@ class PumpCalibration:
         return (datetime.now() - self.last_calibration) < max_age
 ```
 
+**Supported Pump Types**:
+- `switch.feedpump_a` - Nutrient A (Veg)
+- `switch.feedpump_b` - Nutrient B (Flower)
+- `switch.feedpump_c` - Nutrient C (Micro)
+- `switch.feedpump_w` - Water
+- `switch.feedpump_x` - Custom X
+- `switch.feedpump_y` - Custom Y
+- `switch.feedpump_pp` - pH Down (pH-)
+- `switch.feedpump_pm` - pH Up (pH+)
+
 #### Automatic Calibration Management
 ```python
 class OGBFeedCalibrationManager:
-    """Manages pump calibration with auto-recalibration."""
+    """Manages pump calibration with auto-recalibration for all 8 pump types."""
 
     async def start_pump_calibration(self, pump_type: str) -> bool:
-        """Start calibration for specific pump with accuracy validation."""
+        """Start calibration for specific pump with accuracy validation.
+        
+        Measures actual time to dispense test volume (10ml) and calculates
+        flow rate: calibration_factor = ml / seconds
+        """
 
     async def start_daily_calibration(self):
-        """Enable automatic daily recalibration at 2 AM."""
+        """Enable automatic daily recalibration at 2 AM.
+        
+        Checks all 8 pump types and recalibrates expired or invalid calibrations.
+        """
 
     async def validate_all_calibrations(self) -> bool:
-        """Validate all pumps have current, accurate calibrations."""
+        """Validate all pumps have current, accurate calibrations.
+        
+        Returns False if any pump has:
+        - No calibration (is_calibrated = False)
+        - Expired calibration (>30 days)
+        - Low accuracy (<80%)
+        """
 ```
 
 #### Pump Operation
@@ -452,22 +494,25 @@ async def dose_nutrient(self, pump_id: str, volume_ml: float) -> bool:
     # Get pump calibration data
     calibration = self.get_pump_calibration(pump_id)
 
-    # Apply calibration adjustment
-    adjusted_volume = volume_ml * calibration.calibration_factor
-
-    # Calculate dosing time
-    ml_per_second = self.get_pump_flow_rate(pump_id)
-    dosing_time_seconds = adjusted_volume / ml_per_second
+    # Get calibration factor (ml/s flow rate)
+    # Uses default 0.5 ml/s if not calibrated
+    calibration_factor = calibration.calibration_factor if calibration else 0.5
+    
+    # Calculate dosing time: volume / flow_rate = seconds
+    # Example: 1.0ml / 0.5 ml/s = 2.0 seconds
+    dosing_time_seconds = volume_ml / calibration_factor
 
     # Execute dosing
     success = await self.activate_pump(pump_id, dosing_time_seconds)
 
     if success:
         # Record actual dosing for future calibration
-        self.record_dosing_event(pump_id, volume_ml, adjusted_volume)
+        self.record_dosing_event(pump_id, volume_ml, dosing_time_seconds)
 
     return success
 ```
+
+**Key Principle**: The calibration_factor represents the pump's flow rate in ml/s. To achieve the desired volume, we divide the target volume by the flow rate to get the required run time in seconds. This ensures precise dosing regardless of pump speed variations.
 
 ## Environmental Integration
 
@@ -638,25 +683,44 @@ hydroponic_config = {
 
 ```python
 async def calibrate_pump(self, pump_id: str):
-    """Calibrate a dosing pump for accuracy."""
+    """Calibrate a dosing pump for accuracy.
+    
+    The calibration_factor represents the pump's flow rate in ml/s.
+    This is used to calculate dosing time: time = volume / flow_rate
+    """
 
-    # Step 1: Prepare calibration container
-    calibration_volume = 10.0  # 10ml test dose
+    # Step 1: Prepare calibration container with measuring scale
+    test_volume = 10.0  # 10ml test dose (can be adjusted)
 
-    # Step 2: Execute test dose
-    await self.dose_nutrient(pump_id, calibration_volume)
+    # Step 2: Record start time and execute test dose
+    start_time = datetime.now()
+    await self.activate_pump(pump_id, estimated_time)  # Run pump
 
-    # Step 3: Measure actual volume dispensed
-    actual_volume = await self.measure_dispensed_volume()
+    # Step 3: Record end time when pump stops
+    end_time = datetime.now()
+    measured_time = (end_time - start_time).total_seconds()
 
-    # Step 4: Calculate calibration factor
-    calibration_factor = calibration_volume / actual_volume
+    # Step 4: Calculate calibration factor (flow rate in ml/s)
+    # Formula: calibration_factor = ml / seconds
+    # Example: 10ml / 20s = 0.5 ml/s
+    calibration_factor = test_volume / measured_time
 
-    # Step 5: Update pump configuration
-    self.update_pump_calibration(pump_id, calibration_factor)
+    # Step 5: Calculate accuracy by comparing to previous calibration
+    old_factor = self.get_previous_calibration_factor(pump_id)
+    expected_time = test_volume / old_factor if old_factor > 0 else test_volume / 0.5
+    accuracy = min(100.0, (expected_time / measured_time) * 100)
 
-    _LOGGER.info(f"Pump {pump_id} calibrated: factor = {calibration_factor:.3f}")
+    # Step 6: Update pump configuration
+    self.update_pump_calibration(pump_id, calibration_factor, accuracy)
+
+    _LOGGER.info(f"Pump {pump_id} calibrated: {calibration_factor:.3f} ml/s, accuracy: {accuracy:.1f}%")
 ```
+
+**Important Notes**:
+- The `calibration_factor` is the **flow rate** (ml/s), NOT a multiplier
+- Dosing time is calculated as: `time_seconds = desired_volume_ml / flow_rate_ml_per_s`
+- A higher calibration_factor means a faster pump (shorter dosing time)
+- All 8 pump types (A, B, C, W, X, Y, pH-, pH+) are calibrated independently
 
 ---
 
@@ -664,25 +728,31 @@ async def calibrate_pump(self, pump_id: str):
 
 ### ✅ Implemented Features
 - **Proportional Dosing**: Dose amounts scale with deviation severity
-- **Dead Zone Logic**: Prevents unnecessary micro-adjustments (< 3% EC, < 0.1 pH)
-- **Frequent Small Doses**: 30-minute minimum intervals vs 2-hour batches
-- **Advanced Calibration**: Auto-recalibration with accuracy scoring
+- **Dead Zone Logic**: Prevents unnecessary micro-adjustments (< 8% EC, < 0.2 pH)
+- **Conservative Dosing**: 60-minute minimum intervals, maximum 6 doses/day
+- **Advanced Calibration**: Auto-recalibration with accuracy scoring for all 8 pump types
+- **Correct Calibration Math**: Flow rate (ml/s) used for time calculation, not volume multiplier
 - **Parameter Validation**: Comprehensive validation with plant stage adaptation
 
 ### 🔧 Key Improvements
-- **Prevents Over-Fertilization**: Small doses instead of large batches
-- **Responsive Control**: Adjusts based on real-time deviations
-- **Equipment Protection**: Reduces pump cycling and wear
+- **Prevents Over-Fertilization**: Conservative dosing with larger dead zones
+- **Stable Control**: Less frequent adjustments prevent oscillation
+- **Equipment Protection**: Reduced pump cycling (max 6x/day vs 12x/day)
 - **Calibration Accuracy**: Automatic validation and adjustment
+- **System Stability**: 8% EC and 0.2 pH dead zones prevent micro-adjustments
 
-### 📊 Performance Metrics
-- **Adjustment Frequency**: Every 30+ minutes (vs 2+ hours)
+### 📊 Performance Metrics (Conservative Settings)
+- **Sensor Check Interval**: Every 15 minutes
+- **Minimum Dosing Interval**: 60 minutes between doses
 - **Dose Precision**: 0.1ml increments with calibration factors
-- **Safety Limits**: 10ml nutrient cap, 3ml pH adjuster cap
-- **Daily Capacity**: 12 adjustments (vs 8 batch preparations)
+- **Safety Limits**: 5ml nutrient cap, 1.5ml pH adjuster cap
+- **Daily Capacity**: Maximum 6 doses per day
+- **Dead Zones**: 8% EC tolerance, 0.2 pH tolerance
+- **Pump Calibration**: 8 pump types (A, B, C, W, X, Y, pH-, pH+), 30-day validity, 80% accuracy threshold
+- **Calibration Factor**: Flow rate in ml/s (default: 0.5 ml/s), used for time calculation
 
 ---
 
-**Last Updated**: December 24, 2025
-**Version**: 3.0 (Proportional Nutrient Management)
-**Status**: Production Ready with Advanced Features
+**Last Updated**: March 5, 2026
+**Version**: 3.1 (Conservative Nutrient Management)
+**Status**: Production Ready with Conservative Settings

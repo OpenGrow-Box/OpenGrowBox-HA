@@ -73,13 +73,18 @@ def calculate_perfect_vpd(vpd_range, tolerance_percent):
     except (ValueError, TypeError):
         raise ValueError("Invalid inputs for vpd_range or tolerance_percent.")
 
+    # BUGFIX: Validate that vpd_min < vpd_max
+    if vpd_min >= vpd_max:
+        _LOGGER.warning(f"VPD range invalid: min ({vpd_min}) >= max ({vpd_max}), swapping values")
+        vpd_min, vpd_max = vpd_max, vpd_min
+
     average_vpd = (vpd_min + vpd_max) / 2
     tolerance = (tolerance_percent / 100) * average_vpd
 
     return {
-        "perfection": round(average_vpd, 3),
-        "perfect_min": round(average_vpd - tolerance, 3),
-        "perfect_max": round(average_vpd + tolerance, 3),
+        "perfection": round(average_vpd, 2),
+        "perfect_min": round(average_vpd - tolerance, 2),
+        "perfect_max": round(average_vpd + tolerance, 2),
     }
 
 
@@ -95,35 +100,16 @@ def calculate_dew_point(temp, humidity):
     b = 237.7
 
     gamma = (a * temp) / (b + temp) + math.log(humidity / 100)
-    dew_point = (b * gamma) / (a - gamma)
+    
+    # BUGFIX: Prevent division by zero when gamma equals a (17.27)
+    denominator = a - gamma
+    if abs(denominator) < 0.001:  # Avoid division by zero
+        _LOGGER.warning(f"Dew point calculation: denominator too small ({denominator}), adjusting")
+        denominator = 0.001 if denominator >= 0 else -0.001
+    
+    dew_point = (b * gamma) / denominator
 
     return round(dew_point, 2)
-
-
-# Berechne DewPointVPD (asynchron)
-async def calc_dew_vpd(air_temp, dew_point):
-    try:
-        air_temp = float(air_temp)
-        dew_point = float(dew_point)
-    except (ValueError, TypeError):
-        return {
-            "dewpoint_vpd": None,
-            "vapor_pressure_actual": None,
-            "vapor_pressure_saturation": None,
-        }
-
-    sdp_luft = 0.6108 * math.exp((17.27 * air_temp) / (air_temp + 237.3))
-    adp = 0.6108 * math.exp((17.27 * dew_point) / (dew_point + 237.3))
-    dew_vpd = sdp_luft - adp
-
-    vapor_pressure_actual = 6.11 * (10 ** ((7.5 * dew_point) / (237.3 + dew_point)))
-    vapor_pressure_saturation = 6.11 * (10 ** ((7.5 * air_temp) / (237.3 + air_temp)))
-
-    return {
-        "dewpoint_vpd": round(dew_vpd, 3),
-        "vapor_pressure_actual": round(vapor_pressure_actual, 2),
-        "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
-    }
 
 
 # Berechne DewPointVPD (Based on Dewpoint/TEMP)

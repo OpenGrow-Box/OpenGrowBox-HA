@@ -673,6 +673,95 @@ class LightUV(Light):
             "light_off_time": str(self.lightOffTime) if self.lightOffTime else None,
         }
 
+    async def turn_on(self, brightness_pct=None, transition=None, **kwargs):
+        """UV light turn_on override to handle special UV behavior."""
+        if not self.switches:
+            _LOGGER.warning(f"{self.deviceName}: No switches available for turn_on")
+            return
+            
+        # If brightness_pct is 0 or very low, turn off instead
+        if brightness_pct is not None and brightness_pct <= 0:
+            _LOGGER.debug(f"{self.deviceName}: brightness_pct={brightness_pct}, calling turn_off instead")
+            await self.turn_off()
+            return
+            
+        # Call parent turn_on with brightness
+        if brightness_pct is not None:
+            await super().turn_on(brightness_pct=brightness_pct, transition=transition, **kwargs)
+        else:
+            await super().turn_on(**kwargs)
+            
+    async def turn_off(self, **kwargs):
+        """UV light turn_off override - ensure complete shutdown."""
+        _LOGGER.debug(f"{self.deviceName}: LightUV turn_off called")
+        
+        if not self.switches:
+            _LOGGER.warning(f"{self.deviceName}: No switches available for turn_off")
+            return
+            
+        # Ensure state is reset
+        self.is_uv_active = False
+        self.current_phase = None
+        self.isRunning = False
+        
+        # Force voltage to 0
+        self.voltage = 0
+        
+        for switch in self.switches:
+            entity_id = switch.get("entity_id")
+            if not entity_id:
+                continue
+                
+            try:
+                _LOGGER.debug(f"{self.deviceName}: Turning off UV entity {entity_id}")
+                
+                # Try light.turn_off first (most common for UV lights)
+                if entity_id.startswith("light."):
+                    await self.hass.services.async_call(
+                        domain="light",
+                        service="turn_off",
+                        service_data={"entity_id": entity_id},
+                    )
+                    _LOGGER.debug(f"{self.deviceName}: UV light entity {entity_id} turned off")
+                    
+                # Try switch.turn_off for switch entities
+                elif entity_id.startswith("switch."):
+                    await self.hass.services.async_call(
+                        domain="switch",
+                        service="turn_off",
+                        service_data={"entity_id": entity_id},
+                    )
+                    _LOGGER.debug(f"{self.deviceName}: UV switch entity {entity_id} turned off")
+                    
+                # For select entities (AcInfinity style)
+                elif entity_id.startswith("select."):
+                    await self.hass.services.async_call(
+                        domain="select",
+                        service="select_option",
+                        service_data={
+                            "entity_id": entity_id,
+                            "option": "Off"
+                        },
+                    )
+                    _LOGGER.debug(f"{self.deviceName}: UV select entity {entity_id} set to Off")
+                    
+                # For number entities, set to 0
+                elif entity_id.startswith("number."):
+                    await self.hass.services.async_call(
+                        domain="number",
+                        service="set_value",
+                        service_data={
+                            "entity_id": entity_id,
+                            "value": 0
+                        },
+                    )
+                    _LOGGER.debug(f"{self.deviceName}: UV number entity {entity_id} set to 0")
+                    
+            except Exception as e:
+                _LOGGER.error(f"{self.deviceName}: Error turning off UV entity {entity_id}: {e}")
+                
+        _LOGGER.info(f"{self.deviceName}: UV light turn_off complete, voltage reset to 0")
+
     async def cleanup(self):
         """Cleanup tasks on shutdown."""
         if self._schedule_task and not self._schedule_task.done():

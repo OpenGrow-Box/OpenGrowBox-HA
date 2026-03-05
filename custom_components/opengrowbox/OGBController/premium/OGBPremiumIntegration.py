@@ -140,12 +140,17 @@ class OGBPremiumIntegration:
                     prem_integration = coordinator.premium_integration
                     room_name = getattr(prem_integration, 'room', 'unknown')
 
-                    # Count active connections
-                    if (prem_integration.is_logged_in and
-                        prem_integration.ogb_ws and
-                        prem_integration.ogb_ws.ws_connected):
+                    # Skip self - this room is currently initializing
+                    if room_name == self.room:
+                        continue
+
+                    # Count all rooms with premium integration (not just connected ones)
+                    # The server counts sessions at login attempt, not just when ws_connected
+                    if (prem_integration.is_logged_in or 
+                        (prem_integration.ogb_ws and prem_integration.ogb_ws.ws_connected) or
+                        not hasattr(prem_integration, '_initialization_blocked')):
                         active_premium_connections += 1
-                        _LOGGER.info(f"📊 Active connection: {room_name}")
+                        _LOGGER.info(f"📊 Active/Initializing connection: {room_name}")
                     elif hasattr(prem_integration, '_initialization_blocked') and prem_integration._initialization_blocked:
                         blocked_rooms.append(room_name)
 

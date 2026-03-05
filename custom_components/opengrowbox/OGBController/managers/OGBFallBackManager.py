@@ -32,7 +32,8 @@ class MonitoredEntityState:
     entity_type: str  # "sensor" or "device"
     sensor_type: Optional[str] = None  # temperature, humidity, etc.
     device_name: str = ""
-    context: str = "unknown"  # air/water/soil/light
+    context: str = "unknown"  # air/water/soil/light or device label
+    device_type: Optional[str] = None  # Exhaust, Light, etc. (for devices)
     last_update: datetime = field(default_factory=datetime.now)
     last_value: Any = None
     is_stale: bool = False
@@ -258,6 +259,7 @@ class OGBFallBackManager:
             entity_id = event_data.get("entity_id")
             device_name = event_data.get("device_name")
             device_type = event_data.get("device_type")
+            context = event_data.get("context", device_type)  # Use device_label if available, fallback to device_type
             room = event_data.get("room")
 
             # Only monitor devices from our room
@@ -272,13 +274,14 @@ class OGBFallBackManager:
                 entity_id=entity_id,
                 entity_type="device",
                 device_name=device_name,
-                context=device_type,
+                context=context,
+                device_type=device_type,
                 last_update=datetime.now(),
             )
 
             _LOGGER.info(
                 f"🔌 {self.room} Registered device for monitoring: "
-                f"{device_name} ({device_type}) - {entity_id}"
+                f"{device_name} (Type: {device_type}, Label: {context}) - {entity_id}"
             )
 
         except Exception as e:
@@ -342,7 +345,13 @@ class OGBFallBackManager:
             details = f"Context: {state.context}"
         else:
             entity_label = f"Device '{state.device_name}'"
-            details = f"Type: {state.context}"
+            # Show both device_type and context (label) if available
+            if state.device_type and state.context and state.context != state.device_type:
+                details = f"Type: {state.device_type}\nLabel: {state.context}"
+            elif state.device_type:
+                details = f"Type: {state.device_type}"
+            else:
+                details = f"Type: {state.context}"
 
         message = (
             f"⚠️ {entity_label} has not reported data for {age_minutes} minutes.\n\n"
@@ -385,6 +394,7 @@ class OGBFallBackManager:
                     "sensor_type": state.sensor_type,
                     "device_name": state.device_name,
                     "context": state.context,
+                    "device_type": state.device_type,
                     "age_minutes": age_minutes,
                     "last_value": state.last_value,
                     "timestamp": datetime.now().isoformat(),
@@ -400,13 +410,22 @@ class OGBFallBackManager:
         # Build recovery message
         if state.entity_type == "sensor":
             entity_label = f"Sensor '{state.sensor_type}'"
+            details = f"Context: {state.context}"
         else:
             entity_label = f"Device '{state.device_name}'"
+            # Show both device_type and context (label) if available
+            if state.device_type and state.context and state.context != state.device_type:
+                details = f"Type: {state.device_type}\nLabel: {state.context}"
+            elif state.device_type:
+                details = f"Type: {state.device_type}"
+            else:
+                details = f"Type: {state.context}"
 
         message = (
             f"✅ {entity_label} is now reporting data again.\n\n"
             f"Device: {state.device_name}\n"
             f"Entity: {state.entity_id}\n"
+            f"{details}\n"
         )
 
         if state.last_value is not None:
@@ -433,6 +452,7 @@ class OGBFallBackManager:
                     "sensor_type": state.sensor_type,
                     "device_name": state.device_name,
                     "context": state.context,
+                    "device_type": state.device_type,
                     "current_value": state.last_value,
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -473,6 +493,7 @@ class OGBFallBackManager:
                     "sensor_type": state.sensor_type,
                     "device_name": state.device_name,
                     "context": state.context,
+                    "device_type": state.device_type,
                     "is_stale": state.is_stale,
                     "age_minutes": round(age, 1),
                     "last_value": state.last_value,
@@ -497,6 +518,8 @@ class OGBFallBackManager:
                         "entity_type": state.entity_type,
                         "sensor_type": state.sensor_type,
                         "device_name": state.device_name,
+                        "context": state.context,
+                        "device_type": state.device_type,
                         "age_minutes": round(age, 1),
                         "stale_since": (
                             state.stale_since.isoformat() if state.stale_since else None

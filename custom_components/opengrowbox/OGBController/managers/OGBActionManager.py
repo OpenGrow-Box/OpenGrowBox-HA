@@ -51,7 +51,6 @@ class OGBActionManager:
         self.hass = hass
         self.data_store = data_store
         self.event_manager = event_manager
-        self.event_manager = event_manager  # Also provide camelCase version for backwards compatibility
         self.room = room
         self.name = "OGB Action Manager"
 
@@ -365,7 +364,7 @@ class OGBActionManager:
 
     async def _handle_increase_vpd(self, capabilities):
         """Handle VPD increase requests."""
-        _LOGGER.error(f"🔥 {self.room}: _handle_increase_vpd CALLED (vpd_actions={self.vpd_actions is not None})")
+        _LOGGER.debug(f"🔥 {self.room}: _handle_increase_vpd CALLED (vpd_actions={self.vpd_actions is not None})")
         if self.vpd_actions:
             await self.vpd_actions.increase_vpd(capabilities)
         else:
@@ -373,7 +372,7 @@ class OGBActionManager:
 
     async def _handle_reduce_vpd(self, capabilities):
         """Handle VPD reduce requests."""
-        _LOGGER.error(f"🔥 {self.room}: _handle_reduce_vpd CALLED (vpd_actions={self.vpd_actions is not None})")
+        _LOGGER.debug(f"🔥 {self.room}: _handle_reduce_vpd CALLED (vpd_actions={self.vpd_actions is not None})")
         if self.vpd_actions:
             await self.vpd_actions.reduce_vpd(capabilities)
         else:
@@ -381,7 +380,7 @@ class OGBActionManager:
 
     async def _handle_fine_tune_vpd(self, capabilities):
         """Handle VPD fine-tune requests."""
-        _LOGGER.error(f"🔥 {self.room}: _handle_fine_tune_vpd CALLED (vpd_actions={self.vpd_actions is not None})")
+        _LOGGER.debug(f"🔥 {self.room}: _handle_fine_tune_vpd CALLED (vpd_actions={self.vpd_actions is not None})")
         if self.vpd_actions:
             await self.vpd_actions.fine_tune_vpd(capabilities)
         else:
@@ -457,7 +456,7 @@ class OGBActionManager:
         if self.closed_actions:
             await self.closed_actions.execute_closed_environment_cycle(capabilities)
         else:
-            _LOGGER.error(f"{self.room}: closed_actions not initialized")
+            _LOGGER.warning(f"{self.room}: closed_actions not initialized")
 
     async def _handle_maintain_co2(self, capabilities):
         """Handle CO2 maintenance requests."""
@@ -471,21 +470,21 @@ class OGBActionManager:
         if self.closed_actions:
             await self.closed_actions.monitor_o2_safety(capabilities)
         else:
-            _LOGGER.error(f"{self.room}: closed_actions not initialized")
+            _LOGGER.warning(f"{self.room}: closed_actions not initialized")
 
     async def _handle_control_humidity_closed(self, capabilities):
         """Handle closed environment humidity control."""
         if self.closed_actions:
             await self.closed_actions.control_humidity_closed(capabilities)
         else:
-            _LOGGER.error(f"{self.room}: closed_actions not initialized")
+            _LOGGER.warning(f"{self.room}: closed_actions not initialized")
 
     async def _handle_optimize_air_recirculation(self, capabilities):
         """Handle air recirculation optimization."""
         if self.closed_actions:
             await self.closed_actions.optimize_air_recirculation(capabilities)
         else:
-            _LOGGER.error(f"{self.room}: closed_actions not initialized")
+            _LOGGER.warning(f"{self.room}: closed_actions not initialized")
 
     # =================================================================
     # Status and Utility Methods
@@ -680,14 +679,6 @@ class OGBActionManager:
         previousActions = self.data_store.get("previousActions") or []
         current_time = time.time()
         
-        # Get current tent mode for controller type
-        tentMode = self.data_store.get("tentMode") or "VPD Perfection"
-
-        # Skip actions if tent mode is Disabled
-        if tentMode == "Disabled":
-            _LOGGER.info(f"{self.room}: Actions skipped - tent mode is Disabled")
-            return
-
         # Build action set with all actions from this execution cycle
         # API expects: {device: "exhaust", action: "Increase", priority: "high", reason: "...", controllerType: "VPD-P"}
         action_set = {
@@ -856,7 +847,6 @@ class OGBActionManager:
             'VPD Perfection': 'VPD-P',
             'VPD Target': 'VPD-T',
             'Closed Environment': 'CLOSED',
-            'Ultra Instinct': 'ULTRA',
             'Drying': 'DRY',
             'Disabled': 'OFF',
             # Premium API control modes

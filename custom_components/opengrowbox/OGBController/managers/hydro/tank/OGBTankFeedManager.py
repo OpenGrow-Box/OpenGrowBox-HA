@@ -593,14 +593,13 @@ class OGBTankFeedManager:
             dose_ml = 1.0
             cal = self.pump_calibrations.get(PumpType.PH_DOWN.value)
             
-            # Anwende Kalibrierungsfaktor
-            calibration_factor = cal.calibration_factor if cal else 1.0
-            dose_ml *= calibration_factor
-
-            run_time = self._calculate_dose_time(dose_ml)
+            # Get calibration factor and calculate run time correctly
+            # calibration_factor = ml/s, so run_time = ml / (ml/s) = seconds
+            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
 
             if run_time > 0:
-                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_DOWN.value} with {dose_ml:.2f}ml and {run_time:.1f}s (calibration factor: {calibration_factor:.3f})")
+                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_DOWN.value} with {dose_ml:.2f}ml for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
                 return await self._activate_pump(PumpType.PH_DOWN.value, run_time, dose_ml)
                 
         except Exception as e:
@@ -613,14 +612,12 @@ class OGBTankFeedManager:
             dose_ml = 1.0
             cal = self.pump_calibrations.get(PumpType.PH_UP.value)
             
-            # Anwende Kalibrierungsfaktor
-            calibration_factor = cal.calibration_factor if cal else 1.0
-            dose_ml *= calibration_factor
-
-            run_time = self._calculate_dose_time(dose_ml)
+            # Get calibration factor and calculate run time correctly
+            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
 
             if run_time > 0:
-                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_UP.value} with {dose_ml:.2f}ml and {run_time:.1f}s (calibration factor: {calibration_factor:.3f})")
+                _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_UP.value} with {dose_ml:.2f}ml for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
                 return await self._activate_pump(PumpType.PH_UP.value, run_time, dose_ml)
                 
         except Exception as e:
@@ -636,15 +633,15 @@ class OGBTankFeedManager:
                     ml_per_liter = self.nutrients[nutrient]
                     total_ml = self._calculate_nutrient_dose(ml_per_liter)
                     
-                    # Anwende Kalibrierungsfaktor
+                    # Get calibration factor and calculate run time correctly
                     pump_enum = getattr(PumpType, f"NUTRIENT_{nutrient}")
                     cal = self.pump_calibrations.get(pump_enum.value)
-                    if cal:
-                        total_ml *= cal.calibration_factor
+                    calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
                     
-                    if total_ml > 0:
-                        run_time = self._calculate_dose_time(total_ml)
-                        
+                    # Calculate run time: ml / (ml/s) = seconds
+                    run_time = total_ml / calibration_factor if calibration_factor > 0 else total_ml / self.pump_config.ml_per_second
+                    
+                    if run_time > 0:
                         if await self._activate_pump(pump_enum.value, run_time, total_ml):
                             # Wait between nutrients
                             await asyncio.sleep(30)
@@ -708,15 +705,16 @@ class OGBTankFeedManager:
 
             for nutrient in nutrients_to_dose:
                 if nutrient in self.nutrients and self.nutrients[nutrient] > 0:
-                    # Apply calibration factor
+                    # Get calibration factor and calculate run time correctly
                     pump_enum = getattr(PumpType, f"NUTRIENT_{nutrient}")
                     cal = self.pump_calibrations.get(pump_enum.value)
-                    calibrated_dose = dose_ml * (cal.calibration_factor if cal else 1.0)
+                    calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+                    
+                    # Calculate run time: ml / (ml/s) = seconds
+                    run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
 
-                    if calibrated_dose > 0:
-                        run_time = self._calculate_dose_time(calibrated_dose)
-
-                        if await self._activate_pump(pump_enum.value, run_time, calibrated_dose):
+                    if run_time > 0:
+                        if await self._activate_pump(pump_enum.value, run_time, dose_ml):
                             # Wait between nutrients to prevent mixing issues
                             await asyncio.sleep(30)
                         else:
@@ -731,15 +729,16 @@ class OGBTankFeedManager:
     async def _dose_ph_down_with_amount(self, dose_ml: float) -> bool:
         """Dose pH down with a specific amount."""
         try:
-            # Apply calibration factor
+            # Get calibration factor and calculate run time correctly
             cal = self.pump_calibrations.get(PumpType.PH_DOWN.value)
-            calibrated_dose = dose_ml * (cal.calibration_factor if cal else 1.0)
-
-            run_time = self._calculate_dose_time(calibrated_dose)
+            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+            
+            # Calculate run time: ml / (ml/s) = seconds
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
 
             if run_time > 0:
-                _LOGGER.info(f"[{self.room}] Dosing {calibrated_dose:.2f}ml pH down (calibration factor: {cal.calibration_factor if cal else 1.0:.3f})")
-                return await self._activate_pump(PumpType.PH_DOWN.value, run_time, calibrated_dose)
+                _LOGGER.info(f"[{self.room}] Dosing {dose_ml:.2f}ml pH down for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
+                return await self._activate_pump(PumpType.PH_DOWN.value, run_time, dose_ml)
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down with amount: {e}")
@@ -748,15 +747,16 @@ class OGBTankFeedManager:
     async def _dose_ph_up_with_amount(self, dose_ml: float) -> bool:
         """Dose pH up with a specific amount."""
         try:
-            # Apply calibration factor
+            # Get calibration factor and calculate run time correctly
             cal = self.pump_calibrations.get(PumpType.PH_UP.value)
-            calibrated_dose = dose_ml * (cal.calibration_factor if cal else 1.0)
-
-            run_time = self._calculate_dose_time(calibrated_dose)
+            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+            
+            # Calculate run time: ml / (ml/s) = seconds
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
 
             if run_time > 0:
-                _LOGGER.info(f"[{self.room}] Dosing {calibrated_dose:.2f}ml pH up (calibration factor: {cal.calibration_factor if cal else 1.0:.3f})")
-                return await self._activate_pump(PumpType.PH_UP.value, run_time, calibrated_dose)
+                _LOGGER.info(f"[{self.room}] Dosing {dose_ml:.2f}ml pH up for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
+                return await self._activate_pump(PumpType.PH_UP.value, run_time, dose_ml)
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH up with amount: {e}")

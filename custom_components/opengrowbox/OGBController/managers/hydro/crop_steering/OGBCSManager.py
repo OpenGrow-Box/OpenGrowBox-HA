@@ -1047,6 +1047,143 @@ class OGBCSManager:
             _LOGGER.info(f"{self.room} - Day, VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
             return "p0"
 
+    def _get_light_transition_times(self):
+        """Calculate light on/off times and irrigation buffer windows.
+        
+        Returns:
+            Dict with light times and irrigation window boundaries
+        """
+        try:
+            # Get light schedule from dataStore
+            light_on_time_str = self.data_store.getDeep("isPlantDay.lightOnTime")
+            light_off_time_str = self.data_store.getDeep("isPlantDay.lightOffTime")
+            
+            if not light_on_time_str or not light_off_time_str:
+                _LOGGER.warning(f"{self.room} - Light schedule not set, allowing irrigation anytime")
+                return None
+            
+            # Parse times
+            try:
+                light_on = datetime.strptime(light_on_time_str, "%H:%M:%S").time()
+                light_off = datetime.strptime(light_off_time_str, "%H:%M:%S").time()
+            except ValueError:
+                # Try without seconds
+                light_on = datetime.strptime(light_on_time_str, "%H:%M").time()
+                light_off = datetime.strptime(light_off_time_str, "%H:%M").time()
+            
+            # Get buffer hours (default 2 hours)
+            buffer_hours = self.data_store.getDeep("CropSteering.LightBufferHours") or 2
+            
+            now = datetime.now().time()
+            
+            # Calculate irrigation window
+            # Convert to datetime for arithmetic, then back to time
+            today = datetime.now().date()
+            light_on_dt = datetime.combine(today, light_on)
+            light_off_dt = datetime.combine(today, light_off)
+            
+            # Handle overnight schedules (e.g., 20:00 to 08:00)
+            if light_off_dt <= light_on_dt:
+                light_off_dt += timedelta(days=1)
+            
+            # Calculate buffer boundaries
+            irrigation_start = light_on_dt + timedelta(hours=buffer_hours)
+            irrigation_stop = light_off_dt - timedelta(hours=buffer_hours)
+            
+            return {
+                'light_on': light_on,
+                'light_off': light_off,
+                'irrigation_start_time': irrigation_start.time(),
+                'irrigation_stop_time': irrigation_stop.time(),
+                'current_time': now,
+                'buffer_hours': buffer_hours,
+                'is_overnight': light_off_dt > datetime.combine(today + timedelta(days=1), datetime.min.time())
+            }
+        except Exception as e:
+            _LOGGER.error(f"{self.room} - Error calculating light transition times: {e}")
+            return None
+
+    def _is_in_irrigation_window(self):
+        """Check if current time is within the allowed irrigation window.
+        
+        Irrigation is only allowed:
+        - 2h AFTER light on
+        - 2h BEFORE light off
+        
+        Returns:
+            bool: True if irrigation is allowed
+        """
+        times = self._get_light_transition_times()
+        if times is None:
+            return True  # Allow if no schedule set
+        
+        now = times['current_time']
+        start = times['irrigation_start_time']
+        stop = times['irrigation_stop_time']
+        
+        # Handle overnight schedules
+        if times['is_overnight']:
+            # Light is on overnight (e.g., 20:00 to 08:00)
+            # Irrigation window: 22:00 to 06:00
+            if start > stop:
+                # Window spans midnight
+                in_window = now >= start or now <= stop
+            else:
+                in_window = start <= now <= stop
+        else:
+            # Normal schedule (e.g., 08:00 to 20:00)
+            # Irrigation window: 10:00 to 18:00
+            in_window = start <= now <= stop
+        
+        if not in_window:
+            _LOGGER.debug(
+                f"{self.room} - Outside irrigation window (buffer: {times['buffer_hours']}h). "
+                f"Allowed: {start.strftime('%H:%M')} - {stop.strftime('%H:%M')}, "
+                f"Current: {now.strftime('%H:%M')}"
+            )
+        
+        return in_window
+
+    def _is_near_light_off(self, buffer_minutes=120):
+        """Check if lights will turn off soon.
+        
+        Args:
+            buffer_minutes: Minutes before light off to check (default 120 = 2h)
+            
+        Returns:
+            bool: True if lights turn off within buffer period
+        """
+        try:
+            light_off_time_str = self.data_store.getDeep("isPlantDay.lightOffTime")
+            if not light_off_time_str:
+                return False
+            
+            # Parse light off time
+            try:
+                light_off = datetime.strptime(light_off_time_str, "%H:%M:%S").time()
+            except ValueError:
+                light_off = datetime.strptime(light_off_time_str, "%H:%M").time()
+            
+            now = datetime.now()
+            today = now.date()
+            
+            # Create datetime for light off today
+            light_off_dt = datetime.combine(today, light_off)
+            
+            # Check if light off is in the future today
+            if light_off_dt <= now:
+                # Light off already passed, check tomorrow
+                light_off_dt += timedelta(days=1)
+            
+            # Calculate time until light off
+            time_until_off = (light_off_dt - now).total_seconds() / 60  # minutes
+            
+            return time_until_off <= buffer_minutes
+            
+        except Exception as e:
+            _LOGGER.error(f"{self.room} - Error checking light off time: {e}")
+            return False
+
     def _get_plant_info_from_medium(self) -> tuple:
         """
         Get plant phase and week from GrowMedium objects.
@@ -1224,7 +1361,9 @@ class OGBCSManager:
     async def _handle_phase_p0_auto(self, vwc, ec, preset):
         """P0: Monitoring phase - Wait for Dryback Signal
         
-        IMPORTANT: If lights go OFF during P0, transition to P3.
+        IMPORTANT: 
+        - If lights go OFF during P0, transition to P3.
+        - If lights just turned ON, wait 2h before allowing transition to P1.
         """
         # Check light status first - ensure proper boolean conversion
         is_light_on_raw = self.data_store.getDeep("isPlantDay.islightON")
@@ -1242,6 +1381,13 @@ class OGBCSManager:
             self.data_store.setDeep("CropSteering.CropPhase", "p3")
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change("p0", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
+            return
+        
+        # Check irrigation window (2h after light on)
+        if not self._is_in_irrigation_window():
+            _LOGGER.debug(
+                f"{self.room} - P0: Outside irrigation window, waiting..."
+            )
             return
         
         # P0 is simple: Wait until VWC falls below minimum
@@ -1293,6 +1439,22 @@ class OGBCSManager:
             self.data_store.setDeep("CropSteering.CropPhase", "p3")
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change("p1", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
+            return
+        
+        # Check if lights will turn off soon (2h buffer)
+        if self._is_near_light_off(buffer_minutes=120):
+            _LOGGER.info(
+                f"{self.room} - P1: Lights will turn off soon, stopping irrigation early"
+            )
+            # Transition to P3 early to start dryback
+            self.data_store.setDeep("CropSteering.p1_start_vwc", None)
+            self.data_store.setDeep("CropSteering.p1_irrigation_count", 0)
+            self.data_store.setDeep("CropSteering.p1_last_vwc", None)
+            self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
+            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+            self.data_store.setDeep("CropSteering.CropPhase", "p3")
+            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+            await self._log_phase_change("p1", "p3", f"Lights turning off soon - early transition to night dryback (VWC: {vwc:.1f}%)")
             return
         
         # Check if calibrated max value already exists
@@ -1692,7 +1854,7 @@ class OGBCSManager:
                     f"{self.room} - P3: Dryback optimal at {current_dryback:.1f}%"
                 )
 
-            # Emergency irrigation if too dry
+            # Emergency irrigation if too dry (CONSERVATIVE SETTINGS)
             calibrated_max = self.data_store.getDeep(
                 f"CropSteering.Calibration.p3.VWCMax"
             )
@@ -1700,13 +1862,28 @@ class OGBCSManager:
                 float(calibrated_max) if calibrated_max else preset["VWCMax"]
             )
 
+            # Conservative: 90% threshold (higher = later trigger)
             emergency_level = effective_max * preset.get("emergency_threshold", 0.90)
             if vwc < emergency_level:
+                # Check minimum time in P3 before allowing emergency (4 hours)
+                phase_start = self.data_store.getDeep("CropSteering.phaseStartTime")
+                min_time_in_p3_hours = 4
+                if phase_start:
+                    time_in_p3 = (datetime.now() - phase_start).total_seconds() / 3600
+                    if time_in_p3 < min_time_in_p3_hours:
+                        _LOGGER.debug(
+                            f"{self.room} - P3: Emergency conditions met but only {time_in_p3:.1f}h in P3, "
+                            f"waiting {min_time_in_p3_hours}h before allowing emergency irrigation"
+                        )
+                        return
+
                 # Get USER timing settings for P3 Emergency irrigation
                 timing_settings = self._get_automatic_timing_settings("p3")
-                max_emergency = timing_settings["ShotSum"]  # User-configurable max shots
-                emergency_shot_duration = timing_settings["ShotDuration"]  # User-configurable duration
-                emergency_interval_minutes = timing_settings["ShotIntervall"]  # User-configurable interval between shots
+                # CONSERVATIVE: Max 1 emergency shot (override user setting)
+                max_emergency = min(timing_settings["ShotSum"], 1)
+                # CONSERVATIVE: Max 10s duration (override user setting)
+                emergency_shot_duration = min(timing_settings["ShotDuration"], 10)
+                emergency_interval_minutes = timing_settings["ShotIntervall"]
                 emergency_interval_seconds = emergency_interval_minutes * 60
 
                 p3_emergency_count = (
@@ -1719,7 +1896,7 @@ class OGBCSManager:
                 if p3_last_emergency_time is None:
                     self.data_store.setDeep(
                         "CropSteering.p3_last_emergency_time",
-                        now - timedelta(seconds=emergency_interval_seconds)  # Allow immediate first emergency
+                        now - timedelta(seconds=emergency_interval_seconds)
                     )
                     p3_last_emergency_time = now - timedelta(seconds=emergency_interval_seconds)
 
@@ -1740,16 +1917,17 @@ class OGBCSManager:
                         {
                             "Name": self.room,
                             "Type": "CSLOG",
-                            "Message": f"P3 Emergency irrigation {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s)",
+                            "Message": f"P3 CONSERVATIVE Emergency irrigation {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s, after {time_in_p3:.1f}h in P3)",
                         },
                         haEvent=True,
                     )
                     _LOGGER.warning(
-                        f"{self.room} - P3: Emergency irrigation {p3_emergency_count + 1}/{max_emergency} (VWC {vwc:.1f}% < {emergency_level:.1f}%, duration: {emergency_shot_duration}s)"
+                        f"{self.room} - P3: CONSERVATIVE Emergency irrigation {p3_emergency_count + 1}/{max_emergency} "
+                        f"(VWC {vwc:.1f}% < {emergency_level:.1f}%, duration: {emergency_shot_duration}s, after {time_in_p3:.1f}h in P3)"
                     )
                 else:
                     _LOGGER.warning(
-                        f"{self.room} - P3: Max emergency irrigations reached ({max_emergency}), skipping"
+                        f"{self.room} - P3: Max emergency irrigations reached ({max_emergency}) or too soon, skipping"
                     )
         else:
             # STAGE-CHECKER: Light is on -> Back to P0
