@@ -521,11 +521,11 @@ class OGBDampeningActions:
         max_humidity = tent_data.get("maxHumidity", 80)
         min_humidity = tent_data.get("minHumidity", 40)
 
-        # Define buffer zones
-        HEATER_BUFFER = 2.0    # Don't activate heater within 2°C of max temp
-        COOLER_BUFFER = 2.0    # Don't activate cooler within 2°C of min temp
-        HUMIDIFIER_BUFFER = 5.0   # Don't activate humidifier within 5% of max humidity
-        DEHUMIDIFIER_BUFFER = 5.0 # Don't activate dehumidifier within 5% of min humidity
+        # Define buffer zones - configurable via data store with sensible defaults
+        HEATER_BUFFER = float(self.data_store.getDeep("controlOptions.heaterBuffer") or 2.0)    # Don't activate heater within X°C of max temp
+        COOLER_BUFFER = float(self.data_store.getDeep("controlOptions.coolerBuffer") or 2.0)    # Don't activate cooler within X°C of min temp
+        HUMIDIFIER_BUFFER = float(self.data_store.getDeep("controlOptions.humidifierBuffer") or 5.0)   # Don't activate humidifier within X% of max humidity
+        DEHUMIDIFIER_BUFFER = float(self.data_store.getDeep("controlOptions.dehumidifierBuffer") or 5.0) # Don't activate dehumidifier within X% of min humidity
 
         # Calculate cutoff temperatures
         heater_cutoff_temp = max_temp - HEATER_BUFFER

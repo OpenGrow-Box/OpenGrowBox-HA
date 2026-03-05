@@ -58,6 +58,9 @@ class OGBActionManager:
         self.isInitialized = False
         self.actionHistory: Dict[str, Dict[str, Any]] = {}
         self.defaultCooldownMinutes = DEFAULT_DEVICE_COOLDOWNS.copy()
+        
+        # Lock for thread-safe action history updates
+        self._action_history_lock = asyncio.Lock()
         self.adaptiveCooldownEnabled = True
         self._emergency_mode = False
 
@@ -676,11 +679,10 @@ class OGBActionManager:
         # Store previous actions for analytics - API expects specific format
         # Format: [{actions: [{device, action, priority, reason, timestamp, controllerType}, ...]}, ...]
         # See: ogb-grow-api/AGENTS.md lines 495-503 and CompactDataSchema.js
-        previousActions = self.data_store.get("previousActions") or []
-        current_time = time.time()
         
         # Build action set with all actions from this execution cycle
         # API expects: {device: "exhaust", action: "Increase", priority: "high", reason: "...", controllerType: "VPD-P"}
+        current_time = time.time()
         action_set = {
             "actions": [],
             "timestamp": current_time,
@@ -705,13 +707,17 @@ class OGBActionManager:
             }
             action_set["actions"].append(action_entry)
 
-        # Only add if we have actions
-        if action_set["actions"]:
-            previousActions.append(action_set)
+        # Use lock for thread-safe action history updates to prevent race conditions
+        async with self._action_history_lock:
+            previousActions = self.data_store.get("previousActions") or []
+            
+            # Only add if we have actions
+            if action_set["actions"]:
+                previousActions.append(action_set)
 
-        # Keep only the last 5 action sets (API expects max 5)
-        previousActions = previousActions[-5:]
-        self.data_store.set("previousActions", previousActions)
+            # Keep only the last 5 action sets (API expects max 5)
+            previousActions = previousActions[-5:]
+            self.data_store.set("previousActions", previousActions)
         
         # CRITICAL: Also store actionData for API compatibility
         # The API's HistoricalDataTrainer.extractActionsFromRecord() expects actionData.controlCommands

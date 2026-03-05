@@ -460,7 +460,8 @@ class Light(Device):
                 plantStage = self.dataStore.get("plantStage")
                 self.currentPlantStage = plantStage
                 
-                if plantStage in self.PlantStageMinMax:
+                # Only apply PlantStage min/max if user hasn't defined custom values
+                if plantStage in self.PlantStageMinMax and not self._has_user_defined_minmax():
                     percentRange = self.PlantStageMinMax[plantStage]
                     self.minVoltage = percentRange["min"]
                     self.maxVoltage = percentRange["max"]
@@ -596,14 +597,10 @@ class Light(Device):
             plantStage = self.data_store.get("plantStage")
             
             if is_minmax_active:
-                user_max = self.maxVoltage if self.maxVoltage is not None else self.maxVoltage
-                if plantStage and plantStage in self.PlantStageMinMax:
-                    plant_max = self.PlantStageMinMax[plantStage]["max"]
-                    target_voltage = max(user_max, plant_max)
-                    voltage_source = f"User MinMax (max of User={user_max} and PlantStage={plant_max})"
-                else:
-                    target_voltage = user_max
-                    voltage_source = "User MinMax"
+                # Use user-defined min/max values, ignore PlantStage
+                user_max = self.maxVoltage if self.maxVoltage is not None else 100
+                target_voltage = user_max
+                voltage_source = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
                 plant_range = self.PlantStageMinMax[plantStage]
                 target_voltage = plant_range["max"]
@@ -673,9 +670,21 @@ class Light(Device):
                 return
             self.sunPhaseActive = True
 
-            # Fix Race Condition: Use consistent start voltage - maxVoltage for sunset
-            start_voltage = self.maxVoltage if self.maxVoltage is not None else self.maxVoltage
-            target_voltage = self.initVoltage
+            # Store original min/max values to restore later
+            original_min = self.minVoltage
+            original_max = self.maxVoltage
+            
+            # Check if user-defined min/max is active
+            is_minmax_active = getattr(self, 'is_minmax_active', False)
+            
+            if is_minmax_active:
+                # Use user-defined values
+                start_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+                target_voltage = self.minVoltage if self.minVoltage is not None else 0
+            else:
+                # Use default values
+                start_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+                target_voltage = self.initVoltage
             step_duration = self.sunSetDuration / 10
             voltage_step = (start_voltage - target_voltage) / 10
 
@@ -710,6 +719,9 @@ class Light(Device):
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error on SunSet: {e}")
         finally:
+            # Restore original min/max values
+            self.minVoltage = original_min
+            self.maxVoltage = original_max
             # Immer sunPhaseActive zurücksetzen, aber sunset_phase_active bleibt bis das Fenster verlassen wird
             self.sunPhaseActive = False
             _LOGGER.debug(f"{self.deviceName}: SunSet Task ended, sunPhaseActive=False")
@@ -810,10 +822,10 @@ class Light(Device):
                 self.log_action("Turn OFF via toggle")
 
     async def increaseAction(self, data):
-        """Erhöht die Spannung."""
+        """Increase voltage."""
         new_voltage = None
 
-        if not self.isDimmable == False:
+        if not self.isDimmable:
             self.log_action("Not Allowed: Device Not Dimmable")
             return
         if self.islightON == False:
@@ -847,9 +859,9 @@ class Light(Device):
             await self.turn_on(brightness_pct=new_voltage)
 
     async def reduceAction(self, data):
-        """Reduziert die Spannung."""
+        """Reduce voltage."""
         new_voltage = None
-        if not self.isDimmable == False:
+        if not self.isDimmable:
             self.log_action("Not Allowed: Device Not Dimmable")
             return
         if self.islightON == False:
@@ -1004,7 +1016,7 @@ class Light(Device):
             light_min = 20.0
             light_max = 100.0
         else:
-            light_min_max_active = device_minmax.get("active", "True")
+            light_min_max_active = device_minmax.get("active", True)
             if not light_min_max_active:
                 _LOGGER.warning(f"💡 {self.deviceName}: DeviceMinMax.Light not active. Using default values 20-100%.")
                 light_min = 20.0

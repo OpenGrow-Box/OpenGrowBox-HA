@@ -142,9 +142,14 @@ class OGBVPDManager:
                 currentMode = self.data_store.get("tentMode")
                 tentMode = OGBModeRunPublication(currentMode=currentMode)
 
+                currentMode = self.data_store.get("tentMode")
+                tentMode = OGBModeRunPublication(currentMode=currentMode)
+
                 if self.room.lower() == "ambient":
                     _LOGGER.debug(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                     await self.event_manager.emit("AmbientData",vpdPub,haEvent=True)
+                    # Also emit selectActionMode for ambient rooms so mode manager processes VPD changes
+                    await self.event_manager.emit("selectActionMode",tentMode)
                     await self.get_weather_data()
                     return
 
@@ -247,8 +252,15 @@ class OGBVPDManager:
         lastVpd = self.data_store.getDeep("vpd.current")
         currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
 
-        if currentVPD == 0.0 or currentVPD == 0:
-            _LOGGER.error(f"VPD 0.0 FOUND {self.room}")
+        # Validate VPD value - must be positive and within reasonable range
+        if currentVPD is None:
+            _LOGGER.error(f"VPD calculation returned None for {self.room}")
+            return
+        if currentVPD <= 0:
+            _LOGGER.error(f"Invalid VPD value: {currentVPD} (must be positive) in {self.room}")
+            return
+        if currentVPD > 5.0:
+            _LOGGER.error(f"VPD value too high: {currentVPD} (possible sensor error) in {self.room}")
             return
 
         # Create VPD publication - convert "unavailable" to None
@@ -332,10 +344,21 @@ class OGBVPDManager:
         if current_main_control != value:
             self.data_store.set("vpdDetermination", value)
             self.vpd_determination = value
-            # Emit event for determination change
-            asyncio.create_task(
-                self.event_manager.emit("VPDDeterminationChange", value)
-            )
+            # Emit event for determination change with error handling
+            async def _emit_with_retry():
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        await self.event_manager.emit("VPDDeterminationChange", value)
+                        return
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            _LOGGER.warning(f"Failed to emit VPDDeterminationChange (attempt {attempt + 1}), retrying: {e}")
+                            await asyncio.sleep(0.1 * (attempt + 1))
+                        else:
+                            _LOGGER.error(f"Failed to emit VPDDeterminationChange after {max_retries} attempts: {e}")
+            
+            asyncio.create_task(_emit_with_retry())
 
     def get_vpd_status(self):
         """Get current VPD status information."""

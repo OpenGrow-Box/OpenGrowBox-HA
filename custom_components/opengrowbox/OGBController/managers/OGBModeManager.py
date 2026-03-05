@@ -192,6 +192,13 @@ class OGBModeManager:
             targetedVPD = float(targetedVPD_raw)
             tolerance_percent = float(tolerance_raw)  # Prozentuale Toleranz (1-25%)
 
+            # Validate tolerance is positive
+            if tolerance_percent <= 0:
+                _LOGGER.warning(
+                    f"{self.room}: Invalid tolerance value ({tolerance_percent}). Must be positive. Using default 10%."
+                )
+                tolerance_percent = 10.0
+
             # Mindest- und Höchstwert basierend auf der Toleranz berechnen
             tolerance_value = targetedVPD * (tolerance_percent / 100)
             min_vpd = targetedVPD - tolerance_value
@@ -199,6 +206,13 @@ class OGBModeManager:
 
             # Verfügbare Capabilities abrufen
             capabilities = self.data_store.get("capabilities")
+            
+            # Validate capabilities exist
+            if not capabilities:
+                _LOGGER.warning(
+                    f"{self.room}: No capabilities available. Skipping VPD control."
+                )
+                return
 
             # VPD steuern basierend auf der Toleranz
             if currentVPD < min_vpd:
@@ -336,38 +350,28 @@ class OGBModeManager:
     async def handle_script_mode(self):
         """
         Handles 'Script Mode' - fully customizable user scripts.
-        Supports both DSL (simple syntax) and Python scripts.
+        Stateless execution like VPD Perfection - called cyclically by ModeManager.
         """
-        _LOGGER.info(f"ModeManager: {self.room} Script Mode activated.")
+        _LOGGER.debug(f"ModeManager: {self.room} executing Script Mode cycle")
 
-        # Initialize script mode manager if not already done
+        # Initialize script mode manager if needed
         if self.scriptModeManager is None:
-            # Need to get ogb instance - will be passed from coordinator
-            # For now, we'll initialize it in a different way
-            from ..OGB import OpenGrowBox
-            # This is a workaround - in reality we'd need to pass ogb reference
-            _LOGGER.warning(f"{self.room}: Script Mode requires initialization from coordinator")
-            return
+            if hasattr(self, '_ogb_ref') and self._ogb_ref:
+                self.scriptModeManager = OGBScriptMode(self._ogb_ref)
+            else:
+                _LOGGER.warning(f"{self.room}: Script Mode requires OGB reference. Set _ogb_ref first.")
+                return
 
-        # Load script configuration from data_store
-        script_config = self.data_store.getDeep("controlOptions.scriptMode")
-        
-        if not script_config:
-            _LOGGER.warning(f"{self.room}: No script configuration found for Script Mode")
-            _LOGGER.info(f"{self.room}: Use template 'basic_vpd_control' or configure via YAML")
-            return
+        # Execute script (stateless - like VPD Perfection)
+        # Script is loaded from DataStore on each execution
+        await self.scriptModeManager.execute()
 
-        # Load and execute script
-        if self.scriptModeManager.load_script(script_config):
-            await self.scriptModeManager.execute()
-        else:
-            _LOGGER.error(f"{self.room}: Failed to load script for Script Mode")
-
-    def initialize_script_mode(self, ogb):
+    def set_ogb_reference(self, ogb):
         """
-        Initialize Script Mode manager with OGB reference.
-        Called by coordinator after OGB initialization.
+        Set OGB reference for Script Mode.
+        Called by coordinator after initialization.
         """
+        self._ogb_ref = ogb
         if self.scriptModeManager is None:
             self.scriptModeManager = OGBScriptMode(ogb)
             _LOGGER.info(f"{self.room}: Script Mode manager initialized")
