@@ -14,6 +14,7 @@ from ..data.OGBDataClasses.OGBPublications import (OGBCropSteeringPublication,
 from ..premium.analytics.OGBAIDataBridge import OGBAIDataBridge
 from .hydro.crop_steering.OGBCSManager import OGBCSManager
 from .ClosedEnvironmentManager import ClosedEnvironmentManager
+from .OGBScriptMode import OGBScriptMode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +35,9 @@ class OGBModeManager:
 
         # Drying Actions for drying mode handling
         self.dryingActions = DryingActions(dataStore, self.event_manager, room)
+
+        # Script Mode Manager for custom user scripts
+        self.scriptModeManager: OGBScriptMode | None = None
 
         # AI Data Bridge for cropsteering learning integration
         # Will be started when premium control is active
@@ -88,6 +92,8 @@ class OGBModeManager:
             await self.handle_premium_modes(False)
         elif tentMode == "Closed Environment":
             await self.handle_closed_environment()
+        elif tentMode == "Script Mode":
+            await self.handle_script_mode()
         elif tentMode == "Disabled":
             await self.handle_disabled_mode()
 
@@ -325,3 +331,43 @@ class OGBModeManager:
         Supports ElClassico, 5DayDry, and DewBased algorithms.
         """
         await self.dryingActions.handle_drying()
+
+    ## Script Mode - Custom user-defined automation
+    async def handle_script_mode(self):
+        """
+        Handles 'Script Mode' - fully customizable user scripts.
+        Supports both DSL (simple syntax) and Python scripts.
+        """
+        _LOGGER.info(f"ModeManager: {self.room} Script Mode activated.")
+
+        # Initialize script mode manager if not already done
+        if self.scriptModeManager is None:
+            # Need to get ogb instance - will be passed from coordinator
+            # For now, we'll initialize it in a different way
+            from ..OGB import OpenGrowBox
+            # This is a workaround - in reality we'd need to pass ogb reference
+            _LOGGER.warning(f"{self.room}: Script Mode requires initialization from coordinator")
+            return
+
+        # Load script configuration from data_store
+        script_config = self.data_store.getDeep("controlOptions.scriptMode")
+        
+        if not script_config:
+            _LOGGER.warning(f"{self.room}: No script configuration found for Script Mode")
+            _LOGGER.info(f"{self.room}: Use template 'basic_vpd_control' or configure via YAML")
+            return
+
+        # Load and execute script
+        if self.scriptModeManager.load_script(script_config):
+            await self.scriptModeManager.execute()
+        else:
+            _LOGGER.error(f"{self.room}: Failed to load script for Script Mode")
+
+    def initialize_script_mode(self, ogb):
+        """
+        Initialize Script Mode manager with OGB reference.
+        Called by coordinator after OGB initialization.
+        """
+        if self.scriptModeManager is None:
+            self.scriptModeManager = OGBScriptMode(ogb)
+            _LOGGER.info(f"{self.room}: Script Mode manager initialized")
