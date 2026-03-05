@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -11,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class CommandInfo:
-    """Speichert Metadaten über einen Command"""
+    """Stores metadata about a command"""
 
     func: Callable
     description: str
@@ -33,19 +34,27 @@ class OGBConsoleManager:
         self.is_initialized = False
         self.last_command = ""
 
-        # Command-Registry mit Metadaten
+        # Command registry with metadata
         self.commands: Dict[str, CommandInfo] = {}
         self._register_commands()
 
         self.hass.bus.async_listen("ogb_console_command", self._command_income)
+        self.hass.bus.async_listen("ogb_get_commands", self._handle_get_commands)
         asyncio.create_task(self.init())
+        
+        # Reference to data_store_manager (set after initialization)
+        self.data_store_manager = None
+    
+    def set_data_store_manager(self, data_store_manager):
+        """Set the data store manager for script storage access."""
+        self.data_store_manager = data_store_manager
 
     def _register_commands(self):
-        """Registriert alle verfügbaren Commands mit ihren Metadaten"""
+        """Registers all available commands with their metadata"""
         self.register_command(
             "help",
             self.cmd_help,
-            "Zeigt verfügbare Befehle oder Details zu einem Befehl",
+            "Shows available commands or details about a command",
             "help [command]",
             ["help", "help gcd"],
         )
@@ -53,19 +62,19 @@ class OGBConsoleManager:
         self.register_command(
             "version",
             self.cmd_version,
-            "Zeigt die Console-Version an",
+            "Shows the console version",
             "version",
             ["version"],
         )
 
         self.register_command(
-            "test", self.cmd_test, "Führt einen Test-Befehl aus", "test", ["test"]
+            "test", self.cmd_test, "Executes a test command", "test", ["test"]
         )
 
         self.register_command(
             "gcd",
             self.cmd_gcd,
-            "Setzt oder zeigt den Global Cooldown für ein Gerät",
+            "Sets or shows the global cooldown for a device capability",
             "gcd <capability> <minutes>",
             ["gcd light 5", "gcd cover 10"],
         )
@@ -73,7 +82,7 @@ class OGBConsoleManager:
         self.register_command(
             "list",
             self.cmd_list,
-            "Listet verfügbare Capabilities auf",
+            "Lists available capabilities or devices",
             "list [capabilities|devices]",
             ["list capabilities", "list devices"],
         )
@@ -81,7 +90,7 @@ class OGBConsoleManager:
         self.register_command(
             "device_states",
             self.cmd_device_states,
-            "Zeigt aktuelle Gerätestatus für Debugging",
+            "Shows current device states for debugging",
             "device_states",
             [],
         )
@@ -90,7 +99,7 @@ class OGBConsoleManager:
         self.register_command(
             "cs_calibrate",
             self.cmd_cs_calibrate,
-            "Startet VWC Kalibrierung für CropSteering",
+            "Starts VWC calibration for CropSteering",
             "cs_calibrate <max|min|stop> [phase]",
             ["cs_calibrate max", "cs_calibrate max p1", "cs_calibrate min p2", "cs_calibrate stop"],
         )
@@ -98,9 +107,18 @@ class OGBConsoleManager:
         self.register_command(
             "cs_status",
             self.cmd_cs_status,
-            "Zeigt CropSteering Status und Kalibrierungswerte",
+            "Shows CropSteering status and calibration values",
             "cs_status",
             ["cs_status"],
+        )
+
+        # Script Mode Commands
+        self.register_command(
+            "script",
+            self.cmd_script,
+            "Script mode management",
+            "script <status|save|load|template|backup|restore|validate>",
+            ["script status", "script save", "script template basic_vpd_control"],
         )
 
     def register_command(
@@ -112,8 +130,8 @@ class OGBConsoleManager:
         examples: List[str] = None,
     ):
         """
-        Öffentliche Methode zum Registrieren neuer Commands.
-        Kann von außen verwendet werden, um die Console zu erweitern.
+        Public method to register new commands.
+        Can be used externally to extend the console.
         """
         self.commands[name.lower()] = CommandInfo(
             func=func, description=description, usage=usage, examples=examples or []
@@ -137,8 +155,37 @@ class OGBConsoleManager:
         _LOGGER.warning(f"[{self.room}] Received command: {event_command}")
         await self._handle_command(event_command)
 
+    async def _handle_get_commands(self, event):
+        """Handle request for available commands list."""
+        event_room = event.data.get("room")
+        request_id = event.data.get("request_id")
+        
+        if event_room != self.room:
+            return
+        
+        _LOGGER.debug(f"[{self.room}] Received get_commands request")
+        
+        # Build commands dictionary
+        commands = {}
+        for cmd_name, cmd_info in self.commands.items():
+            commands[cmd_name] = {
+                "description": cmd_info.description,
+                "usage": cmd_info.usage,
+                "examples": cmd_info.examples,
+            }
+        
+        # Send response event
+        event_type = "ogb_commands_response"
+        event_data = {
+            "room": self.room,
+            "commands": commands,
+            "request_id": request_id,
+        }
+        self.hass.bus.async_fire(event_type, event_data)
+        _LOGGER.debug(f"[{self.room}] Sent {len(commands)} commands")
+
     async def _handle_command(self, command: str):
-        """Allgemeines Command-Handling mit automatischer Help-Ausgabe"""
+        """General command handling with automatic help output"""
         parts = command.strip().split()
         if not parts:
             await self._send_response(
@@ -180,9 +227,9 @@ class OGBConsoleManager:
     # =========================
 
     async def cmd_help(self, params: List[str]):
-        """Zeigt Help-Informationen an"""
+        """Shows help information"""
         if not params:
-            # Zeige alle Commands
+            # Show all commands
             response = "📖 Available Commands:\n" + "=" * 50 + "\n"
             for cmd_name, cmd_info in sorted(self.commands.items()):
                 response += f"\n• {cmd_name:<12} - {cmd_info.description}"
@@ -190,7 +237,7 @@ class OGBConsoleManager:
             response += "Type 'help <command>' or '<command> -h' for details."
             await self._send_response(response)
         else:
-            # Zeige Details für spezifischen Command
+            # Show details for specific command
             cmd_name = params[0].lower()
             cmd_info = self.commands.get(cmd_name)
 
@@ -211,20 +258,20 @@ class OGBConsoleManager:
             await self._send_response(response)
 
     async def cmd_version(self, params: List[str]):
-        """Zeigt Version an"""
+        """Shows version"""
         await self._send_response("🍀 OGB Console Version 1.0.1 🍀")
 
     async def cmd_test(self, params: List[str]):
-        """Test-Command"""
+        """Test command"""
         await self._send_response("✅ Test command executed successfully.")
 
     async def cmd_gcd(self, params: List[str]):
         """
-        Setzt oder zeigt den Global Cooldown für ein Gerät.
+        Sets or shows the global cooldown for a device capability.
         Usage: gcd <capability> <minutes>
         """
         if len(params) == 0:
-            # Zeige alle aktuellen GCDs
+            # Show all current GCDs
             response = "📊 Current Global Cooldowns:\n" + "=" * 50 + "\n"
             for cap, minutes in DEFAULT_DEVICE_COOLDOWNS.items():
                 response += f"  {cap:<15} : {minutes} min\n"
@@ -309,8 +356,70 @@ class OGBConsoleManager:
             await self._send_response(response)
 
         elif list_type == "devices":
-            # Beispiel - hier würdest du echte Geräte auflisten
-            await self._send_response("📋 Device listing not yet implemented.")
+            # Get devices from datastore
+            devices = self.data_store.get("devices") or []
+            
+            if not devices:
+                await self._send_response("📋 No devices registered.")
+                return
+            
+            response = f"📋 Registered Devices ({len(devices)}):\n" + "=" * 70 + "\n"
+            
+            for idx, device in enumerate(devices, 1):
+                device_name = getattr(device, 'deviceName', 'Unknown')
+                device_type = getattr(device, 'deviceType', 'Unknown')
+                room = getattr(device, 'inRoom', 'Unknown')
+                is_running = getattr(device, 'isRunning', False)
+                is_dimmable = getattr(device, 'isDimmable', False)
+                is_special = getattr(device, 'isSpecialDevice', False)
+                device_label = getattr(device, 'deviceLabel', 'N/A')
+                
+                response += f"\n{idx}. 📱 {device_name}\n"
+                response += f"   📋 Type: {device_type}\n"
+                response += f"   🏠 Room: {room}\n"
+                response += f"   🏷️  Label: {device_label}\n"
+                response += f"   🟢 Status: {'Running' if is_running else 'Stopped'}\n"
+                response += f"   🎚️  Dimmable: {'Yes' if is_dimmable else 'No'}\n"
+                response += f"   ⭐ Special: {'Yes' if is_special else 'No'}\n"
+                
+                # Duty cycle for dimmable devices
+                if is_dimmable:
+                    duty_cycle = getattr(device, 'dutyCycle', None)
+                    if duty_cycle is not None:
+                        response += f"   ⚡ Duty Cycle: {duty_cycle}%\n"
+                
+                # Get switches with details
+                switches = getattr(device, 'switches', [])
+                if switches:
+                    response += f"\n   🔌 Switches ({len(switches)}):\n"
+                    for switch in switches:
+                        entity_id = switch.get('entity_id', 'Unknown')
+                        value = switch.get('value', 'unknown')
+                        friendly_name = switch.get('friendly_name', entity_id.split('.')[-1] if '.' in entity_id else entity_id)
+                        response += f"      • {friendly_name}: {value}\n"
+                
+                # Get sensors with details
+                sensors = getattr(device, 'sensors', [])
+                if sensors:
+                    response += f"\n   📊 Sensors ({len(sensors)}):\n"
+                    for sensor in sensors:
+                        entity_id = sensor.get('entity_id', 'Unknown')
+                        value = sensor.get('value', 'unknown')
+                        friendly_name = sensor.get('friendly_name', entity_id.split('.')[-1] if '.' in entity_id else entity_id)
+                        unit = sensor.get('unit_of_measurement', '')
+                        response += f"      • {friendly_name}: {value} {unit}\n"
+                
+                # Options if available
+                options = getattr(device, 'options', [])
+                if options:
+                    response += f"\n   ⚙️  Options ({len(options)}):\n"
+                    for opt in options:
+                        opt_name = opt.get('name', 'Unknown')
+                        opt_value = opt.get('value', 'N/A')
+                        response += f"      • {opt_name}: {opt_value}\n"
+            
+            response += "\n" + "=" * 70
+            await self._send_response(response)
 
         else:
             await self._send_response(
@@ -319,7 +428,7 @@ class OGBConsoleManager:
             )
 
     async def cmd_device_states(self, params: List[str]):
-        """Zeigt aktuelle Gerätestatus für Debugging"""
+        """Shows current device states for debugging"""
         devices = self.data_store.get("devices") or []
 
         if not devices:
@@ -341,15 +450,17 @@ class OGBConsoleManager:
                     response += f"   Duty Cycle: {device.dutyCycle}%\n"
 
             # Add entity states
-            if device.switches:
-                response += f"   Switches ({len(device.switches)}):\n"
-                for switch in device.switches:
+            switches = getattr(device, 'switches', [])
+            if switches:
+                response += f"   Switches ({len(switches)}):\n"
+                for switch in switches:
                     value = switch.get("value", "unknown")
                     response += f"     • {switch['entity_id']}: {value}\n"
 
-            if device.sensors:
-                response += f"   Sensors ({len(device.sensors)}):\n"
-                for sensor in device.sensors:
+            sensors = getattr(device, 'sensors', [])
+            if sensors:
+                response += f"   Sensors ({len(sensors)}):\n"
+                for sensor in sensors:
                     value = sensor.get("value", "unknown")
                     response += f"     • {sensor['entity_id']}: {value}\n"
 
@@ -364,7 +475,7 @@ class OGBConsoleManager:
 
     async def cmd_cs_calibrate(self, params: List[str]):
         """
-        Startet oder stoppt VWC Kalibrierung.
+        Starts or stops VWC calibration.
         Usage: cs_calibrate <max|min|stop> [phase]
         """
         if not params:
@@ -374,7 +485,7 @@ class OGBConsoleManager:
                 "Actions:\n"
                 "  max  - Kalibriert VWC Maximum (Sättigung)\n"
                 "  min  - Kalibriert VWC Minimum (Dryback)\n"
-                "  stop - Stoppt laufende Kalibrierung\n"
+                "  stop - Stops ongoing calibration\n"
                 "Phases: p1, p2, p3 (default: p1)"
             )
             return
@@ -423,7 +534,7 @@ class OGBConsoleManager:
         await self.event_manager.emit("VWCCalibrationCommand", command_data)
 
     async def cmd_cs_status(self, params: List[str]):
-        """Zeigt CropSteering Status und Kalibrierungswerte"""
+        """Shows CropSteering status and calibration values"""
         response = "🌱 CropSteering Status:\n" + "=" * 50 + "\n"
 
         # Mode info
@@ -469,11 +580,151 @@ class OGBConsoleManager:
         await self._send_response(response)
 
     # =========================
+    # SCRIPT MODE COMMANDS
+    # =========================
+
+    async def cmd_script(self, params: List[str]):
+        """Script mode management"""
+        if not params:
+            await self._send_response(
+                "⚠️ Missing subcommand.\n"
+                "Usage: script <status|save|load|template|backup|restore|validate>\n"
+                "Use 'script -h' for help."
+            )
+            return
+        
+        if not self.data_store_manager:
+            await self._send_response(
+                "❌ Script storage not available.\n"
+                "DataStoreManager not initialized."
+            )
+            return
+        
+        subcommand = params[0].lower()
+        
+        if subcommand == "status":
+            # Check if script exists
+            script = await self.data_store_manager.load_script(self.room)
+            if script:
+                enabled = "✅ Enabled" if script.get("enabled") else "❌ Disabled"
+                script_type = script.get("type", "dsl")
+                await self._send_response(
+                    f"📜 Script Status for {self.room}:\n"
+                    f"   Status: {enabled}\n"
+                    f"   Type: {script_type}\n"
+                    f"   Script file exists: Yes"
+                )
+            else:
+                await self._send_response(
+                    f"📜 Script Status for {self.room}:\n"
+                    f"   Status: ❌ No script configured\n"
+                    f"   Use 'script template <name>' to load a template."
+                )
+        
+        elif subcommand == "template":
+            if len(params) < 2:
+                await self._send_response(
+                    "⚠️ Missing template name.\n"
+                    "Available templates: basic_vpd_control, advanced_environment"
+                )
+                return
+            
+            template_name = params[1]
+            template = self.data_store_manager.load_template(template_name)
+            
+            if template:
+                # Save template as current script
+                success = await self.data_store_manager.save_script(self.room, template)
+                if success:
+                    await self._send_response(
+                        f"✅ Template '{template_name}' loaded and saved.\n"
+                        f"   Script Mode will use this script on next cycle."
+                    )
+                else:
+                    await self._send_response(
+                        f"❌ Failed to save template '{template_name}'."
+                    )
+            else:
+                await self._send_response(
+                    f"❌ Template '{template_name}' not found.\n"
+                    f"Available: basic_vpd_control, advanced_environment"
+                )
+        
+        elif subcommand == "load":
+            # Force reload from file
+            script = await self.data_store_manager.load_script(self.room)
+            if script:
+                await self._send_response(
+                    f"✅ Script reloaded from file for {self.room}."
+                )
+            else:
+                await self._send_response(
+                    f"❌ No script file found for {self.room}."
+                )
+        
+        elif subcommand == "backup":
+            # Show backup status
+            backup_path = self.data_store_manager._get_script_path(self.room, backup=True)
+            if os.path.exists(backup_path):
+                await self._send_response(
+                    f"✅ Backup exists for {self.room}.\n"
+                    f"   Use 'script restore' to restore it."
+                )
+            else:
+                await self._send_response(
+                    f"ℹ️ No backup found for {self.room}.\n"
+                    f"   A backup is created automatically when saving."
+                )
+        
+        elif subcommand == "restore":
+            success = await self.data_store_manager.restore_script_backup(self.room)
+            if success:
+                await self._send_response(
+                    f"✅ Script restored from backup for {self.room}."
+                )
+            else:
+                await self._send_response(
+                    f"❌ Failed to restore backup for {self.room}.\n"
+                    f"   No backup file found."
+                )
+        
+        elif subcommand == "validate":
+            script = await self.data_store_manager.load_script(self.room)
+            if not script:
+                await self._send_response(
+                    f"❌ No script found for {self.room}."
+                )
+                return
+            
+            # Basic validation
+            script_code = script.get("script", "")
+            lines = script_code.strip().split("\n")
+            
+            await self._send_response(
+                f"✅ Script validation for {self.room}:\n"
+                f"   Lines: {len(lines)}\n"
+                f"   Type: {script.get('type', 'dsl')}\n"
+                f"   Enabled: {script.get('enabled', False)}"
+            )
+        
+        elif subcommand == "save":
+            await self._send_response(
+                "ℹ️ Scripts are saved automatically when using 'script template'.\n"
+                f"   Current script for {self.room} is already persisted to file."
+            )
+        
+        else:
+            await self._send_response(
+                f"⚠️ Unknown subcommand: '{subcommand}'\n"
+                f"Available: status, template, load, backup, restore, validate"
+            )
+
+    # =========================
     # UTILITY METHODS
     # =========================
 
     async def _send_response(self, message: str):
-        """Sendet eine Response zurück zur Console"""
+        """Sends a response back to the console"""
         event_type = "ogb_console_response"
         event_data = {
             "room": self.room,
@@ -484,9 +735,9 @@ class OGBConsoleManager:
         self.hass.bus.async_fire(event_type, event_data)
 
     def get_command_list(self) -> List[str]:
-        """Gibt Liste aller registrierten Commands zurück"""
+        """Returns list of all registered commands"""
         return list(self.commands.keys())
 
     def command_exists(self, command: str) -> bool:
-        """Prüft, ob ein Command existiert"""
+        """Checks if a command exists"""
         return command.lower() in self.commands

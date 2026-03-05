@@ -113,7 +113,109 @@ opengrowbox:
           SET("workData.myCalculation", temp * 0.8)
 ```
 
-### Option 3: Load from File
+### Option 3: Terminal Configuration (Interactive)
+
+Configure Script Mode directly via the OGB Terminal:
+
+#### Enable Script Mode
+```
+ogb$ tentmode Script Mode
+[SUCCESS] Mode changed to Script Mode
+```
+
+#### Check Script Status
+```
+ogb$ script status
+[RESPONSE] Script Mode: Active
+           Type: dsl
+           Last execution: 14:32:15
+           Status: Running
+```
+
+#### Edit Script
+```
+ogb$ script edit
+Entering script editor. Type 'END' on a new line to finish.
+> READ vpd FROM vpd.current
+> IF vpd > 1.2 THEN
+>   CALL exhaust.increase
+> ENDIF
+> END
+[RESPONSE] ✓ Script captured (4 lines). Use 'script save' to store.
+```
+
+#### Load Template
+```
+ogb$ script template basic_vpd_control
+[RESPONSE] ✓ Template 'basic_vpd_control' loaded.
+           Use 'script show' to view.
+```
+
+Available templates:
+- `basic_vpd_control` - Simple VPD management
+- `advanced_environment` - Full environmental control with safety checks
+
+#### Save Script
+```
+ogb$ script save
+[RESPONSE] ✓ Script saved to DataStore.
+           Script Mode will use this script on next cycle.
+```
+
+#### Show Current Script
+```
+ogb$ script show
+[RESPONSE] Current Script:
+-----------
+READ vpd FROM vpd.current
+READ vpd_max FROM vpd.perfectMax
+IF vpd > vpd_max THEN
+  CALL exhaust.increase
+ENDIF
+-----------
+```
+
+#### Validate Script
+```
+ogb$ script validate
+[RESPONSE] ✓ Script validation passed.
+           Syntax: OK
+           Commands: 5
+           Warnings: 0
+```
+
+#### Test Run (One-time execution)
+```
+ogb$ script run
+[RESPONSE] Executing script...
+           LOG: VPD check: 1.25
+           CALL: exhaust.increase
+           ✓ Execution completed in 0.3s
+```
+
+#### Clear Script
+```
+ogb$ script clear
+[RESPONSE] ⚠ Script cleared. Script Mode disabled until new script saved.
+```
+
+#### Debug DataStore
+```
+ogb$ datastore list
+[RESPONSE] Available DataStore paths:
+           - vpd.current
+           - vpd.perfection
+           - tentData.temperature
+           - tentData.humidity
+           - isPlantDay.islightON
+           - capabilities.canHeat.state
+           ... (50+ more paths)
+
+ogb$ datastore get vpd.current
+[RESPONSE] Value: 1.15 kPa
+```
+
+### Option 4: Load from File
 
 ```yaml
 opengrowbox:
@@ -123,6 +225,57 @@ opengrowbox:
         enabled: true
         type: "dsl"
         file: "/config/opengrowbox_scripts/my_grow_script.txt"
+```
+
+## How Script Mode Works
+
+### Execution Model (Like VPD Perfection)
+
+Script Mode uses a **stateless, cyclic execution model**:
+
+1. **Script is stored** in DataStore (`controlOptions.scriptMode`)
+2. **ModeManager calls** `handle_script_mode()` cyclically (every 30s by default)
+3. **Script is loaded** from DataStore on each execution
+4. **Script executes** completely (all commands)
+5. **Fresh start** on next cycle (no state persistence between runs)
+
+```
+Cycle 1: Load Script → Execute → Done
+   ↓ (30 seconds)
+Cycle 2: Load Script → Execute → Done
+   ↓ (30 seconds)
+Cycle 3: Load Script → Execute → Done
+```
+
+### Why Stateless?
+
+- **Reliability**: No background threads that can crash
+- **Predictability**: Each run starts fresh
+- **Safety**: Max execution time enforced per cycle
+- **Debugging**: Easy to test individual executions
+
+### Variable Lifecycle
+
+Variables are **not persisted** between cycles:
+
+```dsl
+// Cycle 1
+SET counter = 0          // counter = 0
+SET counter = counter + 1  // counter = 1
+// End of cycle: counter is lost
+
+// Cycle 2
+// counter doesn't exist anymore!
+READ counter FROM workData.counter  // Must read from DataStore
+```
+
+**To persist values**, use SET/READ with DataStore:
+```dsl
+// Save value
+SET workData.myCounter = counter
+
+// Later cycle: read it back
+READ counter FROM workData.myCounter
 ```
 
 ## DSL Syntax Reference

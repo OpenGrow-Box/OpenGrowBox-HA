@@ -2,9 +2,15 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Dict, List
+import shutil
+from typing import Any, Dict, List, Optional
 
 _LOGGER = logging.getLogger(__name__)
+
+# Script storage constants
+SCRIPT_MAX_SIZE_KB = 100
+SCRIPT_BACKUP_SUFFIX = "_backup"
+SCRIPT_DIR = "scripts"
 
 
 def _is_corrupted_tuple_string(value: Any) -> bool:
@@ -349,3 +355,238 @@ class OGBDSManager:
                 )
         except Exception as e:
             _LOGGER.error(f"❌ Failed to delete state file: {e}")
+
+    # =================================================================
+    # SCRIPT STORAGE METHODS
+    # Scripts are stored separately from state to avoid memory leaks
+    # and ensure persistence across restarts
+    # =================================================================
+
+    def _get_script_dir(self) -> str:
+        """Get or create the scripts directory."""
+        script_dir = os.path.join(
+            self.hass.config.path("ogb_data"),
+            SCRIPT_DIR
+        )
+        os.makedirs(script_dir, exist_ok=True)
+        return script_dir
+
+    def _get_script_path(self, room: str, backup: bool = False) -> str:
+        """Get the path for a script file.
+        
+        Args:
+            room: Room name
+            backup: If True, return backup file path
+        """
+        script_dir = self._get_script_dir()
+        filename = f"{room.lower()}_script{SCRIPT_BACKUP_SUFFIX if backup else ''}.yaml"
+        return os.path.join(script_dir, filename)
+
+    async def load_script(self, room: str) -> Optional[Dict]:
+        """Load script from file (NOT from DataStore).
+        
+        Args:
+            room: Room name
+            
+        Returns:
+            Script config dict or None if not found
+        """
+        script_path = self._get_script_path(room)
+        
+        if not os.path.exists(script_path):
+            _LOGGER.debug(f"[{room}] No script file found at {script_path}")
+            return None
+        
+        # Check file size
+        try:
+            file_size_kb = os.path.getsize(script_path) / 1024
+            if file_size_kb > SCRIPT_MAX_SIZE_KB:
+                _LOGGER.error(f"[{room}] Script file too large ({file_size_kb:.1f}KB), max {SCRIPT_MAX_SIZE_KB}KB")
+                return None
+        except Exception as e:
+            _LOGGER.warning(f"[{room}] Could not check script file size: {e}")
+        
+        try:
+            content = await self.hass.async_add_executor_job(
+                self._sync_load_script, script_path
+            )
+            _LOGGER.info(f"[{room}] Script loaded from {script_path}")
+            return content
+        except Exception as e:
+            _LOGGER.error(f"[{room}] Failed to load script: {e}")
+            return None
+
+    def _sync_load_script(self, path: str) -> Dict:
+        """Synchronously load script from file."""
+        try:
+            import yaml
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            _LOGGER.error(f"Failed to parse script YAML: {e}")
+            raise
+
+    async def save_script(self, room: str, script_config: Dict) -> bool:
+        """Save script to file with backup.
+        
+        Args:
+            room: Room name
+            script_config: Script configuration dict
+            
+        Returns:
+            True if saved successfully
+        """
+        # Validate size
+        script_size_kb = len(str(script_config)) / 1024
+        if script_size_kb > SCRIPT_MAX_SIZE_KB:
+            _LOGGER.error(f"[{room}] Script too large ({script_size_kb:.1f}KB), max {SCRIPT_MAX_SIZE_KB}KB")
+            return False
+        
+        # Create backup before saving
+        await self._backup_script(room)
+        
+        # Save script
+        script_path = self._get_script_path(room)
+        try:
+            await self.hass.async_add_executor_job(
+                self._sync_save_script, script_path, script_config
+            )
+            _LOGGER.info(f"[{room}] Script saved to {script_path}")
+            return True
+        except Exception as e:
+            _LOGGER.error(f"[{room}] Failed to save script: {e}")
+            return False
+
+    def _sync_save_script(self, path: str, config: Dict):
+        """Synchronously save script to file."""
+        import yaml
+        with open(path, 'w', encoding='utf-8') as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+        # Set secure permissions
+        os.chmod(path, 0o600)
+
+    async def _backup_script(self, room: str):
+        """Create single backup of current script."""
+        script_path = self._get_script_path(room)
+        backup_path = self._get_script_path(room, backup=True)
+        
+        if not os.path.exists(script_path):
+            return
+        
+        try:
+            await self.hass.async_add_executor_job(
+                shutil.copy2, script_path, backup_path
+            )
+            _LOGGER.debug(f"[{room}] Script backup created")
+        except Exception as e:
+            _LOGGER.warning(f"[{room}] Failed to create script backup: {e}")
+
+    async def restore_script_backup(self, room: str) -> bool:
+        """Restore script from backup.
+        
+        Args:
+            room: Room name
+            
+        Returns:
+            True if restored successfully
+        """
+        script_path = self._get_script_path(room)
+        backup_path = self._get_script_path(room, backup=True)
+        
+        if not os.path.exists(backup_path):
+            _LOGGER.warning(f"[{room}] No backup found to restore")
+            return False
+        
+        try:
+            await self.hass.async_add_executor_job(
+                shutil.copy2, backup_path, script_path
+            )
+            _LOGGER.info(f"[{room}] Script restored from backup")
+            return True
+        except Exception as e:
+            _LOGGER.error(f"[{room}] Failed to restore script backup: {e}")
+            return False
+
+    def load_template(self, template_name: str) -> Optional[Dict]:
+        """Load a built-in template.
+        
+        Args:
+            template_name: Name of the template
+            
+        Returns:
+            Template config or None if not found
+        """
+        # First check if template exists as file
+        template_dir = os.path.join(self._get_script_dir(), "templates")
+        template_path = os.path.join(template_dir, f"{template_name}.yaml")
+        
+        if os.path.exists(template_path):
+            try:
+                import yaml
+                with open(template_path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f)
+            except Exception as e:
+                _LOGGER.warning(f"Failed to load template file {template_name}: {e}")
+        
+        # Fallback to built-in templates
+        return self._get_builtin_template(template_name)
+
+    def _get_builtin_template(self, template_name: str) -> Optional[Dict]:
+        """Get built-in template defined in code."""
+        templates = {
+            "basic_vpd_control": {
+                "enabled": True,
+                "type": "dsl",
+                "script": """// Basic VPD Control Template
+READ vpd_current FROM vpd.current
+READ vpd_max FROM vpd.perfectMax
+READ vpd_min FROM vpd.perfectMin
+
+IF vpd_current > vpd_max THEN
+    LOG "VPD too high"
+    CALL exhaust.increase
+    CALL dehumidifier.increase
+ENDIF
+
+IF vpd_current < vpd_min THEN
+    LOG "VPD too low"
+    CALL exhaust.reduce
+    CALL humidifier.increase
+ENDIF
+"""
+            },
+            "advanced_environment": {
+                "enabled": True,
+                "type": "dsl", 
+                "script": """// Advanced Environment Control Template
+READ vpd FROM vpd.current
+READ vpd_max FROM vpd.perfectMax
+READ temp FROM tentData.temperature
+READ temp_max FROM tentData.maxTemp
+READ is_light_on FROM isPlantDay.islightON
+
+// Critical VPD check
+IF vpd > vpd_max + 0.3 THEN
+    LOG "CRITICAL: VPD way too high!" LEVEL=error
+    CALL exhaust.increase WITH priority=emergency
+    CALL dehumidifier.increase WITH priority=emergency
+ENDIF
+
+// Temperature safety
+IF temp > temp_max - 2 THEN
+    LOG "Temperature high"
+    CALL cooler.increase
+    CALL exhaust.increase
+ENDIF
+
+// Day/Night cycle
+IF is_light_on THEN
+    CALL light.on
+ELSE
+    CALL light.off
+ENDIF
+"""
+            }
+        }
+        
+        return templates.get(template_name)

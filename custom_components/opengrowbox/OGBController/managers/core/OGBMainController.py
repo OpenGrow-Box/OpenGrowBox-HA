@@ -152,6 +152,8 @@ class OGBMainController:
         self.console_manager = OGBConsoleManager(
             self.hass, self.data_store, self.event_manager, self.room
         )
+        # Inject data_store_manager for script storage access
+        self.console_manager.set_data_store_manager(self.data_store_manager)
 
         # Notification system
         self.notificator = OGBNotificator(self.hass, self.room)

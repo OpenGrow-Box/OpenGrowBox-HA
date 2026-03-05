@@ -101,13 +101,18 @@ def calculate_dew_point(temp, humidity):
 
     gamma = (a * temp) / (b + temp) + math.log(humidity / 100)
     
-    # BUGFIX: Prevent division by zero when gamma equals a (17.27)
-    denominator = a - gamma
-    if abs(denominator) < 0.001:  # Avoid division by zero
-        _LOGGER.warning(f"Dew point calculation: denominator too small ({denominator}), adjusting")
-        denominator = 0.001 if denominator >= 0 else -0.001
+    # Validate gamma is within valid range for dew point calculation
+    # Gamma must be less than 'a' (17.27) for valid dew point
+    if gamma >= a:
+        _LOGGER.warning(f"Dew point calculation: gamma ({gamma}) >= a ({a}), returning approximate value")
+        # Return a slightly lower temperature as approximation
+        return round(temp - 2.0, 2)
     
-    dew_point = (b * gamma) / denominator
+    if gamma < -10:  # Unrealistically low gamma indicates sensor error
+        _LOGGER.warning(f"Dew point calculation: gamma ({gamma}) too low, possible sensor error")
+        return "unavailable"
+    
+    dew_point = (b * gamma) / (a - gamma)
 
     return round(dew_point, 2)
 

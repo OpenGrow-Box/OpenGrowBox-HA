@@ -417,7 +417,17 @@ class OGBConfigurationManager:
 
     async def _update_vpd_target(self, data):
         """Update targeted VPD value."""
-        value = float(data.newState[0])
+        # Validate data exists before conversion
+        if not data or not hasattr(data, 'newState') or not data.newState or len(data.newState) == 0:
+            _LOGGER.error(f"{self.room}: Invalid data for VPD target update")
+            return
+        
+        try:
+            value = float(data.newState[0])
+        except (ValueError, TypeError) as e:
+            _LOGGER.error(f"{self.room}: Failed to convert VPD target value: {data.newState[0]} - {e}")
+            return
+        
         current_value = self.data_store.getDeep("vpd.targeted")
 
         if current_value != value:
