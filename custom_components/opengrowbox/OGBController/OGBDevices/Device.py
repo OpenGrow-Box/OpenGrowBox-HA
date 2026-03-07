@@ -666,8 +666,8 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: NO Sensor data or Options found")
             return
 
-        relevant_keys  = ["_duty", "_intensity", "_dutyCycle"]
-        duty_types     = {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"}
+        relevant_keys = ["_duty", "_intensity", "_dutyCycle"]
+        duty_types    = {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"}
 
         def convert_to_int(value, multiply_by_10: bool = False) -> int | None:
             try:
@@ -683,6 +683,11 @@ class Device:
         for sensor in self.sensors:
             entity_id = sensor.get("entity_id", "")
             if not any(key in entity_id.lower() for key in relevant_keys):
+                continue
+
+            # duty-Sensoren nicht für Light verwenden – verhindert voltage-Überschreibung mit 0
+            if self.deviceType == "Light" and "_duty" in entity_id.lower():
+                _LOGGER.debug(f"{self.deviceName}: Skipping duty sensor for Light: {entity_id}")
                 continue
 
             _LOGGER.debug(f"{self.deviceName}: Relevant Sensor Found: {entity_id}")
