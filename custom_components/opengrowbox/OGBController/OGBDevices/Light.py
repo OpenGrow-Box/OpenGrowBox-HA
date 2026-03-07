@@ -573,16 +573,14 @@ class Light(Device):
 
     async def _run_sunrise(self):
         """Führt die SunRisessequenz als separate Task aus."""
-        # Set flag FIRST to prevent concurrent calls
         if getattr(self, '_sunrise_running', False):
             _LOGGER.debug(f"{self.deviceName}: Sunrise already running, skipping")
             return
         self._sunrise_running = True
-        
-        # Initialize for finally block
+
         original_min = self.minVoltage
         original_max = self.maxVoltage
-        
+
         try:
             if not self.isDimmable or not self.islightON:
                 _LOGGER.debug(f"{self.deviceName}: SunRise kann nicht ausgeführt werden")
@@ -595,30 +593,24 @@ class Light(Device):
             if self.sun_phase_paused:
                 return
 
-            # Calculate sunrise target voltage with correct priority:
-            # 1. User MinMax (if DeviceMinMax.active = True)
-            # 2. Plant Stage (if User MinMax is not active)
-            # 3. Fallback to maxVoltage
             is_minmax_active = getattr(self, 'is_minmax_active', False)
             plantStage = self.data_store.get("plantStage")
-            
+
             if is_minmax_active:
-                # Use user-defined min/max values, ignore PlantStage
-                user_max = self.maxVoltage if self.maxVoltage is not None else 100
-                target_voltage = user_max
+                target_voltage = float(self.maxVoltage if self.maxVoltage is not None else 100)
                 voltage_source = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
                 plant_range = self.PlantStageMinMax[plantStage]
-                target_voltage = plant_range["max"]
+                target_voltage = float(plant_range["max"])
                 voltage_source = f"Plant Stage ({plantStage})"
             else:
-                target_voltage = self.maxVoltage if self.maxVoltage is not None else 100
+                target_voltage = float(self.maxVoltage if self.maxVoltage is not None else 100)
                 voltage_source = "maxVoltage"
 
-            start_voltage = self.minVoltage
+            start_voltage = float(self.minVoltage)
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10
-            
+
             self.sunPhaseActive = True
             _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% bis {target_voltage}% ({voltage_source})")
 
@@ -626,13 +618,17 @@ class Light(Device):
                 if not self.islightON:
                     _LOGGER.debug(f"{self.deviceName}: SunRise abgebrochen - Licht aus")
                     break
-                
+
                 if self.sun_phase_paused:
                     await self._wait_if_paused()
                 else:
                     await asyncio.sleep(step_duration)
-                    next_voltage = min(start_voltage + (voltage_step * i), target_voltage)
-                    self.voltage = round(next_voltage, 1)
+
+                    # Letzter Schritt → exakt target_voltage, kein Rundungsfehler
+                    if i == 10:
+                        self.voltage = round(target_voltage)
+                    else:
+                        self.voltage = round(start_voltage + (voltage_step * i))
 
                     message = f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
@@ -646,9 +642,7 @@ class Light(Device):
                         SunRise=self.sunrise_phase_active,
                         SunSet=self.sunset_phase_active,
                     )
-                    await self.event_manager.emit(
-                        "LogForClient", lightAction, haEvent=True
-                    )
+                    await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
                     _LOGGER.debug(f"{self.deviceName}: SunRise Step {i}: {self.voltage}%")
                     await self.turn_on(brightness_pct=self.voltage)
 
@@ -668,70 +662,79 @@ class Light(Device):
 
     async def _run_sunset(self):
         """Führt die Sonnenuntergangssequenz als separate Task aus."""
+        original_min = self.minVoltage
+        original_max = self.maxVoltage
+
         try:
             if not self.isDimmable or not self.islightON:
                 _LOGGER.debug(f"{self.deviceName}: Sonnenuntergang kann nicht ausgeführt werden - isDimmable: {self.isDimmable}, islightON: {self.islightON}")
                 return
             if self.sun_phase_paused:
                 return
+
             self.sunPhaseActive = True
 
-            # Store original min/max values to restore later
-            original_min = self.minVoltage
-            original_max = self.maxVoltage
-            
-            # Check if user-defined min/max is active
             is_minmax_active = getattr(self, 'is_minmax_active', False)
-            
+
             if is_minmax_active:
-                # Use user-defined values
-                start_voltage = self.maxVoltage if self.maxVoltage is not None else 100
-                target_voltage = self.minVoltage if self.minVoltage is not None else 0
+                start_voltage  = float(self.maxVoltage if self.maxVoltage is not None else 100)
+                target_voltage = float(self.minVoltage if self.minVoltage is not None else 0)
             else:
-                # Use default values
-                start_voltage = self.maxVoltage if self.maxVoltage is not None else 100
-                target_voltage = self.initVoltage
+                start_voltage  = float(self.maxVoltage if self.maxVoltage is not None else 100)
+                target_voltage = float(self.initVoltage)
+
             step_duration = self.sunSetDuration / 10
-            voltage_step = (start_voltage - target_voltage) / 10
+            voltage_step  = (start_voltage - target_voltage) / 10
 
             _LOGGER.debug(f"{self.deviceName}: Start SunSet {start_voltage}% bis {target_voltage}%")
 
             for i in range(1, 11):
-                # Check if we should continue with sunset
                 if not self.islightON:
                     _LOGGER.error(f"{self.deviceName}: SunSet Stopped - Light is OFF")
                     break
-                
-                # Warten falls pausiert
+
                 if self.sun_phase_paused:
                     await self._wait_if_paused()
                 else:
                     await asyncio.sleep(step_duration)
-                    next_voltage = max(start_voltage - (voltage_step * i), target_voltage)
-                    self.voltage = round(next_voltage,1)
+
+                    # Letzter Schritt → exakt target_voltage, kein Rundungsfehler
+                    if i == 10:
+                        self.voltage = round(target_voltage)
+                    else:
+                        self.voltage = round(start_voltage - (voltage_step * i))
+
                     message = f"{self.deviceName}: SunSet Step {i}: {self.voltage}%"
-                    lightAction = OGBLightAction(Name=self.inRoom,Device=self.deviceName,Type=self.deviceType,Action="ON",Message=message,Voltage=self.voltage,Dimmable=True,SunRise=self.sunrise_phase_active,SunSet=self.sunset_phase_active)
-                    await self.eventManager.emit("LogForClient",lightAction,haEvent=True)
+                    lightAction = OGBLightAction(
+                        Name=self.inRoom,
+                        Device=self.deviceName,
+                        Type=self.deviceType,
+                        Action="ON",
+                        Message=message,
+                        Voltage=self.voltage,
+                        Dimmable=True,
+                        SunRise=self.sunrise_phase_active,
+                        SunSet=self.sunset_phase_active,
+                    )
+                    await self.eventManager.emit("LogForClient", lightAction, haEvent=True)
                     _LOGGER.debug(f"{self.deviceName}: SunSet Step {i}: {self.voltage}%")
                     await self.turn_on(brightness_pct=self.voltage)
 
             _LOGGER.debug(f"{self.deviceName}: SunSet Finish")
             self.voltage = 0
             await self.turn_off(brightness_pct=self.voltage)
-            
+
         except asyncio.CancelledError:
             _LOGGER.debug(f"{self.deviceName}: SunSet has Stopped")
-            raise  # Re-raise to properly handle cancellation
+            raise
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error on SunSet: {e}")
         finally:
-            # Restore original min/max values
             self.minVoltage = original_min
             self.maxVoltage = original_max
-            # Immer sunPhaseActive zurücksetzen, aber sunset_phase_active bleibt bis das Fenster verlassen wird
             self.sunPhaseActive = False
             _LOGGER.debug(f"{self.deviceName}: SunSet Task ended, sunPhaseActive=False")
-    
+
     ## Actions
     async def toggleLight(self, lightState):
         """Toggle the light based on schedule."""
