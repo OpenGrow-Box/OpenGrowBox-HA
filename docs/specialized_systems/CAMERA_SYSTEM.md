@@ -177,8 +177,8 @@ timelapse_config = {
 Timelapse recording respects the plant day/night cycle:
 
 ```python
-# Check plant day status
-is_plant_day = self.dataStore.get("isPlantDay")
+# Check plant day status (light ON/OFF)
+is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
 if not is_plant_day:
     _LOGGER.debug(f"{self.deviceName}: Skipping capture - isPlantDay is False (light off)")
     return
@@ -188,6 +188,29 @@ if not is_plant_day:
 - **Light ON**: Capture images at configured interval
 - **Light OFF**: Skip capture, wait for next interval
 - **Benefit**: Avoids capturing dark images, saves storage
+
+### Night Mode Capture
+
+Users can configure whether timelapse captures occur during night (lights off) periods:
+
+```python
+# Night capture configuration
+night_config = {
+    "capture_at_night": False,  # Default: skip night captures
+}
+```
+
+**Frontend Indicator:**
+When night mode is active (lights off, night capture disabled), a moon badge appears:
+- **Location**: Recording Status Area
+- **Icon**: Moon (MdNightlight)
+- **Text**: "Night Mode - Auto-skipping captures"
+
+**Configuration:**
+Users can enable night capture via the Timelapse & Config tab:
+- Checkbox: "Capture at Night"
+- Applies to: Timelapse recording only
+- Daily snapshots: Always skip at night (current behavior)
 
 ## Daily Snapshots
 
@@ -378,7 +401,7 @@ if i % max(1, len(filtered_images) // 10) == 0:
 | `TimelapseGenerationStarted` | Backend → Frontend | Generation started notification |
 | `TimelapseGenerationProgress` | Backend → Frontend | Progress updates |
 | `TimelapseGenerationComplete` | Backend → Frontend | Generation complete with download URL |
-| `CameraRecordingStatus` | Backend → Frontend | Recording status updates |
+| `CameraRecordingStatus` | Backend → Frontend | Recording status updates (includes is_night_mode, capture_at_night fields) |
 | `TimelapseCompleted` | Backend → Frontend | Recording finished |
 | `DailyPhotosResponse` | Backend → Frontend | Daily photos list |
 | `DailyPhotoResponse` | Backend → Frontend | Single photo data (base64) |
