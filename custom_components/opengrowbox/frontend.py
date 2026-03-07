@@ -33,12 +33,15 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         hass, f"{URL_BASE}/static", static_path, cache_headers=False
     )
 
+    # Note: sidebar_icon only supports mdi: prefixes, not custom icons
+    sidebar_icon = "mdi:cannabis"
+
     if "ogb-gui" not in hass.data.get("frontend_panels", {}):
         async_register_built_in_panel(
             hass,
             component_name="custom",
             sidebar_title="OpenGrowBox",
-            sidebar_icon="mdi:cannabis",
+            sidebar_icon=sidebar_icon,
             frontend_url_path="ogb-gui",
             config_panel_domain=DOMAIN,
             config={
@@ -52,6 +55,6 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
             },
             require_admin=False,
         )
-        _LOGGER.info("Custom panel registered successfully.")
+        _LOGGER.info(f"Custom panel registered with icon: {sidebar_icon}")
     else:
         _LOGGER.debug("Custom panel already registered.")
