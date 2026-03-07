@@ -609,7 +609,7 @@ class Light(Device):
                 target_voltage = self.maxVoltage if self.maxVoltage is not None else 100
                 voltage_source = "maxVoltage"
 
-            start_voltage = self.initVoltage
+            start_voltage = self.minVoltage
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10
             

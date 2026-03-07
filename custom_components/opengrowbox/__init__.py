@@ -38,6 +38,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         _LOGGER.error(f"Frontend integration not found: {e}")
         return False
 
+    # Clean up orphaned/missing OGB entities from entity registry
+    await _cleanup_orphaned_entities(hass)
+
     # Create the coordinator
     coordinator = OGBIntegrationCoordinator(hass, config_entry)
     hass.data[DOMAIN][config_entry.entry_id] = coordinator
@@ -53,6 +56,51 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     _LOGGER.info(f"✅ Integration setup complete, waiting for sensor platform to register services")
 
     return True
+
+
+async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
+    """
+    Clean up orphaned OGB entities from the entity registry.
+    
+    Removes entities that are registered to OpenGrowBox but no longer exist
+    or are no longer available. This prevents HA warnings about missing entities.
+    """
+    try:
+        from homeassistant.helpers import entity_registry as er
+        
+        entity_reg = await er.async_get(hass)
+        
+        # Get all OGB-related entries
+        ogb_entities = []
+        for entity_id, entry in entity_reg.entities.items():
+            if entry.platform == "opengrowbox":
+                ogb_entities.append((entity_id, entry))
+        
+        if not ogb_entities:
+            return
+            
+        # Check each entity and remove if it's orphaned (not available)
+        removed_count = 0
+        for entity_id, entry in ogb_entities:
+            # Try to get the entity state - if it doesn't exist, it's orphaned
+            state = hass.states.get(entity_id)
+            
+            if state is None:
+                # Entity doesn't exist - remove from registry
+                try:
+                    await entity_reg.async_remove(entity_id)
+                    removed_count += 1
+                    _LOGGER.info(f"🧹 Removed orphaned entity: {entity_id}")
+                except Exception as e:
+                    _LOGGER.debug(f"Could not remove {entity_id}: {e}")
+        
+        if removed_count > 0:
+            _LOGGER.info(f"✅ Cleaned up {removed_count} orphaned OpenGrowBox entities")
+        else:
+            _LOGGER.debug("No orphaned entities found")
+            
+    except Exception as e:
+        _LOGGER.debug(f"Entity cleanup skipped: {e}")
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

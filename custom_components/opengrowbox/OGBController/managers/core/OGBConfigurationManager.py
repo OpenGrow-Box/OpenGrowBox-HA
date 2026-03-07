@@ -528,17 +528,13 @@ class OGBConfigurationManager:
         """Update VPD values based on plant stage."""
         plant_stage = self.data_store.get("plantStage")
         stage_values = self.data_store.getDeep(f"plantStages.{plant_stage}")
-        own_control_values = self.data_store.getDeep("controlOptions.minMaxControl")
+        min_max_active = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.minMaxControl")
+        )
 
         if not stage_values:
             _LOGGER.error(
                 f"{self.room}: No data found for plant stage '{plant_stage}'."
-            )
-            return
-
-        if own_control_values:
-            _LOGGER.error(
-                f"{self.room}: No adjustment possible for plant stage with own MinMax active"
             )
             return
 
@@ -556,6 +552,7 @@ class OGBConfigurationManager:
             perfect_vpd_min = perfections["perfect_min"]
             perfect_vpd_max = perfections["perfect_max"]
 
+            # Always update VPD targets (these are NOT the same as Light MinMax)
             await _update_specific_sensor(
                 "ogb_current_vpd_target_", self.room, perfect_vpd, self.hass
             )
@@ -568,10 +565,8 @@ class OGBConfigurationManager:
 
             self.data_store.setDeep("vpd.range", vpd_range)
 
-            min_max_active = self._string_to_bool(
-                self.data_store.getDeep("controlOptions.minMaxControl")
-            )
-
+            # Only update Temp/Humidity targets if minMaxControl is NOT active
+            # (Light MinMax is handled separately in Light.py)
             if min_max_active == False:
                 self.data_store.setDeep("tentData.maxTemp", max_temp)
                 self.data_store.setDeep("tentData.minTemp", min_temp)
