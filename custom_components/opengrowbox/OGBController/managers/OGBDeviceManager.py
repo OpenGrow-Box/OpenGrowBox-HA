@@ -69,6 +69,12 @@ class OGBDeviceManager:
         deviceName = device.get("name", "unknown_device")
         deviceData = device.get("entities", [])
 
+        # Duplikat-Check – selber Name darf nicht zweimal rein
+        current_devices = self.data_store.get("devices") or []
+        if any(getattr(d, "deviceName", None) == deviceName for d in current_devices):
+            _LOGGER.warning(f"{self.room}: Device '{deviceName}' bereits in devices – addDevice abgebrochen")
+            return None
+
         allLabels = []
         deviceLabels = device.get("labels", [])
 
@@ -78,7 +84,7 @@ class OGBDeviceManager:
                 "id": lbl.get("id"),
                 "name": lbl.get("name"),
                 "scope": lbl.get("scope", "device"),
-                "entity": None,  # Keine direkte Entity-Zuordnung
+                "entity": None,
             }
             allLabels.append(new_lbl)
 
@@ -108,14 +114,18 @@ class OGBDeviceManager:
         )
         if not identified_device:
             _LOGGER.error(f"Failed to identify device: {deviceName}")
-            return
+            return None
 
         _LOGGER.debug(f"Device:->{identified_device} identification Success")
 
+        # Nochmal prüfen – Race-Condition zwischen identify und append
+        current_devices = self.data_store.get("devices") or []
+        if any(getattr(d, "deviceName", None) == deviceName for d in current_devices):
+            _LOGGER.warning(f"{self.room}: Device '{deviceName}' wurde während identify hinzugefügt – abgebrochen")
+            return None
 
-        devices = self.data_store.get("devices")
-        devices.append(identified_device)
-        self.data_store.set("devices", devices)
+        current_devices.append(identified_device)
+        self.data_store.set("devices", current_devices)
 
         _LOGGER.info(f"Added new device From List: {identified_device}")
         return identified_device

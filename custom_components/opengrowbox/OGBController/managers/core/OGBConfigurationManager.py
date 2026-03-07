@@ -783,16 +783,6 @@ class OGBConfigurationManager:
         if current_value != value:
             bool_value = self._string_to_bool(value)
             self.data_store.setDeep("controlOptions.minMaxControl", bool_value)
-            if bool_value == False:
-                _LOGGER.info(f"{self.room}: MinMax control disabled - resetting devices to default values")
-                await self.event_manager.emit("MinMaxControlDisabled", {
-                    "room": self.room
-                })
-            else:
-                _LOGGER.info(f"{self.room}: MinMax control enabled - restoring device min/max values")
-                await self.event_manager.emit("MinMaxControlEnabled", {
-                    "room": self.room
-                })
 
     async def _update_min_temp(self, data):
         """
@@ -1043,25 +1033,46 @@ class OGBConfigurationManager:
         """Update device min/max activation flags."""
         value = self._string_to_bool(data.newState[0])
         name = data.Name.lower()
+        device_type = None
+        active_bool = value
 
-        # Set activation flags based on device type
+        # Determine device type from entity name
         if "exhaust" in name:
-            self.data_store.setDeep("DeviceMinMax.Exhaust.active", value)
-            _LOGGER.info(f"{self.room}: Exhaust min/max control set to {value}")
+            device_type = "Exhaust"
+            active_path = "DeviceMinMax.Exhaust.active"
         elif "intake" in name:
-            self.data_store.setDeep("DeviceMinMax.Intake.active", value)
-            _LOGGER.info(f"{self.room}: Intake min/max control set to {value}")
+            device_type = "Intake"
+            active_path = "DeviceMinMax.Intake.active"
         elif "ventilation" in name:
-            self.data_store.setDeep("DeviceMinMax.Ventilation.active", value)
-            _LOGGER.info(f"{self.room}: Ventilation min/max control set to {value}")
+            device_type = "Ventilation"
+            active_path = "DeviceMinMax.Ventilation.active"
         elif "light" in name:
-            self.data_store.setDeep("DeviceMinMax.Light.active", value)
-            _LOGGER.info(f"{self.room}: Light min/max control set to {value}")
+            device_type = "Light"
+            active_path = "DeviceMinMax.Light.active"
         else:
             _LOGGER.error(f"{self.room}: Unknown device type for min/max control: {name}")
+            return
 
-        # Emit event for device manager
-        await self.event_manager.emit("SetMinMax", data)
+        # Check current value and update if changed
+        current_value = self.data_store.getDeep(active_path)
+        if current_value != active_bool:
+            _LOGGER.debug(f"{self.room}: Updating {device_type} min/max active from {current_value} to {active_bool}")
+            self.data_store.setDeep(active_path, active_bool)
+        else:
+            _LOGGER.debug(f"{self.room}: {device_type} min/max active already set to {active_bool}")
+
+        # Ensure the active flag is set in the data store
+        self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", active_bool)
+        _LOGGER.info(f"{self.room}: {device_type} min/max active set to {active_bool}")
+
+        # Emit event with correct device type
+        if not active_bool:
+            _LOGGER.debug(f"{self.room}: Emitting MinMaxControlDisabled for {device_type}")
+            await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": device_type})
+        else:
+            _LOGGER.debug(f"{self.room}: Emitting MinMaxControlEnabled for {device_type}")
+            await self.event_manager.emit("MinMaxControlEnabled", {"deviceType": device_type})
+
 
     async def _device_min_max_setter(self, data):
         """Update device min/max settings for voltage and duty cycle limits."""
@@ -1092,26 +1103,32 @@ class OGBConfigurationManager:
             _LOGGER.error(f"{self.room}: Unknown device limit control: {name}")
             return
 
+        # Ensure min/max active flag is set when setting values
+        self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
+        _LOGGER.debug(f"{self.room}: Auto-activated {device_type} min/max control")
+
         if "min" in name:
             self.data_store.setDeep(min_path, float(value))
-            # Aktiviere MinMax wenn min oder max gesetzt wird
-            self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
             _LOGGER.info(f"{self.room}: Set {device_type.lower()} min {('duty' if device_type != 'Light' else 'voltage')} = {value}")
         elif "max" in name:
             self.data_store.setDeep(max_path, float(value))
-            self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
             _LOGGER.info(f"{self.room}: Set {device_type.lower()} max {('duty' if device_type != 'Light' else 'voltage')} = {value}")
 
+        # Get current values and validate
         min_val = self.data_store.getDeep(min_path)
         max_val = self.data_store.getDeep(max_path)
         if min_val is not None and max_val is not None and min_val >= max_val:
+            adjustment = 10
             _LOGGER.warning(
                 f"{self.room}: Invalid {device_type} min/max: min={min_val} >= max={max_val}. "
-                f"Adjusting max to min+10"
+                f"Adjusting max to min+{adjustment}"
             )
-            self.data_store.setDeep(max_path, min_val + 10)
+            self.data_store.setDeep(max_path, min_val + adjustment)
 
-        await self.event_manager.emit("SetMinMax", data)
+        # Emit event to update devices
+        _LOGGER.debug(f"{self.room}: Emitting SetDeviceMinMax for {device_type}")
+        await self.event_manager.emit("SetDeviceMinMax", device_type)
+
 
     async def _device_from_label(self, data):
         """Update device label identification setting."""
