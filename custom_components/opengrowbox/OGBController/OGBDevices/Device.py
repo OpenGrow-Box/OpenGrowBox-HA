@@ -201,10 +201,8 @@ class Device:
         
     # Initialisiere das Gerät und identifiziere Eigenschaften
     def deviceInit(self, entitys):
-    
         # NEU: Suche nach dediziertem Sensor-Device für Sensor Erstellung
         clean_entitys = self.discoverRelatedSensors(entitys)
-    
         self.identifySwitchesAndSensors(clean_entitys)
         self.identifyIfRunningState()
         self.identifDimmable()
@@ -1576,6 +1574,13 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlDisabled")
             return
 
+        # Nur reagieren wenn das Event für diesen deviceType gilt
+        if isinstance(data, dict):
+            event_device_type = data.get("deviceType")
+            if event_device_type and event_device_type != self.deviceType:
+                _LOGGER.debug(f"{self.deviceName}: ignoring MinMaxControlDisabled – event for {event_device_type}, I am {self.deviceType}")
+                return
+
         _LOGGER.info(f"{self.deviceName}: MinMax control disabled - resetting to default values")
 
         if self.deviceType == "Light":
@@ -1606,7 +1611,7 @@ class Device:
                     f"fallback: min={self.minVoltage}%, max={self.maxVoltage}%"
                 )
 
-            if self.isRunning and hasattr(self, 'voltage') and self.voltage is not None:
+            if self.isRunning and self.voltage is not None:
                 old_voltage = self.voltage
                 try:
                     self.voltage = float(getattr(self, 'initVoltage', 20))
@@ -1615,7 +1620,11 @@ class Device:
                 _LOGGER.info(f"{self.deviceName}: Running - voltage reset from {old_voltage}% to {self.voltage}%")
                 await self.turn_on(brightness_pct=self.voltage)
             else:
-                _LOGGER.info(f"{self.deviceName}: Not running - voltage unchanged at {getattr(self, 'voltage', 'N/A')}%")
+                try:
+                    self.voltage = float(getattr(self, 'initVoltage', 20))
+                except (ValueError, TypeError):
+                    self.voltage = 20.0
+                _LOGGER.info(f"{self.deviceName}: Not running - voltage updated to {self.voltage}% but light NOT turned on")
 
         elif self.deviceType in {"Exhaust", "Intake", "Ventilation"}:
             old_min, old_max = self.minDuty, self.maxDuty
@@ -1636,14 +1645,14 @@ class Device:
                     self.minDuty, self.maxDuty = 0.0, 100.0
                 _LOGGER.info(f"{self.deviceName}: Device-specific min/max: min={self.minDuty}, max={self.maxDuty}")
             else:
-                self.minDuty  = float(getattr(self, 'minDuty', 0))
-                self.maxDuty  = float(getattr(self, 'maxDuty', 100))
+                self.minDuty = float(getattr(self, 'minDuty', 0))
+                self.maxDuty = float(getattr(self, 'maxDuty', 100))
                 _LOGGER.info(
                     f"{self.deviceName}: Resetting to defaults: "
                     f"min={old_min}→{self.minDuty}, max={old_max}→{self.maxDuty}"
                 )
 
-            if self.isRunning and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
+            if self.isRunning and self.dutyCycle is not None:
                 old_duty = self.dutyCycle
                 try:
                     steps = float(self.steps) if self.steps else 1.0
@@ -1660,12 +1669,20 @@ class Device:
             else:
                 _LOGGER.info(f"{self.deviceName}: Not running - dutyCycle unchanged at {getattr(self, 'dutyCycle', 'N/A')}%")
 
+
     async def on_minmax_control_enabled(self, data) -> None:
         """Restore user-defined min/max values when global minMaxControl is enabled."""
         minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
         if self.deviceType not in minmax_device_types:
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlEnabled")
             return
+
+        # Nur reagieren wenn das Event für diesen deviceType gilt
+        if isinstance(data, dict):
+            event_device_type = data.get("deviceType")
+            if event_device_type and event_device_type != self.deviceType:
+                _LOGGER.debug(f"{self.deviceName}: ignoring MinMaxControlEnabled – event for {event_device_type}, I am {self.deviceType}")
+                return
 
         _LOGGER.info(f"{self.deviceName}: MinMax control enabled - restoring user-defined min/max values")
 
@@ -1693,11 +1710,14 @@ class Device:
                     _LOGGER.warning(f"{self.deviceName}: Ungültige Voltage-Werte im dataStore")
                     return
 
-                if self.isRunning and hasattr(self, 'voltage') and self.voltage is not None:
+                if self.isRunning and self.voltage is not None:
                     old_voltage = self.voltage
                     self.voltage = self.clamp_voltage(self.voltage)
-                    _LOGGER.info(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}%")
+                    _LOGGER.info(f"{self.deviceName}: Running - voltage clamped from {old_voltage}% to {self.voltage}%")
                     await self.turn_on(brightness_pct=self.voltage)
+                else:
+                    self.voltage = self.clamp_voltage(self.voltage)
+                    _LOGGER.info(f"{self.deviceName}: Not running - voltage clamped to {self.voltage}% but light NOT turned on")
             else:
                 _LOGGER.warning(f"{self.deviceName}: No min/max voltage found in dataStore")
 
@@ -1715,16 +1735,19 @@ class Device:
                     _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte im dataStore")
                     return
 
-                if self.isRunning and hasattr(self, 'dutyCycle') and self.dutyCycle is not None:
+                if self.isRunning and self.dutyCycle is not None:
                     old_duty = self.dutyCycle
-                    self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)  # ← sichere Methode
-                    _LOGGER.info(f"{self.deviceName}: DutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
+                    self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
+                    _LOGGER.info(f"{self.deviceName}: Running - dutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
                     if self.isSpecialDevice:
                         await self.turn_on(brightness_pct=float(self.dutyCycle))
                     else:
                         await self.turn_on(percentage=self.dutyCycle)
+                else:
+                    _LOGGER.info(f"{self.deviceName}: Not running - dutyCycle unchanged at {getattr(self, 'dutyCycle', 'N/A')}%")
             else:
                 _LOGGER.warning(f"{self.deviceName}: No min/max duty found in dataStore")
+
 
     def clamp_voltage(self, value: int | float | str | None) -> float:
         """Clamp voltage to min/max range."""
