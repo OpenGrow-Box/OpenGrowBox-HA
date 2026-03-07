@@ -87,28 +87,41 @@ class Exhaust(Device):
         )
 
 
-    def clamp_duty_cycle(self, value):
+    def clamp_duty_cycle(self, value: int | float | str | None) -> int:
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
+
+        # value sicher zu float konvertieren
         if value is None:
             _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle called with None, using default 50%")
-            value = 50
-        
-        # Always read min/max from dataStore to get user-defined values
-        minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
-        if minMaxSets and minMaxSets.get("minDuty") is not None and minMaxSets.get("maxDuty") is not None:
-            min_duty = float(minMaxSets.get("minDuty"))
-            max_duty = float(minMaxSets.get("maxDuty"))
+            value = 50.0
         else:
-            # Fallback to class defaults
-            min_duty = float(self.minDuty) if self.minDuty is not None else 10
-            max_duty = float(self.maxDuty) if self.maxDuty is not None else 100
-        
-        duty_cycle = float(value)
-        clamped_value = max(min_duty, min(max_duty, duty_cycle))
-        clamped_value = int(clamped_value)
-        
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt (range: {min_duty}-{max_duty}%)")
-        return clamped_value
+            try:
+                value = float(value)
+            except (ValueError, TypeError):
+                _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle got invalid value '{value}', using default 50%")
+                value = 50.0
+
+        # Min/Max aus dataStore lesen
+        min_duty, max_duty = 10.0, 100.0  # ← deine Defaults (10 statt 0)
+        try:
+            minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
+            if minMaxSets:
+                raw_min = minMaxSets.get("minDuty")
+                raw_max = minMaxSets.get("maxDuty")
+                if raw_min is not None and raw_max is not None:
+                    min_duty = float(raw_min)
+                    max_duty = float(raw_max)
+        except (ValueError, TypeError, AttributeError):
+            _LOGGER.warning(f"{self.deviceName}: Fehler beim Lesen von DeviceMinMax, nutze Defaults")
+            try:
+                min_duty = float(self.minDuty) if self.minDuty is not None else 10.0
+                max_duty = float(self.maxDuty) if self.maxDuty is not None else 100.0
+            except (ValueError, TypeError):
+                pass
+
+        clamped = int(max(min_duty, min(max_duty, value)))
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped}% begrenzt (range: {min_duty}-{max_duty}%)")
+        return clamped
 
     def change_duty_cycle(self, increase=True):
         """

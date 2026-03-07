@@ -377,7 +377,6 @@ class OGBDeviceManager:
         }
         return device_classes.get(device_type, Device)
 
-
     async def DeviceUpdater(self):
         controlOption = self.data_store.get("mainControl")
 
@@ -431,20 +430,10 @@ class OGBDeviceManager:
                     None,
                 )
                 if currentDevice:
-                    # Vergleiche Labels
-                    realLabels = set(
-                        lbl.get("name", "").lower()
-                        for lbl in realDevice.get("labels", [])
-                    )
                     currentLabel = getattr(currentDevice, "deviceLabel", "EMPTY")
-
-                    # Bestimme das Label, das bei der aktuellen Identifizierung erkannt würde
-                    # Use same priority logic as identify_device()
                     expected_label = self._determine_device_type_from_labels(
                         realDevice.get("labels", [])
                     )
-
-                    # Nur neu identifizieren, wenn sich das erkannte Label tatsächlich geändert hat
                     if currentLabel != expected_label:
                         devicesToReidentify.append(realDevice)
                         _LOGGER.warning(
@@ -457,22 +446,27 @@ class OGBDeviceManager:
                 await self.removeDevice(device.deviceName)
 
         # Geräte mit geänderten Labels entfernen und neu hinzufügen
+        reidentify_names = set()  # ← immer initialisieren, auch wenn devicesToReidentify leer
         if devicesToReidentify:
             _LOGGER.warning(
                 f"Re-identifying {len(devicesToReidentify)} devices due to label changes"
             )
             for device in devicesToReidentify:
+                reidentify_names.add(device["name"])
                 await self.removeDevice(device["name"])
                 await self.setupDevice(device)
 
         if newDevices:
             _LOGGER.warning(f"Found {len(newDevices)} new devices, initializing...")
             for device in newDevices:
+                if device["name"] in reidentify_names:  # ← verhindert doppeltes Init
+                    _LOGGER.debug(f"'{device['name']}' bereits via reidentify hinzugefügt – übersprungen")
+                    continue
                 _LOGGER.debug(f"Registering new device: {device}")
                 await self.setupDevice(device)
         else:
             _LOGGER.warning("Device-Check: No new devices found.")
-
+    
     def device_Worker(self):
         if self._devicerefresh_task and not self._devicerefresh_task.done():
             _LOGGER.debug("Device refresh task is already running. Skipping start.")

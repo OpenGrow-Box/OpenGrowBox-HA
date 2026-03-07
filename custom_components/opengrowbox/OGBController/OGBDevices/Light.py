@@ -32,6 +32,7 @@ class Light(Device):
             deviceLabel,
             allLabels,
         )
+        self.data_store = dataStore
         self.voltage = 0
         self.initVoltage = 20
         self.minVoltage = None
@@ -309,11 +310,16 @@ class Light(Device):
     def calculate_actual_voltage(self, percent):
         return percent * (10 / 100)
 
-    def clamp_voltage(self, v):
+    def clamp_voltage(self, v: int | float | str | None) -> float:
         if v is None:
-            return 0
-        min_v = self.minVoltage if self.minVoltage is not None else 0
-        max_v = self.maxVoltage if self.maxVoltage is not None else 100
+            return 0.0
+        try:
+            v = float(v)
+        except (ValueError, TypeError):
+            return 0.0
+        
+        min_v = float(self.minVoltage) if self.minVoltage is not None else 0.0
+        max_v = float(self.maxVoltage) if self.maxVoltage is not None else 100.0
         return max(min_v, min(max_v, v))
 
     async def setPlanStageLight(self, plantStageData):
