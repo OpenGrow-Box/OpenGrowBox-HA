@@ -54,9 +54,6 @@ class Camera(Device):
         self.tl_image_count = 0
         self._timelapse_unsub = None  # Stores HA timer unsubscribe callback
         self._timelapse_start_unsub = None  # Stores start timer unsubscribe callback (async_track_point_in_time)
-        
-        # CamConfig Object
-        self.ogb_cam_conf = self.dataStore.get("plantsView")
 
         # HA availability flag for consistent validation
         if hass is None:
@@ -136,6 +133,23 @@ class Camera(Device):
     async def init(self):
         """Initialize camera device."""
         try:
+            # Wait for saved state to be loaded into dataStore before reading plantsView
+            # This prevents loading default values before async_init completes
+            for attempt in range(10):  # Try for up to 5 seconds (10 * 0.5s)
+                plants_view = self.dataStore.get("plantsView")
+                # Check if state has been loaded by looking for fields that exist in saved state
+                # but not in defaults from OGBData.py (which only has: isTimeLapseActive, TimeLapseIntervall, StartDate, EndDate, OutPutFormat)
+                if plants_view and (
+                    plants_view.get("tl_image_count", 0) > 0 or  # Has non-zero count (saved state has this, default doesn't)
+                    "daily_snapshot_enabled" in plants_view or  # Saved state has this field, default doesn't
+                    "capture_at_night" in plants_view  # Saved state has this field, default doesn't
+                ):
+                    _LOGGER.info(f"{self.deviceName}: Saved state detected in dataStore (attempt {attempt + 1})")
+                    break
+                if attempt < 9:  # Don't sleep on last attempt
+                    await asyncio.sleep(0.5)
+            else:
+                _LOGGER.warning(f"{self.deviceName}: Saved state may not be loaded yet, proceeding with available data")
             # Use Home Assistant config path like OGBDSManager does
             if self.hass:
                 base_path = self.hass.config.path("ogb_data")
@@ -185,6 +199,7 @@ class Camera(Device):
                     "tl_image_count": 0,
                     "daily_snapshot_enabled": False,
                     "daily_snapshot_time": "09:00",
+                    "capture_at_night": False,
                 }
                 self.dataStore.set("plantsView", plants_view)
             else:
@@ -323,12 +338,20 @@ class Camera(Device):
         self.tl_end_time = end_dt
         self.tl_active = True
 
+        # Check plant day (Light logic) before capturing - also used later for status event
+        is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+
         # Take the first image immediately when timelapse starts
         # This ensures we capture at the exact start time, not waiting for first interval
         try:
-            # Check plant day (Light logic) before capturing
-            is_plant_day = self.dataStore.get("isPlantDay")
-            if is_plant_day:
+            # Get capture_at_night config - always read fresh from dataStore
+            plants_view = self.dataStore.get("plantsView") or {}
+            capture_at_night = plants_view.get("capture_at_night", False)
+
+            # Only skip if night AND night capture is disabled
+            if not is_plant_day and not capture_at_night:
+                _LOGGER.debug(f"{self.deviceName}: Skipped initial capture - isPlantDay is False (light off), night capture disabled")
+            else:
                 # Capture Image
                 await self.takeImage()
 
@@ -355,8 +378,6 @@ class Camera(Device):
                     self.dataStore.set("plantsView", plants_view)
 
                     _LOGGER.info(f"{self.deviceName}: Captured first timelapse image immediately at start")
-            else:
-                _LOGGER.debug(f"{self.deviceName}: Skipped initial capture - isPlantDay is False (light off)")
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Failed to capture initial timelapse image: {e}")
 
@@ -372,6 +393,10 @@ class Camera(Device):
             f"(interval: {interval_sec}s, end: {dt_util.as_local(end_dt).isoformat()})"
         )
 
+        # Get capture_at_night config - always read fresh from dataStore
+        plants_view = self.dataStore.get("plantsView") or {}
+        capture_at_night = plants_view.get("capture_at_night", False)
+
         # Emit recording started event
         await self.event_manager.emit("CameraRecordingStatus", {
             "room": self.inRoom,
@@ -380,6 +405,8 @@ class Camera(Device):
             "image_count": self.tl_image_count,
             "start_time": start_dt.isoformat(),
             "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            "is_night_mode": not is_plant_day if not capture_at_night else False,
+            "capture_at_night_enabled": capture_at_night,
         }, haEvent=True)
 
     async def _schedule_timelapse_start(self, start_dt, end_dt):
@@ -412,6 +439,12 @@ class Camera(Device):
             f"(current time: {dt_util.now().isoformat()})"
         )
 
+        # Get night mode config for status event
+        is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+        # Get capture_at_night config - always read fresh from dataStore
+        plants_view = self.dataStore.get("plantsView") or {}
+        capture_at_night = plants_view.get("capture_at_night", False)
+
         # Emit scheduled event
         await self.event_manager.emit("CameraRecordingStatus", {
             "room": self.inRoom,
@@ -421,6 +454,8 @@ class Camera(Device):
             "scheduled_start": start_dt.isoformat(),
             "scheduled_end": end_dt.isoformat(),
             "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            "is_night_mode": not is_plant_day if not capture_at_night else False,
+            "capture_at_night_enabled": capture_at_night,
         }, haEvent=True)
 
     async def startTL(self, resume=False):
@@ -517,9 +552,23 @@ class Camera(Device):
                 return
 
             # 2. Check plant day (Light logic)
-            is_plant_day = self.dataStore.get("isPlantDay")
-            if not is_plant_day:
-                _LOGGER.debug(f"{self.deviceName}: Skipping capture - isPlantDay is False (light off)")
+            is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+            # Get capture_at_night config - always read fresh from dataStore
+            plants_view = self.dataStore.get("plantsView") or {}
+            capture_at_night = plants_view.get("capture_at_night", False)
+            if not is_plant_day and not capture_at_night:
+                _LOGGER.debug(f"{self.deviceName}: Skipping capture - isPlantDay is False (light off), night capture disabled")
+                # Emit status update so frontend knows we're in night mode (skipping captures)
+                await self.event_manager.emit("CameraRecordingStatus", {
+                    "room": self.inRoom,
+                    "camera_entity": self.camera_entity_id,
+                    "is_recording": True,
+                    "image_count": self.tl_image_count,
+                    "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
+                    "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                    "is_night_mode": True,
+                    "capture_at_night_enabled": capture_at_night,
+                }, haEvent=True)
                 return
 
             # 3. Capture Image
@@ -554,6 +603,8 @@ class Camera(Device):
                         "image_count": self.tl_image_count,
                         "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
                         "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                        "is_night_mode": not is_plant_day if not capture_at_night else False,
+                        "capture_at_night_enabled": capture_at_night,
                     }, haEvent=True)
                 
                 # Trigger state save occasionally? 
@@ -591,6 +642,12 @@ class Camera(Device):
         plants_view["isTimeLapseActive"] = False
         self.dataStore.set("plantsView", plants_view)
 
+        # Get night mode config for status event
+        is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+        # Get capture_at_night config - always read fresh from dataStore
+        plants_view = self.dataStore.get("plantsView") or {}
+        capture_at_night = plants_view.get("capture_at_night", False)
+
         # Emit recording status stopped (for frontend)
         await self.event_manager.emit("CameraRecordingStatus", {
             "room": self.inRoom,
@@ -599,6 +656,8 @@ class Camera(Device):
             "image_count": self.tl_image_count,
             "start_time": None,
             "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            "is_night_mode": not is_plant_day if not capture_at_night else False,
+            "capture_at_night_enabled": capture_at_night,
         }, haEvent=True)
 
         await self.event_manager.emit("TimelapseCompleted", {
@@ -637,16 +696,7 @@ class Camera(Device):
                         # Store image data
                         self.last_image = image_data
                         self.last_capture_time = dt_util.now()
-                        
-                        # Emit image captured event for WebSocket transmission
-                        await self.event_manager.emit("CameraImageCaptured", {
-                            "device": self.deviceName,
-                            "timestamp": self.last_capture_time.isoformat(),
-                            "image_data": image_data,
-                            "camera_entity": camera_entity_id,
-                            "deviceType": self.deviceType
-                        }, haEvent=True)
-                        
+
                         _LOGGER.info(f"{self.deviceName}: Image captured successfully from {camera_entity_id}")
                         return image_data
                     else:
@@ -1134,6 +1184,7 @@ class Camera(Device):
                     "OutPutFormat": tl_config.get("OutPutFormat", "mp4"),
                     "daily_snapshot_enabled": plants_view.get("daily_snapshot_enabled", False),
                     "daily_snapshot_time": plants_view.get("daily_snapshot_time", "09:00"),
+                    "capture_at_night": plants_view.get("capture_at_night", False),
                 },
                 "available_timelapses": available_timelapses,
                 "tl_active": is_recording_active,
@@ -1178,6 +1229,12 @@ class Camera(Device):
                 "daily_snapshot_enabled": new_config.get("daily_snapshot_enabled", False),
                 "daily_snapshot_time": new_config.get("daily_snapshot_time", "09:00"),
             })
+
+            # Handle capture_at_night setting
+            capture_at_night = new_config.get("capture_at_night")
+            if capture_at_night is not None:
+                plants_view["capture_at_night"] = capture_at_night
+
             self.dataStore.set("plantsView", plants_view)
 
             # Update daily snapshot scheduling if settings changed
@@ -1283,8 +1340,6 @@ class Camera(Device):
     async def _handle_get_timelapse_status(self, event):
         """Handle opengrowbox_get_timelapse_status event from frontend."""
         try:
-            _LOGGER.info(f"{self.deviceName}: timelapse Event <Event opengrowbox_get_timelapse_status[L]: device_name={event.data.get('device_name')}>")
-
             event_data = event.data
             device_name = event_data.get("device_name")
 
@@ -1293,7 +1348,11 @@ class Camera(Device):
                 _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected: {self.camera_entity_id}, got: {device_name})")
                 return
 
-            _LOGGER.info(f"{self.deviceName}: Sending CameraRecordingStatus with last_capture_time: {self.last_capture_time}")
+            # Get night mode config for status event
+            is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+            # Get capture_at_night config - always read fresh from dataStore
+            plants_view = self.dataStore.get("plantsView") or {}
+            capture_at_night = plants_view.get("capture_at_night", False)
 
             # Emit current status via CameraRecordingStatus (frontend subscribes to this)
             # This ensures the frontend gets the accurate last_capture_time for countdown timer
@@ -1304,6 +1363,8 @@ class Camera(Device):
                 "image_count": self.tl_image_count,
                 "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
                 "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                "is_night_mode": not is_plant_day if not capture_at_night else False,
+                "capture_at_night_enabled": capture_at_night,
             }, haEvent=True)
 
             # Also emit TimelapseStatusResponse for any other listeners
@@ -1515,20 +1576,44 @@ class Camera(Device):
                 if process.returncode != 0:
                     raise Exception(f"ffmpeg failed: {stderr.decode()}")
             
-            # Success
+            # Success - read file and send as base64
             self.tl_generation_status = "complete"
             self.tl_generation_progress = 100
-            
+
+            # Read the generated file and encode as base64 for transmission
+            def _read_and_encode_file():
+                try:
+                    with open(output_path, 'rb') as f:
+                        file_data = f.read()
+                    # Encode to base64 for transmission via WebSocket
+                    return base64.b64encode(file_data).decode('utf-8'), len(file_data)
+                except Exception as e:
+                    _LOGGER.error(f"{self.deviceName}: Failed to read timelapse file: {e}")
+                    return None, 0
+
+            file_base64, file_size = await self.hass.async_add_executor_job(_read_and_encode_file)
+
+            if file_base64 is None:
+                # Failed to read file, send error
+                await self.event_manager.emit("TimelapseGenerationComplete", {
+                    "device_name": self.camera_entity_id,
+                    "success": False,
+                    "error": "Failed to read generated timelapse file",
+                }, haEvent=True)
+                return
+
             await self.event_manager.emit("TimelapseGenerationComplete", {
                 "device_name": self.camera_entity_id,
                 "success": True,
                 "output_path": output_path,
                 "format": output_format,
                 "frame_count": len(filtered_images),
-                "download_url": f"/local/ogb_data/{self.inRoom}_img/timelapse_output/{os.path.basename(output_path)}",
+                "filename": os.path.basename(output_path),
+                "file_data": file_base64,
+                "file_size": file_size,
             }, haEvent=True)
-            
-            _LOGGER.info(f"{self.deviceName}: Timelapse generation complete: {output_path}")
+
+            _LOGGER.info(f"{self.deviceName}: Timelapse generation complete: {output_path} ({file_size} bytes)")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Timelapse generation failed: {e}")
