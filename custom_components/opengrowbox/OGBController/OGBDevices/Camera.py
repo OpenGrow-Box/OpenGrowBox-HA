@@ -54,9 +54,6 @@ class Camera(Device):
         self.tl_image_count = 0
         self._timelapse_unsub = None  # Stores HA timer unsubscribe callback
         self._timelapse_start_unsub = None  # Stores start timer unsubscribe callback (async_track_point_in_time)
-        
-        # CamConfig Object
-        self.ogb_cam_conf = self.dataStore.get("plantsView")
 
         # HA availability flag for consistent validation
         if hass is None:
@@ -66,7 +63,6 @@ class Camera(Device):
             self.hass_available = True
 
         ## Events Register
-        self.event_manager.on("TakeImage", self.takeImage)
         self.event_manager.on("StartTL", self.startTL)
         
         # Register HA event listeners for timelapse
@@ -136,6 +132,23 @@ class Camera(Device):
     async def init(self):
         """Initialize camera device."""
         try:
+            # Wait for saved state to be loaded into dataStore before reading plantsView
+            # This prevents loading default values before async_init completes
+            for attempt in range(10):  # Try for up to 5 seconds (10 * 0.5s)
+                plants_view = self.dataStore.get("plantsView")
+                # Check if state has been loaded by looking for fields that exist in saved state
+                # but not in defaults from OGBData.py (which only has: isTimeLapseActive, TimeLapseIntervall, StartDate, EndDate, OutPutFormat)
+                if plants_view and (
+                    plants_view.get("tl_image_count", 0) > 0 or  # Has non-zero count (saved state has this, default doesn't)
+                    "daily_snapshot_enabled" in plants_view or  # Saved state has this field, default doesn't
+                    "capture_at_night" in plants_view  # Saved state has this field, default doesn't
+                ):
+                    _LOGGER.info(f"{self.deviceName}: Saved state detected in dataStore (attempt {attempt + 1})")
+                    break
+                if attempt < 9:  # Don't sleep on last attempt
+                    await asyncio.sleep(0.5)
+            else:
+                _LOGGER.warning(f"{self.deviceName}: Saved state may not be loaded yet, proceeding with available data")
             # Use Home Assistant config path like OGBDSManager does
             if self.hass:
                 base_path = self.hass.config.path("ogb_data")
@@ -185,6 +198,7 @@ class Camera(Device):
                     "tl_image_count": 0,
                     "daily_snapshot_enabled": False,
                     "daily_snapshot_time": "09:00",
+                    "capture_at_night": False,
                 }
                 self.dataStore.set("plantsView", plants_view)
             else:
@@ -285,13 +299,10 @@ class Camera(Device):
 
     def _validate_storage_path(self, subdirectory="daily"):
         """Validate and return a safe storage path.
-
         Args:
             subdirectory: Subdirectory to validate (e.g., "daily", "timelapse")
-
         Returns:
             tuple: (validated_path, storage_base_path)
-
         Raises:
             ValueError: If path traversal attempt detected.
         """
@@ -310,7 +321,6 @@ class Camera(Device):
 
     async def _start_capturing(self, start_dt, end_dt):
         """Start the interval-based capture scheduler.
-
         Args:
             start_dt: timezone-aware datetime for when timelapse started
             end_dt: timezone-aware datetime for when timelapse should end
@@ -323,17 +333,25 @@ class Camera(Device):
         self.tl_end_time = end_dt
         self.tl_active = True
 
+        # Check plant day (Light logic) before capturing - also used later for status event
+        is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+
         # Take the first image immediately when timelapse starts
         # This ensures we capture at the exact start time, not waiting for first interval
         try:
-            # Check plant day (Light logic) before capturing
-            is_plant_day = self.dataStore.get("isPlantDay")
-            if is_plant_day:
-                # Capture Image
-                await self.takeImage()
+            # Get capture_at_night config - always read fresh from dataStore
+            plants_view = self.dataStore.get("plantsView") or {}
+            capture_at_night = plants_view.get("capture_at_night", False)
 
-                # Save Image with current timestamp
-                if hasattr(self, 'last_image') and self.last_image:
+            # Only skip if night AND night capture is disabled
+            if not is_plant_day and not capture_at_night:
+                _LOGGER.debug(f"{self.deviceName}: Skipped initial capture - isPlantDay is False (light off), night capture disabled")
+            else:
+                # Capture Image with retry
+                image_data = await self._capture_timelapse_image_with_retry()
+
+                # Save Image with current timestamp (only if capture succeeded)
+                if image_data:
                     # Use timelapse subdirectory
                     storage_base = getattr(self, 'camera_storage_path', f"/config/ogb_data/{self.inRoom}_img/{self.deviceName}")
                     image_path = os.path.join(storage_base, "timelapse")
@@ -355,8 +373,6 @@ class Camera(Device):
                     self.dataStore.set("plantsView", plants_view)
 
                     _LOGGER.info(f"{self.deviceName}: Captured first timelapse image immediately at start")
-            else:
-                _LOGGER.debug(f"{self.deviceName}: Skipped initial capture - isPlantDay is False (light off)")
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Failed to capture initial timelapse image: {e}")
 
@@ -372,6 +388,10 @@ class Camera(Device):
             f"(interval: {interval_sec}s, end: {dt_util.as_local(end_dt).isoformat()})"
         )
 
+        # Get capture_at_night config - always read fresh from dataStore
+        plants_view = self.dataStore.get("plantsView") or {}
+        capture_at_night = plants_view.get("capture_at_night", False)
+
         # Emit recording started event
         await self.event_manager.emit("CameraRecordingStatus", {
             "room": self.inRoom,
@@ -380,11 +400,12 @@ class Camera(Device):
             "image_count": self.tl_image_count,
             "start_time": start_dt.isoformat(),
             "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            "is_night_mode": not is_plant_day if not capture_at_night else False,
+            "capture_at_night_enabled": capture_at_night,
         }, haEvent=True)
 
     async def _schedule_timelapse_start(self, start_dt, end_dt):
         """Schedule a delayed start for timelapse using async_track_point_in_time.
-
         Args:
             start_dt: timezone-aware datetime for when to start capturing
             end_dt: timezone-aware datetime for when timelapse should end
@@ -412,6 +433,12 @@ class Camera(Device):
             f"(current time: {dt_util.now().isoformat()})"
         )
 
+        # Get night mode config for status event
+        is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+        # Get capture_at_night config - always read fresh from dataStore
+        plants_view = self.dataStore.get("plantsView") or {}
+        capture_at_night = plants_view.get("capture_at_night", False)
+
         # Emit scheduled event
         await self.event_manager.emit("CameraRecordingStatus", {
             "room": self.inRoom,
@@ -421,13 +448,13 @@ class Camera(Device):
             "scheduled_start": start_dt.isoformat(),
             "scheduled_end": end_dt.isoformat(),
             "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            "is_night_mode": not is_plant_day if not capture_at_night else False,
+            "capture_at_night_enabled": capture_at_night,
         }, haEvent=True)
 
     async def startTL(self, resume=False):
         """Start timelapse capture using StartDate/EndDate from plantsView.
-
         Dates must be in UTC ISO format (YYYY-MM-DDTHH:MM:SSZ).
-
         If StartDate <= now: Start capturing immediately.
         If StartDate > now: Schedule start for that time.
         """
@@ -517,27 +544,41 @@ class Camera(Device):
                 return
 
             # 2. Check plant day (Light logic)
-            is_plant_day = self.dataStore.get("isPlantDay")
-            if not is_plant_day:
-                _LOGGER.debug(f"{self.deviceName}: Skipping capture - isPlantDay is False (light off)")
+            is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+            # Get capture_at_night config - always read fresh from dataStore
+            plants_view = self.dataStore.get("plantsView") or {}
+            capture_at_night = plants_view.get("capture_at_night", False)
+            if not is_plant_day and not capture_at_night:
+                _LOGGER.debug(f"{self.deviceName}: Skipping capture - isPlantDay is False (light off), night capture disabled")
+                # Emit status update so frontend knows we're in night mode (skipping captures)
+                await self.event_manager.emit("CameraRecordingStatus", {
+                    "room": self.inRoom,
+                    "camera_entity": self.camera_entity_id,
+                    "is_recording": True,
+                    "image_count": self.tl_image_count,
+                    "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
+                    "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                    "is_night_mode": True,
+                    "capture_at_night_enabled": capture_at_night,
+                }, haEvent=True)
                 return
 
-            # 3. Capture Image
-            await self.takeImage()
-            
-            # 4. Save Image
-            if hasattr(self, 'last_image') and self.last_image:
+            # 3. Capture Image with retry
+            image_data = await self._capture_timelapse_image_with_retry()
+
+            # 4. Save Image (only if capture succeeded)
+            if image_data:
                 # Use timelapse subdirectory
                 storage_base = getattr(self, 'camera_storage_path', f"/config/ogb_data/{self.inRoom}_img/{self.deviceName}")
                 image_path = os.path.join(storage_base, "timelapse")
-                
+
                 # ISO FILENAME FORMAT: {device_name}_YYYYMMDD_HHMMSS.jpg
                 # Uses ISO 8601 date format with underscore separator (filesystem-safe)
                 # Timestamp in LOCAL time for human-readable filenames
                 timestamp_str = now_local.strftime("%Y%m%d_%H%M%S")
                 filename = f"{self.deviceName}_{timestamp_str}.jpg"
                 full_path = os.path.join(image_path, filename)
-                
+
                 await self.saveImage(full_path)
                 self.tl_image_count += 1
 
@@ -554,12 +595,24 @@ class Camera(Device):
                         "image_count": self.tl_image_count,
                         "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
                         "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                        "is_night_mode": not is_plant_day if not capture_at_night else False,
+                        "capture_at_night_enabled": capture_at_night,
                     }, haEvent=True)
-                
-                # Trigger state save occasionally? 
-                # Doing this every frame might be heavy for SD cards if interval is short.
-                # Kept from original code:
+
                 asyncio.create_task(self.event_manager.emit("SaveState", {"source": "Camera", "device": self.deviceName}))
+            else:
+                # Capture failed - emit status with last successful capture time
+                await self.event_manager.emit("CameraRecordingStatus", {
+                    "room": self.inRoom,
+                    "camera_entity": self.camera_entity_id,
+                    "is_recording": True,
+                    "image_count": self.tl_image_count,
+                    "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
+                    "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                    "is_night_mode": not is_plant_day if not capture_at_night else False,
+                    "capture_at_night_enabled": capture_at_night,
+                    "capture_failed": True,
+                }, haEvent=True)
 
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Timelapse callback error: {e}")
@@ -591,6 +644,12 @@ class Camera(Device):
         plants_view["isTimeLapseActive"] = False
         self.dataStore.set("plantsView", plants_view)
 
+        # Get night mode config for status event
+        is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+        # Get capture_at_night config - always read fresh from dataStore
+        plants_view = self.dataStore.get("plantsView") or {}
+        capture_at_night = plants_view.get("capture_at_night", False)
+
         # Emit recording status stopped (for frontend)
         await self.event_manager.emit("CameraRecordingStatus", {
             "room": self.inRoom,
@@ -599,6 +658,8 @@ class Camera(Device):
             "image_count": self.tl_image_count,
             "start_time": None,
             "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+            "is_night_mode": not is_plant_day if not capture_at_night else False,
+            "capture_at_night_enabled": capture_at_night,
         }, haEvent=True)
 
         await self.event_manager.emit("TimelapseCompleted", {
@@ -610,66 +671,6 @@ class Camera(Device):
         asyncio.create_task(self.event_manager.emit("SaveState", {"source": "Camera", "device": self.deviceName, "action": "stop_recording"}))
 
 
-    async def takeImage(self):
-        """Handle TakeImage event from OGB system - capture from HA camera entity."""
-        try:
-            # Get camera entity_id from stored entities
-            camera_entity_id = None
-            if hasattr(self, 'camera_entities') and self.camera_entities:
-                for entity in self.camera_entities:
-                    if isinstance(entity, dict):
-                        entity_id = entity.get("entity_id", "")
-                        if entity_id.startswith("camera."):
-                            camera_entity_id = entity_id
-                            break
-            
-            if not camera_entity_id:
-                _LOGGER.error(f"{self.deviceName}: No camera entity found")
-                return None
-            
-            # Use HA camera proxy service to get image
-            if self.hass:
-                try:
-                    # Get image from HA camera proxy
-                    image_data = await self._get_ha_camera_image(camera_entity_id)
-                    
-                    if image_data:
-                        # Store image data
-                        self.last_image = image_data
-                        self.last_capture_time = dt_util.now()
-                        
-                        # Emit image captured event for WebSocket transmission
-                        await self.event_manager.emit("CameraImageCaptured", {
-                            "device": self.deviceName,
-                            "timestamp": self.last_capture_time.isoformat(),
-                            "image_data": image_data,
-                            "camera_entity": camera_entity_id,
-                            "deviceType": self.deviceType
-                        }, haEvent=True)
-                        
-                        _LOGGER.info(f"{self.deviceName}: Image captured successfully from {camera_entity_id}")
-                        return image_data
-                    else:
-                        _LOGGER.warning(f"{self.deviceName}: No image data from camera {camera_entity_id}")
-                        return None
-                        
-                except Exception as ha_err:
-                    _LOGGER.error(f"{self.deviceName}: HA camera capture error: {ha_err}")
-                    return None
-            else:
-                _LOGGER.error(f"{self.deviceName}: No HA instance available")
-                return None
-            
-        except Exception as e:
-            _LOGGER.error(f"{self.deviceName}: Failed to capture image: {e}")
-            # Emit error event
-            await self.event_manager.emit("CameraError", {
-                "device": self.deviceName,
-                "error": str(e),
-                "timestamp": dt_util.now().isoformat()
-            }, haEvent=True)
-            return None
-    
     async def _get_ha_camera_image(self, entity_id):
         """Get image from HA camera entity directly via component API."""
         try:
@@ -683,7 +684,6 @@ class Camera(Device):
             _LOGGER.debug(f"{self.deviceName}: Fetching image from {entity_id} via HA API")
             
             # Use HA's internal async_get_image function
-            # This bypasses HTTP and uses internal API with proper auth
             image = await async_get_image(self.hass, entity_id)
             
             if image and image.content:
@@ -736,11 +736,9 @@ class Camera(Device):
 
     async def _capture_daily_snapshot(self):
         """Capture daily snapshot with 3-retry exponential backoff.
-
         Retry delays: 5s, 15s, 30s
         Reuses _get_ha_camera_image() for actual capture.
         Emits ogb_camera_capture_failed on final failure.
-
         Returns:
             str: Base64-encoded image data on success, None on failure.
         """
@@ -797,12 +795,81 @@ class Camera(Device):
             },
             haEvent=True,
         )
+        return None
+
+    async def _capture_timelapse_image_with_retry(self):
+        """Capture timelapse image with 3-retry exponential backoff.
+        Retry delays: 5s, 15s, 30s
+        Reuses _get_ha_camera_image() for actual capture.
+        Emits ogb_camera_capture_failed on final failure.
+        Returns:
+            str: Base64-encoded image data on success, None on failure.
+        """
+        retry_delays = [5, 15, 30]  # seconds between retries
+        camera_entity_id = self.camera_entity_id
+
+        for attempt, delay in enumerate(retry_delays):
+            try:
+                _LOGGER.debug(
+                    f"{self.deviceName}: Timelapse capture attempt {attempt + 1}/3"
+                )
+
+                # Clear previous image to prevent saving old data on failure
+                self.last_image = None
+
+                # Use _get_ha_camera_image for actual capture
+                image_data = await self._get_ha_camera_image(camera_entity_id)
+
+                if image_data:
+                    # Update last_image only on success
+                    self.last_image = image_data
+                    self.last_capture_time = dt_util.now()
+
+                    _LOGGER.info(
+                        f"{self.deviceName}: Timelapse image captured successfully "
+                        f"(attempt {attempt + 1})"
+                    )
+                    return image_data
+                else:
+                    _LOGGER.warning(
+                        f"{self.deviceName}: Timelapse attempt {attempt + 1} "
+                        f"returned no image data"
+                    )
+
+            except Exception as e:
+                _LOGGER.warning(
+                    f"{self.deviceName}: Timelapse attempt {attempt + 1} failed: {e}"
+                )
+
+            # If not the last attempt, wait before retry
+            if attempt < len(retry_delays) - 1:
+                _LOGGER.info(
+                    f"{self.deviceName}: Retrying timelapse capture in {delay} seconds..."
+                )
+                await asyncio.sleep(delay)
+
+        # All retries failed
+        _LOGGER.error(
+            f"{self.deviceName}: Timelapse capture failed after {len(retry_delays)} attempts"
+        )
+
+        # Emit failure event
+        await self.event_manager.emit(
+            "ogb_camera_capture_failed",
+            {
+                "device": self.deviceName,
+                "room": self.inRoom,
+                "camera_entity": camera_entity_id,
+                "error": f"Failed after {len(retry_delays)} retry attempts",
+                "retry_count": len(retry_delays),
+            },
+            haEvent=True,
+        )
 
         return None
 
     async def _schedule_daily_snapshot(self):
         """Schedule daily snapshot using async_track_point_in_time().
-
         Uses HA's dt_util.now() for proper timezone/DST handling.
         Calculates next capture time and schedules callback.
         If the target time has already passed today, schedules for tomorrow.
@@ -863,10 +930,8 @@ class Camera(Device):
 
     async def _save_daily_photo(self, image_data):
         """Save daily snapshot photo with YYYY-MM-DD_HHMMSS.jpg filename format.
-
         Args:
             image_data: Base64-encoded image data to save.
-
         Returns:
             dict: Result with keys:
                 - success (bool): True if saved or already exists
@@ -874,7 +939,6 @@ class Camera(Device):
                 - path (str): Full path to saved file
                 - date (str): Date prefix (YYYY-MM-DD)
                 - reason (str): "saved", "already_exists", or error message
-
         Raises:
             ValueError: If path traversal attempt detected.
         """
@@ -975,7 +1039,6 @@ class Camera(Device):
 
     async def _daily_snapshot_callback(self, *args):
         """Callback triggered when scheduled daily snapshot time arrives.
-
         Captures an image, saves it to the daily/ subdirectory,
         emits a success event, and reschedules for the next day.
         """
@@ -1134,6 +1197,7 @@ class Camera(Device):
                     "OutPutFormat": tl_config.get("OutPutFormat", "mp4"),
                     "daily_snapshot_enabled": plants_view.get("daily_snapshot_enabled", False),
                     "daily_snapshot_time": plants_view.get("daily_snapshot_time", "09:00"),
+                    "capture_at_night": plants_view.get("capture_at_night", False),
                 },
                 "available_timelapses": available_timelapses,
                 "tl_active": is_recording_active,
@@ -1178,6 +1242,12 @@ class Camera(Device):
                 "daily_snapshot_enabled": new_config.get("daily_snapshot_enabled", False),
                 "daily_snapshot_time": new_config.get("daily_snapshot_time", "09:00"),
             })
+
+            # Handle capture_at_night setting
+            capture_at_night = new_config.get("capture_at_night")
+            if capture_at_night is not None:
+                plants_view["capture_at_night"] = capture_at_night
+
             self.dataStore.set("plantsView", plants_view)
 
             # Update daily snapshot scheduling if settings changed
@@ -1283,8 +1353,6 @@ class Camera(Device):
     async def _handle_get_timelapse_status(self, event):
         """Handle opengrowbox_get_timelapse_status event from frontend."""
         try:
-            _LOGGER.info(f"{self.deviceName}: timelapse Event <Event opengrowbox_get_timelapse_status[L]: device_name={event.data.get('device_name')}>")
-
             event_data = event.data
             device_name = event_data.get("device_name")
 
@@ -1293,7 +1361,11 @@ class Camera(Device):
                 _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected: {self.camera_entity_id}, got: {device_name})")
                 return
 
-            _LOGGER.info(f"{self.deviceName}: Sending CameraRecordingStatus with last_capture_time: {self.last_capture_time}")
+            # Get night mode config for status event
+            is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
+            # Get capture_at_night config - always read fresh from dataStore
+            plants_view = self.dataStore.get("plantsView") or {}
+            capture_at_night = plants_view.get("capture_at_night", False)
 
             # Emit current status via CameraRecordingStatus (frontend subscribes to this)
             # This ensures the frontend gets the accurate last_capture_time for countdown timer
@@ -1304,6 +1376,8 @@ class Camera(Device):
                 "image_count": self.tl_image_count,
                 "start_time": self.tl_start_time.isoformat() if self.tl_start_time else None,
                 "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
+                "is_night_mode": not is_plant_day if not capture_at_night else False,
+                "capture_at_night_enabled": capture_at_night,
             }, haEvent=True)
 
             # Also emit TimelapseStatusResponse for any other listeners
@@ -1360,9 +1434,68 @@ class Camera(Device):
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling stop timelapse: {e}")
 
+    def _scan_timelapse_directory_sync(self, timelapse_path, start_dt, end_dt):
+        """Synchronous helper to scan timelapse directory for images.       
+        This function runs in a thread pool executor to avoid blocking the event loop.
+        """
+        all_images = []
+        for root, dirs, files in os.walk(timelapse_path):
+            for file in files:
+                if file.endswith(('.jpg', '.jpeg', '.png')):
+                    file_path = os.path.join(root, file)
+                    file_stat = os.stat(file_path)
+
+                    # Create timezone-aware datetime in UTC to match start_dt/end_dt
+                    file_mtime = datetime.fromtimestamp(file_stat.st_mtime, tz=timezone.utc)
+
+                    # Check if within date range
+                    if start_dt and file_mtime < start_dt:
+                        continue
+                    if end_dt and file_mtime > end_dt:
+                        continue
+
+                    all_images.append({
+                        "path": file_path,
+                        "mtime": file_mtime,
+                        "filename": file,
+                    })
+        return all_images
+
+    def _create_output_directory_sync(self, www_path):
+        """Synchronous helper to create output directory.       
+        This function runs in a thread pool executor to avoid blocking the event loop.
+        """
+        os.makedirs(www_path, exist_ok=True)
+
+    def _create_zip_file_batch_sync(self, zip_path, images_batch):
+        """Synchronous helper to add a batch of images to ZIP file.       
+        This function runs in a thread pool executor to avoid blocking the event loop.
+        """
+        with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
+            for img in images_batch:
+                # Use original filename to preserve timestamp information
+                arcname = img["filename"]
+                zipf.write(img["path"], arcname)
+
+    def _write_ffmpeg_list_file_sync(self, list_file, filtered_images, interval):
+        """Synchronous helper to write ffmpeg input list file.       
+        This function runs in a thread pool executor to avoid blocking the event loop.
+        """
+        with open(list_file, 'w') as f:
+            for img in filtered_images:
+                f.write(f"file '{img['path']}'\n")
+                f.write(f"duration {interval}\n")
+            # Last frame needs duration too
+            f.write(f"file '{filtered_images[-1]['path']}'\n")
+
+    def _remove_file_sync(self, file_path):
+        """Synchronous helper to remove a file.       
+        This function runs in a thread pool executor to avoid blocking the event loop.
+        """
+        os.remove(file_path)
+
     async def _generate_timelapse_video(self, start_date, end_date, interval, output_format):
         """Generate timelapse video from stored images.
-
         Args:
             start_date: Start date in UTC ISO format (YYYY-MM-DDTHH:MM:SSZ)
             end_date: End date in UTC ISO format (YYYY-MM-DDTHH:MM:SSZ)
@@ -1382,29 +1515,10 @@ class Camera(Device):
             start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')) if start_date else None
             end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00')) if end_date else None
 
-            # Find all images in date range
-            all_images = []
-            # Scan timelapse directory for images
-            for root, dirs, files in os.walk(timelapse_path):
-                for file in files:
-                    if file.endswith(('.jpg', '.jpeg', '.png')):
-                        file_path = os.path.join(root, file)
-                        file_stat = os.stat(file_path)
-
-                        # Create timezone-aware datetime in UTC to match start_dt/end_dt                                                                                                 
-                        file_mtime = datetime.fromtimestamp(file_stat.st_mtime, tz=timezone.utc)                                                                                         
-
-                        # Check if within date range
-                        if start_dt and file_mtime < start_dt:
-                            continue
-                        if end_dt and file_mtime > end_dt:
-                            continue
-                        
-                        all_images.append({
-                            "path": file_path,
-                            "mtime": file_mtime,
-                            "filename": file,
-                        })
+            # Find all images in date range (run in executor to avoid blocking)
+            all_images = await self.hass.async_add_executor_job(
+                self._scan_timelapse_directory_sync, timelapse_path, start_dt, end_dt
+            )
             
             # Sort by modification time
             all_images.sort(key=lambda x: x["mtime"])
@@ -1420,24 +1534,33 @@ class Camera(Device):
                 }, haEvent=True)
                 return
             
-            # Filter by interval
-            filtered_images = [all_images[0]]  # Always include first
-            last_time = all_images[0]["mtime"]
-            
-            for img in all_images[1:]:
-                time_diff = (img["mtime"] - last_time).total_seconds()
-                if time_diff >= interval:
-                    filtered_images.append(img)
-                    last_time = img["mtime"]
-            
-            _LOGGER.info(f"{self.deviceName}: Selected {len(filtered_images)} images for timelapse")
+            # Filter by interval (only for video formats, not ZIP)
+            # For ZIP format, include all captured images without filtering
+            # For video formats, apply interval filtering to control frame rate
+            if output_format == "zip":
+                # Include all images for ZIP format
+                filtered_images = all_images
+                _LOGGER.info(f"{self.deviceName}: Including all {len(filtered_images)} images for ZIP format")
+            else:
+                # Apply interval filtering for video formats
+                filtered_images = [all_images[0]]  # Always include first
+                last_time = all_images[0]["mtime"]
+                
+                for img in all_images[1:]:
+                    time_diff = (img["mtime"] - last_time).total_seconds()
+                    if time_diff >= interval:
+                        filtered_images.append(img)
+                        last_time = img["mtime"]
+                
+                _LOGGER.info(f"{self.deviceName}: Selected {len(filtered_images)} images for video timelapse (interval: {interval}s)")
             
             # Create output directory in www folder for frontend access via /local/
             if self.hass:
                 www_path = self.hass.config.path("www", "ogb_data", f"{self.inRoom}_img", "timelapse_output")
             else:
                 www_path = f"/config/www/ogb_data/{self.inRoom}_img/timelapse_output"
-            os.makedirs(www_path, exist_ok=True)
+            # Create directory in executor to avoid blocking
+            await self.hass.async_add_executor_job(self._create_output_directory_sync, www_path)
             
             timestamp = dt_util.now().strftime("%Y%m%d_%H%M%S")
             
@@ -1448,22 +1571,30 @@ class Camera(Device):
                 
                 self.tl_generation_status = "creating_zip"
                 
+                # Create empty ZIP file first
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    for i, img in enumerate(filtered_images):
-                        # Use original filename to preserve timestamp information
-                        arcname = img["filename"]
-                        zipf.write(img["path"], arcname)
-                        
-                        # Update progress
-                        self.tl_generation_progress = int((i / len(filtered_images)) * 100)
-                        
-                        # Emit progress every 10%
-                        if i % max(1, len(filtered_images) // 10) == 0:
-                            await self.event_manager.emit("TimelapseGenerationProgress", {
-                                "device_name": self.camera_entity_id,
-                                "progress": self.tl_generation_progress,
-                                "status": self.tl_generation_status,
-                            }, haEvent=True)
+                    pass
+                
+                # Process images in batches to allow progress updates
+                batch_size = max(1, len(filtered_images) // 10)  # Process in ~10 batches
+                for batch_start in range(0, len(filtered_images), batch_size):
+                    batch_end = min(batch_start + batch_size, len(filtered_images))
+                    batch = filtered_images[batch_start:batch_end]
+                    
+                    # Add batch to ZIP in executor
+                    await self.hass.async_add_executor_job(
+                        self._create_zip_file_batch_sync, zip_path, batch
+                    )
+                    
+                    # Update progress
+                    self.tl_generation_progress = int((batch_end / len(filtered_images)) * 100)
+                    
+                    # Emit progress
+                    await self.event_manager.emit("TimelapseGenerationProgress", {
+                        "device_name": self.camera_entity_id,
+                        "progress": self.tl_generation_progress,
+                        "status": self.tl_generation_status,
+                    }, haEvent=True)
                 
                 output_path = zip_path
                 
@@ -1471,14 +1602,11 @@ class Camera(Device):
                 # Create MP4 video using ffmpeg
                 output_path = os.path.join(www_path, f"timelapse_{self.deviceName}_{timestamp}.mp4")
                 
-                # Create temporary file list for ffmpeg
+                # Create temporary file list for ffmpeg (run in executor to avoid blocking)
                 list_file = os.path.join(www_path, f"input_list_{timestamp}.txt")
-                with open(list_file, 'w') as f:
-                    for img in filtered_images:
-                        f.write(f"file '{img['path']}'\n")
-                        f.write(f"duration {interval}\n")
-                    # Last frame needs duration too
-                    f.write(f"file '{filtered_images[-1]['path']}'\n")
+                await self.hass.async_add_executor_job(
+                    self._write_ffmpeg_list_file_sync, list_file, filtered_images, interval
+                )
                 
                 self.tl_generation_status = "encoding_video"
                 
@@ -1505,9 +1633,9 @@ class Camera(Device):
                 
                 stdout, stderr = await process.communicate()
                 
-                # Clean up list file
+                # Clean up list file (run in executor to avoid blocking)
                 try:
-                    os.remove(list_file)
+                    await self.hass.async_add_executor_job(self._remove_file_sync, list_file)
                     _LOGGER.debug(f"{self.deviceName}: Cleaned up temporary list file: {list_file}")
                 except OSError as e:
                     _LOGGER.warning(f"{self.deviceName}: Failed to remove temporary file {list_file}: {e}")
@@ -1515,20 +1643,44 @@ class Camera(Device):
                 if process.returncode != 0:
                     raise Exception(f"ffmpeg failed: {stderr.decode()}")
             
-            # Success
+            # Success - read file and send as base64
             self.tl_generation_status = "complete"
             self.tl_generation_progress = 100
-            
+
+            # Read the generated file and encode as base64 for transmission
+            def _read_and_encode_file():
+                try:
+                    with open(output_path, 'rb') as f:
+                        file_data = f.read()
+                    # Encode to base64 for transmission via WebSocket
+                    return base64.b64encode(file_data).decode('utf-8'), len(file_data)
+                except Exception as e:
+                    _LOGGER.error(f"{self.deviceName}: Failed to read timelapse file: {e}")
+                    return None, 0
+
+            file_base64, file_size = await self.hass.async_add_executor_job(_read_and_encode_file)
+
+            if file_base64 is None:
+                # Failed to read file, send error
+                await self.event_manager.emit("TimelapseGenerationComplete", {
+                    "device_name": self.camera_entity_id,
+                    "success": False,
+                    "error": "Failed to read generated timelapse file",
+                }, haEvent=True)
+                return
+
             await self.event_manager.emit("TimelapseGenerationComplete", {
                 "device_name": self.camera_entity_id,
                 "success": True,
                 "output_path": output_path,
                 "format": output_format,
                 "frame_count": len(filtered_images),
-                "download_url": f"/local/ogb_data/{self.inRoom}_img/timelapse_output/{os.path.basename(output_path)}",
+                "filename": os.path.basename(output_path),
+                "file_data": file_base64,
+                "file_size": file_size,
             }, haEvent=True)
-            
-            _LOGGER.info(f"{self.deviceName}: Timelapse generation complete: {output_path}")
+
+            _LOGGER.info(f"{self.deviceName}: Timelapse generation complete: {output_path} ({file_size} bytes)")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Timelapse generation failed: {e}")
@@ -1547,10 +1699,8 @@ class Camera(Device):
 
     async def _handle_get_daily_photos(self, event):
         """Handle opengrowbox_get_daily_photos event from frontend.
-
         Scans the daily/ folder and returns a list of available daily photos
         sorted newest first. Each photo entry contains date and filename.
-
         Response event: DailyPhotosResponse
         """
         try:
@@ -1621,14 +1771,11 @@ class Camera(Device):
 
     async def _handle_get_daily_photo(self, event):
         """Handle opengrowbox_get_daily_photo event from frontend.
-
         Reads a daily photo file by date and returns it base64-encoded.
-
         Args:
             event: HA event with data containing:
                 - device_name: Camera device identifier
                 - date: Date string (YYYY-MM-DD format)
-
         Response event: DailyPhotoResponse with base64-encoded image data.
         """
         try:
@@ -1750,14 +1897,11 @@ class Camera(Device):
 
     async def _handle_delete_daily_photo(self, event):
         """Handle opengrowbox_delete_daily_photo event from frontend.
-
         Deletes a single daily photo file by date.
-
         Args:
             event: HA event with data containing:
                 - device_name: Camera device identifier
                 - date: Date string (YYYY-MM-DD format)
-
         Emits:
             - ogb_camera_photo_deleted: On successful deletion
             - DailyPhotoDeletedResponse: Success/error response
@@ -1899,13 +2043,10 @@ class Camera(Device):
 
     async def _handle_delete_all_daily(self, event):
         """Handle opengrowbox_delete_all_daily event from frontend.
-
         Deletes all daily photos for this camera from the daily/ folder.
-
         Args:
             event: HA event with data containing:
                 - device_name: Camera device identifier
-
         Emits:
             - ogb_camera_all_daily_deleted: On successful deletion
             - DailyAllDeletedResponse: Success/error response with count
@@ -2003,16 +2144,13 @@ class Camera(Device):
 
     async def _handle_download_daily_zip(self, event):
         """Handle opengrowbox_download_daily_zip event from frontend.
-
         Generates an in-memory ZIP file containing daily photos, optionally
         filtered by date range. Streams the ZIP as base64 via HA event.
-
         Args:
             event: HA event with data containing:
                 - device_name: Camera device identifier
                 - start_date: Optional start date string (YYYY-MM-DD format)
                 - end_date: Optional end date string (YYYY-MM-DD format)
-
         Emits:
             - DailyZipResponse: Success/error response with base64-encoded ZIP data
         """
@@ -2274,13 +2412,10 @@ class Camera(Device):
 
     async def _handle_delete_all_timelapse_output(self, event):
         """Handle opengrowbox_delete_all_timelapse_output event from frontend.
-
         Deletes all timelapse output files (MP4/ZIP) from the www output directory.
-
         Args:
             event: HA event with data containing:
                 - device_name: Camera device identifier
-
         Emits:
             - ogb_camera_all_timelapse_output_deleted: On successful deletion
             - TimelapseOutputAllDeletedResponse: Success/error response with count
@@ -2377,8 +2512,7 @@ class Camera(Device):
 
     async def async_cleanup(self):
         """Cleanup when camera device is being removed or HA is stopping.
-
-        Cancels all scheduled tasks including daily snapshots and background generation.
+            Cancels all scheduled tasks including daily snapshots and background generation.
         """
         try:
             # Cancel daily snapshot schedule
