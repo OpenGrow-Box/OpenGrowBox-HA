@@ -358,15 +358,35 @@ class Light(Device):
             _LOGGER.debug(f"{self.deviceName}: Cannot change voltage")
             return None
 
-        target = self.voltage + (self.steps if increase else -self.steps)
+        # Ensure we have valid steps
+        try:
+            step_value = float(self.steps) if self.steps else 5.0
+        except (ValueError, TypeError):
+            _LOGGER.warning(f"{self.deviceName}: Invalid step value, using default 5.0")
+            step_value = 5.0
+            
+        target = self.voltage + (step_value if increase else -step_value)
+        
+        # Only change if target is different from current
+        if target == self.voltage:
+            _LOGGER.info(f"{self.deviceName}: Voltage unchanged at {self.voltage}% (already at {'max' if increase else 'min'} bound)")
+            return self.voltage
 
-        self.voltage = self.clamp_voltage(target)
+        new_voltage = self.clamp_voltage(target)
 
-        actual = self.calculate_actual_voltage(self.voltage)
-
-        _LOGGER.info(
-            f"{self.deviceName}: Voltage changed to {self.voltage}% ({actual:.2f}V)"
-        )
+        # Only update if the clamped value is different from current
+        if new_voltage != self.voltage:
+            self.voltage = new_voltage
+            actual = self.calculate_actual_voltage(self.voltage)
+            _LOGGER.info(
+                f"{self.deviceName}: Voltage changed from {self.voltage + (step_value if not increase else -step_value)}% to {self.voltage}% ({actual:.2f}V) (step: {step_value}%)"
+            )
+        else:
+            actual = self.calculate_actual_voltage(self.voltage)
+            _LOGGER.info(
+                f"{self.deviceName}: Voltage unchanged at {self.voltage}% ({actual:.2f}V) (already at {'max' if increase else 'min'} bound)"
+            )
+            
         return self.voltage
 
     # SunPhases Helpers

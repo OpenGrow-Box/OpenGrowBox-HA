@@ -35,9 +35,9 @@ class Intake(Device):
         self.isInitialized = False
 
         # Initialize min/max to defaults - will be overridden by user settings in checkMinMax
-        self.minDuty = 0  # Class default
+        self.minDuty = 10  # Class default
         self.maxDuty = 100  # Class default
-        self.dutyCycle = self.minDuty + ((self.maxDuty - self.minDuty) // 2 // self.steps) * self.steps
+        # Note: dutyCycle will be set by checkForControlValue or default logic
 
         if self.isAcInfinDev:
             self.steps = 10
@@ -140,20 +140,35 @@ class Intake(Device):
             )
             return self.dutyCycle
 
+        # Ensure we have valid current duty cycle
+        if self.dutyCycle is None:
+            _LOGGER.warning(f"{self.deviceName}: Current duty cycle is None, setting to default 50%")
+            self.dutyCycle = 50
+            
+        # Ensure we have valid steps
+        try:
+            step_value = int(self.steps) if self.steps else 5
+        except (ValueError, TypeError):
+            _LOGGER.warning(f"{self.deviceName}: Invalid step value, using default 5")
+            step_value = 5
+            
         # Berechne neuen Wert basierend auf Schrittweite
         new_duty_cycle = (
-            int(self.dutyCycle) + int(self.steps)
+            int(self.dutyCycle) + step_value
             if increase
-            else int(self.dutyCycle) - int(self.steps)
+            else int(self.dutyCycle) - step_value
         )
 
         # Begrenze den neuen Duty Cycle auf erlaubte Werte
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
 
-        # Setze den begrenzten Wert als neuen Duty Cycle
-        self.dutyCycle = clamped_duty_cycle
-
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle auf {self.dutyCycle}% geändert.")
+        # Only update if the value actually changed
+        if clamped_duty_cycle != self.dutyCycle:
+            self.dutyCycle = clamped_duty_cycle
+            _LOGGER.info(f"{self.deviceName}: Duty Cycle changed from {int(self.dutyCycle) + (step_value if not increase else -step_value)}% to {self.dutyCycle}% (step: {step_value}%)")
+        else:
+            _LOGGER.info(f"{self.deviceName}: Duty Cycle unchanged at {self.dutyCycle}% (already at {'max' if increase else 'min'} bound)")
+            
         return self.dutyCycle
 
     # Actions
