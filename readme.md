@@ -177,9 +177,16 @@ services:
 
 ```yaml
 # configuration.yaml
-opengrowbox:
-  mainControl: "HomeAssistant"  # Required
-  updateInterval: 30           # Update frequency (seconds)
+# Loads default set of integrations. Do not remove.
+default_config:
+logger:
+  default: info
+  logs:
+    homeassistant.config_entries: debug
+    homeassistant.setup: debug
+    homeassistant.loader: debug
+    custom_components.opengrowbox: debug
+    custom_components.ogb-dev-env: debug
 ```
 
 ### Room Configuration
