@@ -73,16 +73,7 @@ class Intake(Device):
     def init(self):
         """Initialisiert die Ventilation."""
         if not self.isInitialized:
-            # Load min/max from dataStore FIRST
             self.checkMinMax(False)
-            
-            # Check if dutyCycle needs to be clamped to new min/max range
-            if hasattr(self, 'minDuty') and hasattr(self, 'maxDuty') and self.minDuty is not None and self.maxDuty is not None:
-                if self.dutyCycle < self.minDuty or self.dutyCycle > self.maxDuty:
-                    old_duty = self.dutyCycle
-                    self.dutyCycle = max(self.minDuty, min(self.maxDuty, self.dutyCycle))
-                    _LOGGER.debug(f"{self.deviceName}: dutyCycle clamped from {old_duty}% to {self.dutyCycle}%")
-
             self.isInitialized = True
 
     def __repr__(self):
