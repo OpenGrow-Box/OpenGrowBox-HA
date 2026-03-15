@@ -519,7 +519,7 @@ class LightUV(Light):
             SunRise=False,
             SunSet=False,
         )
-        await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+        await self.event_manager.emit("LogForClient", lightAction, haEvent=True, debug_type="INFO")
         
         # Turn off the light
         await self.turn_off()

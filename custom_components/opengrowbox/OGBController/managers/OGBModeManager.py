@@ -271,7 +271,7 @@ class OGBModeManager:
         # Map controller types to their feature keys (API uses camelCase)
         controller_feature_map = {
             "PID": "pidControllers",
-            "MPC": "mcpControllers",
+            "MPC": "mpcControllers",
             "AI": "aiControllers",
         }
         
@@ -294,7 +294,7 @@ class OGBModeManager:
                 "Warning": f"{controllerType} controller not available in your subscription",
                 "Feature": feature_key,
                 "Enabled": False
-            }, haEvent=True)
+            }, haEvent=True, debug_type="WARNING")
             return
         
         _LOGGER.info(f"{self.room}: Executing {controllerType} controller (feature '{feature_key}' enabled)")

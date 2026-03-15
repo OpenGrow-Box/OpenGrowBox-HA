@@ -307,7 +307,7 @@ class Sensor:
         config = get_sensor_config(sensor_type, context)
 
         if not config:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"Keine Konfiguration für '{sensor_type}' im Kontext '{context}'"
             )
             config = {

@@ -132,7 +132,7 @@ class OGBConfigurationManager:
             f"ogb_feed_nutrient_y_{self.room.lower()}": self._update_feed_nutrient_y_ml,
             f"ogb_feed_nutrient_ph_{self.room.lower()}": self._update_feed_nutrient_ph_ml,
             # Ambient/Outdoor Features
-            f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
+            #f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
             # Devices
             f"ogb_light_minmax_{self.room.lower()}": self._device_self_min_max,
             f"ogb_light_volt_min_{self.room.lower()}": self._device_min_max_setter,
@@ -673,7 +673,9 @@ class OGBConfigurationManager:
         """
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.co2ppm.target")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update CO2 target value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.target", float(value))
 
@@ -683,7 +685,9 @@ class OGBConfigurationManager:
         """
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.co2ppm.minPPM")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update CO2 min value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.minPPM", float(value))
 
@@ -693,7 +697,9 @@ class OGBConfigurationManager:
         """
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.co2ppm.maxPPM")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update CO2 max value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.maxPPM", float(value))
 
@@ -716,7 +722,9 @@ class OGBConfigurationManager:
         """
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.weights.temp")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             self.data_store.setDeep("controlOptionData.weights.temp", float(value))
 
     async def _update_humidity_weight(self, data):
@@ -725,7 +733,9 @@ class OGBConfigurationManager:
         """
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.weights.hum")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             self.data_store.setDeep("controlOptionData.weights.hum", float(value))
 
     async def _update_breeder_bloom_days_value(self, data):
@@ -795,7 +805,9 @@ class OGBConfigurationManager:
             return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.minTemp")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update min temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minTemp", float(value))
             self.data_store.setDeep("tentData.minTemp", float(value))
@@ -811,7 +823,9 @@ class OGBConfigurationManager:
             return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.minHum")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update min humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minHum", float(value))
             self.data_store.setDeep("tentData.minHumidity", float(value))
@@ -827,7 +841,9 @@ class OGBConfigurationManager:
             return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.maxTemp")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update max temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxTemp", float(value))
             self.data_store.setDeep("tentData.maxTemp", float(value))
@@ -843,7 +859,9 @@ class OGBConfigurationManager:
             return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.maxHum")
-        if float(current_value) != value:
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update max humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxHum", float(value))
             self.data_store.setDeep("tentData.maxHumidity", float(value))
@@ -1118,7 +1136,7 @@ class OGBConfigurationManager:
         max_val = self.data_store.getDeep(max_path)
         if min_val is not None and max_val is not None and min_val >= max_val:
             adjustment = 10
-            _LOGGER.error(
+            _LOGGER.debug(
                 f"{self.room}: Invalid {device_type} min/max: min={min_val} >= max={max_val}. "
                 f"Adjusting max to min+{adjustment}"
             )
@@ -1198,18 +1216,6 @@ class OGBConfigurationManager:
             self.data_store.setDeep("controlOptions.multiMediumCtrl", bool_value)
             _LOGGER.info(f"{self.room}: Multi medium control set to {bool_value}")
 
-    async def _update_ambient_control(self, data):
-        """
-        Update ambient control
-        """
-        value = data.newState[0]
-        current_value = self._string_to_bool(
-            self.data_store.getDeep("controlOptions.ambientControl")
-        )
-        if current_value != value:
-            self.data_store.setDeep(
-                "controlOptions.ambientControl", self._string_to_bool(value)
-            )
 
     async def _update_light_control_type(self, data):
         """

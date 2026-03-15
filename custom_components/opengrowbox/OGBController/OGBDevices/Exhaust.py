@@ -29,61 +29,32 @@ class Exhaust(Device):
             deviceLabel,
             allLabels,
         )
-        self.steps = 5  # DutyCycle Steps
-        self.isDimmable = True
-        self.isInitialized = False
 
+        self.steps = 5  # DutyCycle Steps
         # Initialize min/max to defaults - will be overridden by user settings in checkMinMax
-        self.minDuty = 10  # Class default
+        self.minDuty = 0  # Class default
         self.maxDuty = 100  # Class default
         # Note: dutyCycle will be set by checkForControlValue or default logic
 
-        self.init()
-
-        # Delayed initialization - wait for device to come online before turning on
-        asyncio.create_task(self._delayed_init())
+        if self.isAcInfinDev:
+            self.steps = 10
+            self.maxDuty = 100
+            self.minDuty = 0
 
         ## Events Register
         self.event_manager.on("Increase Exhaust", self.increaseAction)
         self.event_manager.on("Reduce Exhaust", self.reduceAction)
 
-    async def _delayed_init(self):
-        """Wait for device to come online, then restore previous state."""
-        # Wait up to 10 seconds for device to come online
-        for _ in range(20):
-            if self._is_device_online():
-                break
-            await asyncio.sleep(0.5)
-        
-        # Only turn on if device was previously running (preserve state)
-        if self.isRunning:
-            await self.turn_on(percentage=self.dutyCycle)
-        else:
-            _LOGGER.debug(f"{self.deviceName}: Skipping turn_on during init - device was off")
-
-    # Actions Helpers
-
-
-    def init(self):
-        """Initialisiert die Ventilation."""
-        if not self.isInitialized:
-            self.checkMinMax(False)
-            self.isInitialized = True
-
-    def __repr__(self):
-        return (
-            f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
-            f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
-            f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' "
-        )
-
 
     def clamp_duty_cycle(self, value: int | float | str | None) -> int:
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
 
+        if self.isDimmable == False:
+            return
+
         # value sicher zu float konvertieren
         if value is None:
-            _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle called with None, using default 50%")
+            _LOGGER.warning(f"{self.deviceName}:{self.isDimmable} clamp_duty_cycle called with None, using default 50%")
             value = 50.0
         else:
             try:
@@ -119,15 +90,15 @@ class Exhaust(Device):
         Ändert den Duty Cycle basierend auf dem Schrittwert.
         Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
         """
-        if not self.isDimmable:
+        if self.isDimmable == False:
             _LOGGER.warning(
                 f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist."
             )
-            return self.dutyCycle
+            return 
 
         # Ensure we have valid current duty cycle
         if self.dutyCycle is None:
-            _LOGGER.warning(f"{self.deviceName}: Current duty cycle is None, setting to default 50%")
+            _LOGGER.warning(f"{self.deviceName}:{self.isDimmable} Current duty cycle is None, setting to default 50%")
             self.dutyCycle = 50
             
         # Ensure we have valid steps
@@ -190,4 +161,4 @@ class Exhaust(Device):
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
-        _LOGGER.warning(f"{action_name}: {log_message}")
+        _LOGGER.debug(f"{action_name}: {log_message}")

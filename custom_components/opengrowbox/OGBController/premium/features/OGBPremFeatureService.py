@@ -37,6 +37,7 @@ class OGBFeatureService:
     """
 
     # Feature definitions with UI metadata (icons, categories, descriptions)
+    # DYNAMIC: This is merged with subscription + global features at runtime
     FEATURE_DEFINITIONS = {
         # Core features (Free tier)
         "basic_monitoring": {
@@ -54,8 +55,26 @@ class OGBFeatureService:
             "description": "Intelligent environmental control",
             "required_tier": "free",
             "ui_icon": "FaRobot",
-            "category": "core",
-            "is_core": True,
+            "category": "controller",
+            "is_controller": True,
+        },
+        "pid_controllers": {
+            "id": "pid_controllers",
+            "name": "PID Controllers",
+            "description": "PID control algorithms",
+            "required_tier": "free",
+            "ui_icon": "FaSlidersH",
+            "category": "controller",
+            "is_controller": True,
+        },
+        "mpc_controllers": {
+            "id": "mpc_controllers",
+            "name": "MPC Controllers",
+            "description": "Model Predictive Control",
+            "required_tier": "free",
+            "ui_icon": "FaBrain",
+            "category": "controller",
+            "is_controller": True,
         },
         "mobile_app": {
             "id": "mobile_app",
@@ -373,18 +392,19 @@ class OGBFeatureService:
 
     async def _handle_get_definitions(self, event):
         """
-        Handle request for feature definitions with metadata.
-
-        Returns all feature definitions with icons, descriptions, categories.
+        Handle request for all feature definitions.
+        
+        DYNAMIC: Now merges hardcoded + subscription features + global config
         """
         try:
             event_room = event.data.get("room", "")
             if event_room.lower() != self.room.lower():
-                return  # Not for this room
+                return
 
             event_id = event.data.get("event_id")
 
-            definitions = self.get_all_definitions()
+            # Get dynamic definitions from subscription + global config
+            definitions = self.get_all_feature_definitions_dynamic()
 
             await self._send_response(
                 event_id,
@@ -405,6 +425,198 @@ class OGBFeatureService:
                 "failed_to_get_definitions",
                 {"error": str(e)},
             )
+
+    # =================================================================
+    # DYNAMIC FEATURE METHODS
+    # =================================================================
+    
+    @classmethod
+    def get_all_feature_definitions_dynamic(cls) -> dict:
+        """
+        Get all feature definitions dynamically.
+        
+        Merges:
+        1. Hardcoded FEATURE_DEFINITIONS
+        2. Features from subscription (subscription_features)
+        3. Features from global config (feature_flags_config)
+        
+        Returns:
+            Complete feature definitions with metadata
+        """
+        # Start with hardcoded
+        all_features = dict(cls.FEATURE_DEFINITIONS)
+        
+        # Controller features to auto-detect from database
+        # These will be enhanced at runtime with subscription data
+        return all_features
+    
+    @classmethod
+    def build_definitions_from_subscription(cls, subscription_features: dict, global_config: dict = None) -> dict:
+        """
+        Build feature definitions from subscription + global config.
+        
+        Called at runtime to merge:
+        1. Hardcoded FEATURE_DEFINITIONS
+        2. Features from subscription_plans
+        3. Feature metadata from feature_flags_config
+        
+        Args:
+            subscription_features: Features from subscription (e.g., {"pidControllers": true, ...})
+            global_config: Global config from feature_flags_config
+            
+        Returns:
+            Complete feature definitions
+        """
+        # Start with hardcoded
+        features = dict(cls.FEATURE_DEFINITIONS)
+        
+        # Add/update features from subscription
+        for feature_key, is_enabled in subscription_features.items():
+            if feature_key not in features:
+                # New feature - add with dynamic metadata
+                is_controller = feature_key.endswith("Controllers")
+                category = "controller" if is_controller else "general"
+                
+                features[feature_key] = {
+                    "id": feature_key,
+                    "name": cls._format_feature_name(feature_key),
+                    "description": f"Feature: {feature_key}",
+                    "required_tier": "basic",  # Default
+                    "ui_icon": cls._get_icon_for_feature(feature_key),
+                    "category": category,
+                    "is_controller": is_controller,
+                    "is_core": False,
+                    "source": "subscription"
+                }
+        
+        # Enhance with global config metadata
+        if global_config:
+            for feature_key, config in global_config.items():
+                if not isinstance(config, dict):
+                    continue
+                    
+                if feature_key in features:
+                    # Update existing with global metadata
+                    features[feature_key].update({
+                        "display_name": config.get("display_name"),
+                        "description": config.get("description", features[feature_key].get("description")),
+                        "category": config.get("category", features[feature_key].get("category")),
+                        "enabled_globally": config.get("enabled_globally", False),
+                        "source": "global"
+                    })
+                else:
+                    # New feature from global config
+                    is_controller = feature_key.endswith("_controllers")
+                    features[feature_key] = {
+                        "id": feature_key,
+                        "name": config.get("display_name", cls._format_feature_name(feature_key)),
+                        "description": config.get("description", f"Feature: {feature_key}"),
+                        "required_tier": "basic",
+                        "ui_icon": cls._get_icon_for_feature(feature_key),
+                        "category": config.get("category", "general"),
+                        "is_controller": is_controller,
+                        "enabled_globally": config.get("enabled_globally", False),
+                        "source": "global"
+                    }
+        
+        return features
+    
+    @classmethod
+    def _format_feature_name(cls, feature_key: str) -> str:
+        """Convert feature_key to display name."""
+        # Handle camelCase or snake_case
+        name = feature_key.replace("_", " ")
+        
+        # Capitalize each word
+        words = name.split()
+        result = []
+        for word in words:
+            if word.upper() in ["AI", "PID", "MPC", "UV", "CO2", "API"]:
+                result.append(word.upper())
+            elif len(word) <= 3:
+                result.append(word.upper())
+            else:
+                result.append(word.capitalize())
+        
+        return " ".join(result)
+    
+    @classmethod
+    def _get_icon_for_feature(cls, feature_key: str) -> str:
+        """Get appropriate icon for feature."""
+        key_lower = feature_key.lower()
+        
+        if "controller" in key_lower or key_lower.endswith("controllers"):
+            if "ai" in key_lower:
+                return "FaRobot"
+            elif "pid" in key_lower:
+                return "FaSlidersH"
+            elif "mpc" in key_lower:
+                return "FaBrain"
+            else:
+                return "FaCog"
+        elif "analytics" in key_lower or "ai_" in key_lower:
+            return "FaChartLine"
+        elif "compliance" in key_lower:
+            return "FaShieldAlt"
+        elif "support" in key_lower:
+            return "FaHeadset"
+        elif "integration" in key_lower or "webhook" in key_lower:
+            return "FaPlug"
+        else:
+            return "FaStar"
+    
+    def get_controller_features_from_subscription(self) -> list:
+        """
+        Get enabled controller features from current subscription.
+        
+        Returns list of enabled controller feature IDs.
+        """
+        if not self.subscription_features:
+            return []
+        
+        controllers = []
+        for feature_key, is_enabled in self.subscription_features.items():
+            if not is_enabled:
+                continue
+            if feature_key.endswith("Controllers") or feature_key.endswith("_controllers"):
+                controllers.append(feature_key)
+        
+        return controllers
+    
+    # Legacy method - now uses dynamic version
+    def get_all_feature_definitions(self) -> dict:
+        """Legacy method - returns dynamic definitions."""
+        return self.get_all_feature_definitions_dynamic()
+    
+    def get_subscription_summary(self) -> dict:
+        """Get subscription summary with available features."""
+        available = self.get_available_features()
+        current_tier = self._get_current_tier()
+        
+        return {
+            "tier": current_tier,
+            "available_features": available,
+            "total_features": len(available),
+        }
+    
+    def _get_current_tier(self) -> str:
+        """Get current subscription tier."""
+        return self.subscription_data.get("plan_name", "free") if self.subscription_data else "free"
+    
+    async def _send_response(self, event_id, status, response_type, data):
+        """Send response via Home Assistant event."""
+        if not event_id:
+            return
+            
+        response_data = {
+            "event_id": event_id,
+            "status": status,
+            "response_type": response_type,
+            "data": data,
+            "room": self.room,
+        }
+        
+        self.hass.bus.async_fire(f"ogb_features_{response_type}", response_data)
 
     async def _handle_get_subscription(self, event):
         """

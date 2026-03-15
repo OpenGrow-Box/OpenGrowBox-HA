@@ -30,58 +30,16 @@ class Intake(Device):
             allLabels,
         )
         self.steps = 5  # DutyCycle Steps
-        self.isDimmable = True
-        self.isSpecialDevice = False
-        self.isInitialized = False
-
-        # Initialize min/max to defaults - will be overridden by user settings in checkMinMax
-        self.minDuty = 10  # Class default
+        self.minDuty = 0  # Class default
         self.maxDuty = 100  # Class default
-        # Note: dutyCycle will be set by checkForControlValue or default logic
-
         if self.isAcInfinDev:
             self.steps = 10
             self.maxDuty = 100
             self.minDuty = 0
 
-        self.init()
-
-        # Delayed initialization - wait for device to come online before turning on
-        asyncio.create_task(self._delayed_init())
-
         ## Events Register
         self.event_manager.on("Increase Intake", self.increaseAction)
         self.event_manager.on("Reduce Intake", self.reduceAction)
-
-    async def _delayed_init(self):
-        """Wait for device to come online, then restore previous state."""
-        # Wait up to 10 seconds for device to come online
-        for _ in range(20):
-            if self._is_device_online():
-                break
-            await asyncio.sleep(0.5)
-        
-        # Only turn on if device was previously running (preserve state)
-        if self.isRunning:
-            await self.turn_on(percentage=self.dutyCycle)
-        else:
-            _LOGGER.debug(f"{self.deviceName}: Skipping turn_on during init - device was off")
-
-    # Actions Helpers
-
-
-    def init(self):
-        """Initialisiert die Ventilation."""
-        if not self.isInitialized:
-            self.checkMinMax(False)
-            self.isInitialized = True
-
-    def __repr__(self):
-        return (
-            f"DeviceName:'{self.deviceName}' Typ:'{self.deviceType}'RunningState:'{self.isRunning}'"
-            f"Dimmable:'{self.isDimmable}' Switches:'{self.switches}' Sensors:'{self.sensors}'"
-            f"Options:'{self.options}' OGBS:'{self.ogbsettings}'DutyCycle:'{self.dutyCycle}' "
-        )
 
     def clamp_duty_cycle(self, value: int | float | str | None) -> int:
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
@@ -118,7 +76,6 @@ class Intake(Device):
         clamped = int(max(min_duty, min(max_duty, value)))
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped}% begrenzt (range: {min_duty}-{max_duty}%)")
         return clamped
-
 
     def change_duty_cycle(self, increase=True):
         """
@@ -196,4 +153,4 @@ class Intake(Device):
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
-        _LOGGER.warning(f"{action_name}: {log_message}")
+        _LOGGER.debug(f"{action_name}: {log_message}")

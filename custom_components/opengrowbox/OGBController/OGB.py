@@ -12,6 +12,7 @@ from datetime import datetime
 from .managers.core.OGBConfigurationManager import OGBConfigurationManager
 from .managers.core.OGBMainController import OGBMainController
 from .managers.core.OGBVPDManager import OGBVPDManager
+from .managers.OGBWizardManager import OGBWizardManager
 from .OGBOrchestrator import OGBOrchestrator
 from .RegistryListener import OGBRegistryEvenListener
 # OGBPremiumIntegration is now created by OGBMainController - no need to import here
@@ -80,6 +81,12 @@ class OpenGrowBox:
             self.main_controller.event_manager,
             room,
             hass,
+        )
+        self.wizard_manager = OGBWizardManager(
+            hass,
+            self.main_controller.data_store,
+            self.main_controller.event_manager,
+            room,
         )
 
         # Register event handlers (matching original)

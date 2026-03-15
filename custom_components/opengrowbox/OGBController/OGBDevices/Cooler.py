@@ -42,7 +42,7 @@ class Cooler(Device):
     def clamp_duty_cycle(self, duty_cycle):
         """Begrenzt den Duty Cycle auf erlaubte Werte."""
         if duty_cycle is None:
-            _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle called with None, using default 50%")
+            _LOGGER.debug(f"{self.deviceName}: clamp_duty_cycle called with None, using default 50%")
             duty_cycle = 50
         
         min_duty = float(self.minDuty) if self.minDuty is not None else 0
@@ -61,7 +61,7 @@ class Cooler(Device):
         Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
         """
         if not self.isDimmable:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist."
             )
             return self.dutyCycle
@@ -114,4 +114,4 @@ class Cooler(Device):
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName}"
-        _LOGGER.warn(f"{action_name}: {log_message}")
+        _LOGGER.debug(f"{action_name}: {log_message}")

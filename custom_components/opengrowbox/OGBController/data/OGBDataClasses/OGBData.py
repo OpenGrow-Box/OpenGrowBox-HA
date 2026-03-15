@@ -309,6 +309,14 @@ class OGBConf:
                 "maxTemp": 24,
                 "minHumidity": 78,
                 "maxHumidity": 85,
+                "minEC": 0.6,
+                "maxEc": 0.9,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 100,
+                "maxLight": 200,
+                "minCo2": 400,
+                "maxCo2": 800,
             },
             "Clones": {
                 "vpdRange": [0.40, 0.85],
@@ -316,6 +324,14 @@ class OGBConf:
                 "maxTemp": 24,
                 "minHumidity": 72,
                 "maxHumidity": 80,
+                "minEC": 0.8,
+                "maxEc": 1.2,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 150,
+                "maxLight": 300,
+                "minCo2": 400,
+                "maxCo2": 800,
             },
             "EarlyVeg": {
                 "vpdRange": [0.60, 1.20],
@@ -323,6 +339,14 @@ class OGBConf:
                 "maxTemp": 26,
                 "minHumidity": 65,
                 "maxHumidity": 75,
+                "minEC": 1.0,
+                "maxEc": 1.6,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 200,
+                "maxLight": 400,
+                "minCo2": 600,
+                "maxCo2": 1000,
             },
             "MidVeg": {
                 "vpdRange": [0.75, 1.45],
@@ -330,6 +354,14 @@ class OGBConf:
                 "maxTemp": 27,
                 "minHumidity": 60,
                 "maxHumidity": 72,
+                "minEC": 1.2,
+                "maxEc": 1.8,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 300,
+                "maxLight": 500,
+                "minCo2": 600,
+                "maxCo2": 1000,
             },
             "LateVeg": {
                 "vpdRange": [0.90, 1.65],
@@ -337,6 +369,14 @@ class OGBConf:
                 "maxTemp": 27,
                 "minHumidity": 55,
                 "maxHumidity": 68,
+                "minEC": 1.4,
+                "maxEc": 2.0,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 400,
+                "maxLight": 600,
+                "minCo2": 800,
+                "maxCo2": 1200,
             },
             "EarlyFlower": {
                 "vpdRange": [0.80, 1.55],
@@ -344,6 +384,14 @@ class OGBConf:
                 "maxTemp": 26,
                 "minHumidity": 55,
                 "maxHumidity": 68,
+                "minEC": 1.6,
+                "maxEc": 2.2,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 50,
+                "maxLight": 70,
+                "minCo2": 800,
+                "maxCo2": 1200,
             },
             "MidFlower": {
                 "vpdRange": [0.90, 1.70],
@@ -351,6 +399,14 @@ class OGBConf:
                 "maxTemp": 25,
                 "minHumidity": 48,
                 "maxHumidity": 62,
+                "minEC": 1.8,
+                "maxEc": 2.4,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 70,
+                "maxLight": 90,
+                "minCo2": 1000,
+                "maxCo2": 1500,
             },
             "LateFlower": {
                 "vpdRange": [0.90, 1.85],
@@ -358,9 +414,23 @@ class OGBConf:
                 "maxTemp": 24,
                 "minHumidity": 42,
                 "maxHumidity": 58,
+                "minEC": 1.4,
+                "maxEc": 2.0,
+                "minPh": 5.8,
+                "maxPh": 6.2,
+                "minLight": 70,
+                "maxLight": 100,
+                "minCo2": 800,
+                "maxCo2": 1200,
+
             },
         }
     )
+    plantStageSource: str = "default"
+    customPlantStages: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    livePlantStagesCache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    customLightPlantStages: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    liveLightPlantStagesCache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     plantDates: Dict[str, Any] = field(
         default_factory=lambda: {
             "isGrowing": False,
@@ -597,8 +667,8 @@ class OGBConf:
                 "sideEffect": {},
             },
         }
-    )
-
+    ),
+    logType: str = ""
     def __post_init__(self):
         """Wird nach der Initialisierung aufgerufen, um hass zu setzen"""
         # hass muss später manuell gesetzt werden

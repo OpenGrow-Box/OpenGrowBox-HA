@@ -59,17 +59,17 @@ class CO2(Device):
 
     async def increaseAction(self, data):
         """Erhöht den CO2 Wert"""
-        logging.warning("INCREASE ACTION START")
+        logging.debug("CO INCREASE ACTION START")
         self.log_action("IncreaseAction/TurnOn")
         await self.turn_on()
 
     async def reduceAction(self, data):
         """Reduziertden CO2 Wert"""
-        logging.warning("REDUCE ACTION START")
+        logging.debug("CO2 REDUCE ACTION START")
         self.log_action("ReduceAction/TurnOff")
         await self.turn_off()
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} PPM-Current:{self.currentCO2} Target-PPM:{self.targetCO2}"
-        _LOGGER.warn(f"{action_name}: {log_message}")
+        _LOGGER.debug(f"{action_name}: {log_message}")

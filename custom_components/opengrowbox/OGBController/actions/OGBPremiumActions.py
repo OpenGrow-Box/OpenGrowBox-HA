@@ -107,7 +107,7 @@ class OGBPremiumActions:
                 )
                 actions = [best_action]
 
-            await self.ogb.eventManager.emit("LogForClient", controlData, haEvent=True)
+            await self.ogb.eventManager.emit("LogForClient", controlData, haEvent=True, debug_type="DEBUG")
 
             for action in actions:
                 deviceAction = action.get("action")

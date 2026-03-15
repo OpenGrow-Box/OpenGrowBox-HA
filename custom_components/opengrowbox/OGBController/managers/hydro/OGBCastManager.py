@@ -2,10 +2,11 @@ import asyncio
 import logging
 
 from ...data.OGBDataClasses.OGBPublications import (OGBHydroAction,
-                                              OGBHydroPublication,
-                                              OGBRetrieveAction,
-                                              OGBRetrivePublication)
+                                               OGBHydroPublication,
+                                               OGBRetrieveAction,
+                                               OGBRetrivePublication)
 from .crop_steering.OGBCSManager import OGBCSManager
+from .plant_watering.OGBPlantWateringManager import OGBPlantWateringManager
 from ..medium.OGBMediumManager import OGBMediumManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,6 +24,9 @@ class OGBCastManager:
         # Use shared medium_manager if provided, otherwise create new one
         self.mediumManager = medium_manager if medium_manager else OGBMediumManager(hass, dataStore, eventManager, room)
         self.CropSteeringManager = OGBCSManager(hass, dataStore, eventManager, room)
+        self.plantWateringManager = OGBPlantWateringManager(
+            hass, dataStore, eventManager, room, self.mediumManager, self
+        )
 
         self.currentMode = None
         self._hydro_task: asyncio.Task | None = None
@@ -53,6 +57,7 @@ class OGBCastManager:
         self.event_manager.on("HydroModeChange", self.HydroModeChange)
         self.event_manager.on("HydroModeStart", self.hydro_Mode)
         self.event_manager.on("PlamtWateringStart", self.hydro_PlantWatering)
+        self.event_manager.on("PlantWateringStart", self.hydro_PlantWatering)
         self.event_manager.on("HydroModeRetrieveChange", self.HydroModRetrieveChange)
         self.event_manager.on("HydroRetriveModeStart", self.retrive_Mode)
         self.event_manager.on("CropSteeringChanges", self._handle_crop_steering_changes)
@@ -217,7 +222,7 @@ class OGBCastManager:
         hydro_mode = self.data_store.getDeep("Hydro.Mode")
         
         if hydro_mode != "Crop-Steering":
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room} - CropSteeringChanges BLOCKED: Hydro.Mode is '{hydro_mode}', "
                 f"not 'Crop-Steering'. Event ignored."
             )
@@ -327,7 +332,7 @@ class OGBCastManager:
             Duration=duration,
             Devices=PumpDevices,
         )
-        await self.event_manager.emit("LogForClient", actionMap, haEvent=True)
+        await self.event_manager.emit("LogForClient", actionMap, haEvent=True, debug_type="INFO")
 
     async def hydro_Mode(
         self,
@@ -441,61 +446,26 @@ class OGBCastManager:
             "Type": "HYDRO",
             "Message": msg,
             "Devices": active_pumps
-        }, haEvent=True)
+        }, haEvent=True, debug_type="INFO")
 
     async def hydro_PlantWatering(
         self,
-        interval: float,
-        duration: float,
+        interval,
+        duration,
         pumpDevices,
         cycle: bool = True,
-        log_prefix: str = "Hydro",
+        log_prefix: str = "Plant Watering",
     ):
-        valid_keywords = ["water", "cast"]
-        devices = pumpDevices["devEntities"]
-        active_pumps = [
-            dev
-            for dev in devices
-            if any(keyword in dev.lower() for keyword in valid_keywords)
-        ]
-
-        if not active_pumps:
-            await self.event_manager.emit(
-                "LogForClient", f"{log_prefix}: No valid pumps found.", haEvent=True
-            )
+        try:
+            duration_value = float(duration)
+        except (TypeError, ValueError):
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Mode": "Plant-Watering",
+                "Type": "HYDRO",
+                "Message": "Plant Watering: ungueltige Pumpendauer.",
+            }, haEvent=True, debug_type="WARNING")
             return
-
-        async def run_cycle():
-            try:
-                while True:
-                    for dev_id in active_pumps:
-                        # Register pump operation
-                        await self._register_pump_operation(dev_id, "plant_watering")
-
-                        pumpAction = OGBHydroAction(
-                            Name=self.room, Action="on", Device=dev_id, Cycle=cycle
-                        )
-                        await self.event_manager.emit("PumpAction", pumpAction)
-                    await asyncio.sleep(float(duration))
-                    for dev_id in active_pumps:
-                        pumpAction = OGBHydroAction(
-                            Name=self.room, Action="off", Device=dev_id, Cycle=cycle
-                        )
-                        await self.event_manager.emit("PumpAction", pumpAction)
-
-                        # Unregister pump operation
-                        await self._unregister_pump_operation(dev_id)
-                    await asyncio.sleep(
-                        float(interval) * 60
-                    )  # interval is in minutes for plant watering
-            except asyncio.CancelledError:
-                # if we get cancelled, make sure pumps end up off
-                for dev_id in active_pumps:
-                    pumpAction = OGBHydroAction(
-                        Name=self.room, Action="off", Device=dev_id, Cycle=cycle
-                    )
-                    await self.event_manager.emit("PumpAction", pumpAction)
-                raise
 
         # Cancel existing plant watering task (not hydro task)
         if self._plant_watering_task is not None:
@@ -503,32 +473,15 @@ class OGBCastManager:
             self._plant_watering_task = None
 
         if cycle:
-            self._plant_watering_task = asyncio.create_task(run_cycle())
-            msg = (
-                f"{log_prefix} mode started: ON for {duration}s, "
-                f"OFF for {interval}m, repeating."
+            self._plant_watering_task = await self.plantWateringManager.start(
+                duration=duration_value,
+                pump_devices=pumpDevices,
+                cooldown_minutes=interval,
             )
+            if self._plant_watering_task is None:
+                return
         else:
-            # Permanent ON mode
-            for dev_id in active_pumps:
-                # Register pump operation
-                await self._register_pump_operation(dev_id, "plant_watering")
-
-                pumpAction = OGBHydroAction(
-                    Name=self.room, Action="on", Device=dev_id, Cycle=cycle
-                )
-                await self.event_manager.emit("PumpAction", pumpAction)
-            msg = (
-                f"{log_prefix} cycle disabled – plant watering pumps set to always ON."
-            )
-
-        await self.event_manager.emit("LogForClient", {
-            "Name": self.room,
-            "Mode": "Plant-Watering",
-            "Type": "HYDRO",
-            "Message": msg,
-            "Devices": active_pumps
-        }, haEvent=True)
+            await self.plantWateringManager.run_single_shot(duration_value, pumpDevices)
 
     # Hydro Retrive
     async def HydroModRetrieveChange(self, pumpAction):
@@ -577,7 +530,7 @@ class OGBCastManager:
             Duration=duration,
             Devices=PumpDevices,
         )
-        await self.event_manager.emit("LogForClient", actionMap, haEvent=True)
+        await self.event_manager.emit("LogForClient", actionMap, haEvent=True, debug_type="INFO")
 
     async def retrive_Mode(
         self,
@@ -603,6 +556,7 @@ class OGBCastManager:
                 "LogForClient",
                 f"{log_prefix}: No valid Retrive pumps found.",
                 haEvent=True,
+                debug_type="WARNING",
             )
             return
 
@@ -678,7 +632,7 @@ class OGBCastManager:
             "Type": "HYDRO",
             "Message": msg,
             "Devices": active_pumps
-        }, haEvent=True)
+        }, haEvent=True, debug_type="INFO")
 
     def log(self, log_message):
         """Logs the performed action."""

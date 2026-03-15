@@ -171,6 +171,9 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 await self.OGB.data_storeManager.async_init()
                 _LOGGER.info(f"✅ {self.room_name}: Restored saved state from disk (async)")
+                if hasattr(self.OGB, 'wizard_manager') and self.OGB.wizard_manager:
+                    await self.OGB.wizard_manager.restore_active_plant_stage_config()
+                    _LOGGER.info(f"✅ {self.room_name}: Restored active plant stage source")
             except Exception as e:
                 _LOGGER.warning(f"⚠️ {self.room_name}: Could not load saved state: {e}")
             

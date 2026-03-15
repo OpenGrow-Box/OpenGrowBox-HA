@@ -62,9 +62,16 @@ class Camera(Device):
         else:
             self.hass_available = True
 
+        # Initialization state management
+        self._init_lock = asyncio.Lock()
+        self._async_init_complete = False
+        self._init_task = None
+
         ## Events Register
         self.event_manager.on("StartTL", self.startTL)
-        
+
+        self.eventManager.on("NeedViewPlant", self._handle_user_needs_image)
+
         # Register HA event listeners for timelapse
         if self.hass:
             self.hass.bus.async_listen("opengrowbox_get_timelapse_config", self._handle_get_timelapse_config)
@@ -82,6 +89,8 @@ class Camera(Device):
             # Register HA event listeners for timelapse deletion
             self.hass.bus.async_listen("opengrowbox_delete_all_timelapse", self._handle_delete_all_timelapse)
             self.hass.bus.async_listen("opengrowbox_delete_all_timelapse_output", self._handle_delete_all_timelapse_output)
+            # Register HA event listener for user plant view request
+            self.hass.bus.async_listen("opengrowbox_user_needs_image", self._handle_user_needs_image)
         
         # Timelapse generation state
         self.tl_generation_active = False
@@ -98,36 +107,88 @@ class Camera(Device):
         self._generation_cooldown = 5.0  # seconds
 
         # Initialize camera after setup
-        asyncio.create_task(self.init())
+        self._init_task = asyncio.create_task(self._init_and_resume())
 
     def deviceInit(self, entitys):
         """Minimal initialization for camera - stores entity in options."""
         # Store camera entities
         self.camera_entities = entitys if isinstance(entitys, list) else [entitys]
-        
+
         # Store camera entity in options (like other devices)
         if self.camera_entities:
             for entity in self.camera_entities:
                 if isinstance(entity, dict) and entity.get("entity_id", "").startswith("camera."):
                     self.options.append(entity)
-        
-        # Set initialization flags directly
+
+        # Set initialization flag but don't set isInitialized yet
+        # This will be set after async init completes
         self.initialization = True
-        self.isInitialized = True
-        
+
         # Use logging like parent class does for consistency
-        logging.warning(f"Device: {self.deviceName} Initialization done {self}")
+        logging.warning(f"Device: {self.deviceName} Initialization started {self}")
+
+    async def _wait_for_init(self):
+        """Wait for async initialization to complete.
+        Returns immediately if already initialized.
+        """
+        if self._async_init_complete:
+            return
+
+        if self._init_task:
+            try:
+                await asyncio.wait_for(self._init_task, timeout=30.0)
+                _LOGGER.info(f"{self.deviceName}: Async initialization completed")
+            except asyncio.TimeoutError:
+                _LOGGER.error(f"{self.deviceName}: Async initialization timed out after 30s")
+            except Exception as e:
+                _LOGGER.error(f"{self.deviceName}: Async initialization failed: {e}")
+
+    async def _init_and_resume(self):
+        """Initialize camera and resume any active timelapse."""
+        try:
+            await self.init()
+            self._async_init_complete = True
+            self.isInitialized = True
+            _LOGGER.info(f"{self.deviceName}: Camera fully initialized and ready")
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: Camera initialization failed: {e}")
+            # Set initialized even on failure to prevent blocking
+            self._async_init_complete = True
+            self.isInitialized = True
     
     @property
     def camera_entity_id(self):
-        """Get the camera entity_id for frontend communication."""
+        """Get the camera entity_id for frontend communication.
+        Returns the first camera entity_id for backward compatibility.
+        Use self.camera_entity_ids property for multi-camera support.
+        """
+        return self.camera_entity_ids[0] if self.camera_entity_ids else self.deviceName
+
+    @property
+    def camera_entity_ids(self):
+        """Get all camera entity_ids for multi-camera support."""
         if hasattr(self, 'camera_entities') and self.camera_entities:
+            entity_ids = []
             for entity in self.camera_entities:
                 if isinstance(entity, dict):
                     entity_id = entity.get("entity_id", "")
                     if entity_id.startswith("camera."):
-                        return entity_id
-        return self.deviceName  # Fallback to device name
+                        entity_ids.append(entity_id)
+            return entity_ids if entity_ids else [self.deviceName]
+        return [self.deviceName]
+
+    def _is_device_for_event(self, device_name):
+        """Check if this camera should handle the given event.
+        Args:
+            device_name: The device_name from the event
+        Returns:
+            bool: True if this camera should handle the event
+        """
+        if not device_name:
+            return False
+        
+        # Check if device_name matches any of our camera entity IDs
+        return device_name in self.camera_entity_ids
 
     async def init(self):
         """Initialize camera device."""
@@ -297,6 +358,102 @@ class Camera(Device):
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Camera initialization failed: {e}")
 
+    async def _handle_user_needs_image(self, event):
+        """Handle user_needs_image from API.
+        Captures or returns cached image, then emits HasPlantViewed event.
+        Response goes via Premium Integration (encrypted).
+        """
+        try:
+            # Wait for initialization
+            await self._wait_for_init()
+
+            event_data = event.data
+            device_name = event_data.get("device_name")
+
+            # Only respond if this event is for this camera
+            # If no device_name specified (NeedViewPlant from API), process for this room
+            if device_name and not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (device: {device_name})")
+                return
+
+            _LOGGER.info(f"{self.deviceName}: Processing plant view request for room: {self.inRoom}")
+
+            # Check if we have a recent cached image (<5 minutes)
+            five_minutes_ago = dt_util.now() - timedelta(minutes=5)
+
+            if (self.last_image is not None and
+                self.last_capture_time is not None and
+                self.last_capture_time > five_minutes_ago):
+
+                # Use cached image
+                image_data = self.last_image
+                cache_status = "cached"
+                capture_time = self.last_capture_time
+                _LOGGER.info(f"{self.deviceName}: Using cached image (captured {capture_time})")
+
+            else:
+                # Capture new image
+                _LOGGER.info(f"{self.deviceName}: Capturing new image (no cache or too old)")
+                camera_entity_id = self.camera_entity_id
+                image_data = await self._get_ha_camera_image(camera_entity_id)
+
+                if image_data:
+                    # Update cache
+                    self.last_image = image_data
+                    self.last_capture_time = dt_util.now()
+                    cache_status = "new"
+                    capture_time = self.last_capture_time
+                    _LOGGER.info(f"{self.deviceName}: Captured new image successfully")
+                else:
+                    # Capture failed
+                    await self.event_manager.emit("user_image_response", {
+                        "device_name": self.camera_entity_id,
+                        "success": False,
+                        "error": "Failed to capture image from camera",
+                    })
+                    return
+
+            # Collect plant data (like DataRelease pattern)
+            plant_data = {
+                "room": self.inRoom,
+                "mainControl": self.dataStore.get("mainControl"),
+                "tentMode": self.dataStore.get("tentMode"),
+                "strainName": self.dataStore.get("strainName"),
+                "plantStage": self.dataStore.get("plantStage"),
+                "planttype": self.dataStore.get("plantType"),
+                "cultivationArea": self.dataStore.get("growAreaM2"),
+                "vpd": self.dataStore.get("vpd"),
+                "isLightON": self.dataStore.get("isPlantDay"),
+                "plantDates": self.dataStore.get("plantDates"),
+                "tentData": self.dataStore.get("tentData"),
+                "Hydro": self.dataStore.get("Hydro"),
+                "growMediums": self.dataStore.get("growMediums"),
+                "controlOptions": self.dataStore.get("controlOptions"),
+                "capabilities": self.dataStore.get("capabilities"),
+                "actionData": self.dataStore.get("actionData") or {},
+            }
+
+            # Emit HasPlantViewed event for Premium Integration to send encrypted
+            await self.event_manager.emit("HasPlantViewed", {
+                "device_name": self.camera_entity_id,
+                "image_data": image_data,
+                "cache_status": cache_status,
+                "capture_time": capture_time.isoformat() if capture_time else None,
+                "room": self.inRoom,
+                "plant_data": plant_data,
+            })
+
+            _LOGGER.info(f"{self.deviceName}: HasPlantViewed emitted with image and plant data")
+
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: Error handling user_needs_image: {e}")
+            await self.event_manager.emit("user_image_response", {
+                "device_name": self.camera_entity_id,
+                "success": False,
+                "error": str(e),
+            })
+
+
     def _validate_storage_path(self, subdirectory="daily"):
         """Validate and return a safe storage path.
         Args:
@@ -459,6 +616,8 @@ class Camera(Device):
         If StartDate > now: Schedule start for that time.
         """
         try:
+            # Wait for initialization to complete
+            await self._wait_for_init()
             # Clean up any existing timer
             self._stop_timelapse_internal_timer()
 
@@ -669,7 +828,6 @@ class Camera(Device):
         }, haEvent=True)
         
         asyncio.create_task(self.event_manager.emit("SaveState", {"source": "Camera", "device": self.deviceName, "action": "stop_recording"}))
-
 
     async def _get_ha_camera_image(self, entity_id):
         """Get image from HA camera entity directly via component API."""
@@ -1129,13 +1287,18 @@ class Camera(Device):
 
     async def _handle_get_timelapse_config(self, event):
         """Handle opengrowbox_get_timelapse_config event from frontend."""
-        _LOGGER.info(f"{self.deviceName}: timelapse Event {event}")
+        _LOGGER.debug(f"{self.deviceName}: timelapse Event {event}")
         try:
+            # Wait for initialization to complete
+            await self._wait_for_init()
+
             event_data = event.data
             device_name = event_data.get("device_name")
 
             # Only respond if this event is for this camera
-            # Note: Currently responding to all cameras - device filtering disabled
+            if not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
+                return
 
             # Get current timelapse config from plantsView
             plants_view = self.dataStore.get("plantsView") or {}
@@ -1216,15 +1379,17 @@ class Camera(Device):
     async def _handle_save_timelapse_config(self, event):
         """Handle opengrowbox_save_timelapse_config event from frontend."""
         try:
+            # Wait for initialization to complete
+            await self._wait_for_init()
+
             event_data = event.data
             device_name = event_data.get("device_name")
-            
+
             _LOGGER.debug(f"{self.deviceName}: RECEIVED save_timelapse_config event from {device_name}")
-            _LOGGER.debug(f"{self.deviceName}: Event data: {event_data}")
-            
+
             # Only respond if this event is for this camera
-            if device_name != self.camera_entity_id:
-                _LOGGER.warning(f"{self.deviceName}: Ignoring event - device mismatch (expected {self.camera_entity_id}, got {device_name})")
+            if not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
                 return
             
             # Get new config from event
@@ -1287,11 +1452,15 @@ class Camera(Device):
     async def _handle_generate_timelapse(self, event):
         """Handle opengrowbox_generate_timelapse event from frontend."""
         try:
+            # Wait for initialization to complete
+            await self._wait_for_init()
+
             event_data = event.data
             device_name = event_data.get("device_name")
 
             # Only respond if this event is for this camera
-            if device_name != self.camera_entity_id:
+            if not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
                 return
 
             # Rate limiting check
@@ -1353,12 +1522,15 @@ class Camera(Device):
     async def _handle_get_timelapse_status(self, event):
         """Handle opengrowbox_get_timelapse_status event from frontend."""
         try:
+            # Wait for initialization to complete
+            await self._wait_for_init()
+
             event_data = event.data
             device_name = event_data.get("device_name")
 
             # Only respond if this event is for this camera
-            if device_name != self.camera_entity_id:
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected: {self.camera_entity_id}, got: {device_name})")
+            if not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
                 return
 
             # Get night mode config for status event
@@ -1397,11 +1569,15 @@ class Camera(Device):
     async def _handle_start_timelapse(self, event):
         """Handle opengrowbox_start_timelapse event from frontend."""
         try:
+            # Wait for initialization to complete
+            await self._wait_for_init()
+
             event_data = event.data
             device_name = event_data.get("device_name")
-            
+
             # Only respond if this event is for this camera
-            if device_name != self.camera_entity_id:
+            if not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
                 return
 
             # Read interval from plantsView
@@ -1421,9 +1597,10 @@ class Camera(Device):
         try:
             event_data = event.data
             device_name = event_data.get("device_name")
-            
+
             # Only respond if this event is for this camera
-            if device_name != self.camera_entity_id:
+            if not self._is_device_for_event(device_name):
+                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
                 return
             
             # Stop timelapse recording using helper
@@ -1647,20 +1824,54 @@ class Camera(Device):
             self.tl_generation_status = "complete"
             self.tl_generation_progress = 100
 
-            # Read the generated file and encode as base64 for transmission
-            def _read_and_encode_file():
+            # Check file size before encoding to prevent memory overflow
+            def _get_file_size():
                 try:
+                    return os.path.getsize(output_path)
+                except Exception as e:
+                    _LOGGER.error(f"{self.deviceName}: Failed to get file size: {e}")
+                    return None
+
+            file_size = await self.hass.async_add_executor_job(_get_file_size)
+
+            if file_size is None:
+                # Failed to get file size
+                await self.event_manager.emit("TimelapseGenerationComplete", {
+                    "device_name": self.camera_entity_id,
+                    "success": False,
+                    "error": "Failed to get generated file size",
+                }, haEvent=True)
+                return
+
+            max_file_size = 200 * 1024 * 1024  # 200MB limit
+            if file_size > max_file_size:
+                _LOGGER.error(f"{self.deviceName}: Generated file exceeds {max_file_size / (1024*1024):.0f}MB limit: {file_size / (1024*1024):.2f}MB")
+                await self.event_manager.emit("TimelapseGenerationComplete", {
+                    "device_name": self.camera_entity_id,
+                    "success": False,
+                    "error": f"Generated file exceeds {max_file_size / (1024*1024):.0f}MB limit ({file_size / (1024*1024):.2f}MB)",
+                }, haEvent=True)
+                return
+
+            # Read the generated file in chunks and encode as base64 for transmission
+            def _read_and_encode_file_chunks():
+                try:
+                    chunks = []
+                    chunk_size = 1024 * 1024  # 1MB chunks
                     with open(output_path, 'rb') as f:
-                        file_data = f.read()
-                    # Encode to base64 for transmission via WebSocket
-                    return base64.b64encode(file_data).decode('utf-8'), len(file_data)
+                        while True:
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            chunks.append(base64.b64encode(chunk).decode('utf-8'))
+                    return chunks, file_size
                 except Exception as e:
                     _LOGGER.error(f"{self.deviceName}: Failed to read timelapse file: {e}")
                     return None, 0
 
-            file_base64, file_size = await self.hass.async_add_executor_job(_read_and_encode_file)
+            file_chunks, file_size = await self.hass.async_add_executor_job(_read_and_encode_file_chunks)
 
-            if file_base64 is None:
+            if file_chunks is None:
                 # Failed to read file, send error
                 await self.event_manager.emit("TimelapseGenerationComplete", {
                     "device_name": self.camera_entity_id,
@@ -1676,11 +1887,15 @@ class Camera(Device):
                 "format": output_format,
                 "frame_count": len(filtered_images),
                 "filename": os.path.basename(output_path),
-                "file_data": file_base64,
+                "file_data": file_chunks,  # Array of base64 chunks
                 "file_size": file_size,
+                "chunk_count": len(file_chunks),
             }, haEvent=True)
 
-            _LOGGER.info(f"{self.deviceName}: Timelapse generation complete: {output_path} ({file_size} bytes)")
+            _LOGGER.info(
+                f"{self.deviceName}: Timelapse generation complete: {output_path} "
+                f"({file_size / (1024*1024):.2f}MB, {len(file_chunks)} chunks)"
+            )
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Timelapse generation failed: {e}")
@@ -2261,45 +2476,107 @@ class Camera(Device):
                 }, haEvent=True)
                 return
 
-            # Create in-memory ZIP file
-            def _create_zip():
-                zip_buffer = io.BytesIO()
-
-                # Use ZIP_STORED for JPG (no recompression) - faster and no quality loss
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_STORED) as zipf:
-                    for filename, file_path in photos:
-                        # Read file and add to ZIP with original filename
-                        with open(file_path, 'rb') as f:
-                            file_data = f.read()
-                        zipf.writestr(filename, file_data)
-
-                # Get ZIP data
-                zip_data = zip_buffer.getvalue()
-                zip_buffer.close()
-                return zip_data
+            # Calculate total size before creating ZIP to prevent memory overflow
+            def _calculate_total_size():
+                total_size = 0
+                max_zip_size = 500 * 1024 * 1024  # 500MB limit
+                for filename, file_path in photos:
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        total_size += file_size
+                        # Check limit during calculation
+                        if total_size > max_zip_size:
+                            raise MemoryError(f"Total size exceeds {max_zip_size / (1024*1024):.0f}MB limit")
+                    except OSError as e:
+                        _LOGGER.warning(f"{self.deviceName}: Could not get size for {filename}: {e}")
+                        return None
+                return total_size
 
             try:
-                zip_data = await self.hass.async_add_executor_job(_create_zip)
+                total_size = await self.hass.async_add_executor_job(_calculate_total_size)
+                if total_size is None:
+                    raise Exception("Failed to calculate total ZIP size")
 
-                # Encode to base64 for transmission
-                zip_base64 = base64.b64encode(zip_data).decode('utf-8')
+                _LOGGER.info(
+                    f"{self.deviceName}: Creating daily ZIP with {len(photos)} photos "
+                    f"(estimated size: {total_size / (1024*1024):.2f}MB)"
+                )
 
-                # Emit success response with base64-encoded ZIP
+                # Create ZIP file to disk instead of memory to prevent overflow
+                output_dir = os.path.join(storage_path, "temp_zips")
+                os.makedirs(output_dir, exist_ok=True)
+                timestamp = dt_util.now().strftime("%Y%m%d_%H%M%S")
+                zip_path = os.path.join(output_dir, f"daily_photos_{timestamp}.zip")
+
+                def _create_zip_to_disk():
+                    # Use ZIP_STORED for JPG (no recompression) - faster and no quality loss
+                    chunk_size = 10 * 1024 * 1024  # 10MB chunks for progress
+                    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
+                        for i, (filename, file_path) in enumerate(photos):
+                            # Read and write in chunks to manage memory
+                            with open(file_path, 'rb') as f:
+                                file_data = f.read()
+                            zipf.writestr(filename, file_data)
+
+                            # Log progress every 50 files
+                            if (i + 1) % 50 == 0:
+                                _LOGGER.debug(f"{self.deviceName}: Processed {i + 1}/{len(photos)} photos")
+
+                    # Get final file size
+                    final_size = os.path.getsize(zip_path)
+                    return final_size
+
+                final_size = await self.hass.async_add_executor_job(_create_zip_to_disk)
+
+                # Read ZIP file in chunks for base64 encoding
+                chunk_size = 1024 * 1024  # 1MB chunks
+                zip_chunks = []
+
+                def _read_zip_in_chunks():
+                    chunks = []
+                    with open(zip_path, 'rb') as f:
+                        while True:
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            chunks.append(base64.b64encode(chunk).decode('utf-8'))
+                    return chunks
+
+                zip_chunks = await self.hass.async_add_executor_job(_read_zip_in_chunks)
+
+                # Emit success response with chunked ZIP data
                 await self.event_manager.emit("DailyZipResponse", {
                     "camera_entity": self.camera_entity_id,
                     "success": True,
-                    "zip_data": zip_base64,
+                    "zip_data": zip_chunks,  # Array of base64 chunks
                     "photo_count": len(photos),
                     "start_date": start_date,
                     "end_date": end_date,
                     "timestamp": dt_util.now().isoformat(),
+                    "total_size": final_size,
+                    "chunk_count": len(zip_chunks),
                 }, haEvent=True)
 
                 _LOGGER.info(
                     f"{self.deviceName}: Generated daily ZIP with {len(photos)} photos "
                     f"(range: {start_date or 'all'} to {end_date or 'all'}, "
-                    f"size: {len(zip_data)} bytes)"
+                    f"size: {final_size / (1024*1024):.2f}MB, chunks: {len(zip_chunks)})"
                 )
+
+                # Clean up temporary ZIP file
+                try:
+                    os.remove(zip_path)
+                    _LOGGER.debug(f"{self.deviceName}: Cleaned up temporary ZIP file: {zip_path}")
+                except OSError as e:
+                    _LOGGER.warning(f"{self.deviceName}: Failed to remove temporary ZIP file: {e}")
+
+            except MemoryError as e:
+                _LOGGER.error(f"{self.deviceName}: Memory limit exceeded for ZIP creation: {e}")
+                await self.event_manager.emit("DailyZipResponse", {
+                    "device_name": self.camera_entity_id,
+                    "success": False,
+                    "error": "Total file size exceeds 500MB limit. Please use smaller date ranges.",
+                }, haEvent=True)
 
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Failed to create ZIP: {e}")

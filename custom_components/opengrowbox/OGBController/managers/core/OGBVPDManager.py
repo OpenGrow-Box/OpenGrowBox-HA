@@ -154,7 +154,7 @@ class OGBVPDManager:
                     return
 
                 await self.event_manager.emit("selectActionMode",tentMode)
-                await self.event_manager.emit("LogForClient",vpdPub,haEvent=True)
+                await self.event_manager.emit("LogForClient",vpdPub,haEvent=True, debug_type="DEBUG")
 
                 # GROW DATA - DataRelease is emitted by OGBActionManager.publicationActionHandler()
                 # after actual device actions are taken (NOT on every VPD calculation)
@@ -295,7 +295,7 @@ class OGBVPDManager:
             f"Action Init for {self.room} with {tentMode} "
         )
         await self.event_manager.emit("selectActionMode", tentMode)
-        await self.event_manager.emit("LogForClient", vpdPub, haEvent=True)
+        await self.event_manager.emit("LogForClient", vpdPub, haEvent=True, debug_type="DEBUG")
 
         return vpdPub
 

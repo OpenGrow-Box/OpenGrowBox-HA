@@ -154,14 +154,14 @@ class DryingActions:
                 "Action": "Drying",
                 "Message": message,
                 "actions": action_list
-            }, haEvent=True)
+            }, haEvent=True, debug_type="INFO")
         else:
             await self.event_manager.emit("LogForClient", {
                 "Name": self.room,
                 "Action": "Drying",
                 "Message": "No actions needed - conditions within tolerance",
                 "actions": []
-            }, haEvent=True)
+            }, haEvent=True, debug_type="DEBUG")
 
     async def handle_5DayDry(self, phaseConfig: Dict[str, Any]) -> None:
         """
@@ -188,7 +188,7 @@ class DryingActions:
                 "Action": "Drying",
                 "Message": "5DayDry: No active phase - check mode start time",
                 "actions": []
-            }, haEvent=True)
+            }, haEvent=True, debug_type="WARNING")
             return
 
         current_temp = tentData["temperature"] if "temperature" in tentData else None
@@ -244,7 +244,7 @@ class DryingActions:
             "Action": "Drying",
             "Message": f"5DayDry VPD: Current {current_vpd_str}, Target {target_vpd}, Action: {action_taken or 'None'}",
             "actions": action_list
-        }, haEvent=True)
+        }, haEvent=True, debug_type="DEBUG")
 
     async def handle_DewBased(self, phaseConfig: Dict[str, Any]) -> None:
         """
@@ -355,7 +355,7 @@ class DryingActions:
             "Action": "Drying",
             "Message": message,
             "actions": action_list
-        }, haEvent=True)
+        }, haEvent=True, debug_type="DEBUG")
 
     def get_current_phase(self, phaseConfig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

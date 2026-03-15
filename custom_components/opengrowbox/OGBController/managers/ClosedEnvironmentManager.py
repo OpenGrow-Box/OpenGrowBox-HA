@@ -53,6 +53,7 @@ class ClosedEnvironmentManager:
         self.ambient_influence_strength = self.data_store.getDeep(
             "controlOptionData.closedEnvironment.ambientInfluenceStrength", 0.3
         )  # 30% ambient influence by default
+        self._sync_ambient_influence()
 
         _LOGGER.info(f"Closed Environment Manager initialized for {room}")
 
@@ -73,11 +74,25 @@ class ClosedEnvironmentManager:
             _LOGGER.warning(f"No device capabilities available for {self.room}")
             return
 
-        # Calculate optimal targets using ambient-enhanced logic
+        self.ambient_influence_strength = self.data_store.getDeep(
+            "controlOptionData.closedEnvironment.ambientInfluenceStrength", self.ambient_influence_strength
+        )
+        self._sync_ambient_influence()
+
+        # Preferred path: delegate full cycle to ClosedActions so Closed mode
+        # uses its own NoVPD/safety logic without affecting other modes.
+        if self.action_manager:
+            _LOGGER.debug(
+                f"{self.room}: Closed Environment using delegated ClosedActions path; fallback temp/humidity path disabled"
+            )
+            await self.event_manager.emit("closed_environment_cycle", capabilities)
+            _LOGGER.debug(f"Closed environment cycle delegated to ClosedActions for {self.room}")
+            return
+
+        # Fallback path if action manager is not ready yet
         temp_target = await self.control_logic.calculate_optimal_temperature_target()
         humidity_target = await self.control_logic.calculate_optimal_humidity_target()
 
-        # Create action publications and process through ActionManager (for Premium API compatibility)
         action_map = []
         if temp_target is not None:
             action_map.extend(await self._create_temperature_actions(capabilities, temp_target))
@@ -85,14 +100,9 @@ class ClosedEnvironmentManager:
             action_map.extend(await self._create_humidity_actions(capabilities, humidity_target))
 
         if action_map:
-            # Use ActionManager to process actions
-            if self.action_manager:
-                await self.action_manager.checkLimitsAndPublicate(action_map)
-            else:
-                _LOGGER.warning(f"{self.room}: action_manager not available, actions skipped")
-            _LOGGER.debug(f"Closed environment actions processed: {len(action_map)} actions")
-
-        # Handle CO2, O2, and air recirculation in closed environment
+            _LOGGER.warning(f"{self.room}: Closed Environment fallback executed without action_manager")
+            await self._publish_fallback_actions(action_map)
+        
         await self.event_manager.emit("maintain_co2", capabilities)
         await self.event_manager.emit("monitor_o2_safety", capabilities)
         await self.event_manager.emit("optimize_air_recirculation", capabilities)
@@ -110,18 +120,52 @@ class ClosedEnvironmentManager:
         if current_temp is None:
             return actions
 
+        try:
+            current_temp = float(current_temp)
+            target_temp = float(target_temp)
+        except (TypeError, ValueError):
+            _LOGGER.warning(f"{self.room}: Invalid temperature values for Closed Environment")
+            return actions
+
         temp_delta = target_temp - current_temp
 
         if abs(temp_delta) > 1.0:  # 1°C tolerance
-            action_type = "Increase" if temp_delta > 0 else "Reduce"
-            actions.append(OGBActionPublication(
-                capability="canHeat",
-                action=action_type,
-                Name=self.room,
-                message=f"Closed Environment: {action_type} heating (delta: {temp_delta:.1f}°C)",
-                priority="medium"
-            ))
-            _LOGGER.debug(f"Temperature control: {action_type} heating (delta: {temp_delta:.1f}°C)")
+            if temp_delta > 0 and capabilities.get("canHeat", {}).get("state", False):
+                actions.append(OGBActionPublication(
+                    capability="canHeat",
+                    action="Increase",
+                    Name=self.room,
+                    message=f"Closed Environment: Increase heating (delta: {temp_delta:.1f}°C)",
+                    priority="medium"
+                ))
+                _LOGGER.debug(f"Temperature control: Increase heating (delta: {temp_delta:.1f}°C)")
+            elif temp_delta > 0 and capabilities.get("canClimate", {}).get("state", False):
+                actions.append(OGBActionPublication(
+                    capability="canClimate",
+                    action="Increase",
+                    Name=self.room,
+                    message=f"Closed Environment: Climate heat support (delta: {temp_delta:.1f}°C)",
+                    priority="medium"
+                ))
+                _LOGGER.debug(f"Temperature control: Climate heat support (delta: {temp_delta:.1f}°C)")
+            elif temp_delta < 0 and capabilities.get("canCool", {}).get("state", False):
+                actions.append(OGBActionPublication(
+                    capability="canCool",
+                    action="Increase",
+                    Name=self.room,
+                    message=f"Closed Environment: Increase cooling (delta: {abs(temp_delta):.1f}°C)",
+                    priority="medium"
+                ))
+                _LOGGER.debug(f"Temperature control: Increase cooling (delta: {abs(temp_delta):.1f}°C)")
+            elif temp_delta < 0 and capabilities.get("canClimate", {}).get("state", False):
+                actions.append(OGBActionPublication(
+                    capability="canClimate",
+                    action="Reduce",
+                    Name=self.room,
+                    message=f"Closed Environment: Climate cool support (delta: {abs(temp_delta):.1f}°C)",
+                    priority="medium"
+                ))
+                _LOGGER.debug(f"Temperature control: Climate cool support (delta: {abs(temp_delta):.1f}°C)")
 
         return actions
 
@@ -134,6 +178,13 @@ class ClosedEnvironmentManager:
         actions = []
 
         if current_humidity is None:
+            return actions
+
+        try:
+            current_humidity = float(current_humidity)
+            target_humidity = float(target_humidity)
+        except (TypeError, ValueError):
+            _LOGGER.warning(f"{self.room}: Invalid humidity values for Closed Environment")
             return actions
 
         humidity_delta = target_humidity - current_humidity
@@ -149,14 +200,24 @@ class ClosedEnvironmentManager:
                 ))
                 _LOGGER.debug(f"Humidity control: Increase humidification (delta: {humidity_delta:.1f}%)")
             else:
-                actions.append(OGBActionPublication(
-                    capability="canDehumidify",
-                    action="Increase",
-                    Name=self.room,
-                    message=f"Closed Environment: Increase dehumidification (delta: {humidity_delta:.1f}%)",
-                    priority="medium"
-                ))
-                _LOGGER.debug(f"Humidity control: Increase dehumidification (delta: {humidity_delta:.1f}%)")
+                if capabilities.get("canDehumidify", {}).get("state", False):
+                    actions.append(OGBActionPublication(
+                        capability="canDehumidify",
+                        action="Increase",
+                        Name=self.room,
+                        message=f"Closed Environment: Increase dehumidification (delta: {humidity_delta:.1f}%)",
+                        priority="medium"
+                    ))
+                    _LOGGER.debug(f"Humidity control: Increase dehumidification (delta: {humidity_delta:.1f}%)")
+                elif capabilities.get("canClimate", {}).get("state", False):
+                    actions.append(OGBActionPublication(
+                        capability="canClimate",
+                        action="Increase",
+                        Name=self.room,
+                        message=f"Closed Environment: Climate dry support (delta: {humidity_delta:.1f}%)",
+                        priority="medium"
+                    ))
+                    _LOGGER.debug(f"Humidity control: Climate dry support (delta: {humidity_delta:.1f}%)")
 
         return actions
 
@@ -172,14 +233,79 @@ class ClosedEnvironmentManager:
             "mode": self.data_store.get("tentMode"),
             "ambient_influence_strength": self.ambient_influence_strength,
             "current_targets": {
-                "temperature": self.data_store.getDeep("targets.temperature"),
-                "humidity": self.data_store.getDeep("targets.humidity"),
+                "temperature": self._get_tentdata_midpoint_target("minTemp", "maxTemp")
+                or self._get_stage_midpoint_target("minTemp", "maxTemp"),
+                "humidity": self._get_tentdata_midpoint_target("minHumidity", "maxHumidity")
+                or self._get_stage_midpoint_target("minHumidity", "maxHumidity"),
             },
             "ambient_conditions": {
                 "temperature": self.data_store.getDeep("tentData.AmbientTemp"),
                 "humidity": self.data_store.getDeep("tentData.AmbientHum"),
             }
         }
+
+    async def _publish_fallback_actions(self, action_map: List[Any]):
+        """Best-effort action publishing when action manager is unavailable."""
+        for action in action_map:
+            capability = getattr(action, "capability", None)
+            action_type = getattr(action, "action", None)
+            if not capability or not action_type:
+                continue
+
+            try:
+                if capability == "canHeat":
+                    await self.event_manager.emit(f"{action_type} Heater", action_type)
+                elif capability == "canCool":
+                    await self.event_manager.emit(f"{action_type} Cooler", action_type)
+                elif capability == "canHumidify":
+                    await self.event_manager.emit(f"{action_type} Humidifier", action_type)
+                elif capability == "canDehumidify":
+                    await self.event_manager.emit(f"{action_type} Dehumidifier", action_type)
+                elif capability == "canClimate":
+                    await self.event_manager.emit(f"{action_type} Climate", action_type)
+            except Exception as e:
+                _LOGGER.error(f"{self.room}: Fallback closed action failed for {capability} {action_type}: {e}")
+
+    def _sync_ambient_influence(self):
+        """Apply persisted ambient influence to closed control logic."""
+        try:
+            influence = float(self.ambient_influence_strength)
+        except (TypeError, ValueError):
+            influence = 0.3
+
+        self.control_logic.set_ambient_influence(
+            temp_influence=influence,
+            humidity_influence=influence,
+        )
+
+    def _get_stage_midpoint_target(self, min_key: str, max_key: str) -> Optional[float]:
+        """Return plant-stage midpoint for status/fallback reporting."""
+        plant_stage = self.data_store.get("plantStage")
+        if not plant_stage:
+            return None
+
+        stage_data = self.data_store.getDeep(f"plantStages.{plant_stage}") or {}
+        min_value = stage_data.get(min_key)
+        max_value = stage_data.get(max_key)
+        if min_value is None or max_value is None:
+            return None
+
+        try:
+            return (float(min_value) + float(max_value)) / 2
+        except (TypeError, ValueError):
+            return None
+
+    def _get_tentdata_midpoint_target(self, min_key: str, max_key: str) -> Optional[float]:
+        """Return midpoint of active room min/max values from tentData."""
+        min_value = self.data_store.getDeep(f"tentData.{min_key}")
+        max_value = self.data_store.getDeep(f"tentData.{max_key}")
+        if min_value is None or max_value is None:
+            return None
+
+        try:
+            return (float(min_value) + float(max_value)) / 2
+        except (TypeError, ValueError):
+            return None
 
     def set_ambient_influence_strength(self, strength: float):
         """
@@ -191,6 +317,7 @@ class ClosedEnvironmentManager:
         self.ambient_influence_strength = max(0.0, min(1.0, strength))
         # Persist to data_store for stateless operation (in controlOptionData like other settings)
         self.data_store.setDeep("controlOptionData.closedEnvironment.ambientInfluenceStrength", self.ambient_influence_strength)
+        self._sync_ambient_influence()
         _LOGGER.info(f"Ambient influence strength set to {self.ambient_influence_strength} for {self.room}")
 
     async def emergency_stop(self):

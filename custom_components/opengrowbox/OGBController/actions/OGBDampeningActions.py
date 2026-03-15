@@ -960,7 +960,7 @@ class OGBDampeningActions:
             action_map: Actions to execute
         """
         await self.action_manager.publicationActionHandler(action_map)
-        await self.ogb.eventManager.emit("LogForClient", action_map, haEvent=True)
+        await self.ogb.eventManager.emit("LogForClient", action_map, haEvent=True, debug_type="INFO")
 
     async def _night_hold_fallback(self, action_map: List):
         """

@@ -583,7 +583,7 @@ class GrowMedium:
         )
         
         await self.event_manager.emit("MediumPlantUpdate", plant_pub, haEvent=True)
-        await self.event_manager.emit("LogForClient", plant_pub.to_dict(), haEvent=True)
+        await self.event_manager.emit("LogForClient", plant_pub.to_dict(), haEvent=True, debug_type="INFO")
         _LOGGER.debug(f"{self.name}: Emitted plant update - Stage: {self.plant_stage}, Phase: {self.get_current_phase()}")
 
     # ============================================================
@@ -600,7 +600,7 @@ class GrowMedium:
             try:
                 return float(value)
             except (ValueError, TypeError):
-                _LOGGER.warning(f"Cannot convert '{value}' to float")
+                _LOGGER.error(f"Cannot convert '{value}' to float")
                 return None
         return None
 
@@ -615,7 +615,7 @@ class GrowMedium:
         device_name = sensor_data.get("device_name", "Unknown")
         timestamp = sensor_data.get("last_update") or datetime.now()
 
-        _LOGGER.warning(f"[{self.room}] Medium {self.name}: REGISTERING sensor {entity_id} ({sensor_type}) value={value}")
+        _LOGGER.info(f"[{self.room}] Medium {self.name}: REGISTERING sensor {entity_id} ({sensor_type}) value={value}")
 
         numeric_value = self._safe_float_convert(value)
 
@@ -625,10 +625,10 @@ class GrowMedium:
         if entity_id not in self.registered_sensors[sensor_type]:
             # Limit sensors per type to prevent unbounded growth (max 20 per type)
             if len(self.registered_sensors[sensor_type]) >= 20:
-                _LOGGER.warning(f"[{self.room}] Medium {self.name}: Max sensors reached for {sensor_type}, removing oldest")
+                _LOGGER.debug(f"[{self.room}] Medium {self.name}: Max sensors reached for {sensor_type}, removing oldest")
                 self.registered_sensors[sensor_type].pop(0)
             self.registered_sensors[sensor_type].append(entity_id)
-            _LOGGER.warning(f"[{self.room}] Medium {self.name}: Added {entity_id} to registered_sensors[{sensor_type}]")
+            _LOGGER.error(f"[{self.room}] Medium {self.name}: Added {entity_id} to registered_sensors[{sensor_type}]")
 
         self.sensor_type_map[entity_id] = sensor_type
 
@@ -659,8 +659,8 @@ class GrowMedium:
 
         # Event - emit LogForClient for UI
         mediumStats = self.get_all_medium_values()
-        _LOGGER.warning(f"[{self.room}] Medium {self.name}: Emitting LogForClient after sensor registration")
-        await self.event_manager.emit("LogForClient", mediumStats, haEvent=True)
+        _LOGGER.debug(f"[{self.room}] Medium {self.name}: Emitting LogForClient after sensor registration")
+        await self.event_manager.emit("LogForClient", mediumStats, haEvent=True, debug_type="DEBUG")
         self.last_log_event_time = datetime.now()
 
     def _update_aggregated_value(self, sensor_type: str) -> None:
@@ -1014,7 +1014,7 @@ class GrowMedium:
         medium_type = MediumType(data["type"])
         name = data.get("name", medium_type.value)
         
-        _LOGGER.warning(
+        _LOGGER.debug(
             f"[{room}] GrowMedium.from_dict: Loading medium '{name}' with "
             f"plant_name={data.get('plant_name')}, breeder_name={data.get('breeder_name') or data.get('plant_strain')}, "
             f"breeder_bloom_days={data.get('breeder_bloom_days')}, "
@@ -1028,16 +1028,16 @@ class GrowMedium:
         if data.get("grow_start_date"):
             try:
                 grow_start_date = datetime.fromisoformat(data["grow_start_date"])
-                _LOGGER.warning(f"[{room}] Parsed grow_start_date: {grow_start_date}")
+                _LOGGER.debug(f"[{room}] Parsed grow_start_date: {grow_start_date}")
             except (ValueError, TypeError) as e:
-                _LOGGER.warning(f"[{room}] Failed to parse grow_start_date: {e}")
+                _LOGGER.error(f"[{room}] Failed to parse grow_start_date: {e}")
                 
         if data.get("bloom_switch_date"):
             try:
                 bloom_switch_date = datetime.fromisoformat(data["bloom_switch_date"])
-                _LOGGER.warning(f"[{room}] Parsed bloom_switch_date: {bloom_switch_date}")
+                _LOGGER.debug(f"[{room}] Parsed bloom_switch_date: {bloom_switch_date}")
             except (ValueError, TypeError) as e:
-                _LOGGER.warning(f"[{room}] Failed to parse bloom_switch_date: {e}")
+                _LOGGER.error(f"[{room}] Failed to parse bloom_switch_date: {e}")
 
         # Get plant_stage: use saved value, or fall back to global plantStage from dataStore
         plant_stage = data.get("plant_stage")
@@ -1045,7 +1045,7 @@ class GrowMedium:
             # Use global plantStage from dataStore as fallback
             plant_stage = dataStore.get("plantStage")
             if plant_stage:
-                _LOGGER.warning(f"[{room}] Using global plantStage from dataStore: {plant_stage}")
+                _LOGGER.debug(f"[{room}] Using global plantStage from dataStore: {plant_stage}")
         
         medium = cls(
             eventManager=eventManager,
@@ -1232,7 +1232,7 @@ class GrowMedium:
                 )
         if triggered_devices:
             self.fallback_triggered = True
-            _LOGGER.warning(
+            _LOGGER.error(
                 f"Fallback triggered for medium {self.name}: {triggered_devices}"
             )
         else:

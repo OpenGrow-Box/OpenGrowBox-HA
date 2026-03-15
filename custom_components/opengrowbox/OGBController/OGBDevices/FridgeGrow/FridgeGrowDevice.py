@@ -296,11 +296,11 @@ class FridgeGrowDevice(Device):
             f"(count: {currentCap['count']})"
         )
     
-    def identifDimmable(self) -> None:
+    def identifyIfDimmable(self) -> None:
         """
         Determine if this FridgeGrow output is dimmable.
         
-        Overrides Device.identifDimmable() to use FridgeGrow config
+        Overrides Device.identifyIfDimmable() to use FridgeGrow config
         instead of entity-based detection.
         """
         config = self._get_config()

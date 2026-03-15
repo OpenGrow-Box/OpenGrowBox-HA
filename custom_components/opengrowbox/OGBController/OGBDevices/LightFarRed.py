@@ -570,7 +570,7 @@ class LightFarRed(Light):
                 SunRise=False,
                 SunSet=False,
             )
-            await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+            await self.event_manager.emit("LogForClient", lightAction, haEvent=True, debug_type="INFO")
         else:
             _LOGGER.debug(f"{self.deviceName}: Skipping LogForClient - intensity change too small ({intensity:.1f}%, last: {self._last_logged_intensity})")
         

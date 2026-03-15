@@ -230,7 +230,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             max_value=2000,
             step=5,
             unit="ppm",
-            initial_value=400,
+            initial_value=1200,
         ),
         CustomNumber(
             f"OGB_CO2TargetValue_{coordinator.room_name}",
@@ -240,7 +240,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             max_value=2000,
             step=5,
             unit="ppm",
-            initial_value=400,
+            initial_value=800,
         ),
         ## PlantTimes
         CustomNumber(
@@ -716,7 +716,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             max_value=15,
             step=0.1,
             unit="ec",
-            initial_value=0,
+            initial_value=0, 
         ),
         CustomNumber(
             f"OGB_CropSteering_P2_MaxEC_{coordinator.room_name}",

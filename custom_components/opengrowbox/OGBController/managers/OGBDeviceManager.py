@@ -72,7 +72,7 @@ class OGBDeviceManager:
         # Duplikat-Check – selber Name darf nicht zweimal rein
         current_devices = self.data_store.get("devices") or []
         if any(getattr(d, "deviceName", None) == deviceName for d in current_devices):
-            _LOGGER.warning(f"{self.room}: Device '{deviceName}' bereits in devices – addDevice abgebrochen")
+            _LOGGER.debug(f"{self.room}: Device '{deviceName}' bereits in devices – addDevice abgebrochen")
             return None
 
         allLabels = []

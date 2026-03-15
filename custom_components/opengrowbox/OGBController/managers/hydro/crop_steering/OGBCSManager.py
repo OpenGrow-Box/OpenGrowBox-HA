@@ -2264,7 +2264,7 @@ class OGBCSManager:
         """Emergency stop all operations"""
         await self._turn_off_all_drippers()
         await self.event_manager.emit(
-            "LogForClient", f"{self.room}: Emergency stop activated", haEvent=True
+            "LogForClient", f"{self.room}: Emergency stop activated", haEvent=True, debug_type="ERROR"
         )
 
     async def _turn_off_all_drippers(self):

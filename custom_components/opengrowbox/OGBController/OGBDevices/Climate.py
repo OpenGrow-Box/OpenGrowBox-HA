@@ -125,4 +125,4 @@ class Climate(Device):
     def log_action(self, action_name):
         """Logs the performed action."""
         log_message = f"{self.deviceName} CurrentHAVOC: {self.currentHAVOC}"
-        _LOGGER.warning(f"{action_name}: {log_message}")
+        _LOGGER.debug(f"{action_name}: {log_message}")

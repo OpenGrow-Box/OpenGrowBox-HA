@@ -114,7 +114,7 @@ class OGBMediumManager:
             # Also emit each medium's current values for monitoring
             for medium in self.media:
                 medium_data = medium.get_all_medium_values()
-                await self.event_manager.emit("LogForClient", medium_data, haEvent=True)
+                await self.event_manager.emit("LogForClient", medium_data, haEvent=True, debug_type="DEBUG")
                 _LOGGER.debug(f"Emitted initial data for medium: {medium.name}")
             
             _LOGGER.info(f"{self.room}: Initial data emission complete")
@@ -241,6 +241,11 @@ class OGBMediumManager:
         medium_index = data.get("medium_index")
         if medium_index is None:
             _LOGGER.error(f"[{self.room}] FinishGrow: No medium_index provided")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "MEDIUM",
+                "Message": "Finish grow failed: no medium selected"
+            }, haEvent=True, debug_type="ERROR")
             return
         
         # Call the finish method
@@ -257,6 +262,12 @@ class OGBMediumManager:
             _LOGGER.debug(f"[{self.room}] ✅ FinishGrow completed for medium index {medium_index}")
         else:
             _LOGGER.error(f"[{self.room}] ❌ FinishGrow failed for medium index {medium_index}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "MEDIUM",
+                "Message": "Finish grow failed: invalid medium index",
+                "medium_index": medium_index
+            }, haEvent=True, debug_type="ERROR")
 
     async def _on_register_sensor(self, data):
         """
@@ -481,7 +492,7 @@ class OGBMediumManager:
                 f"[{self.room}] 📊 Medium {medium.name} changed: {data.get('sensor_type')}="
                 f"{data.get('state') or data.get('last_reading')} -> Emitting LogForClient"
             )
-            await self.event_manager.emit("LogForClient", medium_values, haEvent=True)
+            await self.event_manager.emit("LogForClient", medium_values, haEvent=True, debug_type="DEBUG")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error in medium sensor update: {e}", exc_info=True)
@@ -606,6 +617,12 @@ class OGBMediumManager:
             input_str = data
         else:
             _LOGGER.error(f"{self.room}: Invalid medium change data type: {type(data)}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "MEDIUM",
+                "Message": "Invalid medium selection",
+                "input": str(type(data))
+            }, haEvent=True, debug_type="ERROR")
             return
 
         if not input_str or not input_str.strip():
@@ -616,6 +633,13 @@ class OGBMediumManager:
             base, count = self._parse_medium_input(input_str)
         except ValueError as e:
             _LOGGER.error(f"{self.room}: Invalid medium input '{input_str}' -> {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "MEDIUM",
+                "Message": "Invalid medium selection",
+                "input": input_str,
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
             return
 
         if count < 1:
@@ -968,6 +992,13 @@ class OGBMediumManager:
                 _LOGGER.debug(f"[{self.room}] Set grow_start: {grow_start}")
             except ValueError as e:
                 _LOGGER.error(f"Invalid grow_start date format: {grow_start} - {e}")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.room,
+                    "Type": "MEDIUM",
+                    "Message": "Invalid grow date",
+                    "field": "grow_start",
+                    "value": grow_start
+                }, haEvent=True, debug_type="ERROR")
                 
         # Update bloom switch date
         if bloom_switch is not None:
@@ -977,6 +1008,13 @@ class OGBMediumManager:
                 _LOGGER.debug(f"[{self.room}] Set bloom_switch: {bloom_switch}")
             except ValueError as e:
                 _LOGGER.error(f"Invalid bloom_switch date format: {bloom_switch} - {e}")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.room,
+                    "Type": "MEDIUM",
+                    "Message": "Invalid grow date",
+                    "field": "bloom_switch",
+                    "value": bloom_switch
+                }, haEvent=True, debug_type="ERROR")
                 
         # Update plant stage
         if plant_stage is not None:
@@ -1055,6 +1093,14 @@ class OGBMediumManager:
         # This can be used by premium features to store harvest history
         try:
             await self.event_manager.emit("GrowCompleted", harvest_data, haEvent=True)
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "GROW",
+                "Message": "Grow completed",
+                "medium": medium.name,
+                "plant": medium.plant_name or "unknown",
+                "total_days": total_days or medium.total_grow_days
+            }, haEvent=True, debug_type="INFO")
             _LOGGER.debug(f"[{self.room}] ✅ Emitted GrowCompleted event")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to emit GrowCompleted: {e}")

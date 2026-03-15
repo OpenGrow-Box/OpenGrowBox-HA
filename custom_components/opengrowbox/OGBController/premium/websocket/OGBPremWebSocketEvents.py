@@ -49,6 +49,12 @@ class OGBPremWebSocketEventHandlers:
 
         async def on_connect_error(data):
             _LOGGER.error(f"❌ Connection error: {data}")
+            await client.ogbevents.emit("LogForClient", {
+                "Name": client.ws_room,
+                "Type": "PREMIUM",
+                "Message": "Premium connection failed",
+                "error": str(data)
+            }, haEvent=True, debug_type="ERROR")
             await client._handle_connection_loss()
 
         async def on_error(data):
@@ -82,6 +88,12 @@ class OGBPremWebSocketEventHandlers:
         async def on_auth_failed(data):
             _LOGGER.error(f"❌ Authentication failed: {data}")
             client.authenticated = False
+            await client.ogbevents.emit("LogForClient", {
+                "Name": client.ws_room,
+                "Type": "PREMIUM",
+                "Message": "Premium authentication failed",
+                "reason": str(data)
+            }, haEvent=True, debug_type="ERROR")
 
         return {
             "auth_success": on_auth_success,
@@ -403,12 +415,30 @@ class OGBPremWebSocketEventHandlers:
         async def on_to_many_rooms(data):
             _LOGGER.error(f"❌ {client.ws_room} - {data}")
             await client.ogbevents.emit("ui_to_many_rooms_message", data, haEvent=True)
+            await client.ogbevents.emit("LogForClient", {
+                "Name": client.ws_room,
+                "Type": "PREMIUM",
+                "Message": "Too many rooms connected to Premium",
+                "reason": str(data)
+            }, haEvent=True, debug_type="WARNING")
 
         async def on_ip_violation(data):
             _LOGGER.error(f"❌ {client.ws_room} - IP VIOLATION- {data}")
+            await client.ogbevents.emit("LogForClient", {
+                "Name": client.ws_room,
+                "Type": "PREMIUM",
+                "Message": "Premium IP violation",
+                "details": str(data)
+            }, haEvent=True, debug_type="ERROR")
 
         async def on_free_plan_no_access(data):
             _LOGGER.error(f"❌ {client.ws_room} - FREE PLAN NO ACCESS- {data}")
+            await client.ogbevents.emit("LogForClient", {
+                "Name": client.ws_room,
+                "Type": "PREMIUM",
+                "Message": "Feature blocked on free plan",
+                "details": str(data)
+            }, haEvent=True, debug_type="WARNING")
 
         async def on_session_rotation_error(data):
             """Enhanced rotation error handler"""
@@ -422,6 +452,7 @@ class OGBPremWebSocketEventHandlers:
                 "LogForClient",
                 f"Session rotation error for {client.ws_room}: {data.get('error', 'Unknown error')}",
                 haEvent=True,
+                debug_type="WARNING",
             )
 
         return {

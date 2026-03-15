@@ -44,12 +44,12 @@ class OGBFeatureManager:
     """
 
     # Mapping from API camelCase to internal snake_case
-    # API sends: aiControllers, pidControllers, mcpControllers, etc.
+    # API sends: aiControllers, pidControllers, mpcControllers, etc.
     API_TO_INTERNAL = {
         # Controller features
         "aiControllers": "ai_controllers",
         "pidControllers": "pid_controllers",
-        "mcpControllers": "mpc_controllers",
+        "mpcControllers": "mpc_controllers",
         # Analytics features
         "basicAnalytics": "basic_analytics",
         "advancedAnalytics": "advanced_analytics",
@@ -69,64 +69,214 @@ class OGBFeatureManager:
     INTERNAL_TO_API = {v: k for k, v in API_TO_INTERNAL.items()}
 
     # Feature definitions with descriptions (for UI/documentation)
+    # DYNAMIC: This is merged with global_config features at runtime
     FEATURES = {
-        # Controller features (from API)
+        # Controller features (from API) - fallback defaults
         "ai_controllers": {
             "description": "AI environmental control",
             "api_key": "aiControllers",
+            "category": "controller",
         },
         "pid_controllers": {
             "description": "PID controller for precise environmental control",
             "api_key": "pidControllers",
+            "category": "controller",
         },
         "mpc_controllers": {
             "description": "Model Predictive Control for advanced optimization",
-            "api_key": "mcpControllers",
+            "api_key": "mpcControllers",
+            "category": "controller",
         },
         # Analytics features
         "basic_analytics": {
             "description": "Basic analytics and monitoring",
             "api_key": "basicAnalytics",
+            "category": "analytics",
         },
         "advanced_analytics": {
             "description": "Advanced analytics and insights",
             "api_key": "advancedAnalytics",
+            "category": "analytics",
         },
         # Compliance features
         "basic_compliance": {
             "description": "Basic compliance tracking",
             "api_key": "basicCompliance",
+            "category": "compliance",
         },
         "advanced_compliance": {
             "description": "Full compliance suite with audit logs",
             "api_key": "advancedCompliance",
+            "category": "compliance",
         },
         # Access features
         "web_app_access": {
             "description": "Web application access",
             "api_key": "WebAppAccess",
+            "category": "access",
         },
         "email_support": {
             "description": "Email support access",
             "api_key": "emailSupport",
+            "category": "support",
         },
         "priority_support": {
             "description": "Priority support response",
             "api_key": "prioritySupport",
+            "category": "support",
         },
         # Integration features
         "custom_integrations": {
             "description": "Custom API integrations",
             "api_key": "customIntegrations",
+            "category": "integration",
         },
         "white_label": {
             "description": "White label branding",
             "api_key": "whiteLabel",
+            "category": "branding",
         },
     }
 
     # Tier hierarchy
     TIER_HIERARCHY = ["free", "basic", "grower", "professional", "enterprise"]
+
+    @classmethod
+    def get_all_features_dynamic(cls) -> dict:
+        """
+        Get ALL feature definitions dynamically from database + hardcoded fallback.
+        
+        Merges:
+        1. Hardcoded FEATURES (fallback/defaults)
+        2. Global config features (from feature_flags_config table)
+        
+        This allows adding new features to the database without code changes!
+        
+        Returns:
+            Dict of all features with their metadata
+        """
+        all_features = dict(cls.FEATURES)  # Start with hardcoded
+        
+        # Add any additional features from global_config that aren't in hardcoded
+        # (will be populated at runtime from API response)
+        
+        return all_features
+
+    @classmethod
+    def get_controller_features(cls) -> list:
+        """
+        Get all controller features dynamically.
+        
+        Returns list of feature keys that are controllers:
+        - ["aiControllers", "pidControllers", "mpcControllers", ...]
+        
+        No code changes needed when adding new controller features!
+        """
+        controller_features = []
+        
+        for feature_key, metadata in cls.FEATURES.items():
+            if metadata.get('category') == 'controller':
+                # Return the API key (camelCase)
+                controller_features.append(metadata.get('api_key', feature_key))
+        
+        return controller_features
+
+    @classmethod
+    def build_features_from_subscription(cls, subscription_features: dict, global_config: dict = None) -> dict:
+        """
+        Build the FEATURES dictionary dynamically from subscription + global config.
+        
+        This is called at runtime to merge:
+        1. Features from subscription_plans (subscription_features)
+        2. Feature metadata from feature_flags_config (global_config)
+        
+        Args:
+            subscription_features: Features dict from subscription (e.g., {"pidControllers": true, ...})
+            global_config: Global feature config from feature_flags_config table
+            
+        Returns:
+            Complete FEATURES dict with metadata for all features
+        """
+        # Start with hardcoded defaults
+        features = dict(cls.FEATURES)
+        
+        # Add features from subscription that aren't in hardcoded list
+        for feature_key in subscription_features.keys():
+            if feature_key not in features:
+                # New feature from database - add it with default metadata
+                # Try to determine category from feature_key
+                category = "controller" if feature_key.endswith("Controllers") else "general"
+                
+                features[feature_key] = {
+                    "description": f"Feature: {feature_key}",
+                    "api_key": feature_key,
+                    "category": category,
+                    "source": "subscription"
+                }
+        
+        # Enhance with global_config metadata if provided
+        if global_config:
+            for feature_key, config in global_config.items():
+                if isinstance(config, dict):
+                    # Update with global config metadata
+                    if feature_key in features:
+                        features[feature_key].update({
+                            "display_name": config.get("display_name"),
+                            "description": config.get("description", features[feature_key].get("description")),
+                            "category": config.get("category", features[feature_key].get("category")),
+                            "enabled_globally": config.get("enabled_globally", False),
+                            "source": "global"
+                        })
+                    else:
+                        # New feature from global config
+                        features[feature_key] = {
+                            "display_name": config.get("display_name", feature_key),
+                            "description": config.get("description", f"Feature: {feature_key}"),
+                            "api_key": feature_key,
+                            "category": config.get("category", "general"),
+                            "enabled_globally": config.get("enabled_globally", False),
+                            "source": "global"
+                        }
+        
+        return features
+
+    @classmethod
+    def get_controller_features_from_subscription(cls, subscription_features: dict, global_config: dict = None) -> list:
+        """
+        Get all controller features from subscription dynamically.
+        
+        Automatically detects features ending with 'Controllers' from:
+        1. subscription_features (camelCase: pidControllers, mpcControllers, aiControllers)
+        2. global_config (snake_case: pid_controllers, mpc_controllers, ai_controllers)
+        
+        Args:
+            subscription_features: Features from subscription (e.g., {"pidControllers": true, ...})
+            global_config: Global config from feature_flags_config
+            
+        Returns:
+            List of enabled controller feature keys (e.g., ["PID Control", "MPC Control"])
+        """
+        controller_modes = []
+        
+        # Check subscription features (camelCase)
+        for feature_key, is_enabled in subscription_features.items():
+            if not is_enabled:
+                continue
+            if feature_key.endswith("Controllers"):
+                controller_modes.append(feature_key)
+        
+        # Check global config (snake_case)
+        if global_config:
+            for feature_key, config in global_config.items():
+                if not isinstance(config, dict):
+                    continue
+                if not config.get("enabled_globally", False):
+                    continue
+                if feature_key.endswith("_controllers"):
+                    # Convert snake_case to camelCase for consistency
+                    controller_modes.append(feature_key)
+        
+        return controller_modes
 
     def __init__(
         self,

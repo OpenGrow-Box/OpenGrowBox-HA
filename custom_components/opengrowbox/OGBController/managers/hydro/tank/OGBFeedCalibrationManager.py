@@ -462,6 +462,12 @@ class OGBFeedCalibrationManager:
             _LOGGER.warning(
                 f"{self.room} - Invalid calibrations: {', '.join(invalid_calibrations)}"
             )
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Calibration attention required",
+                "invalid": invalid_calibrations
+            }, haEvent=True, debug_type="WARNING")
             return False
 
         _LOGGER.debug(f"{self.room} - All pump calibrations are valid")

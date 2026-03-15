@@ -438,11 +438,24 @@ class OGBTankFeedManager:
                 await self._save_calibration_data()
             else:
                 _LOGGER.error(f"[{self.room}] Calibration failed - no EC change detected")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.room,
+                    "Type": "HYDROLOG",
+                    "Message": "Pump calibration failed: no EC change detected",
+                    "pump": pump_type
+                }, haEvent=True, debug_type="ERROR")
             
             self.calibration_in_progress = ""
             
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error during pump calibration: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Pump calibration error",
+                "pump": pump_type,
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
             self.calibration_in_progress = ""
 
     def _calculate_dose_time(self, ml_amount: float) -> float:
@@ -604,6 +617,12 @@ class OGBTankFeedManager:
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Automatic pH down dosing failed",
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
         return False
 
     async def _dose_ph_up(self) -> bool:
@@ -622,6 +641,12 @@ class OGBTankFeedManager:
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH up: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Automatic pH up dosing failed",
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
         return False
 
     async def _dose_nutrients(self) -> bool:
@@ -650,6 +675,12 @@ class OGBTankFeedManager:
                     
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing nutrients: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Automatic nutrient dosing failed",
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
         return False
 
     async def _dose_nutrients_proportional(self, data: Dict[str, Any]):
@@ -783,7 +814,7 @@ class OGBTankFeedManager:
                 Action="on",
                 Message=f"Dosing {dose_ml:.1f}ml"
             )
-            await self.event_manager.emit("LogForClient", waterAction, haEvent=True)
+            await self.event_manager.emit("LogForClient", waterAction, haEvent=True, debug_type="INFO")
             
             # Wait for dose time
             await asyncio.sleep(run_time)
@@ -801,6 +832,14 @@ class OGBTankFeedManager:
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error activating pump {pump_type}: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Pump activation failed",
+                "pump": pump_type,
+                "dose_ml": dose_ml,
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
             return False
 
     async def _activate_pump2(self, pump_type: PumpType, run_time: float, dose_ml: float) -> bool:
@@ -826,7 +865,7 @@ class OGBTankFeedManager:
                 Action="on",
                 Message=f"Dosing {dose_ml:.1f}ml"
             )
-            await self.event_manager.emit("LogForClient", waterAction, haEvent=True)
+            await self.event_manager.emit("LogForClient", waterAction, haEvent=True, debug_type="INFO")
             
             # Wait for dose time
             await asyncio.sleep(run_time)
@@ -844,6 +883,14 @@ class OGBTankFeedManager:
             
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error activating pump {pump_type}: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": "Pump activation failed",
+                "pump": str(pump_type),
+                "dose_ml": dose_ml,
+                "error": str(e)
+            }, haEvent=True, debug_type="ERROR")
             return False
 
     async def _on_feed_update(self, payload):

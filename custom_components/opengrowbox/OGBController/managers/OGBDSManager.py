@@ -151,9 +151,9 @@ class OGBDSManager:
             # Load growMediums first if present - this is critical for MediumManager
             if "growMediums" in data:
                 mediums = data["growMediums"]
-                _LOGGER.warning(f"[{self.room}] Found {len(mediums)} mediums in saved state")
+                _LOGGER.debug(f"[{self.room}] Found {len(mediums)} mediums in saved state")
                 for m in mediums:
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         f"[{self.room}]   - {m.get('name')}: plant_name={m.get('plant_name')}, "
                         f"breeder_name={m.get('breeder_name') or m.get('plant_strain')}, breeder_bloom_days={m.get('breeder_bloom_days')}"
                     )
@@ -161,7 +161,7 @@ class OGBDSManager:
             # Load plantsView (timelapse config) if present - critical for Camera
             if "plantsView" in data:
                 plants_view = data["plantsView"]
-                _LOGGER.warning(f"[{self.room}] Found plantsView in saved state: {plants_view}")
+                _LOGGER.debug(f"[{self.room}] Found plantsView in saved state: {plants_view}")
             
             # Load all data into datastore
             for key, value in data.items():
@@ -191,7 +191,7 @@ class OGBDSManager:
 
     async def saveState(self, data):
         """Speichert den vollständigen aktuellen State."""
-        _LOGGER.warning(f"[{self.room}] RECEIVED SaveState event: {data}")
+        _LOGGER.debug(f"[{self.room}] RECEIVED SaveState event: {data}")
         try:
             state = self.data_store.getFullState()
             

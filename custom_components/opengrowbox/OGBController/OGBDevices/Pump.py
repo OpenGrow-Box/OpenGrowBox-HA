@@ -80,4 +80,4 @@ class Pump(Device):
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName}"
-        _LOGGER.warn(f"{action_name}: {log_message}")
+        _LOGGER.debug(f"{action_name}: {log_message}")

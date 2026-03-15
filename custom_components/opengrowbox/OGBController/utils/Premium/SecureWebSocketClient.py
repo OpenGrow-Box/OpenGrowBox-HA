@@ -98,12 +98,12 @@ class OGBWebSocketConManager:
 
         # UNIFIED: Single keep-alive system (replaces separate ping/pong and health monitoring)
         # CRITICAL: Keep-alive interval MUST be shorter than server's pingTimeout
-        # Server typically: pingInterval=25s, pingTimeout=20s (total 45s)
-        # We use 20s interval to stay well ahead of server timeout
+        # Server: pingInterval=30s, pingTimeout=60s
+        # We use 30s interval to match server pingInterval
         self._last_pong_time = time.time()
         self._keepalive_task = None
-        self._keepalive_interval = 20  # Reduced from 30s to prevent transport close
-        self._pong_timeout = 10
+        self._keepalive_interval = 30  # Match server's pingInterval (30s)
+        self._pong_timeout = 30  # CRITICAL: Match server's pingInterval (30s)
 
         # Pong detection with proper event signaling
         self._pong_received = False
@@ -162,7 +162,7 @@ class OGBWebSocketConManager:
             engineio_logger=False,
             ssl_verify=True,
             # Match server's pingInterval and pingTimeout to prevent disconnects
-            # Default server: pingInterval=25000ms, pingTimeout=20000ms
+            # Default server: pingInterval=30000ms, pingTimeout=60000ms
             # We use slightly shorter intervals to stay ahead of server timeout
         )
 
@@ -335,8 +335,14 @@ class OGBWebSocketConManager:
                     self.subscription_data = result.get("subscription_data", {})
 
                     # Session counts - server may use different field names
+                    # CRITICAL: Use explicit None check to allow 0 sessions
                     self.ogb_max_sessions = result.get("ogb_max_sessions") or result.get("maxSessions") or result.get("max_sessions") or 2
-                    self.ogb_sessions = result.get("ogb_sessions") or result.get("sessionCount") or result.get("session_count") or 1
+                    
+                    # Explicit check - don't default to 1 if API returns 0
+                    ogb_sessions = result.get("ogb_sessions")
+                    if ogb_sessions is None:
+                        ogb_sessions = result.get("sessionCount") or result.get("session_count") or 1
+                    self.ogb_sessions = ogb_sessions
                     
                     logging.info(f"📊 {self.ws_room} Login result - sessions: {self.ogb_sessions}/{self.ogb_max_sessions}")
                     self.is_logged_in = True
@@ -1263,17 +1269,192 @@ class OGBWebSocketConManager:
             logging.info(f"🌱 {self.ws_room} Plant stage change from webapp: {data}")
             await self._handle_plant_stage_change(data)
 
+        @self.sio.on("plant_view_need", namespace=ns)
+        async def plant_view_need(data):
+            """Handle plant view need from webapp"""
+            logging.info(f"🌱 {self.ws_room} USER Plant VIEW REQUEST: {data}")
+            await self._handle_plant_view_need(data)
+
         @self.sio.on("prem_actions", namespace=ns)
         async def on_prem_actions(data):
             """Handle premium actions from webapp"""
             logging.info(f"⚡ {self.ws_room} Premium actions from webapp: {data}")
             await self._handle_prem_actions(data)
-
+        
+        # === Control Sync Events (from Webapp) ===
+        @self.sio.on("connection_status", namespace=ns)
+        async def on_connection_status(data):
+            """Handle connection_status event from server - updates plan and session data"""
+            logging.info(f"📊 {self.ws_room} Connection status update: {data}")
+            
+            try:
+                # New consistent API structure: { plan, features, limits, usage, ogb_sessions, timestamp }
+                server_plan = data.get("plan")
+                features = data.get("features", {})
+                limits = data.get("limits", {})
+                usage = data.get("usage", {})
+                ogb_sessions = data.get("ogb_sessions", {})
+                
+                logging.info(f"📊 {self.ws_room} Connection status: plan={server_plan}")
+                
+                # Extract session info
+                if isinstance(ogb_sessions, dict):
+                    active_sessions = ogb_sessions.get("active", 0)
+                    max_sessions = ogb_sessions.get("max_sessions") or ogb_sessions.get("maxRooms")
+                else:
+                    active_sessions = ogb_sessions.get("active", 0) if isinstance(ogb_sessions, dict) else ogb_sessions or 0
+                    max_sessions = None
+                
+                # Update local session counts
+                self.ogb_sessions = active_sessions
+                if max_sessions:
+                    self.ogb_max_sessions = max_sessions
+                
+                # CRITICAL FIX: Update subscription_data with FULL structure
+                if not self.subscription_data:
+                    self.subscription_data = {}
+                
+                # Update plan from connection_status (source of truth!)
+                if server_plan:
+                    self.subscription_data["plan_name"] = server_plan
+                    self._plan = server_plan
+                    logging.info(f"📊 {self.ws_room} Updated plan from connection_status: {server_plan}")
+                
+                # Update features and limits
+                if features:
+                    self.subscription_data["features"] = features
+                    logging.info(f"📊 {self.ws_room} Updated features: {len(features)}")
+                
+                if limits:
+                    self.subscription_data["limits"] = limits
+                    logging.info(f"📊 {self.ws_room} Updated limits: {len(limits)}")
+                
+                # Update usage from connection_status
+                if "usage" not in self.subscription_data:
+                    self.subscription_data["usage"] = {}
+                
+                # Merge usage data - connection_status may have partial data
+                for key, value in usage.items():
+                    self.subscription_data["usage"][key] = value
+                
+                # Override room-specific fields with validated values
+                normalized_current_room = str(self.ws_room).lower()
+                if active_sessions > 0:
+                    self.subscription_data["usage"]["activeConnections"] = active_sessions
+                    self.subscription_data["usage"]["activeRooms"] = [normalized_current_room]
+                    self.subscription_data["usage"]["roomsUsed"] = 1
+                else:
+                    self.subscription_data["usage"]["activeConnections"] = 0
+                    self.subscription_data["usage"]["activeRooms"] = []
+                    self.subscription_data["usage"]["roomsUsed"] = 0
+                
+                if max_sessions:
+                    self.subscription_data["usage"]["maxSessions"] = max_sessions
+                
+                # Emit to Premium Integration with FULL structure
+                emit_data = {
+                    "plan": server_plan,
+                    "features": features,
+                    "limits": limits,
+                    "usage": self.subscription_data.get("usage", {}),
+                    "timestamp": data.get("timestamp", time.time())
+                }
+                
+                await self._safe_emit("api_usage_update", emit_data, haEvent=True)
+                
+                logging.info(
+                    f"📊 {self.ws_room} Updated from connection_status: "
+                    f"plan={server_plan}, sessions={active_sessions}/{max_sessions or self.ogb_max_sessions}"
+                )
+                
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling connection_status: {e}")
+        
+        @self.sio.on("plan_changed", namespace=ns)
+        async def on_plan_changed(data):
+            """Handle plan_changed event from server (contains plan_id)"""
+            try:
+                plan_id = data.get("plan_id")
+                action = data.get("action", "sync")
+                
+                logging.info(f"📊 {self.ws_room} Plan changed event: plan_id={plan_id}, action={action}")
+                
+                # connection_status will be sent by server with updated plan, features, limits
+                # Forward event to Premium Integration for handling
+                emit_data = {
+                    "plan_id": plan_id,
+                    "action": action,
+                    "timestamp": time.time()
+                }
+                
+                await self._safe_emit("plan_changed", emit_data, haEvent=True)
+                
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling plan_changed: {e}")
+        
+        @self.sio.on("storage_limit_reached", namespace=ns)
+        async def on_storage_limit_reached(data):
+            """Handle storage_limit_reached event from server"""
+            try:
+                used = data.get("used", 0)
+                limit = data.get("limit", 1)
+                percent = data.get("percent", 100)
+                upgrade_url = data.get("upgradeUrl", "/settings/upgrade")
+                plan = data.get("plan", "free")
+                
+                logging.warning(f"🚫 {self.ws_room} Storage limit REACHED: {used}/{limit}GB ({percent:.0f}%)")
+                
+                # Emit to Home Assistant frontend
+                emit_data = {
+                    "type": "storage_limit_reached",
+                    "used": used,
+                    "limit": limit,
+                    "percent": percent,
+                    "upgrade_url": upgrade_url,
+                    "plan": plan,
+                    "message": f"Storage full ({used}/{limit}GB). Upgrade to continue storing data.",
+                    "timestamp": data.get("timestamp", time.time())
+                }
+                
+                await self._safe_emit("storage_alert", emit_data, haEvent=True)
+                
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling storage_limit_reached: {e}")
+        
+        @self.sio.on("api_limit_reached", namespace=ns)
+        async def on_api_limit_reached(data):
+            """Handle api_limit_reached event from server"""
+            try:
+                used = data.get("used", 0)
+                limit = data.get("limit", 1000)
+                percent = data.get("percent", 100)
+                upgrade_url = data.get("upgradeUrl", "/settings/upgrade")
+                plan = data.get("plan", "free")
+                
+                logging.warning(f"🚫 {self.ws_room} API limit REACHED: {used}/{limit} calls ({percent:.0f}%)")
+                
+                # Emit to Home Assistant frontend
+                emit_data = {
+                    "type": "api_limit_reached",
+                    "used": used,
+                    "limit": limit,
+                    "percent": percent,
+                    "upgrade_url": upgrade_url,
+                    "plan": plan,
+                    "message": f"API limit reached ({used}/{limit} calls). Upgrade to continue.",
+                    "timestamp": data.get("timestamp", time.time())
+                }
+                
+                await self._safe_emit("api_alert", emit_data, haEvent=True)
+                
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling api_limit_reached: {e}")
+        
         # V1 Debug: Catch ALL events from server (namespace-specific)
         @self.sio.on('*', namespace=ns)
         async def v1_debug_all_events(event, *args):
             """Debug ALL events received from V1 server"""
-            logging.warning(f"📨 {self.ws_room} V1 EVENT RECEIVED: {event} -> {args}")
+            logging.info(f"📨 {self.ws_room} V1 EVENT RECEIVED: {event} -> {args}")
             if 'auth' in event.lower() or 'session' in event.lower() or 'v1' in event.lower() or 'error' in event.lower():
                 logging.debug(f"🚨 {self.ws_room} AUTH/ERROR EVENT: {event} -> {args}")  # Make error events visible
 
@@ -1338,47 +1519,124 @@ class OGBWebSocketConManager:
             logging.info(f"📨 {self.ws_room} Unhandled message type '{msg_type}': {msg_data}")
 
     async def _handle_api_usage_update(self, data: dict):
-        """Handle API usage update from server"""
+        """Handle API usage update from server with new consistent structure"""
         try:
             logging.info(f"📊 {self.ws_room} Processing api_usage_update: {data}")
             
-            # Server sends data with nested 'usage' object:
-            # {'usage': {'roomsUsed': 1, 'growPlansUsed': 0, ...}, 'timestamp': ..., 'source': ...}
-            # Extract the usage object, or use data directly if it's already flat
-            usage = data.get("usage", data)
+            # New consistent API structure: { plan, features, limits, usage, timestamp, ... }
+            server_plan = data.get("plan")
+            features = data.get("features", {})
+            limits = data.get("limits", {})
+            usage = data.get("usage", {})
             
-            # Extract rooms used - server sends 'roomsUsed'
-            # activeConnections = roomsUsed (connected rooms = active sessions)
+            # Extract usage fields
+            active_connections = usage.get("activeConnections", 0)
+            server_active_rooms = usage.get("activeRooms", [])
             rooms_used = usage.get("roomsUsed", 0)
             
-            # Update local session count from usage data
-            if rooms_used > 0:
-                self.ogb_sessions = rooms_used
+            # CRITICAL FIX: Always use current room if we have active connections
+            normalized_current_room = str(self.ws_room).lower()
             
-            # CRITICAL FIX: Update subscription_data.usage so it persists for browser refresh
+            if active_connections > 0:
+                # We have an active connection - we ARE a room!
+                active_rooms = [normalized_current_room]
+                logging.debug(f"📊 {self.ws_room} API update: active connections={active_connections}, using current room")
+            else:
+                active_rooms = []
+            
+            # Update local session count
+            self.ogb_sessions = active_connections
+            
+            # CRITICAL FIX: Update subscription_data with FULL structure
+            if not self.subscription_data:
+                self.subscription_data = {}
+            
+            # Update plan from api_usage_update
+            if server_plan:
+                self.subscription_data["plan_name"] = server_plan
+                self._plan = server_plan
+                logging.info(f"📊 {self.ws_room} Updated plan from api_usage_update: {server_plan}")
+            
+            # Update features and limits
+            if features:
+                self.subscription_data["features"] = features
+                logging.info(f"📊 {self.ws_room} Updated features: {len(features)}")
+            
+            if limits:
+                self.subscription_data["limits"] = limits
+                logging.info(f"📊 {self.ws_room} Updated limits: {len(limits)}")
+            
+            # Update usage
+            if "usage" not in self.subscription_data:
+                self.subscription_data["usage"] = {}
+            
+            # Merge ALL usage fields from server
+            usage_fields = [
+                "roomsUsed", "activeConnections", "activeRooms", "maxSessions",
+                "growPlansUsed", "apiCallsThisMonth", "storageUsedGB",
+                "billingPeriodStart", "billingPeriodEnd", "billingInterval",
+                "isYearlyPlan", "dataRetention"
+            ]
+            
+            for field in usage_fields:
+                value = usage.get(field)
+                if value is not None:
+                    self.subscription_data["usage"][field] = value
+            
+            # Override room-specific fields with validated values
+            self.subscription_data["usage"]["activeConnections"] = active_connections
+            self.subscription_data["usage"]["activeRooms"] = active_rooms
+            self.subscription_data["usage"]["roomsUsed"] = len(active_rooms)
+            
+            # Emit to Premium Integration with FULL structure
+            emit_data = {
+                "plan": server_plan,
+                "features": features,
+                "limits": limits,
+                "usage": self.subscription_data.get("usage", {}),
+                "timestamp": data.get("timestamp", time.time()),
+                "source": data.get("source", "WebSocket")
+            }
+            
+            await self._safe_emit("api_usage_update", emit_data, haEvent=True)
+            
+            logging.info(
+                f"📊 {self.ws_room} Processed api_usage_update: "
+                f"plan={server_plan}, rooms={len(active_rooms)}, connections={active_connections}"
+            )
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling api_usage_update: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
             # When frontend reconnects, it gets subscription_data which must have current values
             if self.subscription_data:
                 if "usage" not in self.subscription_data:
                     self.subscription_data["usage"] = {}
-                self.subscription_data["usage"]["roomsUsed"] = rooms_used
+                self.subscription_data["usage"]["roomsUsed"] = len(active_rooms)
                 self.subscription_data["usage"]["growPlansUsed"] = usage.get("growPlansUsed", 0)
                 self.subscription_data["usage"]["apiCallsThisMonth"] = usage.get("apiCallsThisMonth", 0)
                 self.subscription_data["usage"]["storageUsedGB"] = usage.get("storageUsedGB", 0)
-                self.subscription_data["usage"]["activeConnections"] = rooms_used
-                self.subscription_data["usage"]["activeRooms"] = usage.get("activeRooms", [])
-                logging.debug(f"📊 {self.ws_room} Updated subscription_data.usage with current values")
+                self.subscription_data["usage"]["activeConnections"] = active_connections
+                self.subscription_data["usage"]["activeRooms"] = active_rooms
+                logging.debug(f"📊 {self.ws_room} Updated subscription_data.usage with current values: rooms={len(active_rooms)}, connections={active_connections}")
+                
+                # CRITICAL: Update plan name in subscription_data when it changes
+                if server_plan and server_plan != "free":
+                    self.subscription_data["plan_name"] = server_plan
+                    logging.info(f"📊 {self.ws_room} Updated plan_name in subscription_data: {server_plan}")
             
             # Wrap in 'usage' object for frontend compatibility 
             # Frontend expects: { usage: {...}, timestamp: ..., lastEndpoint: ..., lastMethod: ... }
-            # activeConnections should always equal roomsUsed (connected rooms = active sessions)
             emit_data = {
                 "usage": {
                     "roomsUsed": rooms_used,
                     "growPlansUsed": usage.get("growPlansUsed", 0),
                     "apiCallsThisMonth": usage.get("apiCallsThisMonth", 0),
                     "storageUsedGB": usage.get("storageUsedGB", 0),
-                    "activeConnections": rooms_used,  # Same as roomsUsed - connected rooms = active sessions
-                    "activeRooms": usage.get("activeRooms", []),
+                    "activeConnections": active_connections,
+                    "activeRooms": active_rooms if isinstance(active_rooms, list) else [],
+                    "plan_name": server_plan
                 },
                 "timestamp": data.get("timestamp", time.time()),
                 "lastEndpoint": data.get("lastEndpoint"),
@@ -1387,7 +1645,7 @@ class OGBWebSocketConManager:
             
             # Emit to Home Assistant frontend
             await self._safe_emit("api_usage_update", emit_data, haEvent=True)
-            logging.info(f"📊 {self.ws_room} Emitted api_usage_update to HA: rooms={rooms_used}, activeConnections={rooms_used}, apiCalls={emit_data['usage']['apiCallsThisMonth']}")
+            logging.info(f"📊 {self.ws_room} Emitted api_usage_update to HA: plan={server_plan}, rooms={rooms_used}, activeConnections={active_connections}, apiCalls={emit_data['usage']['apiCallsThisMonth']}, storageGB={emit_data['usage']['storageUsedGB']}")
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling api_usage_update: {e}")
@@ -1410,32 +1668,47 @@ class OGBWebSocketConManager:
     # =================================================================
 
     async def _handle_subscription_expiring(self, data: dict):
-        """Handle subscription expiring soon warning"""
+        """Handle subscription expiring soon warning with new API structure"""
         try:
             plan_name = data.get("plan_name", "unknown")
+            features = data.get("features", {})
+            limits = data.get("limits", {})
             expires_in = data.get("expires_in_seconds", 0)
+            current_period_end = data.get("current_period_end")
             
             logging.warning(
-                f"⚠️ {self.ws_room} Subscription '{plan_name}' expiring in {expires_in}s"
+                f"⚠️ {self.ws_room} Subscription '{plan_name}' expiring in {expires_in}s!"
             )
+            
+            # Update subscription_data with plan info
+            if not self.subscription_data:
+                self.subscription_data = {}
+            
+            self.subscription_data["plan_name"] = plan_name
+            self.subscription_data["features"] = features
+            self.subscription_data["limits"] = limits
             
             # Emit to HA for Premium Integration to handle
             await self._safe_emit("SubscriptionExpiringSoon", {
                 "room": self.ws_room,
                 "plan_name": plan_name,
+                "features": features,
+                "limits": limits,
                 "expires_in_seconds": expires_in,
-                "current_period_end": data.get("current_period_end"),
-                "timestamp": data.get("timestamp")
+                "current_period_end": current_period_end,
+                "timestamp": data.get("timestamp", time.time())
             }, haEvent=True)
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling subscription_expiring: {e}")
 
     async def _handle_subscription_expired(self, data: dict):
-        """Handle subscription expired event - downgrade to free"""
+        """Handle subscription expired event with new API structure"""
         try:
             previous_plan = data.get("previous_plan", "unknown")
             new_plan = data.get("new_plan", "free")
+            features = data.get("features", {})
+            limits = data.get("limits", {})
             
             logging.error(
                 f"🚨 {self.ws_room} Subscription EXPIRED! {previous_plan} -> {new_plan}"
@@ -1444,22 +1717,32 @@ class OGBWebSocketConManager:
             # Update local state
             self.is_premium = False
             
+            # Update subscription_data to free plan with FULL structure
+            if not self.subscription_data:
+                self.subscription_data = {}
+            
+            self.subscription_data["plan_name"] = new_plan
+            self.subscription_data["features"] = features or {}
+            self.subscription_data["limits"] = limits or {}
+            
             # Emit to HA for Premium Integration to handle
             await self._safe_emit("SubscriptionExpired", {
                 "room": self.ws_room,
                 "previous_plan": previous_plan,
                 "new_plan": new_plan,
+                "features": features or {},
+                "limits": limits or {},
                 "expired_at": data.get("expired_at"),
-                "timestamp": data.get("timestamp")
+                "timestamp": data.get("timestamp", time.time())
             }, haEvent=True)
             
             # Also emit SubscriptionChanged for feature manager update
             await self._safe_emit("SubscriptionChanged", {
                 "room": self.ws_room,
                 "plan_name": new_plan,
-                "features": {},  # Free plan has no premium features
-                "limits": {"max_rooms": 1, "max_sessions": 1},
-                "reason": "expired"
+                "features": features or {},
+                "limits": limits or {},
+                "timestamp": data.get("timestamp", time.time())
             }, haEvent=True)
             
         except Exception as e:
@@ -1517,6 +1800,33 @@ class OGBWebSocketConManager:
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling ctrl_value_update: {e}")
+
+    async def _handle_plant_view_need(self, data: dict):
+        """Handle plant view need from webapp"""
+        try:
+            room_id = data.get("room_id")
+            logging.info(f"📷 {self.ws_room} plant_view_need received, room_id: {room_id}")
+            
+            # Emit to HA for camera to handle - pass room_id in event data
+            await self._safe_emit("NeedViewPlant", {
+                "room_id": room_id,
+                "room": self.ws_room
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling plant_view_need: {e}")
+
+
+        try:           
+            # Emit to HA for mode manager to handle
+            await self._safe_emit("HasPlantViewed", {
+                "room": self.ws_room,
+                "plantStage": plant_stage,
+                "source": "webapp"
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling plant_stage_change: {e}")
 
     async def _handle_plant_stage_change(self, data: dict):
         """Handle plant stage change from webapp"""
@@ -1878,6 +2188,33 @@ class OGBWebSocketConManager:
             except Exception as e:
                 logging.warning(f"Error during disconnect: {e}")
 
+        # Normalize session counts immediately so frontend does not keep stale values
+        updated_sessions = self.ogb_sessions
+        if isinstance(updated_sessions, dict):
+            current_active = updated_sessions.get("active", 0) or 0
+            updated_sessions = {
+                **updated_sessions,
+                "active": max(0, current_active - 1),
+            }
+        else:
+            updated_sessions = max(0, (updated_sessions or 0) - 1)
+
+        self.ogb_sessions = updated_sessions
+
+        if not self.subscription_data:
+            self.subscription_data = {}
+        if "usage" not in self.subscription_data:
+            self.subscription_data["usage"] = {}
+
+        usage = self.subscription_data["usage"]
+        active_connections = updated_sessions.get("active", 0) if isinstance(updated_sessions, dict) else updated_sessions
+        usage["activeConnections"] = active_connections
+
+        active_rooms = usage.get("activeRooms") or []
+        if isinstance(active_rooms, list):
+            usage["activeRooms"] = [room for room in active_rooms if str(room).lower() != str(self.ws_room).lower()]
+            usage["roomsUsed"] = len(usage["activeRooms"])
+
         # Reset connection states only
         self.ws_connected = False
 
@@ -1891,6 +2228,8 @@ class OGBWebSocketConManager:
             {
                 "ogb_sessions": self.ogb_sessions,
                 "ogb_max_sessions": self.ogb_max_sessions,
+                "active_rooms": usage.get("activeRooms", []),
+                "active_connections": active_connections,
             },
         )
 
@@ -2270,7 +2609,7 @@ class OGBWebSocketConManager:
         """
         try:
             # Diagnostic: Log prem_event call details with full state
-            logging.warning(
+            logging.debug(
                 f"📨 {self.ws_room} PREM_EVENT called: type={message_type}, "
                 f"ws_connected={self.ws_connected}, authenticated={self.authenticated}, "
                 f"has_aes_gcm={self._aes_gcm is not None}, "
@@ -2308,7 +2647,7 @@ class OGBWebSocketConManager:
                 logging.error(f"❌ {self.ws_room} Fallback also failed: {fallback_error}")
                 return False
 
-    async def submit_analytics(self, analytics_data: dict) -> bool:
+    async def subm<it_analytics(self, analytics_data: dict) -> bool:
         """
         Submit analytics data to Premium API via WebSocket.
         
@@ -3025,29 +3364,42 @@ class OGBWebSocketConManager:
         logging.info(f"Session monitoring stop requested for {self.ws_room}")
 
     async def get_session_status(self) -> dict:
-        """Get current session status from API"""
+        """Get current session status from local runtime state."""
         try:
             if not self.authenticated:
                 return {
                     "active_sessions": 0,
-                    "max_sessions": 1,
-                    "current_plan": "free",
+                    "max_sessions": self.ogb_max_sessions or 1,
+                    "current_plan": self.subscription_data.get("plan_name", "free") if self.subscription_data else "free",
                     "active_rooms": [],
                     "usage_percent": 0,
                 }
 
-            # Send request to API for session data
-            response = await self.send_encrypted_message("get_session_status", {})
+            ogb_sessions_data = self.ogb_sessions
+            if isinstance(ogb_sessions_data, dict):
+                active_sessions = ogb_sessions_data.get("active", 0) or 0
+                total_sessions = ogb_sessions_data.get("total", active_sessions) or active_sessions
+            else:
+                active_sessions = ogb_sessions_data or 0
+                total_sessions = active_sessions
 
-            if response and "session_data" in response:
-                return response["session_data"]
+            max_sessions = self.ogb_max_sessions or 1
+            active_rooms = []
+
+            usage = self.subscription_data.get("usage", {}) if isinstance(self.subscription_data, dict) else {}
+            if isinstance(usage.get("activeRooms"), list):
+                active_rooms = usage.get("activeRooms", [])
+
+            if not active_rooms and active_sessions > 0 and self.ws_room:
+                active_rooms = [self.ws_room]
 
             return {
-                "active_sessions": 0,
-                "max_sessions": 1,
-                "current_plan": "free",
-                "active_rooms": [],
-                "usage_percent": 0,
+                "active_sessions": active_sessions,
+                "max_sessions": max_sessions,
+                "current_plan": self.subscription_data.get("plan_name", "free") if self.subscription_data else "free",
+                "active_rooms": active_rooms,
+                "usage_percent": (active_sessions / max_sessions * 100) if max_sessions else 0,
+                "total_sessions": total_sessions,
             }
         except Exception as e:
             logging.error(f"Failed to get session status for {self.ws_room}: {e}")
@@ -3067,5 +3419,3 @@ class OGBWebSocketConManager:
             logging.debug(f"Broadcasted session update to frontend: {session_data}")
         except Exception as e:
             logging.error(f"Failed to broadcast session update to frontend: {e}")
-
-

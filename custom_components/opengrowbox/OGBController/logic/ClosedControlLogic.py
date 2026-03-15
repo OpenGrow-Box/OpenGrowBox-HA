@@ -6,7 +6,7 @@ Provides VPD-perfection-like precision but optimized for sealed chambers with am
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,175 +30,152 @@ class ClosedControlLogic:
         self.data_store = data_store
         self.room = room
 
-        # Plant stage ranges will be read from datastore (plantStages)
-        # Similar to VPD perfection's range-based control
-        self.temp_tolerance = 0.1  # 10% tolerance for perfection range
-        self.humidity_tolerance = 0.15  # 15% tolerance for perfection range
+        self.temp_tolerance = 1.0  # 1°C tolerance for control
+        self.humidity_tolerance = 3.0  # 3% RH tolerance for control
 
-        # Ambient influence parameters
-        self.ambient_temp_influence = 0.3  # 30% ambient influence on temp
-        self.ambient_humidity_influence = 0.4  # 40% ambient influence on humidity
-        self.ambient_buffer_zone = 2.0  # °C/°C buffer for ambient effects
+        self.ambient_temp_influence = 0.3
+        self.ambient_humidity_influence = 0.4
+        self.ambient_buffer_zone = 2.0
 
+    def get_control_limits(self) -> Dict[str, Any]:
+        """
+        Get the actual min/max control limits for closed environment.
+        Returns the broad safety limits (not perfection range).
+        This is used like VPD: control when outside min/max bounds.
+        
+        Returns:
+            Dict with minTemp, maxTemp, minHumidity, maxHumidity or None values
+        """
+        limits = {
+            "minTemp": None,
+            "maxTemp": None,
+            "minHumidity": None,
+            "maxHumidity": None,
+        }
+        
+        limits["minTemp"] = self._get_limit_value("tentData.minTemp", "minTemp")
+        limits["maxTemp"] = self._get_limit_value("tentData.maxTemp", "maxTemp")
+        limits["minHumidity"] = self._get_limit_value("tentData.minHumidity", "minHumidity")
+        limits["maxHumidity"] = self._get_limit_value("tentData.maxHumidity", "maxHumidity")
+        
+        _LOGGER.debug(
+            f"{self.room}: Closed limits - "
+            f"Temp: {limits.get('minTemp')} / {limits.get('maxTemp')}°C, "
+            f"Humidity: {limits.get('minHumidity')} / {limits.get('maxHumidity')}%"
+        )
+        
+        return limits
+    
+    def _get_limit_value(self, tent_key: str, stage_key: str) -> Optional[float]:
+        """Get a limit value from tentData or plantStages."""
+        value = self.data_store.getDeep(tent_key)
+        
+        if value is None:
+            plant_stage = self._get_current_plant_stage()
+            if plant_stage:
+                stage_data = self._get_plant_stage_data(plant_stage)
+                if stage_data:
+                    value = stage_data.get(stage_key)
+        
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        
+        return None
+
+    def calculate_temperature_deviation(self) -> Dict[str, Any]:
+        """
+        Calculate temperature deviation from limits (like VPD).
+        Returns the deviation and direction for control decisions.
+        
+        Returns:
+            Dict with current, min, max, deviation, status
+        """
+        limits = self.get_control_limits()
+        current = self.data_store.getDeep("tentData.temperature")
+        
+        if current is None or limits.get("minTemp") is None or limits.get("maxTemp") is None:
+            return {"current": None, "min": limits.get("minTemp"), "max": limits.get("maxTemp"), "deviation": 0, "status": "no_data"}
+        
+        try:
+            current = float(current)
+            min_temp = float(limits["minTemp"])
+            max_temp = float(limits["maxTemp"])
+            
+            if current < min_temp:
+                deviation = current - min_temp
+                status = "too_low"
+            elif current > max_temp:
+                deviation = current - max_temp
+                status = "too_high"
+            else:
+                deviation = 0
+                status = "in_range"
+            
+            return {
+                "current": current,
+                "min": min_temp,
+                "max": max_temp,
+                "deviation": deviation,
+                "status": status
+            }
+        except (TypeError, ValueError):
+            return {"current": None, "min": limits.get("minTemp"), "max": limits.get("maxTemp"), "deviation": 0, "status": "invalid"}
+    
+    def calculate_humidity_deviation(self) -> Dict[str, Any]:
+        """
+        Calculate humidity deviation from limits (like VPD).
+        Returns the deviation and direction for control decisions.
+        
+        Returns:
+            Dict with current, min, max, deviation, status
+        """
+        limits = self.get_control_limits()
+        current = self.data_store.getDeep("tentData.humidity")
+        
+        if current is None or limits.get("minHumidity") is None or limits.get("maxHumidity") is None:
+            return {"current": None, "min": limits.get("minHumidity"), "max": limits.get("maxHumidity"), "deviation": 0, "status": "no_data"}
+        
+        try:
+            current = float(current)
+            min_hum = float(limits["minHumidity"])
+            max_hum = float(limits["maxHumidity"])
+            
+            if current < min_hum:
+                deviation = current - min_hum
+                status = "too_low"
+            elif current > max_hum:
+                deviation = current - max_hum
+                status = "too_high"
+            else:
+                deviation = 0
+                status = "in_range"
+            
+            return {
+                "current": current,
+                "min": min_hum,
+                "max": max_hum,
+                "deviation": deviation,
+                "status": status
+            }
+        except (TypeError, ValueError):
+            return {"current": None, "min": limits.get("minHumidity"), "max": limits.get("maxHumidity"), "deviation": 0, "status": "invalid"}
+    
     async def calculate_optimal_temperature_target(self) -> Optional[float]:
-        """
-        Calculate optimal temperature target using plant stage ranges + ambient enhancement.
-        Similar to VPD perfection: broad safety range + narrow perfection range with ambient optimization.
-
-        Returns:
-            Optimal temperature target in Celsius, or None if calculation fails
-        """
-        try:
-            # Get plant stage ranges from datastore
-            plant_stage = self._get_current_plant_stage()
-            if not plant_stage:
-                _LOGGER.warning("No plant stage available")
-                return None
-
-            stage_data = self._get_plant_stage_data(plant_stage)
-            if not stage_data:
-                _LOGGER.warning(f"Plant stage data not available for: {plant_stage}")
-                return None
-
-            # Broad safety range (never exceeded)
-            broad_min = stage_data.get("minTemp")
-            broad_max = stage_data.get("maxTemp")
-            if broad_min is None or broad_max is None:
-                _LOGGER.warning(f"Temperature range data missing for stage: {plant_stage}")
-                return None
-
-            # Calculate midpoint and perfection range (like VPD perfection)
-            midpoint = (broad_min + broad_max) / 2
-            perfection_range = (broad_max - broad_min) * self.temp_tolerance
-            perfect_min = midpoint - perfection_range
-            perfect_max = midpoint + perfection_range
-
-            # Ensure perfection range stays within broad safety bounds
-            perfect_min = max(broad_min, perfect_min)
-            perfect_max = min(broad_max, perfect_max)
-
-            # Get current temperature for control logic
-            current_temp = self.data_store.getDeep("tentData.temperature")
-            if current_temp is None:
-                return midpoint  # Default to midpoint if no sensor data
-
-            # Apply ambient enhancement to the perfection range
-            ambient_factor = self._calculate_ambient_temperature_factor()
-
-            # Adjust perfection range based on ambient conditions
-            ambient_adjusted_min = perfect_min + ambient_factor
-            ambient_adjusted_max = perfect_max + ambient_factor
-
-            # Keep within broad safety bounds
-            ambient_adjusted_min = max(broad_min, ambient_adjusted_min)
-            ambient_adjusted_max = min(broad_max, ambient_adjusted_max)
-
-            # Control logic similar to VPD perfection
-            if current_temp < ambient_adjusted_min:
-                # Too cold - target the adjusted minimum
-                optimal_target = ambient_adjusted_min
-                _LOGGER.debug(f"Temperature too low: targeting {optimal_target:.1f}°C (adjusted min)")
-            elif current_temp > ambient_adjusted_max:
-                # Too hot - target the adjusted maximum
-                optimal_target = ambient_adjusted_max
-                _LOGGER.debug(f"Temperature too high: targeting {optimal_target:.1f}°C (adjusted max)")
-            else:
-                # Within perfection range - target midpoint with ambient influence
-                optimal_target = midpoint + (ambient_factor * self.ambient_temp_influence)
-                optimal_target = max(ambient_adjusted_min, min(ambient_adjusted_max, optimal_target))
-                _LOGGER.debug(f"Temperature in range: fine-tuning to {optimal_target:.1f}°C (midpoint)")
-
-            _LOGGER.debug(
-                f"Temperature ranges - Broad: [{broad_min:.1f}, {broad_max:.1f}]°C, "
-                f"Perfection: [{ambient_adjusted_min:.1f}, {ambient_adjusted_max:.1f}]°C, "
-                f"Current: {current_temp:.1f}°C, Target: {optimal_target:.1f}°C"
-            )
-
-            return optimal_target
-
-        except Exception as e:
-            _LOGGER.error(f"Error calculating temperature target: {e}")
-            return None
-
+        """Legacy method - returns midpoint for compatibility."""
+        limits = self.get_control_limits()
+        if limits.get("minTemp") and limits.get("maxTemp"):
+            return (limits["minTemp"] + limits["maxTemp"]) / 2
+        return None
+    
     async def calculate_optimal_humidity_target(self) -> Optional[float]:
-        """
-        Calculate optimal humidity target using plant stage ranges + ambient enhancement.
-        Similar to VPD perfection: broad safety range + narrow perfection range with ambient optimization.
-
-        Returns:
-            Optimal humidity target as percentage, or None if calculation fails
-        """
-        try:
-            # Get plant stage ranges from datastore
-            plant_stage = self._get_current_plant_stage()
-            if not plant_stage:
-                _LOGGER.warning("No plant stage available")
-                return None
-
-            stage_data = self._get_plant_stage_data(plant_stage)
-            if not stage_data:
-                _LOGGER.warning(f"Plant stage data not available for: {plant_stage}")
-                return None
-
-            # Broad safety range (never exceeded)
-            broad_min = stage_data.get("minHumidity")
-            broad_max = stage_data.get("maxHumidity")
-            if broad_min is None or broad_max is None:
-                _LOGGER.warning(f"Humidity range data missing for stage: {plant_stage}")
-                return None
-
-            # Calculate midpoint and perfection range
-            midpoint = (broad_min + broad_max) / 2
-            perfection_range = (broad_max - broad_min) * self.humidity_tolerance
-            perfect_min = midpoint - perfection_range
-            perfect_max = midpoint + perfection_range
-
-            # Ensure perfection range stays within broad safety bounds
-            perfect_min = max(broad_min, perfect_min)
-            perfect_max = min(broad_max, perfect_max)
-
-            # Get current humidity for control logic
-            current_humidity = self.data_store.getDeep("tentData.humidity")
-            if current_humidity is None:
-                return midpoint  # Default to midpoint if no sensor data
-
-            # Apply ambient enhancement to the perfection range
-            ambient_factor = self._calculate_ambient_humidity_factor()
-
-            # Adjust perfection range based on ambient conditions
-            ambient_adjusted_min = perfect_min + ambient_factor
-            ambient_adjusted_max = perfect_max + ambient_factor
-
-            # Keep within broad safety bounds
-            ambient_adjusted_min = max(broad_min, ambient_adjusted_min)
-            ambient_adjusted_max = min(broad_max, ambient_adjusted_max)
-
-            # Control logic similar to VPD perfection
-            if current_humidity < ambient_adjusted_min:
-                # Too dry - target the adjusted minimum
-                optimal_target = ambient_adjusted_min
-                _LOGGER.debug(f"Humidity too low: targeting {optimal_target:.1f}% (adjusted min)")
-            elif current_humidity > ambient_adjusted_max:
-                # Too humid - target the adjusted maximum
-                optimal_target = ambient_adjusted_max
-                _LOGGER.debug(f"Humidity too high: targeting {optimal_target:.1f}% (adjusted max)")
-            else:
-                # Within perfection range - target midpoint with ambient influence
-                optimal_target = midpoint + (ambient_factor * self.ambient_humidity_influence)
-                optimal_target = max(ambient_adjusted_min, min(ambient_adjusted_max, optimal_target))
-                _LOGGER.debug(f"Humidity in range: fine-tuning to {optimal_target:.1f}% (midpoint)")
-
-            _LOGGER.debug(
-                f"Humidity ranges - Broad: [{broad_min:.1f}, {broad_max:.1f}]%, "
-                f"Perfection: [{ambient_adjusted_min:.1f}, {ambient_adjusted_max:.1f}]%, "
-                f"Current: {current_humidity:.1f}%, Target: {optimal_target:.1f}%"
-            )
-
-            return optimal_target
-
-        except Exception as e:
-            _LOGGER.error(f"Error calculating humidity target: {e}")
-            return None
+        """Legacy method - returns midpoint for compatibility."""
+        limits = self.get_control_limits()
+        if limits.get("minHumidity") and limits.get("maxHumidity"):
+            return (limits["minHumidity"] + limits["maxHumidity"]) / 2
+        return None
 
     def _calculate_ambient_temperature_factor(self) -> float:
         """

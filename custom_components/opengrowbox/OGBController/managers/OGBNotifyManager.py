@@ -258,3 +258,108 @@ class OGBNotificator:
     ):
         """Send an info notification (low priority, lenient rate limiting)"""
         await self._send(title=title, message=message, level="info", service=service)
+
+    # =================================================================
+    # Premium Subscription Notifications
+    # =================================================================
+
+    async def notify_plan_changed(self, old_plan: str, new_plan: str, features: dict = None, limits: dict = None):
+        """Notify user about plan change."""
+        await self.info(
+            message=f"OpenGrowBox plan changed from {old_plan} to {new_plan}",
+            title=f"OGB Plan Changed - {self.room}"
+        )
+
+    async def notify_subscription_expiring_soon(
+        self,
+        plan_name: str,
+        expires_in_seconds: int,
+        current_period_end: str = None,
+        features: dict = None,
+        limits: dict = None
+    ):
+        """Notify user that subscription is expiring soon."""
+        expires_in_hours = expires_in_seconds // 3600
+        expires_in_days = expires_in_seconds // 86400
+
+        if expires_in_days > 0:
+            message = f"Your {plan_name} subscription expires in {expires_in_days} day(s)"
+        else:
+            message = f"Your {plan_name} subscription expires in {expires_in_hours} hour(s)"
+
+        await self.warning(
+            message=message,
+            title=f"OGB Subscription Expiring - {self.room}"
+        )
+
+    async def notify_subscription_expired(
+        self,
+        previous_plan: str,
+        new_plan: str = "free",
+        expired_at: str = None,
+        features: dict = None,
+        limits: dict = None
+    ):
+        """Notify user that subscription has expired."""
+        await self.critical(
+            message=f"Your OpenGrowBox {previous_plan} subscription has expired. Downgraded to {new_plan}.",
+            title=f"OGB Subscription Expired - {self.room}"
+        )
+
+    # =================================================================
+    # Storage Notifications
+    # =================================================================
+
+    async def notify_storage_limit_reached(
+        self,
+        used_gb: float,
+        limit_gb: float,
+        percent: float = 100,
+        upgrade_url: str = "/settings/upgrade"
+    ):
+        """Notify user that storage limit is reached - data storage has stopped."""
+        await self.critical(
+            message=f"Storage limit REACHED ({used_gb:.2f}/{limit_gb}GB = {percent:.0f}%). Data storage has stopped. Upgrade your plan to continue.",
+            title=f"OGB Storage Full - {self.room}"
+        )
+
+    async def notify_storage_warning(
+        self,
+        used_gb: float,
+        limit_gb: float,
+        percent: float
+    ):
+        """Notify user that storage is nearly full (80-95%)."""
+        await self.warning(
+            message=f"Storage usage: {percent:.0f}% ({used_gb:.2f}/{limit_gb}GB). Consider upgrading your plan to avoid interruption.",
+            title=f"OGB Storage Warning - {self.room}"
+        )
+
+    # =================================================================
+    # API Call Limit Notifications
+    # =================================================================
+
+    async def notify_api_limit_reached(
+        self,
+        used: int,
+        limit: int,
+        percent: float = 100,
+        upgrade_url: str = "/settings/upgrade"
+    ):
+        """Notify user that API call limit is reached - data processing has stopped."""
+        await self.critical(
+            message=f"API limit REACHED ({used}/{limit} calls = {percent:.0f}%). Data processing has stopped. Upgrade your plan to continue.",
+            title=f"OGB API Limit Reached - {self.room}"
+        )
+
+    async def notify_api_warning(
+        self,
+        used: int,
+        limit: int,
+        percent: float
+    ):
+        """Notify user that API calls are nearly exhausted (80-95%)."""
+        await self.warning(
+            message=f"API usage: {percent:.0f}% ({used}/{limit} calls). Consider upgrading your plan to avoid interruption.",
+            title=f"OGB API Warning - {self.room}"
+        )

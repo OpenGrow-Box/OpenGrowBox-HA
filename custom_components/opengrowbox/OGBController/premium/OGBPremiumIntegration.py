@@ -84,6 +84,10 @@ class OGBPremiumIntegration:
 
         # Data control
         self.lastTentMode = None
+        
+        # Debounce for _managePremiumControls to prevent excessive calls
+        self._last_manage_controls_time = 0
+        self._manage_controls_cooldown = 2.0  # seconds
 
         # Premium sensors registry
         self._premium_sensors = {}
@@ -168,12 +172,19 @@ class OGBPremiumIntegration:
                 if plan_name == "free":
                     max_connections = 1
 
-            _LOGGER.warning(f"🔍 {self.room} Plan: {plan_name}, Active connections: {active_premium_connections}, Max allowed: {max_connections}")
+            _LOGGER.warning(f"🔍 {self.room} Plan: {plan_name}, Active connections: {active_premium_connections}, Max allowed: {max_connections} - {self.subscription_data}")
             if blocked_rooms:
                 _LOGGER.warning(f"🚫 Blocked rooms: {', '.join(blocked_rooms)}")
 
             if active_premium_connections >= max_connections:
                 _LOGGER.warning(f"⚠️ {self.room} BLOCKED - {active_premium_connections} connections active, limit is {max_connections}")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.room,
+                    "Type": "PREMIUM",
+                    "Message": "Premium blocked by session limit",
+                    "active": active_premium_connections,
+                    "allowed": max_connections
+                }, haEvent=True, debug_type="WARNING")
                 # Mark this integration as blocked
                 self._initialization_blocked = True
                 return False
@@ -195,10 +206,6 @@ class OGBPremiumIntegration:
 
     async def init(self):
         """Initialize Premium Manager."""
-        # Check global premium connection limits before initializing
-        if not await self._check_global_premium_limits():
-            _LOGGER.warning(f"⚠️ {self.room} Premium initialization blocked - plan limits exceeded")
-            return
 
         # Get or create room ID first
         await self._get_or_create_room_id()
@@ -211,6 +218,7 @@ class OGBPremiumIntegration:
             self.room,           # ws_room (unique per room)
             self.room_id,        # room_id (unique per room)
         )
+
         # Give WebSocket client access to credentials for auto-relogin
         self.ogb_ws._credential_provider = self._get_credentials_for_relogin
         self.is_primary_ws_client = True  # Always true since no sharing
@@ -233,6 +241,11 @@ class OGBPremiumIntegration:
 
         # Load saved state
         await self._load_last_state()
+
+        # Check global premium connection limits before initializing
+        if not await self._check_global_premium_limits():
+            _LOGGER.warning(f"⚠️ {self.room} Premium initialization blocked - plan limits exceeded")
+            return
 
         # Wait for WebSocket to be ready (with timeout)
         for _ in range(20):
@@ -296,6 +309,9 @@ class OGBPremiumIntegration:
 
         # Grow completion events - send harvest data to Premium API
         self.event_manager.on("GrowCompleted", self._on_grow_completed)
+
+        # Camera plant view events - send image and plant data to Premium API
+        self.event_manager.on("HasPlantViewed", self._handle_has_plant_viewed)
 
         # Cross-room authentication
         self.hass.bus.async_listen("isAuthenticated", self._handle_authenticated)
@@ -431,6 +447,36 @@ class OGBPremiumIntegration:
                     self.subscription_data = {}
                 self.subscription_data["plan_name"] = new_plan
 
+            # Get active connections for room validation
+            active_connections = 0
+            if self.ogb_ws and hasattr(self.ogb_ws, 'ogb_sessions'):
+                ogb_sessions_data = self.ogb_ws.ogb_sessions
+                if isinstance(ogb_sessions_data, dict):
+                    active_connections = ogb_sessions_data.get("active", 0) or 0
+                else:
+                    active_connections = ogb_sessions_data or 0
+
+            # CRITICAL FIX: Update usage with validated room values on plan change
+            normalized_current_room = str(self.room).lower()
+            
+            if not self.subscription_data:
+                self.subscription_data = {}
+            if "usage" not in self.subscription_data:
+                self.subscription_data["usage"] = {}
+            
+            if active_connections > 0:
+                # We have an active connection - we ARE a room!
+                self.subscription_data["usage"]["activeRooms"] = [normalized_current_room]
+                self.subscription_data["usage"]["roomsUsed"] = 1
+                self.subscription_data["usage"]["activeConnections"] = active_connections
+                _LOGGER.debug(
+                    f"📊 {self.room} Subscription change: active connections={active_connections}, rooms=1"
+                )
+            else:
+                self.subscription_data["usage"]["activeRooms"] = []
+                self.subscription_data["usage"]["roomsUsed"] = 0
+                self.subscription_data["usage"]["activeConnections"] = 0
+
             # Update WebSocket client
             if self.ogb_ws:
                 self.ogb_ws.subscription_data = self.subscription_data
@@ -465,18 +511,31 @@ class OGBPremiumIntegration:
         """Handle subscription expiring soon warning."""
         try:
             plan_name = data.get("plan_name", "unknown")
+            features = data.get("features", {})
+            limits = data.get("limits", {})
             expires_in = data.get("expires_in_seconds", 0)
+            current_period_end = data.get("current_period_end")
             
             _LOGGER.warning(
                 f"⚠️ {self.room} Subscription '{plan_name}' expiring in {expires_in}s!"
             )
             
+            # Update subscription_data with plan info
+            if not self.subscription_data:
+                self.subscription_data = {}
+            
+            self.subscription_data["plan_name"] = plan_name
+            self.subscription_data["features"] = features
+            self.subscription_data["limits"] = limits
+            
             # Fire HA event for UI notification
             self.hass.bus.async_fire("ogb_premium_subscription_expiring", {
                 "room": self.room,
                 "plan_name": plan_name,
+                "features": features,
+                "limits": limits,
                 "expires_in_seconds": expires_in,
-                "current_period_end": data.get("current_period_end"),
+                "current_period_end": current_period_end,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
             
@@ -485,7 +544,18 @@ class OGBPremiumIntegration:
                 "Name": self.room,
                 "Type": "WARNING",
                 "Message": f"Premium subscription expiring in {expires_in // 60} minutes!"
-            }, haEvent=True)
+            }, haEvent=True, debug_type="WARNING")
+            
+            # Send notification via OGBNotificator
+            try:
+                from ..managers.OGBNotifyManager import OGBNotificator
+                if not hasattr(self, 'notificator'):
+                    self.notificator = OGBNotificator(self.hass, self.room)
+                await self.notificator.notify_subscription_expiring_soon(
+                    plan_name, expires_in, current_period_end, features, limits
+                )
+            except Exception as e:
+                _LOGGER.error(f"❌ {self.room} Error sending subscription expiring notification: {e}")
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Subscription expiring handler error: {e}")
@@ -495,6 +565,8 @@ class OGBPremiumIntegration:
         try:
             previous_plan = data.get("previous_plan", "unknown")
             new_plan = data.get("new_plan", "free")
+            features = data.get("features", {})
+            limits = data.get("limits", {})
             
             _LOGGER.error(
                 f"🚨 {self.room} Subscription EXPIRED! {previous_plan} -> {new_plan}"
@@ -503,12 +575,13 @@ class OGBPremiumIntegration:
             # Update local state
             self.is_premium = False
             
-            # Update subscription_data to free plan
+            # Update subscription_data to free plan with FULL structure
             if not self.subscription_data:
                 self.subscription_data = {}
+            
             self.subscription_data["plan_name"] = new_plan
-            self.subscription_data["features"] = {}
-            self.subscription_data["limits"] = {"max_rooms": 1, "max_sessions": 1}
+            self.subscription_data["features"] = features or {}
+            self.subscription_data["limits"] = limits or {}
             
             # Update WebSocket client
             if self.ogb_ws:
@@ -533,6 +606,8 @@ class OGBPremiumIntegration:
                 "room": self.room,
                 "previous_plan": previous_plan,
                 "new_plan": new_plan,
+                "features": features or {},
+                "limits": limits or {},
                 "expired_at": data.get("expired_at"),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
@@ -542,7 +617,18 @@ class OGBPremiumIntegration:
                 "Name": self.room,
                 "Type": "ERROR",
                 "Message": f"Premium subscription expired! Downgraded to {new_plan} plan."
-            }, haEvent=True)
+            }, haEvent=True, debug_type="ERROR")
+            
+            # Send notification via OGBNotificator
+            try:
+                from ..managers.OGBNotifyManager import OGBNotificator
+                if not hasattr(self, 'notificator'):
+                    self.notificator = OGBNotificator(self.hass, self.room)
+                await self.notificator.notify_subscription_expired(
+                    previous_plan, new_plan, data.get("expired_at"), features, limits
+                )
+            except Exception as e:
+                _LOGGER.error(f"❌ {self.room} Error sending subscription expired notification: {e}")
             
             # Refresh UI controls
             await self._managePremiumControls()
@@ -687,32 +773,136 @@ class OGBPremiumIntegration:
         instead of the stale values from the initial login.
         """
         try:
-            # Extract usage data - may be nested or flat
-            usage = data.get("usage", data)
+            # New consistent API structure: { plan, features, limits, usage, timestamp, ... }
+            server_plan = data.get("plan")
+            features = data.get("features", {})
+            limits = data.get("limits", {})
+            usage = data.get("usage", {})
             
-            _LOGGER.debug(f"📊 {self.room} API usage update received: {usage}")
+            _LOGGER.debug(f"📊 {self.room} API usage update received: plan={server_plan}")
             
-            # Update subscription_data with current usage values
+            # Get active connections from usage
+            active_connections = usage.get("activeConnections", 0)
+            
+            # CRITICAL FIX: Always use current room if we have active connections
+            normalized_current_room = str(self.room).lower()
+            
+            if active_connections > 0:
+                # We have an active connection - we ARE a room!
+                normalized_active_rooms = [normalized_current_room]
+                rooms_used = 1
+                _LOGGER.debug(
+                    f"📊 {self.room} API update: active connections={active_connections}, using current room"
+                )
+            else:
+                normalized_active_rooms = []
+                rooms_used = 0
+            
+            # Update subscription_data with FULL structure
             if not self.subscription_data:
                 self.subscription_data = {}
             
+            # Update plan from api_usage_update (source of truth!)
+            if server_plan:
+                self.subscription_data["plan_name"] = server_plan
+                _LOGGER.info(f"📊 {self.room} Updated plan_name: {server_plan}")
+            
+            # Update features and limits
+            if features:
+                self.subscription_data["features"] = features
+                _LOGGER.info(f"📊 {self.room} Updated features: {len(features)}")
+            
+            if limits:
+                self.subscription_data["limits"] = limits
+                _LOGGER.info(f"📊 {self.room} Updated limits: {len(limits)}")
+            
+            # Update usage
             if "usage" not in self.subscription_data:
                 self.subscription_data["usage"] = {}
             
-            # Update all usage fields
-            self.subscription_data["usage"]["roomsUsed"] = usage.get("roomsUsed", 0)
-            self.subscription_data["usage"]["growPlansUsed"] = usage.get("growPlansUsed", 0)
-            self.subscription_data["usage"]["apiCallsThisMonth"] = usage.get("apiCallsThisMonth", 0)
-            self.subscription_data["usage"]["storageUsedGB"] = usage.get("storageUsedGB", 0)
-            self.subscription_data["usage"]["activeConnections"] = usage.get("activeConnections", 0)
-            self.subscription_data["usage"]["activeRooms"] = usage.get("activeRooms", [])
+            # Merge ALL usage fields from server
+            usage_fields = [
+                "roomsUsed", "activeConnections", "activeRooms", "maxSessions",
+                "growPlansUsed", "apiCallsThisMonth", "storageUsedGB",
+                "billingPeriodStart", "billingPeriodEnd", "billingInterval",
+                "isYearlyPlan", "dataRetention"
+            ]
+            
+            for field in usage_fields:
+                value = usage.get(field)
+                if value is not None:
+                    self.subscription_data["usage"][field] = value
+            
+            # Override room-specific fields with validated values
+            self.subscription_data["usage"]["activeConnections"] = active_connections
+            self.subscription_data["usage"]["activeRooms"] = normalized_active_rooms
+            self.subscription_data["usage"]["roomsUsed"] = rooms_used
             
             # Sync with WebSocket client's subscription_data
             if self.ogb_ws:
                 self.ogb_ws.subscription_data = self.subscription_data
             
-            _LOGGER.debug(f"📊 {self.room} subscription_data.usage updated: apiCallsThisMonth={usage.get('apiCallsThisMonth', 0)}")
+            # Update datastore so frontend can read current state
+            self.data_store.set("subscriptionData", self.subscription_data)
             
+            _LOGGER.debug(
+                f"📊 {self.room} subscription_data updated: "
+                f"plan={server_plan}, rooms={rooms_used}, connections={active_connections}"
+            )
+            
+            # Check if plan actually changed and notify frontend
+            old_plan = self.subscription_data.get("plan_name", "free")
+            new_plan = server_plan
+            
+            if old_plan != new_plan:
+                _LOGGER.info(f"🔄 {self.room} Plan changed from {old_plan} to {new_plan}, emitting event to frontend")
+                
+                # Update local premium status
+                self.is_premium = new_plan not in ["free", "trial"]
+                if self.ogb_ws:
+                    self.ogb_ws.is_premium = self.is_premium
+                
+                # Fire HA event for UI update (triggers frontend refresh)
+                self.hass.bus.async_fire("ogb_premium_subscription_changed", {
+                    "room": self.room,
+                    "old_plan": old_plan,
+                    "new_plan": new_plan,
+                    "features": features,
+                    "limits": limits,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+                
+                # Send notification via OGBNotificator
+                try:
+                    from ..managers.OGBNotifyManager import OGBNotificator
+                    if not hasattr(self, 'notificator'):
+                        self.notificator = OGBNotificator(self.hass, self.room)
+                    await self.notificator.notify_plan_changed(old_plan, new_plan, features, limits)
+                except Exception as e:
+                    _LOGGER.error(f"❌ {self.room} Error sending plan change notification: {e}")
+            
+            # CRITICAL: Always update feature manager when features change
+            # This ensures TentMode options are updated even if plan stays the same
+            if self.feature_manager and features:
+                old_features = self.feature_manager.features or {}
+                # Check if features actually changed
+                if old_features != features:
+                    _LOGGER.info(f"🔄 {self.room} Features changed, updating FeatureManager and TentMode options")
+                    self.feature_manager.update_subscription(self.subscription_data)
+                    # Update UI controls based on new features
+                    try:
+                        await self._managePremiumControls()
+                    except Exception as e:
+                        _LOGGER.error(f"❌ {self.room} Error updating premium controls: {e}")
+            
+            # CRITICAL FIX: ALWAYS save state, not just when plan changes or not
+            # This ensures usage data and plan changes are persisted
+            await self._save_request(True)
+            
+            _LOGGER.debug(
+                f"📊 {self.room} subscription_data.updated and saved: "
+                f"plan={server_plan}, rooms={rooms_used}, connections={active_connections}"
+            )
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} API usage update error: {e}")
 
@@ -857,6 +1047,40 @@ class OGBPremiumIntegration:
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Plan activation error: {e}")
 
+    async def _handle_has_plant_viewed(self, data):
+        """Handle HasPlantViewed from Camera and send encrypted to API."""
+        try:
+            _LOGGER.info(f"📷 {self.room} HasPlantViewed received, sending encrypted")
+
+            # Check if logged in and WebSocket available
+            if not self.is_logged_in or not self.ogb_ws:
+                _LOGGER.debug(f"📷 {self.room} Not logged in, cannot send encrypted plant view")
+                return
+
+            # Prepare encrypted payload
+            encrypted_payload = {
+                "room": data.get("room"),
+                "device_name": data.get("device_name"),
+                "image_data": data.get("image_data"),
+                "cache_status": data.get("cache_status"),
+                "capture_time": data.get("capture_time"),
+                "plant_data": data.get("plant_data"),
+            }
+
+            # Send encrypted message via WebSocket
+            success = await self.ogb_ws.send_encrypted_message(
+                "has-plant-viewed",
+                encrypted_payload
+            )
+
+            if success:
+                _LOGGER.info(f"📷 {self.room} HasPlantViewed sent encrypted successfully")
+            else:
+                _LOGGER.error(f"📷 {self.room} Failed to send encrypted HasPlantViewed")
+
+        except Exception as e:
+            _LOGGER.error(f"📷 {self.room} Error handling HasPlantViewed: {e}", exc_info=True)
+
     # =================================================================
     # State Loading & Restoration
     # =================================================================
@@ -935,6 +1159,12 @@ class OGBPremiumIntegration:
         # Initialize feature manager with restored subscription data
         if self.subscription_data:
             self._update_feature_manager()
+        
+        # CRITICAL FIX: Update datastore so frontend can read the loaded subscription_data
+        # Frontend reads from data_store, not from subscription_data directly
+        # Without this, frontend shows stale data after restart
+        self.data_store.set("subscriptionData", self.subscription_data)
+        _LOGGER.debug(f"📦 {self.room} Loaded subscription_data into datastore for frontend")
 
         # GrowPlan manager
         if self.growPlanManager:
@@ -1116,6 +1346,8 @@ class OGBPremiumIntegration:
 
             # User IS logged in - send full profile with user object
             _LOGGER.debug(f"📋 {self.room} Profile requested - sending logged-in user data")
+            await self._refresh_runtime_usage_from_backend()
+            self._sync_runtime_usage_snapshot()
             
             connection_info = self.ogb_ws.get_connection_info() if self.ogb_ws else {}
             health = await self.ogb_ws.health_check() if self.ogb_ws else {}
@@ -1183,7 +1415,6 @@ class OGBPremiumIntegration:
             _LOGGER.error(f"❌ {self.room} Error fetching subscription data from API: {e}")
             return {}
 
-
     async def _on_prem_login(self, event):
         """Enhanced login handler using integrated client."""
         event_room = event.data.get("room")
@@ -1196,7 +1427,6 @@ class OGBPremiumIntegration:
             return
 
         if not self.is_ready:
-            _LOGGER.warning(f"⚠️ {self.room} Not ready for login, waiting for initialization...")
             _LOGGER.debug(f"⚠️ {self.room} is_ready check: _is_initialized={self._is_initialized}, ogb_ws={self.ogb_ws is not None}")
             # Wait up to 10 seconds for initialization to complete
             for i in range(20):
@@ -1206,6 +1436,11 @@ class OGBPremiumIntegration:
                     break
             if not self.is_ready:
                 _LOGGER.error(f"❌ {self.room} Still not ready after 10s, aborting login. _is_initialized={self._is_initialized}, ogb_ws={self.ogb_ws is not None}")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.room,
+                    "Type": "PREMIUM",
+                    "Message": "Premium login unavailable, manager not initialized"
+                }, haEvent=True, debug_type="ERROR")
                 # Send error response to UI using the event manager for consistency
                 event_id = event.data.get("event_id")
                 if event_id:
@@ -1253,9 +1488,27 @@ class OGBPremiumIntegration:
                 # WebSocket connection failed immediately
                 self.is_premium_selected = False
                 _LOGGER.error(f"❌ {self.room} WebSocket connection failed")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.room,
+                    "Type": "PREMIUM",
+                    "Message": "Premium login failed, reverted to HomeAssistant"
+                }, haEvent=True, debug_type="ERROR")
+                try:
+                    await self.hass.services.async_call(
+                        "select",
+                        "select_option",
+                        {
+                            "entity_id": f"select.ogb_maincontrol_{self.room.lower()}",
+                            "option": "HomeAssistant",
+                        },
+                        blocking=True,
+                    )
+                    _LOGGER.warning(f"↩️ {self.room} rolled back to HomeAssistant after Premium WebSocket failure")
+                except Exception as rollback_error:
+                    _LOGGER.error(f"❌ {self.room} rollback to HomeAssistant failed: {rollback_error}", exc_info=True)
                 # Auth response will be sent by the auth callback
 
-            self.event_manager.emit("DataRelease",True)
+            await self.event_manager.emit("DataRelease", True)
 
         except Exception as e:
             self.is_premium_selected = False
@@ -1493,13 +1746,19 @@ class OGBPremiumIntegration:
         """Broadcast restored premium state to frontend after HA restart."""
         try:
             _LOGGER.info(f"📢 {self.room} Notifying frontend of restored Premium state")
+            
+            # CRITICAL FIX: First refresh from backend, THEN sync, THEN send to frontend
+            # This ensures the validated values (not stale cached ones) are sent
+            await self._refresh_runtime_usage_from_backend()
+            self._sync_runtime_usage_snapshot()
 
             connection_info = self.ogb_ws.get_connection_info() if self.ogb_ws else {}
 
+            # NOW send the validated subscription_data to frontend
             profile_data = {
                 "currentPlan": self.subscription_data.get("plan_name", "free") if self.subscription_data else "free",
                 "is_premium": self.is_premium,
-                "subscription_data": self.subscription_data,
+                "subscription_data": self.subscription_data,  # Now has VALIDATED values!
                 "ogb_max_sessions": self.ogb_ws.ogb_max_sessions if self.ogb_ws else 0,
                 "ogb_sessions": self.ogb_ws.ogb_sessions if self.ogb_ws else 0,
                 "user_id": self.user_id,
@@ -1521,6 +1780,137 @@ class OGBPremiumIntegration:
 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Failed to broadcast restored state: {e}")
+
+    async def _refresh_runtime_usage_from_backend(self):
+        """Refresh live session/room usage from the premium backend before sending UI state."""
+        if not self.ogb_ws or not self.is_logged_in:
+            return
+
+        try:
+            session_data = await self.ogb_ws.get_session_status()
+            if not isinstance(session_data, dict):
+                return
+
+            # FIX: Handle both formats - ogb_sessions can be a dict or int
+            # Server returns: ogb_sessions: {total: 2, active: 1, rooms: [...]}
+            ogb_sessions = session_data.get("ogb_sessions")
+            if isinstance(ogb_sessions, dict):
+                # Use active count from dict (most accurate)
+                active_sessions = ogb_sessions.get("active", 0)
+            else:
+                active_sessions = session_data.get("active_sessions", 0)
+
+            # CRITICAL FIX: PRESERVE existing usage data from subscription_data!
+            # The saved state contains apiCallsThisMonth, storage, etc. - don't overwrite with 0!
+            normalized_current_room = str(self.room).lower()
+            
+            if active_sessions > 0:
+                # We have an active connection - we ARE a room!
+                normalized_active_rooms = [normalized_current_room]
+                rooms_used = 1
+                _LOGGER.debug(
+                    f"📊 {self.room} Refresh: active sessions={active_sessions}, using current room"
+                )
+            else:
+                normalized_active_rooms = []
+                rooms_used = 0
+
+            # Only update subscription_data.usage with the room-related fields
+            # PRESERVE all other fields like apiCallsThisMonth, storage, etc.!
+            if self.subscription_data is None:
+                self.subscription_data = {}
+            if "usage" not in self.subscription_data or self.subscription_data["usage"] is None:
+                self.subscription_data["usage"] = {}
+            
+            usage = self.subscription_data["usage"]
+            
+            # PRESERVE existing values - only update what we need to validate
+            # Don't overwrite apiCallsThisMonth, storageUsedGB, etc.!
+            existing_api_calls = usage.get("apiCallsThisMonth")
+            existing_storage = usage.get("storageUsedGB")
+            existing_grow_plans = usage.get("growPlansUsed")
+            existing_billing = usage.get("billingPeriodStart")
+            
+            # Now update with validated values
+            usage["activeConnections"] = active_sessions
+            usage["activeRooms"] = normalized_active_rooms
+            usage["roomsUsed"] = rooms_used
+            
+            # Restore preserved values if they existed
+            if existing_api_calls is not None:
+                usage["apiCallsThisMonth"] = existing_api_calls
+            if existing_storage is not None:
+                usage["storageUsedGB"] = existing_storage
+            if existing_grow_plans is not None:
+                usage["growPlansUsed"] = existing_grow_plans
+            if existing_billing is not None:
+                usage["billingPeriodStart"] = existing_billing
+
+            if self.ogb_ws:
+                self.ogb_ws.subscription_data = self.subscription_data
+
+            _LOGGER.debug(
+                f"📊 {self.room} Refreshed runtime usage from backend: "
+                f"connections={usage['activeConnections']} rooms={usage['roomsUsed']} active_rooms={usage['activeRooms']} "
+                f"apiCalls={usage.get('apiCallsThisMonth', 'not_set')}"
+            )
+        except Exception as e:
+            _LOGGER.warning(f"⚠️ {self.room} Could not refresh runtime usage from backend: {e}")
+
+    def _sync_runtime_usage_snapshot(self):
+        """Keep subscription_data.usage aligned with current runtime session state."""
+        if self.subscription_data is None:
+            self.subscription_data = {}
+        if "usage" not in self.subscription_data or self.subscription_data["usage"] is None:
+            self.subscription_data["usage"] = {}
+
+        usage = self.subscription_data["usage"]
+
+        ogb_sessions_data = self.ogb_ws.ogb_sessions if self.ogb_ws else 0
+        if isinstance(ogb_sessions_data, dict):
+            current_sessions = ogb_sessions_data.get("active", 0) or 0
+        else:
+            current_sessions = ogb_sessions_data or 0
+
+        usage["activeConnections"] = current_sessions
+        
+        # CRITICAL FIX: SIMPLE AND ROBUST LOGIC
+        # Always use current room if we have active connections - don't trust server values
+        normalized_current_room = str(self.room).lower()
+        
+        if current_sessions > 0:
+            # We have an active connection - we ARE a room!
+            normalized_active_rooms = [normalized_current_room]
+            rooms_used = 1
+            _LOGGER.debug(
+                f"📊 {self.room} Sync: active sessions={current_sessions}, using current room"
+            )
+        else:
+            normalized_active_rooms = []
+            rooms_used = 0
+
+        # CRITICAL FIX: PRESERVE existing usage data!
+        # Don't overwrite apiCallsThisMonth, storageUsedGB, etc.!
+        existing_api_calls = usage.get("apiCallsThisMonth")
+        existing_storage = usage.get("storageUsedGB")
+        existing_grow_plans = usage.get("growPlansUsed")
+        existing_billing = usage.get("billingPeriodStart")
+
+        usage["activeRooms"] = normalized_active_rooms
+        usage["roomsUsed"] = rooms_used
+        
+        # Restore preserved values
+        if existing_api_calls is not None:
+            usage["apiCallsThisMonth"] = existing_api_calls
+        if existing_storage is not None:
+            usage["storageUsedGB"] = existing_storage
+        if existing_grow_plans is not None:
+            usage["growPlansUsed"] = existing_grow_plans
+        if existing_billing is not None:
+            usage["billingPeriodStart"] = existing_billing
+
+        if self.ogb_ws:
+            self.ogb_ws.subscription_data = self.subscription_data
 
     async def _handle_authenticated(self, event):
         """Handle authentication event from other rooms."""
@@ -1794,7 +2184,6 @@ class OGBPremiumIntegration:
     # GROW DATA
     # =================================================================
 
-
     async def _send_growdata_to_prem_api(self, event):
         """Send grow data to Premium API.
 
@@ -1828,7 +2217,7 @@ class OGBPremiumIntegration:
             _LOGGER.warning(f"❌ {self.room} #{event_id} No WebSocket client available")
             return
 
-        _LOGGER.warning(f"🔍 {self.room} #{event_id} WebSocket state: connected={self.ogb_ws.ws_connected}, authenticated={self.ogb_ws.authenticated}")
+        _LOGGER.info(f"🔍 {self.room} #{event_id} WebSocket state: connected={self.ogb_ws.ws_connected}, authenticated={self.ogb_ws.authenticated}")
 
         if not self.ogb_ws.ws_connected:
             _LOGGER.warning(f"❌ {self.room} #{event_id} WebSocket not connected")
@@ -2225,6 +2614,8 @@ class OGBPremiumIntegration:
 
     def _update_feature_manager(self):
         """Initialize or update the feature manager with current subscription data."""
+        _LOGGER.debug(f"{self.room} 🔧 _update_feature_manager called")
+        
         if self.subscription_data:
             if self.feature_manager is None:
                 self.feature_manager = OGBFeatureManager(
@@ -2235,16 +2626,20 @@ class OGBPremiumIntegration:
                     hass=self.hass,
                     event_manager=self.event_manager,
                 )
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🔧 {self.room} Feature manager initialized "
                     f"(plan: {self.feature_manager.plan_name})"
                 )
+                # CRITICAL: After feature manager init, update TentMode options
+                self.hass.async_create_task(self._managePremiumControls())
             else:
                 self.feature_manager.update_subscription(self.subscription_data)
                 _LOGGER.debug(
                     f"🔄 {self.room} Feature manager updated "
                     f"(plan: {self.feature_manager.plan_name})"
                 )
+                # CRITICAL: After feature update, update TentMode options
+                self.hass.async_create_task(self._managePremiumControls())
         else:
             _LOGGER.debug(f"{self.room} No subscription data available for feature manager")
 
@@ -2252,11 +2647,14 @@ class OGBPremiumIntegration:
         """
         Get list of premium tent modes available based on subscription features.
         
-        Uses feature flags from subscription_data.features to determine which
-        premium control modes should be available to this user.
+        DYNAMIC: Automatically detects all controller features from:
+        1. Plan features (subscription_plans.features) - camelCase: pidControllers, mpcControllers, aiControllers
+        2. Global features (feature_flags_config) - snake_case: pid_controllers, mpc_controllers, ai_controllers
+        
+        No code changes needed when adding new controller features to the database!
         
         Returns:
-            List of available premium mode names (e.g., ["PID Control", "MPC Control"])
+            List of available premium mode names (e.g., ["PID Control", "MPC Control", "AI Control"])
         """
         available_modes = []
         
@@ -2267,45 +2665,206 @@ class OGBPremiumIntegration:
             _LOGGER.debug(f"{self.room} No feature manager - no premium modes available")
             return available_modes
         
-        # Map feature keys to tent mode names
-        # API sends camelCase: pidControllers, mcpControllers, aiControllers
-        feature_to_mode = {
-            "pid_controllers": "PID Control",
-            "mpc_controllers": "MPC Control", 
-            "ai_controllers": "AI Control",
-        }
+        # Get plan features (from subscription_plans.features) - camelCase
+        plan_features = self.feature_manager.features or {}
         
-        for feature_key, mode_name in feature_to_mode.items():
-            if self.feature_manager.has_feature(feature_key):
-                available_modes.append(mode_name)
-                _LOGGER.debug(f"{self.room} Feature '{feature_key}' enabled -> mode '{mode_name}' available")
-            else:
-                _LOGGER.debug(f"{self.room} Feature '{feature_key}' disabled -> mode '{mode_name}' NOT available")
+        # Get global config features (from feature_flags_config) - snake_case
+        global_config = getattr(self.feature_manager, 'global_config', {}) or {}
+        
+        _LOGGER.debug(f"{self.room} 🔍 Checking features - plan: {plan_features}, global: {global_config}")
+        
+        # 1. Check plan features (camelCase: pidControllers, mpcControllers, aiControllers)
+        for feature_key, is_enabled in plan_features.items():
+            # Handle both boolean and string "true"/"false" values
+            if isinstance(is_enabled, str):
+                is_enabled = is_enabled.lower() == 'true'
+            elif not isinstance(is_enabled, bool):
+                is_enabled = bool(is_enabled)
+            
+            if not is_enabled:
+                _LOGGER.debug(f"{self.room} 🔍 Skipping disabled feature: {feature_key}={is_enabled}")
+                continue
+            
+            # Only process controller features
+            if feature_key.endswith('Controllers'):
+                mode_name = self._convert_controller_feature_to_mode_name(feature_key)
+                _LOGGER.debug(f"{self.room} 🔍 Found controller feature: {feature_key} -> {mode_name}")
+                
+                if mode_name and mode_name not in available_modes:
+                    available_modes.append(mode_name)
+        
+        # 2. Check global config (snake_case: pid_controllers, mpc_controllers, ai_controllers)
+        for feature_key, config in global_config.items():
+            if not isinstance(config, dict):
+                continue
+            if not config.get('enabled_globally', False):
+                continue
+            
+            # Only process controller features
+            if feature_key.endswith('_controllers'):
+                mode_name = self._convert_controller_feature_to_mode_name(feature_key)
+                _LOGGER.debug(f"{self.room} 🔍 Found global controller: {feature_key} -> {mode_name}")
+                if mode_name and mode_name not in available_modes:
+                    available_modes.append(mode_name)
         
         _LOGGER.info(
-            f"🎮 {self.room} Available premium modes based on features: {available_modes} "
+            f"🎮 {self.room} Available premium modes (dynamic): {available_modes} "
             f"(plan: {self.feature_manager.plan_name})"
         )
         
         return available_modes
+    
+    def _get_all_possible_controller_modes(self) -> list:
+        """
+        Get ALL possible controller mode names from feature definitions.
+        
+        DYNAMIC: This gets ALL controller features that exist in:
+        1. Hardcoded FEATURE_DEFINITIONS (pid_controllers, ai_controllers, mpc_controllers)
+        2. Plan subscription features (from database)
+        3. Global config features (from feature_flags_config)
+        
+        Used to know which modes to REMOVE when feature is deactivated.
+        
+        Returns:
+            List of all possible controller mode names (e.g., ["PID Control", "MPC Control", "AI Control"])
+        """
+        all_modes = set()
+        
+        # Start with hardcoded controller features
+        hardcoded_controllers = [
+            "pidControllers", "mpcControllers", "aiControllers",
+            "pid_controllers", "mpc_controllers", "ai_controllers"
+        ]
+        
+        for feature_key in hardcoded_controllers:
+            mode_name = self._convert_controller_feature_to_mode_name(feature_key)
+            if mode_name:
+                all_modes.add(mode_name)
+        
+        # Add from subscription features (camelCase)
+        if self.feature_manager and self.feature_manager.features:
+            for feature_key in self.feature_manager.features.keys():
+                if feature_key.endswith("Controllers"):
+                    mode_name = self._convert_controller_feature_to_mode_name(feature_key)
+                    if mode_name:
+                        all_modes.add(mode_name)
+        
+        # Add from global config (snake_case)
+        if self.feature_manager:
+            global_config = getattr(self.feature_manager, 'global_config', {}) or {}
+            for feature_key in global_config.keys():
+                if feature_key.endswith("_controllers"):
+                    mode_name = self._convert_controller_feature_to_mode_name(feature_key)
+                    if mode_name:
+                        all_modes.add(mode_name)
+        
+        _LOGGER.debug(f"{self.room} All possible controller modes: {list(all_modes)}")
+        
+        return list(all_modes)
+    
+    def _convert_controller_feature_to_mode_name(self, feature_key: str) -> str:
+        """
+        Convert a controller feature key to TentMode display name.
+        
+        Examples:
+            - "pidControllers" → "PID Control"
+            - "mpcControllers" → "MPC Control"
+            - "aiControllers" → "AI Control"
+            - "customControllers" → "Custom Control"
+            - "pid_controllers" → "PID Control"
+            - "mpc_controllers" → "MPC Control"
+        """
+        if not feature_key:
+            return ""
+        
+        # Remove suffix (either camelCase "Controllers" or snake_case "_controllers")
+        if feature_key.endswith('Controllers'):
+            controller_name = feature_key[:-11]  # Remove "Controllers"
+        elif feature_key.endswith('_controllers'):
+            controller_name = feature_key[:-12]  # Remove "_controllers"
+        else:
+            # Not a controller feature - skip
+            return ""
+        
+        # Convert to title case for display
+        # Handle: pid → PID, mcp → MCP, ai → AI, custom → Custom
+        mode_name = self._camel_or_snake_to_display_name(controller_name)
+        
+        return f"{mode_name} Control"
+    
+    def _camel_or_snake_to_display_name(self, name: str) -> str:
+        """
+        Convert camelCase or snake_case to display name (case-insensitive).
+        
+        Examples:
+            - "pid" → "PID"
+            - "mpc" → "MPC"
+            - "ai" → "AI"
+            - "custom" → "Custom"
+            - "new_ai" → "New AI"
+        """
+        if not name:
+            return ""
+        
+        # Convert to lowercase for case-insensitive matching
+        name_lower = name.lower()
+        
+        # Case-insensitive mapping for known controller types
+        if name_lower == 'pid':
+            return 'PID'
+        elif name_lower == 'mpc':
+            return 'MPC'
+        elif name_lower == 'ai':
+            return 'AI'
+        elif name_lower == 'custom':
+            return 'Custom'
+        elif name_lower == 'new_ai':
+            return 'New AI'
+        else:
+            # Fallback: Replace underscores with spaces and use title case
+            name = name.replace('_', ' ')
+            words = name.split()
+            
+            # Handle special cases: all uppercase acronyms (AI, MPC, PID, UV, etc.)
+            result = []
+            for word in words:
+                if word.upper() in ['AI', 'MPC', 'PID', 'UV', 'CO2', 'HVAC', 'LED', 'DHT', 'PH', 'EC']:
+                    result.append(word.upper())
+                elif word.isupper():
+                    result.append(word)
+                elif len(word) <= 3:
+                    result.append(word.upper())
+                else:
+                    result.append(word.capitalize())
+            
+            return ' '.join(result)
 
     async def _managePremiumControls(self):
         """
         Manage premium control options based on subscription feature flags.
         
-        This method:
-        1. Gets available premium modes from feature flags (not hardcoded)
-        2. Adds/removes tent mode options based on user's subscription
-        3. Handles mode restoration after login
-        4. Falls back to safe mode if current mode becomes unavailable
+        DYNAMIC: This method now:
+        1. Gets ALL possible controller modes (from FEATURE_DEFINITIONS + global config)
+        2. Gets ENABLED modes based on subscription features
+        3. Adds enabled modes to TentMode
+        4. Removes disabled modes from TentMode
+        5. Falls back to safe mode if current mode becomes unavailable
+        
+        No code changes needed when adding new controller features!
         """
+        # Debounce: prevent excessive calls
+        now = asyncio.get_event_loop().time()
+        if now - self._last_manage_controls_time < self._manage_controls_cooldown:
+            return
+        self._last_manage_controls_time = now
+        
         tent_control = f"select.ogb_tentmode_{self.room.lower()}"
         drying_modes = f"select.ogb_dryingmodes_{self.room.lower()}"
 
-        # All possible premium modes (for removal when logged out)
-        all_premium_modes = ["PID Control", "MPC Control", "AI Control"]
+        # DYNAMIC: Get ALL possible premium modes from feature definitions
+        all_premium_modes = self._get_all_possible_controller_modes()
         
-        # Get available modes based on feature flags
+        # Get available modes based on CURRENT subscription features
         available_modes = self._get_available_premium_modes()
         
         # Modes to remove (premium modes user doesn't have access to)
@@ -2315,88 +2874,92 @@ class OGBPremiumIntegration:
 
         current_tent_mode = self.data_store.get("tentMode")
 
-        _LOGGER.debug(
-            f"{self.room} PREM-MODE-CHECK: "
-            f"LAST:{self.lastTentMode} Current:{current_tent_mode} "
-            f"Available:{available_modes} ToRemove:{modes_to_remove}"
-        )
+        # Retry mechanism: wait for select entities to be available
+        max_retries = 10
+        retry_delay = 0.5  # seconds
+        tent_select = None
+        drying_select = None
+        
+        for attempt in range(max_retries):
+            selects = self.hass.data.get("opengrowbox", {}).get("selects", [])
+            
+            for select in selects:
+                if select.entity_id == tent_control:
+                    tent_select = select
+                elif select.entity_id == drying_modes:
+                    drying_select = select
+            
+            if tent_select or not self.is_logged_in:
+                # Found select or don't need it (not logged in)
+                break
+            
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+        
+        if not tent_select and self.is_logged_in:
+            _LOGGER.warning(f"{self.room} TentMode select not found after {max_retries} retries")
+            return
 
         # If not logged in, remove ALL premium modes
         if not self.is_logged_in:
-            if current_tent_mode in all_premium_modes:
-                _LOGGER.info(f"{self.room} Not logged in, switching from '{current_tent_mode}' to 'VPD Perfection'")
-                await self.hass.services.async_call(
-                    "select", "select_option",
-                    {"entity_id": tent_control, "option": "VPD Perfection"},
-                    blocking=True
-                )
-            # Remove all premium options
-            for entity_id, options in [(tent_control, all_premium_modes), (drying_modes, dry_options)]:
-                if options:
-                    await self.hass.services.async_call(
-                        "opengrowbox", "remove_select_options",
-                        {"entity_id": entity_id, "options": options},
-                        blocking=True
-                    )
+            if current_tent_mode in all_premium_modes and tent_select:
+                tent_select._attr_current_option = "VPD Perfection"
+                tent_select.async_write_ha_state()
+            
+            # Remove all premium options from select
+            if tent_select and all_premium_modes:
+                tent_select._attr_options = [
+                    opt for opt in tent_select._attr_options 
+                    if opt not in all_premium_modes
+                ]
+                tent_select.async_write_ha_state()
             return
 
         # User is logged in - add available modes, remove unavailable ones
         
         # First, remove modes the user doesn't have access to
-        if modes_to_remove:
+        if modes_to_remove and tent_select:
             # If current mode is being removed, switch to safe mode first
             if current_tent_mode in modes_to_remove:
-                _LOGGER.warning(
-                    f"{self.room} Current mode '{current_tent_mode}' not available in subscription, "
-                    f"switching to 'VPD Perfection'"
-                )
-                await self.hass.services.async_call(
-                    "select", "select_option",
-                    {"entity_id": tent_control, "option": "VPD Perfection"},
-                    blocking=True
-                )
+                tent_select._attr_current_option = "VPD Perfection"
                 current_tent_mode = "VPD Perfection"
             
-            await self.hass.services.async_call(
-                "opengrowbox", "remove_select_options",
-                {"entity_id": tent_control, "options": modes_to_remove},
-                blocking=True
-            )
+            # Remove unavailable options
+            tent_select._attr_options = [
+                opt for opt in tent_select._attr_options 
+                if opt not in modes_to_remove
+            ]
+            tent_select.async_write_ha_state()
         
         # Then, add modes the user has access to
-        if available_modes:
-            await self.hass.services.async_call(
-                "opengrowbox", "add_select_options",
-                {"entity_id": tent_control, "options": available_modes},
-                blocking=True
-            )
+        if available_modes and tent_select:
+            # Add only options that don't exist yet
+            new_options = [opt for opt in available_modes if opt not in tent_select._attr_options]
+            if new_options:
+                tent_select._attr_options = list(set(tent_select._attr_options + new_options))
+                tent_select.async_write_ha_state()
+                _LOGGER.info(f"{self.room} Added premium options: {new_options}")
 
         # Handle drying modes (if any)
-        if dry_options:
-            await self.hass.services.async_call(
-                "opengrowbox", "add_select_options",
-                {"entity_id": drying_modes, "options": dry_options},
-                blocking=True
-            )
+        if dry_options and drying_select:
+            new_dry_options = [opt for opt in dry_options if opt not in drying_select._attr_options]
+            if new_dry_options:
+                drying_select._attr_options = list(set(drying_select._attr_options + new_dry_options))
+                drying_select.async_write_ha_state()
 
         # Restore previous mode if applicable
         if current_tent_mode in [None, "Disabled", "VPD Perfection"] and self.lastTentMode in available_modes:
-            # Only restore if the last mode is still available
             restore_mode = self.lastTentMode
         elif current_tent_mode in available_modes or current_tent_mode not in all_premium_modes:
-            # Keep current mode if it's available or not a premium mode
             restore_mode = current_tent_mode or "VPD Perfection"
         else:
-            # Current mode is a premium mode that's no longer available
             restore_mode = "VPD Perfection"
 
-        _LOGGER.debug(f"{self.room} RESTORE-MODE: {restore_mode}")
+        if tent_select:
+            tent_select._attr_current_option = restore_mode
+            tent_select.async_write_ha_state()
+        
         self.data_store.set("tentMode", restore_mode)
-        await self.hass.services.async_call(
-            "select", "select_option",
-            {"entity_id": tent_control, "option": restore_mode},
-            blocking=True
-        )
 
     # =================================================================
     # UTILITIES
@@ -2512,6 +3075,9 @@ class OGBPremiumIntegration:
         - Basic: 3 rooms max  
         - Grower: 5 rooms max
         - etc.
+        
+        CRITICAL: If session limit is reached, automatically switch the oldest
+        Premium room to HomeAssistant before connecting this room.
         """
         try:
             _LOGGER.debug(f"Premium mode activated for {self.room}")
@@ -2526,16 +3092,18 @@ class OGBPremiumIntegration:
                 if not self.ogb_ws.is_connected():
                     # Check session limits before connecting
                     if not self._check_if_can_connect():
-                        _LOGGER.warning(f"{self.room} Session limit reached - cannot connect WebSocket")
+                        # TEMPORARILY DISABLED: Auto-switch logic causes issues during user-initiated switches
+                        # The frontend now handles room switching properly with confirmation modal
+                        # Re-enable once ogb-grow-api is fixed to not report stale rooms
+                        _LOGGER.warning(f"{self.room} Session limit reached - frontend handles this via modal")
                         await self._send_auth_response(
                             "error",
                             "to_many_rooms",
                             {
                                 "success": "false",
-                                "MSG": "Cannot activate this room in Premium. Reason: Session limit reached for your plan."
+                                "MSG": "Room limit reached. Please disconnect another room first."
                             }
                         )
-                        # Still manage controls for UI even without WebSocket
                         await self._managePremiumControls()
                         return
 

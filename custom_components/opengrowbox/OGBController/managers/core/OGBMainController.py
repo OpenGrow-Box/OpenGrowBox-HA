@@ -195,6 +195,9 @@ class OGBMainController:
         self.hass.bus.async_listen("AmbientData", self._handle_ambient_data)
         self.hass.bus.async_listen("OutsiteData", self._handle_outsite_data)
 
+        # Client logs handling
+        self.hass.bus.async_listen("getOGBClientLogs", self.event_manager.handle_get_logs)
+
     async def first_start(self):
         """Perform initial system startup sequence.
         

@@ -427,7 +427,7 @@ class OGBActionManager:
 
         # Create water action for logging
         water_action = {"Name": self.room, "Device": dev, "Cycle": cycle, "Action": action, "Message": message}
-        await self.event_manager.emit("LogForClient", water_action, haEvent=True)
+        await self.event_manager.emit("LogForClient", water_action, haEvent=True, debug_type="INFO")
 
     async def _handle_retrieve_action(self, data):
         """Handle retrieve actions."""
@@ -448,7 +448,7 @@ class OGBActionManager:
             # Create water action for logging
             message = "Start Retrieve Pump" if action == "on" else "Stop Retrieve Pump"
             water_action = {"Name": self.room, "Device": dev, "Cycle": cycle, "Action": action, "Message": message}
-            await self.event_manager.emit("LogForClient", water_action, haEvent=True)
+            await self.event_manager.emit("LogForClient", water_action, haEvent=True, debug_type="INFO")
 
     # =================================================================
     # Closed Environment Action Handlers
@@ -573,7 +573,7 @@ class OGBActionManager:
         
         # Use truthiness check: not islightON handles False/None, not nightVPDHold handles False/None
         if not islightON and not nightVPDHold:
-            _LOGGER.warning(f"{self.room}: VPD Night Hold NOT ACTIVE - Ignoring VPD actions (light is OFF)")
+            _LOGGER.debug(f"{self.room}: VPD Night Hold NOT ACTIVE - Ignoring VPD actions (light is OFF)")
             await self._night_hold_fallback(actionMap)
             return False
         
@@ -588,7 +588,7 @@ class OGBActionManager:
         await self.event_manager.emit("LogForClient", {
             "Name": self.room,
             "NightVPDHold": "NotActive Ignoring-VPD"
-        }, haEvent=True)
+        }, haEvent=True, debug_type="INFO")
         
         # Devices to exclude from normal actions during night
         excludeCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canLight", "canCO2"}
@@ -635,6 +635,30 @@ class OGBActionManager:
         else:
             # Fallback: execute actions directly
             await self.publicationActionHandler(actionMap)
+
+    async def checkLimitsAndPublicateNoVPD(self, actionMap: List):
+        """
+        Process actions WITHOUT VPD Night Hold check.
+        
+        Used by Closed Environment mode where CO2/safety actions should
+        bypass the VPD Night Hold logic.
+        
+        Args:
+            actionMap: List of actions to process
+        """
+        if not actionMap:
+            return
+
+        final_actions = actionMap
+
+        # IMPORTANT: Closed Environment must bypass all VPD-specific processing.
+        # We only keep lightweight per-capability conflict resolution here so
+        # Closed actions can still avoid duplicate commands in the same cycle
+        # without being filtered by VPD night-hold or VPD deviation logic.
+        if self.dampening_actions:
+            final_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
+
+        await self.publicationActionHandler(final_actions)
 
     async def checkLimitsAndPublicateWithDampening(self, actionMap: List):
         """
@@ -886,4 +910,3 @@ class OGBActionManager:
             
         except Exception as e:
             _LOGGER.error(f"Error during Action Manager shutdown: {e}")
-

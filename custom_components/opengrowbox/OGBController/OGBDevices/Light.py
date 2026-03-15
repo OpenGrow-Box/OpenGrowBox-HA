@@ -206,6 +206,8 @@ class Light(Device):
         Apply plant stage min/max values if no user-defined values exist.
         Returns True if values were applied, False otherwise.
         """
+        self._sync_plant_stage_minmax_from_store()
+
         if self._has_user_defined_minmax():
             _LOGGER.debug(
                 f"{self.deviceName}: User-defined min/max active, skipping plant stage defaults"
@@ -221,6 +223,29 @@ class Light(Device):
             )
             return True
         return False
+
+    def _sync_plant_stage_minmax_from_store(self):
+        """Sync active light stage min/max from datastore if available."""
+        light_stages = self.data_store.get("lightPlantStages") or self.data_store.getDeep("lightPlantStages")
+
+        if not isinstance(light_stages, dict):
+            return
+
+        normalized = {}
+        for stage_key, stage_data in light_stages.items():
+            if hasattr(stage_data, "to_dict"):
+                stage_data = stage_data.to_dict()
+
+            if not isinstance(stage_data, dict):
+                continue
+
+            normalized[stage_key] = {
+                "min": stage_data.get("min", self.PlantStageMinMax.get(stage_key, {}).get("min", 0)),
+                "max": stage_data.get("max", self.PlantStageMinMax.get(stage_key, {}).get("max", 100)),
+            }
+
+        if normalized:
+            self.PlantStageMinMax.update(normalized)
 
     def checkPlantStageLightValue(self):
         if not self.isDimmable:
@@ -662,7 +687,7 @@ class Light(Device):
                         SunRise=self.sunrise_phase_active,
                         SunSet=self.sunset_phase_active,
                     )
-                    await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+                    await self.event_manager.emit("LogForClient", lightAction, haEvent=True, debug_type="DEBUG")
                     _LOGGER.debug(f"{self.deviceName}: SunRise Step {i}: {self.voltage}%")
                     await self.turn_on(brightness_pct=self.voltage)
 
@@ -736,7 +761,7 @@ class Light(Device):
                         SunRise=self.sunrise_phase_active,
                         SunSet=self.sunset_phase_active,
                     )
-                    await self.eventManager.emit("LogForClient", lightAction, haEvent=True)
+                    await self.eventManager.emit("LogForClient", lightAction, haEvent=True, debug_type="DEBUG")
                     _LOGGER.debug(f"{self.deviceName}: SunSet Step {i}: {self.voltage}%")
                     await self.turn_on(brightness_pct=self.voltage)
 
@@ -846,7 +871,7 @@ class Light(Device):
                     SunRise=self.sunrise_phase_active,
                     SunSet=self.sunset_phase_active,
                 )
-                await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+                await self.event_manager.emit("LogForClient", lightAction, haEvent=True, debug_type="INFO")
                 await self.turn_off()
                 self.log_action("Turn OFF via toggle")
 
@@ -884,7 +909,7 @@ class Light(Device):
                 SunRise=self.sunrise_phase_active,
                 SunSet=self.sunset_phase_active,
             )
-            await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+            await self.event_manager.emit("LogForClient", lightAction, haEvent=True, debug_type="DEBUG")
             await self.turn_on(brightness_pct=new_voltage)
 
     async def reduceAction(self, data):
@@ -923,7 +948,7 @@ class Light(Device):
                 SunRise=self.sunrise_phase_active,
                 SunSet=self.sunset_phase_active,
             )
-            await self.event_manager.emit("LogForClient", lightAction, haEvent=True)
+            await self.event_manager.emit("LogForClient", lightAction, haEvent=True, debug_type="DEBUG")
             await self.turn_on(brightness_pct=new_voltage)
 
     async def updateLight(self, data=None):
@@ -1157,7 +1182,7 @@ class Light(Device):
             SunRise=self.sunrise_phase_active,
             SunSet=self.sunset_phase_active,
         )
-        await self.event_manager.emit("LogForClient", light_action, haEvent=True)
+        await self.event_manager.emit("LogForClient", light_action, haEvent=True, debug_type="DEBUG")
         await self.turn_on(brightness_pct=new_voltage)
 
     def log_action(self, action_name):
