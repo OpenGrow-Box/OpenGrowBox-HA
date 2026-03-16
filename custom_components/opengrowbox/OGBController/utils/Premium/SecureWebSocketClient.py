@@ -2647,7 +2647,7 @@ class OGBWebSocketConManager:
                 logging.error(f"❌ {self.ws_room} Fallback also failed: {fallback_error}")
                 return False
 
-    async def subm<it_analytics(self, analytics_data: dict) -> bool:
+    async def submit_analytics(self, analytics_data: dict) -> bool:
         """
         Submit analytics data to Premium API via WebSocket.
         
