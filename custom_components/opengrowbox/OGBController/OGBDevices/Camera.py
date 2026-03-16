@@ -62,14 +62,8 @@ class Camera(Device):
         else:
             self.hass_available = True
 
-        # Initialization state management
-        self._init_lock = asyncio.Lock()
-        self._async_init_complete = False
-        self._init_task = None
-
         ## Events Register
         self.event_manager.on("StartTL", self.startTL)
-
         self.eventManager.on("NeedViewPlant", self._handle_user_needs_image)
 
         # Register HA event listeners for timelapse
@@ -107,11 +101,12 @@ class Camera(Device):
         self._generation_cooldown = 5.0  # seconds
 
         # Initialize camera after setup
-        self._init_task = asyncio.create_task(self._init_and_resume())
 
-    def init(self, entitys):
-        """Initialize camera - calls parent first for capabilities."""
+        asyncio.create_task(self.init())
 
+
+    def deviceInit(self, entitys):
+        """Minimal initialization for camera - stores entity in options."""
         # Store camera entities
         self.camera_entities = entitys if isinstance(entitys, list) else [entitys]
 
@@ -120,64 +115,16 @@ class Camera(Device):
             for entity in self.camera_entities:
                 if isinstance(entity, dict) and entity.get("entity_id", "").startswith("camera."):
                     self.options.append(entity)
+
         self.identifyCapabilities()
-        # Set initialization flag but don't set isInitialized yet
-        # This will be set after async init completes
+
+        # Set initialization flags directly
         self.initialization = True
+        self.isInitialized = True
 
         # Use logging like parent class does for consistency
-        _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
+        logging.warning(f"Device: {self.deviceName} Initialization done {self}")
 
-    async def _wait_for_init(self):
-        """Wait for async initialization to complete.
-        Returns immediately if already initialized.
-        """
-        if self._async_init_complete:
-            return
-
-        if self._init_task:
-            try:
-                await asyncio.wait_for(self._init_task, timeout=30.0)
-                _LOGGER.info(f"{self.deviceName}: Async initialization completed")
-            except asyncio.TimeoutError:
-                _LOGGER.error(f"{self.deviceName}: Async initialization timed out after 30s")
-            except Exception as e:
-                _LOGGER.error(f"{self.deviceName}: Async initialization failed: {e}")
-
-    async def _init_and_resume(self):
-        """Initialize camera and resume any active timelapse."""
-        try:
-            await self.init()
-            self._async_init_complete = True
-            self.isInitialized = True
-            _LOGGER.info(f"{self.deviceName}: Camera fully initialized and ready")
-            logging.warning(f"Device: {self.deviceName} Initialization done {self}")
-        except Exception as e:
-            _LOGGER.error(f"{self.deviceName}: Camera initialization failed: {e}")
-            # Set initialized even on failure to prevent blocking
-            self._async_init_complete = True
-            self.isInitialized = True
-    
-    @property
-    def camera_entity_id(self):
-        """Get the camera entity_id for frontend communication.
-        Returns the first camera entity_id for backward compatibility.
-        Use self.camera_entity_ids property for multi-camera support.
-        """
-        return self.camera_entity_ids[0] if self.camera_entity_ids else self.deviceName
-
-    @property
-    def camera_entity_ids(self):
-        """Get all camera entity_ids for multi-camera support."""
-        if hasattr(self, 'camera_entities') and self.camera_entities:
-            entity_ids = []
-            for entity in self.camera_entities:
-                if isinstance(entity, dict):
-                    entity_id = entity.get("entity_id", "")
-                    if entity_id.startswith("camera."):
-                        entity_ids.append(entity_id)
-            return entity_ids if entity_ids else [self.deviceName]
-        return [self.deviceName]
 
     def _is_device_for_event(self, device_name):
         """Check if this camera should handle the given event.
@@ -188,12 +135,13 @@ class Camera(Device):
         """
         if not device_name:
             return False
-        
-        # Check if device_name matches any of our camera entity IDs
-        return device_name in self.camera_entity_ids
+        else:
+            return True
 
     async def init(self):
-        """Initialize camera device."""
+        """Initialize camera - calls parent first for capabilities."""
+        _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
+
         try:
             # Wait for saved state to be loaded into dataStore before reading plantsView
             # This prevents loading default values before async_init completes
@@ -366,8 +314,6 @@ class Camera(Device):
         Response goes via Premium Integration (encrypted).
         """
         try:
-            # Wait for initialization
-            await self._wait_for_init()
 
             event_data = event.data
             device_name = event_data.get("device_name")
@@ -454,7 +400,6 @@ class Camera(Device):
                 "success": False,
                 "error": str(e),
             })
-
 
     def _validate_storage_path(self, subdirectory="daily"):
         """Validate and return a safe storage path.
@@ -618,8 +563,7 @@ class Camera(Device):
         If StartDate > now: Schedule start for that time.
         """
         try:
-            # Wait for initialization to complete
-            await self._wait_for_init()
+
             # Clean up any existing timer
             self._stop_timelapse_internal_timer()
 
@@ -1291,16 +1235,8 @@ class Camera(Device):
         """Handle opengrowbox_get_timelapse_config event from frontend."""
         _LOGGER.debug(f"{self.deviceName}: timelapse Event {event}")
         try:
-            # Wait for initialization to complete
-            await self._wait_for_init()
-
             event_data = event.data
             device_name = event_data.get("device_name")
-
-            # Only respond if this event is for this camera
-            if not self._is_device_for_event(device_name):
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
-                return
 
             # Get current timelapse config from plantsView
             plants_view = self.dataStore.get("plantsView") or {}
@@ -1381,19 +1317,11 @@ class Camera(Device):
     async def _handle_save_timelapse_config(self, event):
         """Handle opengrowbox_save_timelapse_config event from frontend."""
         try:
-            # Wait for initialization to complete
-            await self._wait_for_init()
-
             event_data = event.data
             device_name = event_data.get("device_name")
 
             _LOGGER.debug(f"{self.deviceName}: RECEIVED save_timelapse_config event from {device_name}")
 
-            # Only respond if this event is for this camera
-            if not self._is_device_for_event(device_name):
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
-                return
-            
             # Get new config from event
             new_config = event_data.get("config", {})
             _LOGGER.debug(f"{self.deviceName}: New config received: {new_config}")
@@ -1454,16 +1382,8 @@ class Camera(Device):
     async def _handle_generate_timelapse(self, event):
         """Handle opengrowbox_generate_timelapse event from frontend."""
         try:
-            # Wait for initialization to complete
-            await self._wait_for_init()
-
             event_data = event.data
             device_name = event_data.get("device_name")
-
-            # Only respond if this event is for this camera
-            if not self._is_device_for_event(device_name):
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
-                return
 
             # Rate limiting check
             async with self._generation_lock:
@@ -1524,16 +1444,10 @@ class Camera(Device):
     async def _handle_get_timelapse_status(self, event):
         """Handle opengrowbox_get_timelapse_status event from frontend."""
         try:
-            # Wait for initialization to complete
-            await self._wait_for_init()
+
 
             event_data = event.data
             device_name = event_data.get("device_name")
-
-            # Only respond if this event is for this camera
-            if not self._is_device_for_event(device_name):
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
-                return
 
             # Get night mode config for status event
             is_plant_day = self.dataStore.getDeep("isPlantDay.islightON")
@@ -1571,16 +1485,8 @@ class Camera(Device):
     async def _handle_start_timelapse(self, event):
         """Handle opengrowbox_start_timelapse event from frontend."""
         try:
-            # Wait for initialization to complete
-            await self._wait_for_init()
-
             event_data = event.data
             device_name = event_data.get("device_name")
-
-            # Only respond if this event is for this camera
-            if not self._is_device_for_event(device_name):
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
-                return
 
             # Read interval from plantsView
             plants_view = self.dataStore.get("plantsView") or {}
@@ -1599,11 +1505,6 @@ class Camera(Device):
         try:
             event_data = event.data
             device_name = event_data.get("device_name")
-
-            # Only respond if this event is for this camera
-            if not self._is_device_for_event(device_name):
-                _LOGGER.debug(f"{self.deviceName}: Event not for this camera (expected one of {self.camera_entity_ids}, got: {device_name})")
-                return
             
             # Stop timelapse recording using helper
             await self._stop_timelapse_and_notify()
