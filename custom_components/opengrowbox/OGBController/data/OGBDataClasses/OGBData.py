@@ -224,6 +224,7 @@ class OGBConf:
             "canLight": {"state": False, "count": 0, "devEntities": []},
             "canPump": {"state": False, "count": 0, "devEntities": []},
             "canCO2": {"state": False, "count": 0, "devEntities": []},
+            "canWatch": {"state": False, "count": 0, "devEntities": []},
         }
     )
     previousActions: List[Any] = field(default_factory=list)

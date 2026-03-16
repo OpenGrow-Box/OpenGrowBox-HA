@@ -5,6 +5,8 @@ import os
 import shutil
 from typing import Any, Dict, List, Optional
 
+from ..data.OGBParams.OGBParams import CAP_MAPPING
+
 _LOGGER = logging.getLogger(__name__)
 
 # Script storage constants
@@ -88,6 +90,37 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
     return data
 
 
+def _merge_capabilities(data: Dict[str, Any], room: str) -> Dict[str, Any]:
+    """Merge capabilities from saved state with current CAP_MAPPING.
+    
+    Ensures new capabilities are added with default values while preserving
+    existing capabilities from saved state.
+    """
+    if "capabilities" not in data:
+        _LOGGER.warning(f"[{room}] No capabilities in saved state, initializing")
+        return data
+    
+    saved_caps = data["capabilities"]
+    if not isinstance(saved_caps, dict):
+        _LOGGER.warning(f"[{room}] Invalid capabilities format, reinitializing")
+        return data
+    
+    # Default structure for new capabilities
+    DEFAULT_CAP = {"state": False, "count": 0, "devEntities": []}
+    
+    # Add missing capabilities
+    added_caps = []
+    for cap in CAP_MAPPING.keys():
+        if cap not in saved_caps:
+            saved_caps[cap] = DEFAULT_CAP.copy()
+            added_caps.append(cap)
+    
+    if added_caps:
+        _LOGGER.info(f"[{room}] Added {len(added_caps)} new capabilities: {added_caps}")
+    
+    return data
+
+
 class OGBDSManager:
     def __init__(self, hass, dataStore, eventManager, room, regListener):
         self.name = "OGB DataStore Manager"
@@ -147,6 +180,9 @@ class OGBDSManager:
             # CRITICAL: Clean corrupted data before loading into datastore
             # This fixes issues like corrupted tuple strings in growMediums
             data = _clean_corrupted_data(data, self.room)
+            
+            # CRITICAL: Merge capabilities with current CAP_MAPPING to handle new caps
+            data = _merge_capabilities(data, self.room)
             
             # Load growMediums first if present - this is critical for MediumManager
             if "growMediums" in data:

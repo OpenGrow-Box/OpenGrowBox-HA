@@ -183,7 +183,8 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # NOT initialize_mediums_from_config() which loads from wrong path!
             if self.OGB.mediumManager:
                 await self.OGB.mediumManager.init()
-                _LOGGER.info(f"🌱 {self.room_name}: MediumManager initialized with {len(self.OGB.mediumManager.media)} restored mediums")
+                media_count = len(self.OGB.mediumManager.media) if self.OGB.mediumManager.media else 0
+                _LOGGER.info(f"🌱 {self.room_name}: MediumManager initialized with {media_count} restored mediums")
             
             groupedRoomEntities = (
                 await self.OGB.registryListener.get_filtered_entities_with_value(room)

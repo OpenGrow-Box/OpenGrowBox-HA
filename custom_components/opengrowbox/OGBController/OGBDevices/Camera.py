@@ -109,8 +109,9 @@ class Camera(Device):
         # Initialize camera after setup
         self._init_task = asyncio.create_task(self._init_and_resume())
 
-    def deviceInit(self, entitys):
-        """Minimal initialization for camera - stores entity in options."""
+    def init(self, entitys):
+        """Initialize camera - calls parent first for capabilities."""
+
         # Store camera entities
         self.camera_entities = entitys if isinstance(entitys, list) else [entitys]
 
@@ -119,13 +120,13 @@ class Camera(Device):
             for entity in self.camera_entities:
                 if isinstance(entity, dict) and entity.get("entity_id", "").startswith("camera."):
                     self.options.append(entity)
-
+        self.identifyCapabilities()
         # Set initialization flag but don't set isInitialized yet
         # This will be set after async init completes
         self.initialization = True
 
         # Use logging like parent class does for consistency
-        logging.warning(f"Device: {self.deviceName} Initialization started {self}")
+        _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
 
     async def _wait_for_init(self):
         """Wait for async initialization to complete.
@@ -150,6 +151,7 @@ class Camera(Device):
             self._async_init_complete = True
             self.isInitialized = True
             _LOGGER.info(f"{self.deviceName}: Camera fully initialized and ready")
+            logging.warning(f"Device: {self.deviceName} Initialization done {self}")
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Camera initialization failed: {e}")
             # Set initialized even on failure to prevent blocking

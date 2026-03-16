@@ -11,10 +11,8 @@ from homeassistant.helpers.entity_registry import \
 from homeassistant.helpers.label_registry import \
     async_get as async_get_label_registry
 
-from .data.OGBDataClasses.OGBPublications import (OGBEventPublication,
-                                             OGBVPDPublication)
-from .data.OGBParams.OGBParams import (INVALID_VALUES, RELEVANT_KEYWORDS,
-                                  RELEVANT_PREFIXES, RELEVANT_TYPES)
+from .data.OGBDataClasses.OGBPublications import (OGBEventPublication, OGBVPDPublication)
+from .data.OGBParams.OGBParams import (INVALID_VALUES, RELEVANT_KEYWORDS, RELEVANT_PREFIXES)
 from .utils.lightTimeHelpers import update_light_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -304,22 +302,6 @@ class OGBRegistryEvenListener:
                     "labels": result["labels"],
                 }
             )
-
-            # for key, message in RELEVANT_TYPES.items():
-            #    if key in result["entity_id"]:
-            #        if "ogb_" in result["entity_id"]:
-            #            _LOGGER.debug(f"Skipping 'ogb_' entity: {result['entity_id']}")
-            #            continue
-
-            #        workdataStore = self.data_store.getDeep(f"workData.{key}")
-            # workdataStore.append({
-            #    "entity_id": result["entity_id"],
-            #    "value": result["value"],
-            #    "platform": result["platform"],
-            #    "labels": result["labels"],
-            # })
-            # _LOGGER.debug(f"{self.room_name} Updated WorkDataLoad {workdataStore} with {key}")
-            # self.data_store.setDeep(f"workData.{key}", workdataStore)
 
         _LOGGER.debug(
             f"Grouped Entities Array for Room '{room_name}': {grouped_entities_array}"

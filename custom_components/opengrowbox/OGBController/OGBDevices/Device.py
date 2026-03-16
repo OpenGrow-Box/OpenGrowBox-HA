@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from ..data.OGBParams.OGBParams import CAP_MAPPING
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -519,21 +520,8 @@ class Device:
         """
         Identify and register device capabilities based on device type.
         Prevents duplicate registrations - each device is only registered once per capability.
+        Uses CAP_MAPPING from OGBParams.
         """
-        capMapping = {
-            "canHeat": ["heater"],
-            "canCool": ["cooler"],
-            "canClimate": ["climate"],
-            "canHumidify": ["humidifier"],
-            "canDehumidify": ["dehumidifier"],
-            "canVentilate": ["ventilation"],
-            "canExhaust": ["exhaust"],
-            "canIntake": ["intake"],
-            "canLight": ["light"],
-            "canCO2": ["co2"],
-            "canPump": ["pump"],
-        }
-
         # Skip OGB internal devices
         if self.deviceName == "ogb":
             return
@@ -541,11 +529,11 @@ class Device:
         # Initialize capabilities in dataStore if not present
         if not self.dataStore.get("capabilities"):
             self.dataStore.setDeep("capabilities", {
-                cap: {"state": False, "count": 0, "devEntities": []} for cap in capMapping
+                cap: {"state": False, "count": 0, "devEntities": []} for cap in CAP_MAPPING
             })
 
         # Find matching capability for this device type
-        for cap, deviceTypes in capMapping.items():
+        for cap, deviceTypes in CAP_MAPPING.items():
             if self.deviceType.lower() in (dt.lower() for dt in deviceTypes):
                 capPath = f"capabilities.{cap}"
                 currentCap = self.dataStore.getDeep(capPath)
@@ -563,10 +551,9 @@ class Device:
                 
                 # Write updated data back to dataStore
                 self.dataStore.setDeep(capPath, currentCap)
-                _LOGGER.debug(f"{self.deviceName}: Registered for capability {cap} (count: {currentCap['count']})")
 
         # Log final capabilities state
-        _LOGGER.debug(f"{self.deviceName}: Capabilities identified: {self.dataStore.get('capabilities')}")
+        _LOGGER.debug(f"{self.deviceName}: Final capabilities: {self.dataStore.get('capabilities')}")
 
     def identifyIfRunningState(self):
 
@@ -598,6 +585,7 @@ class Device:
                     self.isRunning = None
                     return   
         else:
+            # Check switches
             for switch in self.switches:
                 switch_value = switch.get("value")
                 if switch_value == "on":
@@ -607,7 +595,6 @@ class Device:
                     self.isRunning = False
                     return
                 elif switch_value in (None, "unknown", "Unbekannt", "unavailable"):
-                    # Handle unavailable/unknown states gracefully - don't raise, just log and set to None
                     _LOGGER.debug(f"{self.inRoom} - Switch state '{switch_value}' for {self.deviceName} - treating as unavailable")
                     self.isRunning = None
                     return
@@ -618,7 +605,7 @@ class Device:
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifyIfDimmable(self):
-        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","lightfarred","lightuv","lightblue","lightred","humdifier","dehumidifier","heater","cooler","co2"]
+        allowedDeviceTypes = ["ventilation", "exhaust","intake","light","lightfarred","lightuv","lightblue","lightred","humidifier","dehumidifier","heater","cooler","co2"]
 
         # Gerät muss in der Liste der erlaubten Typen sein
         if self.deviceType.lower() not in allowedDeviceTypes:
@@ -975,7 +962,7 @@ class Device:
                         },
                     )
                     # Zusatzaktionen je nach Gerätetyp
-                    if self.deviceType in ["Light", "Humidifier", "Deumidifier", "Exhaust", "Intake", "Ventilation"]:
+                    if self.deviceType in ["Light", "Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"]:
                         # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
                         
                         if self.deviceType == "Light":
@@ -1210,12 +1197,19 @@ class Device:
                     return
 
                 # Dehumidifier einschalten
-                elif self.deviceType == "Deumidifier":
-                    await self.hass.services.async_call(
-                        domain="switch",
-                        service="turn_on",
-                        service_data={"entity_id": entity_id},
-                    )
+                elif self.deviceType == "Dehumidifier":
+                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
+                        await self.hass.services.async_call(
+                            domain="humidifier",
+                            service="turn_on",
+                            service_data={"entity_id": self.humidifierEntityId},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
                     self.isRunning = True
                     _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON.")
                     return
@@ -1331,13 +1325,38 @@ class Device:
 
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
-                    await self.hass.services.async_call(
-                        domain="switch",
-                        service="turn_off",
-                        service_data={"entity_id": entity_id},
-                    )
+                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
+                        await self.hass.services.async_call(
+                            domain="humidifier",
+                            service="turn_off",
+                            service_data={"entity_id": self.humidifierEntityId},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
                     self.isRunning = False
                     _LOGGER.debug(f"{self.deviceName}: Humidifier OFF.")
+                    return
+
+                # Dehumidifier ausschalten
+                elif self.deviceType == "Dehumidifier":
+                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
+                        await self.hass.services.async_call(
+                            domain="humidifier",
+                            service="turn_off",
+                            service_data={"entity_id": self.humidifierEntityId},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    self.isRunning = False
+                    _LOGGER.debug(f"{self.deviceName}: Dehumidifier OFF.")
                     return
 
                 # Light ausschalten

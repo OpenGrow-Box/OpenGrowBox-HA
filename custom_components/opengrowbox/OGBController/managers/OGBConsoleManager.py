@@ -83,8 +83,8 @@ class OGBConsoleManager:
             "list",
             self.cmd_list,
             "Lists available capabilities or devices",
-            "list [capabilities|devices]",
-            ["list capabilities", "list devices"],
+            "list [caps|devices]",
+            ["list caps", "list capabilities", "list devices"],
         )
 
         self.register_command(
@@ -313,14 +313,14 @@ class OGBConsoleManager:
         if not params:
             await self._send_response(
                 "⚠️ Specify what to list.\n"
-                "Usage: list <capabilities|devices>\n"
+                "Usage: list <caps|devices>\n"
                 "Use 'list -h' for help."
             )
             return
 
         list_type = params[0].lower()
 
-        if list_type == "capabilities":
+        if list_type in ("capabilities", "caps"):
             # Get actual capabilities from datastore
             capabilities = self.data_store.get("capabilities") or {}
             

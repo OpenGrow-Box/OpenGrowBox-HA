@@ -294,7 +294,7 @@ class OGBDeviceManager:
                     if any(keyword in label_name for keyword in keywords):
                         detected_type = device_type
                         detected_label = device_type
-                        _LOGGER.debug(
+                        _LOGGER.warning(
                             f"Device '{device_name}' identified via label as {detected_type}"
                         )
                         break

@@ -8,6 +8,7 @@ RELEVANT_PREFIXES = (
     "date.",
     "text.",
     "humidifier.",
+    "climate.",
     "fan.",
     "camera.",
 )
@@ -101,6 +102,7 @@ CAP_MAPPING = {
     "canLight": ["light"],
     "canCO2": ["co2"],
     "canPump": ["pump"],
+    "canWatch": ["camera"],
 }
 
 # Sensor-Kontexte definieren
@@ -472,10 +474,10 @@ CS_PARAMETER_MAPPING = {
 
 ## Device CoolDowns
 DEFAULT_DEVICE_COOLDOWNS = {
-    "canHumidify": 3,  # Befeuchter braucht Zeit
-    "canDehumidify": 4,  # Entfeuchter braucht noch mehr Zeit
-    "canHeat": 1,  # Heizung reagiert relativ schnell
-    "canCool": 2,  # Kühlung braucht etwas Zeit
+    "canHumidify": 5,  # Befeuchter braucht Zeit
+    "canDehumidify": 3,  # Entfeuchter braucht noch mehr Zeit
+    "canHeat": 3,  # Heizung reagiert relativ schnell
+    "canCool": 3,  # Kühlung braucht etwas Zeit
     "canExhaust": 1,  # Abluft reagiert schnell
     "canIntake": 1,  # Zuluft reagiert schnell
     "canVentilate": 1,  # Ventilation reagiert schnell
