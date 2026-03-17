@@ -42,6 +42,7 @@ class Camera(Device):
         
         # Store device data for camera access
         self.deviceData = deviceData
+        self.camera_entity_id = "camera." + self.deviceName
         
         # Initialize camera state
         self.last_image = None
@@ -123,8 +124,7 @@ class Camera(Device):
         self.isInitialized = True
 
         # Use logging like parent class does for consistency
-        logging.warning(f"Device: {self.deviceName} Initialization done {self}")
-
+        _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
 
     def _is_device_for_event(self, device_name):
         """Check if this camera should handle the given event.
@@ -1273,21 +1273,12 @@ class Camera(Device):
             except Exception as e:
                 _LOGGER.warning(f"{self.deviceName}: Error listing timelapse folders: {e}")
             
-            # Get camera entity_id for frontend matching
-            camera_entity_id = None
-            if hasattr(self, 'camera_entities') and self.camera_entities:
-                for entity in self.camera_entities:
-                    if isinstance(entity, dict):
-                        entity_id = entity.get("entity_id", "")
-                        if entity_id.startswith("camera."):
-                            camera_entity_id = entity_id
-                            break
             
             # Use persisted isTimeLapseActive from plantsView, not just in-memory tl_active
             is_recording_active = plants_view.get("isTimeLapseActive", False) or self.tl_active
             
             config_response = {
-                "device_name": camera_entity_id or self.deviceName,
+                "device_name": self.camera_entity_id,
                 "storage_path": timelapse_path,
                 "current_config": {
                     "interval": tl_config.get("TimeLapseIntervall", "900"),
