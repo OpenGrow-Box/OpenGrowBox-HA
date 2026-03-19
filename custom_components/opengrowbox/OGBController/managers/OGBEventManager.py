@@ -143,7 +143,7 @@ class OGBEventManager:
                     except Exception as e:
                         _LOGGER.error(f"Fehler beim synchronen Listener: {e}")
         elif "Medium" in event_name or "Plant" in event_name:
-            _LOGGER.warning(f"⚠️ No listeners registered for {event_name}")
+            _LOGGER.debug(f"ℹ️ No listeners registered for {event_name}")
 
     def emit_sync(self, event_name, data, haEvent=False, debug_type: Optional[DebugType] = None):
         """Synchrones Event auslösen (für synchrone Kontexte).
@@ -344,6 +344,44 @@ class OGBEventManager:
         self.listeners.clear()
         _LOGGER.info(f"✅ EventManager shutdown complete, cleared {listener_count} listeners")
 
+    def _sanitize_data_for_json(self, data):
+        """Reinigt Daten für JSON-Speicherung, um kaputte Strings zu vermeiden."""
+        if data is None:
+            return None
+        elif isinstance(data, str):
+            # String-Reinigung: sicherstellen, dass der String gültig ist
+            try:
+                # Prüfe ob der String selbst gültiges JSON wäre
+                json.dumps(data)
+                return data
+            except (TypeError, ValueError):
+                # Wenn nicht, versuchen wir, den String zu bereinigen
+                try:
+                    # Ersetze nicht-escaped quotes in Strings
+                    cleaned = str(data)
+                    # Ersetze carriage returns und andere problematische Zeichen
+                    cleaned = cleaned.replace('\r', '\\r').replace('\n', '\\n')
+                    # Prüfe erneut
+                    json.dumps(cleaned)
+                    return cleaned
+                except:
+                    # Als letztes Mittel: repr() verwenden, das sicher immer geht
+                    return repr(str(data))
+        elif isinstance(data, (list, tuple)):
+            return [self._sanitize_data_for_json(item) for item in data]
+        elif isinstance(data, dict):
+            return {k: self._sanitize_data_for_json(v) for k, v in data.items()}
+        elif isinstance(data, (bool, int, float)):
+            return data
+        else:
+            # Für andere Typen: zu String konvertieren und validieren
+            try:
+                s = str(data)
+                json.dumps(s)
+                return s
+            except:
+                return repr(data)
+
     async def _save_log_to_file(self, data, debug_type: DebugType):
         """Speichert LogForClient Events in ogb_data JSON-Datei.
         
@@ -374,9 +412,11 @@ class OGBEventManager:
                         # Backup old file before reset
                         backup_file = log_file + ".backup"
                         try:
+                            content = await asyncio.to_thread(self._read_file, log_file)
                             await asyncio.to_thread(self._write_file, backup_file, content)
                         except:
                             pass
+                        _LOGGER.warning("client_logs.json war korrupt, starte neu")
                         logs = []
                 
                 # Dataclass in dict umwandeln falls nötig (mit Fallback)
@@ -403,6 +443,9 @@ class OGBEventManager:
                 except Exception as e:
                     _LOGGER.debug(f"Konnte Dataclass nicht konvertieren: {e}")
                     serializable_data = str(data)
+                
+                # Daten sanitizen, um korrupte JSON zu vermeiden
+                serializable_data = self._sanitize_data_for_json(serializable_data)
                 
                 # Room aus Daten extrahieren - mehrere Quellen prüfen
                 room = "unknown"
@@ -492,6 +535,37 @@ class OGBEventManager:
             # Nur die neuesten limit Einträge
             return logs[-limit:] if len(logs) > limit else logs
             
+        except json.JSONDecodeError as e:
+            _LOGGER.error(f"Client-Logs Datei ist beschädigt (JSON-Fehler): {e}")
+            # Versuch, Backup wiederherzustellen
+            try:
+                if hasattr(self.hass, 'config'):
+                    ogb_data_dir = self.hass.config.path("ogb_data")
+                else:
+                    ogb_data_dir = "/config/ogb_data"
+                backup_file = os.path.join(ogb_data_dir, "client_logs.json.backup")
+                if os.path.exists(backup_file):
+                    _LOGGER.info("Versuche Backup wiederherzustellen...")
+                    backup_content = await asyncio.to_thread(self._read_file, backup_file)
+                    if backup_content:
+                        logs = json.loads(backup_content)
+                        # Restore backup as main file
+                        import tempfile
+                        import shutil
+                        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', 
+                                                         dir=ogb_data_dir or ".", 
+                                                         prefix='client_logs.json.tmp',
+                                                         delete=False) as temp_file:
+                            temp_file.write(backup_content)
+                            temp_file.flush()
+                            os.fsync(temp_file.fileno())
+                            temp_path = temp_file.name
+                        os.replace(temp_path, os.path.join(ogb_data_dir, "client_logs.json"))
+                        _LOGGER.info("Backup erfolgreich wiederhergestellt")
+                        return logs[-limit:] if len(logs) > limit else logs
+            except Exception as backup_error:
+                _LOGGER.error(f"Konnte Backup nicht wiederherstellen: {backup_error}")
+            return []
         except Exception as e:
             _LOGGER.error(f"Fehler beim Lesen der Client-Logs: {e}")
             return []
@@ -539,6 +613,27 @@ class OGBEventManager:
             return ""
     
     def _write_file(self, filepath: str, content: str):
-        """Synchroner File-Write für asyncio.to_thread"""
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
+        """Synchroner File-Write für asyncio.to_thread mit atomic write support"""
+        import tempfile
+        import shutil
+        
+        # Temporäre Datei im selben Verzeichnis erstellen
+        dir_name = os.path.dirname(filepath) or "."
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', 
+                                         dir=dir_name, 
+                                         prefix=os.path.basename(filepath) + '.tmp',
+                                         delete=False) as temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_path = temp_file.name
+        
+        # Atomic rename
+        try:
+            os.replace(temp_path, filepath)
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+            raise

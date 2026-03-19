@@ -398,7 +398,7 @@ class Sensor:
             },
         )
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             f" ✓ Sensor {sensor_type} ({context}) ({entity_id}) {self.medium_label} {self.deviceLabel} initialisiert"
         )
 

@@ -172,7 +172,7 @@ class OGBPremiumIntegration:
                 if plan_name == "free":
                     max_connections = 1
 
-            _LOGGER.warning(f"🔍 {self.room} Plan: {plan_name}, Active connections: {active_premium_connections}, Max allowed: {max_connections} - {self.subscription_data}")
+            _LOGGER.debug(f"🔍 {self.room} Plan: {plan_name}, Active connections: {active_premium_connections}, Max allowed: {max_connections} - {self.subscription_data}")
             if blocked_rooms:
                 _LOGGER.warning(f"🚫 Blocked rooms: {', '.join(blocked_rooms)}")
 

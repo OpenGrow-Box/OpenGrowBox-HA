@@ -328,7 +328,7 @@ class OGBDeviceManager:
                             detected_label = device_labels[0].get("name", "unknown")
                         else:
                             detected_label = "EMPTY"
-                        _LOGGER.warning(
+                        _LOGGER.debug(
                             f"Device '{device_name}' identified via name as {detected_type}"
                         )
                         break
@@ -483,6 +483,13 @@ class OGBDeviceManager:
             return
 
         async def periodicWorker():
+            # CRITICAL FIX: First update immediately, then loop with delay
+            try:
+                await self.DeviceUpdater()
+                _LOGGER.info(f"{self.room}: Initial device refresh completed")
+            except Exception as e:
+                _LOGGER.error(f"{self.room}: Error during initial device refresh: {e}")
+
             while True:
                 try:
                     await self.DeviceUpdater()

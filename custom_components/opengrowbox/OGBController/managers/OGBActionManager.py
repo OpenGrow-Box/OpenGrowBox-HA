@@ -877,6 +877,7 @@ class OGBActionManager:
             'VPD Perfection': 'VPD-P',
             'VPD Target': 'VPD-T',
             'Closed Environment': 'CLOSED',
+            'Script Mode': 'SCRIPT',
             'Drying': 'DRY',
             'Disabled': 'OFF',
             # Premium API control modes

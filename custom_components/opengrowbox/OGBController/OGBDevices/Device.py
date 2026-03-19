@@ -619,7 +619,7 @@ class Device:
             for entity in source:
                 entity_id = entity.get("entity_id", "").lower()
                 if any(key in entity_id for key in dimmableKeys):
-                    _LOGGER.warning(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
+                    _LOGGER.info(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
                     self.isDimmable = True
                     return
 
@@ -686,7 +686,7 @@ class Device:
 
             # Beim Init (force_update=False): Wert 0 überspringen – noch kein echter HA-Wert
             if not force_update and converted == 0:
-                _LOGGER.warning(f"{self.deviceName}: Init – sensor {entity_id} hat Wert 0, überspringe (warte auf echten Wert via deviceUpdater)")
+                _LOGGER.info(f"{self.deviceName}: Init – sensor {entity_id} hat Wert 0, überspringe (warte auf echten Wert via deviceUpdater)")
                 continue
 
             if self.deviceType == "Light":

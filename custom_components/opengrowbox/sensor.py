@@ -501,7 +501,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             """Handle request for medium plants data - triggers backend to emit MediumPlantsUpdate event."""
             room = call.data.get("room")
             
-            _LOGGER.warning(f"🔍 SERVICE CALL: request_medium_plants_data for room '{room}'")
+            _LOGGER.debug(f"🔍 SERVICE CALL: request_medium_plants_data for room '{room}'")
             
             # Get coordinator for this room - check room_name attribute
             coordinator = None

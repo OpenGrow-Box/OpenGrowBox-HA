@@ -589,7 +589,7 @@ class OGBTankFeedManager:
             self.current_oxi = sensor_data['oxiCurrent']
             self.current_sal = sensor_data['salCurrent']
 
-            _LOGGER.warning(f"[{self.room}] Hydro values: pH={self.current_ph:.2f}, "
+            _LOGGER.debug(f"[{self.room}] Hydro values: pH={self.current_ph:.2f}, "
                         f"EC={self.current_ec:.2f} mS/cm, Temp={self.current_temp:.2f}°C")
 
             # Delegate feed decision to logic manager
