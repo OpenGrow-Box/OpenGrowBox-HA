@@ -357,10 +357,15 @@ class OpenGrowBox:
         perfectVPDMin = perfections["perfect_min"]
         perfectVPDMax = perfections["perfect_max"]
 
-        # Update sensors
-        await _update_specific_sensor("ogb_current_vpd_target_", self.room, perfectVPD, self.hass)
-        await _update_specific_sensor("ogb_current_vpd_target_min_", self.room, perfectVPDMin, self.hass)
-        await _update_specific_sensor("ogb_current_vpd_target_max_", self.room, perfectVPDMax, self.hass)
+        tentMode = self.data_store.get("tentMode")
+        if tentMode == "VPD Target":
+            targeted = self.data_store.getDeep("vpd.targeted")
+            target_min = self.data_store.getDeep("vpd.targetedMin")
+            target_max = self.data_store.getDeep("vpd.targetedMax")
+            if targeted is not None:
+                await _update_specific_sensor("ogb_current_vpd_target_", self.room, targeted, self.hass)
+                await _update_specific_sensor("ogb_current_vpd_target_min_", self.room, target_min, self.hass)
+                await _update_specific_sensor("ogb_current_vpd_target_max_", self.room, target_max, self.hass)
 
         # Store in data store
         self.data_store.setDeep("vpd.range", vpd_range)

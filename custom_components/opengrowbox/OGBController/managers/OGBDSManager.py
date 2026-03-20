@@ -106,64 +106,23 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
 
 
 def _merge_capabilities(data: Dict[str, Any], room: str) -> Dict[str, Any]:
-    """Merge capabilities from saved state with current CAP_MAPPING.
-    
-    Ensures new capabilities are added with default values while preserving
-    existing capabilities from saved state.
-    
-    CRITICAL FIX: Cleans up devEntities lists to remove non-existent devices
-    that were renamed or deleted. This prevents stale device names from
-    persisting across restarts.
+    """Ensure capability schema keys exist in loaded state.
+
+    NOTE: This function is schema-only and must NOT restore runtime device
+    assignments (state/count/devEntities) from old saved states.
     """
     if "capabilities" not in data:
-        _LOGGER.warning(f"[{room}] No capabilities in saved state, initializing")
-        return data
-    
+        data["capabilities"] = {}
+
     saved_caps = data["capabilities"]
     if not isinstance(saved_caps, dict):
-        _LOGGER.warning(f"[{room}] Invalid capabilities format, reinitializing")
-        return data
-    
+        _LOGGER.warning(f"[{room}] Invalid capabilities format, resetting schema")
+        saved_caps = {}
+        data["capabilities"] = saved_caps
+
     # Default structure for new capabilities
     DEFAULT_CAP = {"state": False, "count": 0, "devEntities": []}
-    
-    # Get list of valid device names from saved state
-    # This prevents referencing devices that no longer exist
-    saved_devices = data.get("devices", [])
-    valid_device_names = set()
-    for device in saved_devices:
-        if isinstance(device, dict):
-            device_name = device.get("name") or device.get("deviceName")
-            if device_name:
-                valid_device_names.add(device_name)
-    
-    # Clean up devEntities lists for all capabilities
-    cleaned = False
-    for cap_name, cap_data in saved_caps.items():
-        if not isinstance(cap_data, dict):
-            continue
-        
-        dev_entities = cap_data.get("devEntities", [])
-        if not dev_entities:
-            continue
-        
-        # Filter to only keep devices that actually exist
-        filtered_entities = [dev for dev in dev_entities if dev in valid_device_names]
-        
-        if len(filtered_entities) != len(dev_entities):
-            removed = set(dev_entities) - set(filtered_entities)
-            _LOGGER.warning(
-                f"[{room}] Cleaning {cap_name}: removed {len(removed)} "
-                f"non-existent device(s): {removed}"
-            )
-            cap_data["devEntities"] = filtered_entities
-            cap_data["count"] = len(filtered_entities)
-            cap_data["state"] = len(filtered_entities) > 0
-            cleaned = True
-    
-    if cleaned:
-        _LOGGER.info(f"[{room}] ✅ Cleaned up stale device entries in capabilities")
-    
+
     # Add missing capabilities
     added_caps = []
     for cap in CAP_MAPPING.keys():
@@ -202,6 +161,24 @@ class OGBDSManager:
         self.is_initialized = True
         _LOGGER.info(f"[{self.room}] OGBDSManager initialized (state will be loaded async)")
 
+    def _ensure_capability_schema_only_in_datastore(self):
+        """Ensure all known capability keys exist in datastore without restoring old device assignments."""
+        default_cap = {"state": False, "count": 0, "devEntities": []}
+        current_caps = self.data_store.get("capabilities")
+        if not isinstance(current_caps, dict):
+            current_caps = {}
+
+        added = []
+        for cap in CAP_MAPPING.keys():
+            if cap not in current_caps:
+                current_caps[cap] = default_cap.copy()
+                added.append(cap)
+
+        if added:
+            _LOGGER.info(f"[{self.room}] Added {len(added)} missing capability keys to datastore: {added}")
+
+        self.data_store.set("capabilities", current_caps)
+
     async def async_init(self):
         """Asynchronously initialize and load state from disk into datastore.
         
@@ -237,7 +214,7 @@ class OGBDSManager:
             # This fixes issues like corrupted tuple strings in growMediums
             data = _clean_corrupted_data(data, self.room)
             
-            # CRITICAL: Merge capabilities with current CAP_MAPPING to handle new caps
+            # Schema check only (do not restore runtime capability assignments)
             data = _merge_capabilities(data, self.room)
             
             # Load growMediums first if present - this is critical for MediumManager
@@ -257,7 +234,12 @@ class OGBDSManager:
             
             # Load all data into datastore
             for key, value in data.items():
+                if key in ("devices", "capabilities"):
+                    continue
                 self.data_store.set(key, value)
+
+            # Keep runtime-built capabilities, only ensure schema keys exist
+            self._ensure_capability_schema_only_in_datastore()
             
             _LOGGER.warning(f"[{self.room}] ✅ State loaded ASYNCHRONOUSLY into datastore ({len(data)} keys)")
             
@@ -493,7 +475,12 @@ class OGBDSManager:
             _LOGGER.warning(f"✅ State loaded from {self.storage_path}")
 
             for key, value in loaded_data.items():
+                if key in ("devices", "capabilities"):
+                    continue
                 self.data_store.set(key, value)
+
+            # Keep runtime-built capabilities, only ensure schema keys exist
+            self._ensure_capability_schema_only_in_datastore()
 
         except Exception as e:
             _LOGGER.error(f"❌ Failed to load DataStore: {e}")

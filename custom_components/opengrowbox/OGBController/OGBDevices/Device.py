@@ -695,8 +695,13 @@ class Device:
                 control_value_found = True
                 _LOGGER.debug(f"{self.deviceName}: Voltage from Sensor updated to {self.voltage}%.")
 
-                # Clampen NUR wenn MinMax aktiv
-                if self.is_minmax_active and self.minVoltage is not None and self.maxVoltage is not None:
+                # Runtime clamp only: during restore/init keep loaded control value untouched
+                if (
+                    force_update
+                    and self.is_minmax_active
+                    and self.minVoltage is not None
+                    and self.maxVoltage is not None
+                ):
                     clamped = self.clamp_voltage(self.voltage)
                     if clamped != self.voltage:
                         _LOGGER.warning(f"{self.deviceName}: MinMax aktiv – voltage {self.voltage}% → clamp {clamped}%")
@@ -718,8 +723,13 @@ class Device:
                 control_value_found = True
                 _LOGGER.debug(f"{self.deviceName}: Duty Cycle from Sensor updated to {self.dutyCycle}%.")
 
-                # Clampen NUR wenn MinMax aktiv
-                if self.is_minmax_active and self.minDuty is not None and self.maxDuty is not None:
+                # Runtime clamp only: during restore/init keep loaded control value untouched
+                if (
+                    force_update
+                    and self.is_minmax_active
+                    and self.minDuty is not None
+                    and self.maxDuty is not None
+                ):
                     clamped = self.clamp_duty_cycle(self.dutyCycle)
                     if clamped != self.dutyCycle:
                         _LOGGER.warning(f"{self.deviceName}: MinMax aktiv – dutyCycle {self.dutyCycle}% → clamp {clamped}%")
@@ -766,7 +776,12 @@ class Device:
                     control_value_found = True
                     _LOGGER.debug(f"{self.deviceName}: Voltage set from Options to {self.voltage}%.")
 
-                    if self.is_minmax_active and self.minVoltage is not None and self.maxVoltage is not None:
+                    if (
+                        force_update
+                        and self.is_minmax_active
+                        and self.minVoltage is not None
+                        and self.maxVoltage is not None
+                    ):
                         clamped = self.clamp_voltage(self.voltage)
                         if clamped != self.voltage:
                             _LOGGER.warning(f"{self.deviceName}: MinMax aktiv – voltage {self.voltage}% → clamp {clamped}%")
@@ -796,7 +811,12 @@ class Device:
                     control_value_found = True
                     _LOGGER.debug(f"{self.deviceName}: Duty Cycle set from Options to {self.dutyCycle}%.")
 
-                    if self.is_minmax_active and self.minDuty is not None and self.maxDuty is not None:
+                    if (
+                        force_update
+                        and self.is_minmax_active
+                        and self.minDuty is not None
+                        and self.maxDuty is not None
+                    ):
                         clamped = self.clamp_duty_cycle(self.dutyCycle)
                         if clamped != self.dutyCycle:
                             _LOGGER.warning(f"{self.deviceName}: MinMax aktiv – dutyCycle {self.dutyCycle}% → clamp {clamped}%")
@@ -951,6 +971,10 @@ class Device:
                             if "select." in option["entity_id"]
                         ]
 
+                if not entity_ids:
+                    _LOGGER.warning(f"{self.deviceName}: AcInfinity control has no select entity - skipping turn_on fallback")
+                    return
+
                 for entity_id in entity_ids:
                     _LOGGER.debug(f"{self.deviceName} ON ACTION with ID {entity_id}")
                     await self.hass.services.async_call(
@@ -961,22 +985,21 @@ class Device:
                             "option": "On"
                         },
                     )
-                    # Zusatzaktionen je nach Gerätetyp
-                    if self.deviceType in ["Light", "Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"]:
-                        # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
-                        
-                        if self.deviceType == "Light":
-                            if brightness_pct is not None:
-                                _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
-                                await self.set_value(int(brightness_pct/10))
-                                self.isRunning = True  
-                                return                    
-                        else:
-                            if percentage is not None:
-                                _LOGGER.warning(f"{self.deviceName}: set value to {percentage}")
-                                await self.set_value(percentage/10)
-                                self.isRunning = True
-                                return
+
+                # Zusatzaktionen je nach Gerätetyp
+                if self.deviceType in ["Light", "Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"]:
+                    # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
+                    if self.deviceType == "Light":
+                        if brightness_pct is not None:
+                            _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
+                            await self.set_value(int(brightness_pct/10))
+                    else:
+                        if percentage is not None:
+                            _LOGGER.warning(f"{self.deviceName}: set value to {percentage}")
+                            await self.set_value(percentage/10)
+
+                self.isRunning = True
+                return
 
             # === Standardgeräte ===
             if not self.switches:
@@ -1038,7 +1061,6 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (non-dimmable).")
                         return
 
-
                 # Exhaust einschalten
                 elif self.deviceType == "Exhaust":
                     if self.isSpecialDevice:
@@ -1065,17 +1087,24 @@ class Device:
                             return
 
                     elif self.isDimmable:
-                        await self.hass.services.async_call(
-                            domain="fan",
-                            service="set_percentage",
-                            service_data={
-                                "entity_id": entity_id,
-                                "percentage": percentage,
-                            },
-                        )
-                        self.isRunning = True
-                        _LOGGER.debug(f"{self.deviceName}: Exhaust ON ({percentage}%).")
-                        return
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(True)
+                            await self.set_value(percentage)
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON via select+number ({percentage}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="fan",
+                                service="set_percentage",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "percentage": percentage,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON ({percentage}%).")
+                            return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1111,16 +1140,23 @@ class Device:
                             _LOGGER.debug(f"{self.deviceName}: Intake ON (Switch).")
                             return
                     elif self.isDimmable:
-                        await self.hass.services.async_call(
-                            domain="fan",
-                            service="set_percentage",
-                            service_data={
-                                "entity_id": entity_id,
-                                "percentage": percentage,
-                            },
-                        )
-                        self.isRunning = True
-                        return
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(True)
+                            await self.set_value(percentage)
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Intake ON via select+number ({percentage}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="fan",
+                                service="set_percentage",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "percentage": percentage,
+                                },
+                            )
+                            self.isRunning = True
+                            return
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1143,14 +1179,18 @@ class Device:
                             },
                         )
                     elif self.isDimmable:
-                        await self.hass.services.async_call(
-                            domain="fan",
-                            service="set_percentage",
-                            service_data={
-                                "entity_id": entity_id,
-                                "percentage": percentage,
-                            },
-                        )
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(True)
+                            await self.set_value(percentage)
+                        else:
+                            await self.hass.services.async_call(
+                                domain="fan",
+                                service="set_percentage",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "percentage": percentage,
+                                },
+                            )
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1192,8 +1232,16 @@ class Device:
                             service="turn_on",
                             service_data={"entity_id": entity_id},
                         )
+
+                    # Non-AC-Infinity dimmable humidifier path:
+                    # turn on first, then set numeric output value (duty/intensity/number).
+                    if self.isDimmable and percentage is not None:
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(True)
+                        await self.set_value(percentage)
+
                     self.isRunning = True
-                    _LOGGER.debug(f"{self.deviceName}: Humidifier ON.")
+                    _LOGGER.debug(f"{self.deviceName}: Humidifier ON ({percentage}%).")
                     return
 
                 # Dehumidifier einschalten
@@ -1210,8 +1258,16 @@ class Device:
                             service="turn_on",
                             service_data={"entity_id": entity_id},
                         )
+
+                    # Non-AC-Infinity dimmable dehumidifier path:
+                    # turn on first, then set numeric output value (duty/intensity/number).
+                    if self.isDimmable and percentage is not None:
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(True)
+                        await self.set_value(percentage)
+
                     self.isRunning = True
-                    _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON.")
+                    _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON ({percentage}%).")
                     return
 
 
@@ -1274,6 +1330,10 @@ class Device:
                             if "select." in option["entity_id"]
                         ]
 
+                if not entity_ids:
+                    _LOGGER.warning(f"{self.deviceName}: AcInfinity control has no select entity - skipping turn_off fallback")
+                    return
+
                 for entity_id in entity_ids:
                     _LOGGER.debug(f"{self.deviceName} OFF ACTION with ID {entity_id}")
                     await self.hass.services.async_call(
@@ -1325,6 +1385,10 @@ class Device:
 
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
+                    if self.isDimmable:
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(False)
+                        await self.set_value(0)
                     if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
                         await self.hass.services.async_call(
                             domain="humidifier",
@@ -1343,6 +1407,10 @@ class Device:
 
                 # Dehumidifier ausschalten
                 elif self.deviceType == "Dehumidifier":
+                    if self.isDimmable:
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(False)
+                        await self.set_value(0)
                     if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
                         await self.hass.services.async_call(
                             domain="humidifier",
@@ -1386,7 +1454,11 @@ class Device:
                 # Exhaust ausschalten
                 elif self.deviceType == "Exhaust":
                     if self.isDimmable:
-                        return  # Deaktiviert
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(False)
+                            await self.set_value(0)
+                            self.isRunning = False
+                        return  # Deaktiviert for fan-percentage exhaust
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1400,6 +1472,10 @@ class Device:
                 # Intake ausschalten
                 elif self.deviceType == "Intake":
                     if self.isDimmable:
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(False)
+                            await self.set_value(0)
+                            self.isRunning = False
                         return
                     else:
                         await self.hass.services.async_call(
@@ -1420,11 +1496,15 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                     elif self.isDimmable:
-                        await self.hass.services.async_call(
-                            domain="fan",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
+                        if self._has_select_and_number_control():
+                            await self._set_select_power_option(False)
+                            await self.set_value(0)
+                        else:
+                            await self.hass.services.async_call(
+                                domain="fan",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1477,6 +1557,7 @@ class Device:
             _LOGGER.error(f"{self.deviceName}: set_value ungültiger Wert '{value}'")
             return
 
+        # Preferred: explicit duty/intensity control entities
         for option in self.options:
             entity_id = option.get("entity_id", "")
             if "duty" in entity_id or "intensity" in entity_id:
@@ -1492,7 +1573,82 @@ class Device:
                     _LOGGER.error(f"{self.deviceName}: Fehler beim Setzen des Wertes für {entity_id}: {e}")
                 return  # immer nach erster passender Option abbrechen
 
+        # Fallback for non-AC dimmable devices using generic number entities
+        if self.deviceType in {"Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"}:
+            for option in self.options:
+                entity_id = option.get("entity_id", "")
+                if entity_id.startswith("number."):
+                    try:
+                        send_value = float(int(value)) if self.isAcInfinDev else value
+                        await self.hass.services.async_call(
+                            domain="number",
+                            service="set_value",
+                            service_data={"entity_id": entity_id, "value": send_value},
+                        )
+                        _LOGGER.debug(f"{self.deviceName}: Fallback number value {send_value} für {entity_id} gesetzt.")
+                    except Exception as e:
+                        _LOGGER.error(f"{self.deviceName}: Fehler beim Setzen des Fallback-Wertes für {entity_id}: {e}")
+                    return
+
         _LOGGER.warning(f"{self.deviceName}: keine Option mit 'duty' oder 'intensity' in entity_id gefunden.")
+
+    def _has_select_and_number_control(self) -> bool:
+        """Return True if device exposes both select and number control entities."""
+        all_entities = []
+        all_entities.extend(self.options or [])
+        all_entities.extend(self.switches or [])
+
+        has_select = any(
+            str(entity.get("entity_id", "")).startswith("select.") for entity in all_entities
+        )
+        has_number = any(
+            str(entity.get("entity_id", "")).startswith("number.") for entity in all_entities
+        )
+        return has_select and has_number
+
+    async def _set_select_power_option(self, power_on: bool) -> None:
+        """Set select control to an On/Off-like option if available."""
+        target_candidates = ["on", "auto"] if power_on else ["off"]
+
+        all_entities = []
+        all_entities.extend(self.options or [])
+        all_entities.extend(self.switches or [])
+
+        for option in all_entities:
+            entity_id = str(option.get("entity_id", ""))
+            if not entity_id.startswith("select."):
+                continue
+
+            selected_option = None
+            if self.hass:
+                state = self.hass.states.get(entity_id)
+                attrs = getattr(state, "attributes", {}) if state else {}
+                available = attrs.get("options") or []
+                for candidate in target_candidates:
+                    for available_option in available:
+                        if str(available_option).lower() == candidate:
+                            selected_option = available_option
+                            break
+                    if selected_option is not None:
+                        break
+
+            if selected_option is None:
+                selected_option = "On" if power_on else "Off"
+
+            try:
+                await self.hass.services.async_call(
+                    domain="select",
+                    service="select_option",
+                    service_data={"entity_id": entity_id, "option": selected_option},
+                )
+                _LOGGER.debug(
+                    f"{self.deviceName}: set select option '{selected_option}' on {entity_id}"
+                )
+                return
+            except Exception as e:
+                _LOGGER.debug(
+                    f"{self.deviceName}: select option '{selected_option}' failed on {entity_id}: {e}"
+                )
 
     async def set_mode(self, mode: str) -> None:
         """Setzt den Mode des Geräts, falls unterstützt."""

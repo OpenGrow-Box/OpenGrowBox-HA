@@ -193,6 +193,121 @@ class OGBDampeningActions:
 
         return final_actions
 
+    async def process_actions_target_basic(self, action_map: List) -> List:
+        """Process VPD Target actions with shared safety but without enhancement injection."""
+        _LOGGER.debug(
+            f"{self.ogb.room}: Processing {len(action_map)} VPD Target actions (separated chain)"
+        )
+
+        # Keep night hold behavior identical to standard VPD chain
+        night_vpd_hold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold")
+        is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON")
+        if not is_light_on and not night_vpd_hold:
+            _LOGGER.debug(f"{self.ogb.room}: VPD Night Hold Not Active - Ignoring VPD")
+            await self._night_hold_fallback(action_map)
+            return []
+
+        tent_data = self.ogb.dataStore.get("tentData") or {}
+        has_env_limits = all(
+            key in tent_data
+            for key in ("temperature", "humidity", "minTemp", "maxTemp", "minHumidity", "maxHumidity")
+        )
+
+        # Use targeted VPD bounds from datastore for diagnostics and traceability
+        current_vpd = self.ogb.dataStore.getDeep("vpd.current")
+        targeted_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
+        targeted_min = self.ogb.dataStore.getDeep("vpd.targetedMin")
+        targeted_max = self.ogb.dataStore.getDeep("vpd.targetedMax")
+        _LOGGER.debug(
+            f"{self.ogb.room}: VPD Target dampening context: "
+            f"current={current_vpd}, targeted={targeted_vpd}, "
+            f"min={targeted_min}, max={targeted_max}"
+        )
+        await self.ogb.eventManager.emit(
+            "LogForClient",
+            {
+                "Name": self.ogb.room,
+                "message": "VPD Target separated chain started",
+                "vpdCurrent": current_vpd,
+                "vpdTarget": targeted_vpd,
+                "vpdTargetMin": targeted_min,
+                "vpdTargetMax": targeted_max,
+                "incomingActions": len(action_map),
+            },
+            haEvent=True,
+            debug_type="DEBUG",
+        )
+
+        # Shared basic safety: buffer zones + conflict resolution
+        buffered_actions = self._apply_buffer_zones(action_map, tent_data)
+        resolved_actions = self._resolve_action_conflicts(buffered_actions)
+
+        if not resolved_actions:
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Target chain: no actions after buffer/conflict resolution",
+                    "incomingActions": len(action_map),
+                },
+                haEvent=True,
+                debug_type="DEBUG",
+            )
+            return []
+
+        if has_env_limits:
+            temp_deviation, hum_deviation = self._calculate_basic_deviations(tent_data)
+        else:
+            temp_deviation, hum_deviation = 0.0, 0.0
+
+        # Keep emergency handling/cooldown clearing behavior
+        emergency_conditions = (
+            self.action_manager._getEmergencyOverride(tent_data)
+            if has_env_limits and "dewpoint" in tent_data
+            else []
+        )
+        if emergency_conditions:
+            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+
+        # Keep dampening (cooldown) filter behavior
+        filtered_actions, _ = self.action_manager._filterActionsByDampening(
+            resolved_actions, temp_deviation, hum_deviation
+        )
+
+        if not filtered_actions:
+            await self._handle_blocked_actions(
+                resolved_actions, emergency_conditions, temp_deviation, hum_deviation
+            )
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Target chain: all actions blocked by dampening/cooldown",
+                    "resolvedActions": len(resolved_actions),
+                    "emergency": emergency_conditions,
+                },
+                haEvent=True,
+                debug_type="WARNING",
+            )
+            return []
+
+        await self.ogb.eventManager.emit(
+            "LogForClient",
+            {
+                "Name": self.ogb.room,
+                "message": "VPD Target chain: executing filtered actions",
+                "resolvedActions": len(resolved_actions),
+                "filteredActions": len(filtered_actions),
+                "tempDeviation": temp_deviation,
+                "humDeviation": hum_deviation,
+            },
+            haEvent=True,
+            debug_type="INFO",
+        )
+
+        await self._execute_actions(filtered_actions)
+        return filtered_actions
+
     def _calculate_weights(self, own_weights: bool) -> Tuple[float, float]:
         """
         Calculate temperature and humidity weights.

@@ -458,10 +458,19 @@ class OGBDeviceManager:
                     expected_label = self._determine_device_type_from_labels(
                         realDevice.get("labels", [])
                     )
-                    if currentLabel != expected_label:
+
+                    normalized_current = self._normalize_device_label_for_compare(
+                        currentLabel
+                    )
+                    normalized_expected = self._normalize_device_label_for_compare(
+                        expected_label
+                    )
+
+                    if normalized_current != normalized_expected:
                         devicesToReidentify.append(realDevice)
                         _LOGGER.warning(
-                            f"Device '{realDevice['name']}' label changed from '{currentLabel}' to '{expected_label}', will be re-identified"
+                            f"Device '{realDevice['name']}' label changed from '{currentLabel}' to '{expected_label}' "
+                            f"(normalized: '{normalized_current}' -> '{normalized_expected}'), will be re-identified"
                         )
 
         if removedDevices:
@@ -595,7 +604,7 @@ class OGBDeviceManager:
             special_light_labels = [lbl.get("name", "").lower() for lbl in labels if lbl.get("name", "").lower() in ["light_blue", "light_red", "light_uv", "light_fr", "light_farred", "light_uvb", "light_uva", "uvlight"]]
             if any(keyword in special_light_labels for keyword in ["blue", "red", "uv", "uvb", "uva", "farred"]):
                 # Already identified as special light, don't fall back to generic Light
-                return "Light", None  # Return None for detected_label to avoid overwriting
+                return "Light"
 
             # Third: Contains matching with priority ordering
         for lbl in labels:
@@ -616,4 +625,31 @@ class OGBDeviceManager:
                 if any(keyword in label_name for keyword in keywords):
                     return device_type
         
+        return "EMPTY"
+
+    def _normalize_device_label_for_compare(self, label: str) -> str:
+        """Normalize free-form labels to canonical device-type labels for stable compare."""
+        if not label:
+            return "EMPTY"
+
+        label_lower = str(label).strip().lower()
+        if not label_lower:
+            return "EMPTY"
+
+        # Direct device-type name (e.g. "Exhaust")
+        for device_type in DEVICE_TYPE_MAPPING:
+            if label_lower == device_type.lower():
+                return device_type
+
+        # Exact keyword match
+        for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+            if any(label_lower == str(keyword).lower() for keyword in keywords):
+                return device_type
+
+        # Contains keyword match (fallback)
+        for device_type, keywords in DEVICE_TYPE_MAPPING.items():
+            if any(str(keyword).lower() in label_lower for keyword in keywords):
+                return device_type
+
+        # Keep unknown/context labels (e.g. Medium_1) as EMPTY for reidentify compare
         return "EMPTY"

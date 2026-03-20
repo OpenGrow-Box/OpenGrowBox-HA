@@ -628,7 +628,7 @@ class GrowMedium:
                 _LOGGER.debug(f"[{self.room}] Medium {self.name}: Max sensors reached for {sensor_type}, removing oldest")
                 self.registered_sensors[sensor_type].pop(0)
             self.registered_sensors[sensor_type].append(entity_id)
-            _LOGGER.error(f"[{self.room}] Medium {self.name}: Added {entity_id} to registered_sensors[{sensor_type}]")
+            _LOGGER.debug(f"[{self.room}] Medium {self.name}: Added {entity_id} to registered_sensors[{sensor_type}]")
 
         self.sensor_type_map[entity_id] = sensor_type
 

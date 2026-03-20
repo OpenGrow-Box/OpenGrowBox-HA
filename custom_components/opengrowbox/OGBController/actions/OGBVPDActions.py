@@ -149,6 +149,72 @@ class OGBVPDActions:
 
         await self.action_manager.checkLimitsAndPublicate(action_map)
 
+    async def increase_vpd_target(self, capabilities: Dict[str, Any]):
+        """Increase VPD for VPD Target mode."""
+        vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        action_message = "VPD-Target Increase Action"
+
+        action_map = []
+
+        if capabilities.get("canExhaust", {}).get("state", False):
+            action_map.append(self._create_action("canExhaust", "Increase", action_message))
+        if capabilities.get("canIntake", {}).get("state", False):
+            action_map.append(self._create_action("canIntake", "Reduce", action_message))
+        if capabilities.get("canVentilate", {}).get("state", False):
+            action_map.append(self._create_action("canVentilate", "Increase", action_message))
+        if capabilities.get("canHumidify", {}).get("state", False):
+            action_map.append(self._create_action("canHumidify", "Reduce", action_message))
+        if capabilities.get("canDehumidify", {}).get("state", False):
+            action_map.append(self._create_action("canDehumidify", "Increase", action_message))
+        if capabilities.get("canHeat", {}).get("state", False):
+            action_map.append(self._create_action("canHeat", "Increase", action_message))
+        if capabilities.get("canCool", {}).get("state", False):
+            action_map.append(self._create_action("canCool", "Reduce", action_message))
+        if capabilities.get("canClimate", {}).get("state", False):
+            action_map.append(self._create_action("canClimate", "Eval", action_message))
+
+        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
+            action_map.append(self._create_action("canCO2", "Increase", action_message))
+
+        if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
+            action_map.append(self._create_action("canLight", "Increase", action_message))
+
+        await self.action_manager.checkLimitsAndPublicateTarget(action_map)
+
+    async def reduce_vpd_target(self, capabilities: Dict[str, Any]):
+        """Reduce VPD for VPD Target mode."""
+        vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        action_message = "VPD-Target Reduce Action"
+
+        action_map = []
+
+        if capabilities.get("canExhaust", {}).get("state", False):
+            action_map.append(self._create_action("canExhaust", "Reduce", action_message))
+        if capabilities.get("canIntake", {}).get("state", False):
+            action_map.append(self._create_action("canIntake", "Increase", action_message))
+        if capabilities.get("canVentilate", {}).get("state", False):
+            action_map.append(self._create_action("canVentilate", "Reduce", action_message))
+        if capabilities.get("canHumidify", {}).get("state", False):
+            action_map.append(self._create_action("canHumidify", "Increase", action_message))
+        if capabilities.get("canDehumidify", {}).get("state", False):
+            action_map.append(self._create_action("canDehumidify", "Reduce", action_message))
+        if capabilities.get("canHeat", {}).get("state", False):
+            action_map.append(self._create_action("canHeat", "Reduce", action_message))
+        if capabilities.get("canCool", {}).get("state", False):
+            action_map.append(self._create_action("canCool", "Increase", action_message))
+        if capabilities.get("canClimate", {}).get("state", False):
+            action_map.append(self._create_action("canClimate", "Eval", action_message))
+
+        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
+            action_map.append(self._create_action("canCO2", "Reduce", action_message))
+
+        if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
+            action_map.append(self._create_action("canLight", "Reduce", action_message))
+
+        await self.action_manager.checkLimitsAndPublicateTarget(action_map)
+
     async def fine_tune_vpd(self, capabilities: Dict[str, Any]):
         """
         Fine-tune VPD to reach target value.
@@ -174,6 +240,32 @@ class OGBVPDActions:
         elif delta < 0:
             _LOGGER.debug(f"Fine-tuning: {self.ogb.room} Reducing VPD by {-delta}.")
             await self.reduce_vpd(capabilities)
+
+    async def fine_tune_vpd_target(self, capabilities: Dict[str, Any]):
+        """Fine-tune VPD for VPD Target mode."""
+        current_vpd = self.ogb.dataStore.getDeep("vpd.current")
+        targeted_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
+
+        if current_vpd is None or targeted_vpd is None:
+            _LOGGER.warning(f"{self.ogb.room}: VPD Target values missing for fine-tuning")
+            return
+
+        try:
+            current_vpd = float(current_vpd)
+            targeted_vpd = float(targeted_vpd)
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                f"{self.ogb.room}: Invalid VPD Target values for fine-tuning "
+                f"(current={current_vpd}, targeted={targeted_vpd})"
+            )
+            return
+
+        delta = round(targeted_vpd - current_vpd, 2)
+
+        if delta > 0:
+            await self.increase_vpd_target(capabilities)
+        elif delta < 0:
+            await self.reduce_vpd_target(capabilities)
 
     # =================================================================
     # VPD Control with Dampening
@@ -369,6 +461,9 @@ class OGBVPDActions:
             "room": self.ogb.room,
             "current_vpd": self.ogb.dataStore.getDeep("vpd.current"),
             "target_vpd": self.ogb.dataStore.getDeep("vpd.target"),
+            "targeted_vpd": self.ogb.dataStore.getDeep("vpd.targeted"),
+            "targeted_vpd_min": self.ogb.dataStore.getDeep("vpd.targetedMin"),
+            "targeted_vpd_max": self.ogb.dataStore.getDeep("vpd.targetedMax"),
             "perfection_vpd": self.ogb.dataStore.getDeep("vpd.perfection"),
             "vpd_light_control": self.ogb.dataStore.getDeep(
                 "controlOptions.vpdLightControl"

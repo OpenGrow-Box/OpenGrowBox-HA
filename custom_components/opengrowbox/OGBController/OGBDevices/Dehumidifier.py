@@ -178,7 +178,7 @@ class Dehumidifier(Device):
 
     async def increaseAction(self, data):
         """Schaltet Entfeuchter an oder erhöht Modus"""
-        if self.isDimmable and self.isAcInfinDev:
+        if self.isDimmable:
             newDuty = self.change_duty_cycle(increase=True)
             self.log_action("IncreaseAction")
             await self.turn_on(percentage=newDuty)
@@ -204,7 +204,7 @@ class Dehumidifier(Device):
 
     async def reduceAction(self, data):
         """Schaltet Entfeuchter aus oder reduziert Modus"""
-        if self.isDimmable and self.isAcInfinDev:
+        if self.isDimmable:
             newDuty = self.change_duty_cycle(increase=False)
             self.log_action("ReduceAction")
             if newDuty <= 0:

@@ -81,6 +81,9 @@ class OGBActionManager:
         self.event_manager.on("increase_vpd", self._handle_increase_vpd)
         self.event_manager.on("reduce_vpd", self._handle_reduce_vpd)
         self.event_manager.on("FineTune_vpd", self._handle_fine_tune_vpd)
+        self.event_manager.on("vpdt_increase_vpd", self._handle_vpdt_increase_vpd)
+        self.event_manager.on("vpdt_reduce_vpd", self._handle_vpdt_reduce_vpd)
+        self.event_manager.on("vpdt_finetune_vpd", self._handle_vpdt_finetune_vpd)
 
         # Premium events
         self.event_manager.on("PIDActions", self._handle_pid_actions)
@@ -298,15 +301,44 @@ class OGBActionManager:
         """
         emergencyConditions = []
 
-        # Lower threshold for emergency detection
-        if tentData["temperature"] >= tentData["maxTemp"]:
+        # Defensive parsing - skip emergency evaluation on incomplete/invalid data
+        try:
+            temperature = float(tentData.get("temperature"))
+            max_temp = float(tentData.get("maxTemp"))
+            min_temp = float(tentData.get("minTemp"))
+        except (TypeError, ValueError, AttributeError):
+            return emergencyConditions
+
+        # Configurable buffers to avoid noisy emergency toggling near limits
+        temp_emergency_buffer = float(
+            self.data_store.getDeep("controlOptions.emergencyTempBuffer") or 0.5
+        )
+        humidity_emergency_threshold = float(
+            self.data_store.getDeep("controlOptions.emergencyHumidityThreshold") or 90.0
+        )
+        condensation_emergency_buffer = float(
+            self.data_store.getDeep("controlOptions.emergencyCondensationBuffer") or 0.2
+        )
+
+        # Emergency only when clearly outside safe zone, not merely at the limit
+        if temperature >= (max_temp + temp_emergency_buffer):
             emergencyConditions.append("critical_overheat")
-        if tentData["temperature"] <= tentData["minTemp"]:
+        if temperature <= (min_temp - temp_emergency_buffer):
             emergencyConditions.append("critical_cold")
-        if tentData["dewpoint"] >= tentData["temperature"]:
-            emergencyConditions.append("immediate_condensation_risk")
-        if tentData.get("humidity", 0) > 85:
-            emergencyConditions.append("critical_humidity")
+
+        dewpoint = tentData.get("dewpoint")
+        try:
+            if dewpoint is not None and float(dewpoint) >= (temperature - condensation_emergency_buffer):
+                emergencyConditions.append("immediate_condensation_risk")
+        except (TypeError, ValueError):
+            pass
+
+        humidity = tentData.get("humidity")
+        try:
+            if humidity is not None and float(humidity) >= humidity_emergency_threshold:
+                emergencyConditions.append("critical_humidity")
+        except (TypeError, ValueError):
+            pass
 
         return emergencyConditions
 
@@ -388,6 +420,24 @@ class OGBActionManager:
             await self.vpd_actions.fine_tune_vpd(capabilities)
         else:
             _LOGGER.debug(f"🔥 {self.room}: vpd_actions NOT INITIALIZED - action skipped!")
+
+    async def _handle_vpdt_increase_vpd(self, capabilities):
+        """Handle VPD Target increase requests."""
+        _LOGGER.debug(f"{self.room}: vpdt_increase_vpd CALLED")
+        if self.vpd_actions:
+            await self.vpd_actions.increase_vpd_target(capabilities)
+
+    async def _handle_vpdt_reduce_vpd(self, capabilities):
+        """Handle VPD Target reduce requests."""
+        _LOGGER.debug(f"{self.room}: vpdt_reduce_vpd CALLED")
+        if self.vpd_actions:
+            await self.vpd_actions.reduce_vpd_target(capabilities)
+
+    async def _handle_vpdt_finetune_vpd(self, capabilities):
+        """Handle VPD Target fine-tune requests."""
+        _LOGGER.debug(f"{self.room}: vpdt_finetune_vpd CALLED")
+        if self.vpd_actions:
+            await self.vpd_actions.fine_tune_vpd_target(capabilities)
 
     async def _handle_pid_actions(self, premActions):
         """Handle PID control actions."""
@@ -635,6 +685,18 @@ class OGBActionManager:
         else:
             # Fallback: execute actions directly
             await self.publicationActionHandler(actionMap)
+
+    async def checkLimitsAndPublicateTarget(self, actionMap: List):
+        """Process VPD Target actions with separated target chain."""
+        if not await self._check_vpd_night_hold(actionMap):
+            return
+
+        if self.dampening_actions:
+            await self.dampening_actions.process_actions_target_basic(actionMap)
+        else:
+            filtered_actions, _ = self._filterActionsByDampening(actionMap)
+            if filtered_actions:
+                await self.publicationActionHandler(filtered_actions)
 
     async def checkLimitsAndPublicateNoVPD(self, actionMap: List):
         """

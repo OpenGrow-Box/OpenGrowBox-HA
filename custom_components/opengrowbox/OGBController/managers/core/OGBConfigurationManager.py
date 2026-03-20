@@ -149,8 +149,6 @@ class OGBConfigurationManager:
             f"ogb_ventilation_minmax_{self.room.lower()}": self._device_self_min_max,
             f"ogb_ventilation_duty_min_{self.room.lower()}": self._device_min_max_setter,
             f"ogb_ventilation_duty_max_{self.room.lower()}": self._device_min_max_setter,
-            # Device Selects
-            f"ogb_device_labelident_{self.room.lower()}": self._device_from_label,
             # WorkMode
             f"ogb_workmode_{self.room.lower()}": self._update_work_mode_control,
             # Strain Data
@@ -350,6 +348,26 @@ class OGBConfigurationManager:
         if current_value != value:
             self.data_store.setDeep("vpd.tolerance", value)
 
+            try:
+                new_tolerance = float(value)
+            except (TypeError, ValueError):
+                _LOGGER.warning(f"{self.room}: Invalid VPD tolerance value: {value}")
+                return
+
+            targeted = self.data_store.getDeep("vpd.targeted")
+            if targeted is not None:
+                try:
+                    targeted_value = float(targeted)
+                except (TypeError, ValueError):
+                    _LOGGER.warning(f"{self.room}: Invalid targeted VPD value: {targeted}")
+                    return
+
+                tol_val = targeted_value * (new_tolerance / 100)
+                targeted_min = round(targeted_value - tol_val, 2)
+                targeted_max = round(targeted_value + tol_val, 2)
+                self.data_store.setDeep("vpd.targetedMin", targeted_min)
+                self.data_store.setDeep("vpd.targetedMax", targeted_max)
+
     # Plant stage and type methods
     async def _update_plant_stage(self, data):
         """Update plant stage."""
@@ -429,16 +447,21 @@ class OGBConfigurationManager:
             return
         
         current_value = self.data_store.getDeep("vpd.targeted")
+        current_min = self.data_store.getDeep("vpd.targetedMin")
+        current_max = self.data_store.getDeep("vpd.targetedMax")
 
-        if current_value != value:
+        if current_value != value or current_min is None or current_max is None:
             _LOGGER.info(f"{self.room}: Update Target VPD to {value}")
             self.data_store.setDeep("vpd.targeted", value)
 
             tolerance_percent = float(self.data_store.getDeep("vpd.tolerance") or 0)
             tolerance_value = value * (tolerance_percent / 100)
 
-            min_vpd = value - tolerance_value
-            max_vpd = value + tolerance_value
+            min_vpd = round(value - tolerance_value, 2)
+            max_vpd = round(value + tolerance_value, 2)
+
+            self.data_store.setDeep("vpd.targetedMin", min_vpd)
+            self.data_store.setDeep("vpd.targetedMax", max_vpd)
 
             await _update_specific_sensor(
                 "ogb_current_vpd_target_", self.room, value, self.hass

@@ -251,6 +251,8 @@ class OGBConf:
         default_factory=lambda: {
             "current": None,
             "targeted": None,
+            "targetedMin": None,
+            "targetedMax": None,
             "range": None,
             "perfection": None,
             "perfectMin": None,

@@ -174,35 +174,49 @@ class OGBModeManager:
         Handhabt den Modus 'Targeted VPD' mit Toleranz.
         """
         _LOGGER.info(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
+        _LOGGER.debug(
+            f"{self.room} VPD Target state: "
+            f"current={self.data_store.getDeep('vpd.current')}, "
+            f"targeted={self.data_store.getDeep('vpd.targeted')}, "
+            f"min={self.data_store.getDeep('vpd.targetedMin')}, "
+            f"max={self.data_store.getDeep('vpd.targetedMax')}"
+        )
 
         try:
             # Aktuelle VPD-Werte abrufen
             currentVPD_raw = self.data_store.getDeep("vpd.current")
             targetedVPD_raw = self.data_store.getDeep("vpd.targeted")
             tolerance_raw = self.data_store.getDeep("vpd.tolerance")
+            min_vpd_raw = self.data_store.getDeep("vpd.targetedMin")
+            max_vpd_raw = self.data_store.getDeep("vpd.targetedMax")
 
-            # Validierung: Alle Werte müssen gesetzt sein
-            if currentVPD_raw is None or targetedVPD_raw is None or tolerance_raw is None:
+            # Validierung: current/targeted müssen gesetzt sein
+            if None in (currentVPD_raw, targetedVPD_raw):
                 _LOGGER.warning(
-                    f"{self.room}: VPD values not initialized (current={currentVPD_raw}, targeted={targetedVPD_raw}, tolerance={tolerance_raw}). Skipping VPD control."
+                    f"{self.room}: VPD values not initialized (current={currentVPD_raw}, targeted={targetedVPD_raw}, min={min_vpd_raw}, max={max_vpd_raw}, tolerance={tolerance_raw}). Skipping VPD control."
                 )
                 return
 
             currentVPD = float(currentVPD_raw)
             targetedVPD = float(targetedVPD_raw)
-            tolerance_percent = float(tolerance_raw)  # Prozentuale Toleranz (1-25%)
 
-            # Validate tolerance is positive
-            if tolerance_percent <= 0:
-                _LOGGER.warning(
-                    f"{self.room}: Invalid tolerance value ({tolerance_percent}). Must be positive. Using default 10%."
-                )
-                tolerance_percent = 10.0
+            if min_vpd_raw is None or max_vpd_raw is None:
+                if tolerance_raw is None:
+                    _LOGGER.warning(
+                        f"{self.room}: Missing targeted min/max and tolerance is not set. Skipping VPD control."
+                    )
+                    return
 
-            # Mindest- und Höchstwert basierend auf der Toleranz berechnen
-            tolerance_value = targetedVPD * (tolerance_percent / 100)
-            min_vpd = targetedVPD - tolerance_value
-            max_vpd = targetedVPD + tolerance_value
+                tolerance_percent = float(tolerance_raw)
+                tolerance_value = targetedVPD * (tolerance_percent / 100)
+                min_vpd = round(targetedVPD - tolerance_value, 2)
+                max_vpd = round(targetedVPD + tolerance_value, 2)
+
+                self.data_store.setDeep("vpd.targetedMin", min_vpd)
+                self.data_store.setDeep("vpd.targetedMax", max_vpd)
+            else:
+                min_vpd = float(min_vpd_raw)
+                max_vpd = float(max_vpd_raw)
 
             # Verfügbare Capabilities abrufen
             capabilities = self.data_store.get("capabilities")
@@ -219,17 +233,17 @@ class OGBModeManager:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is below minimum ({min_vpd}). Increasing VPD."
                 )
-                await self.event_manager.emit("increase_vpd", capabilities)
+                await self.event_manager.emit("vpdt_increase_vpd", capabilities)
             elif currentVPD > max_vpd:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD."
                 )
-                await self.event_manager.emit("reduce_vpd", capabilities)
+                await self.event_manager.emit("vpdt_reduce_vpd", capabilities)
             elif abs(currentVPD - targetedVPD) > 0.01:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is within range but not at Targeted ({targetedVPD}). Fine-tuning."
                 )
-                await self.event_manager.emit("FineTune_vpd", capabilities)
+                await self.event_manager.emit("vpdt_finetune_vpd", capabilities)
             else:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is within tolerance range ({min_vpd} - {max_vpd}). No action required."
