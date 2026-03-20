@@ -19,7 +19,7 @@ class OGBModbusDevice(Device):
         dataStore,
         deviceType,
         inRoom,
-        hass=None,
+        hass,
         deviceLabel="EMPTY",
         allLabels=[],
         modbus_config=None,

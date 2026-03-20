@@ -40,7 +40,7 @@ class Climate(Device):
         dataStore,
         deviceType,
         inRoom,
-        hass=None,
+        hass,
         deviceLabel="EMPTY",
         allLabels=[],
     ):

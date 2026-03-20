@@ -233,6 +233,13 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ]
                 await asyncio.gather(*deviceTasks)
                 _LOGGER.info(f"✅ {self.room_name}: Device initialization complete")
+
+                # CRITICAL: Start periodic device refresh AFTER initial setup is complete
+                # This prevents race condition where DeviceUpdater runs before
+                # devices are fully initialized, causing duplicate creation
+                if hasattr(self.OGB, 'deviceManager') and self.OGB.deviceManager:
+                    self.OGB.deviceManager.start_periodic_refresh()
+                    _LOGGER.info(f"✅ {self.room_name}: Periodic device refresh started")
             else:
                 _LOGGER.warning(f"⚠️ {self.room_name}: No devices found.")
 

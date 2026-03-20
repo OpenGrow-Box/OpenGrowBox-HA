@@ -38,6 +38,7 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
     """Clean corrupted data in loaded state.
     
     Specifically handles:
+    - Corrupted DeviceProfiles with dataclass Field objects
     - Corrupted tuple strings in growMediums (ph_range, ec_range)
     - Overly large string values that indicate corruption
     
@@ -45,6 +46,20 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
     """
     if not isinstance(data, dict):
         return data
+    
+    # CRITICAL FIX: Remove corrupted DeviceProfiles with dataclass Field objects
+    # These are runtime metadata that should never be persisted
+    if "DeviceProfiles" in data:
+        dp = data["DeviceProfiles"]
+        # Check if corrupted (list with Field object string representation)
+        if isinstance(dp, list) and len(dp) > 0:
+            first_item = dp[0]
+            if isinstance(first_item, str) and "Field(name=DeviceProfiles" in first_item:
+                _LOGGER.warning(
+                    f"[{room}] ❌ Found corrupted DeviceProfiles with Field objects, removing from loaded state!"
+                )
+                # Remove entirely - these are runtime metadata, not user data
+                data.pop("DeviceProfiles", None)
     
     # Clean growMediums
     if "growMediums" in data and isinstance(data["growMediums"], list):
@@ -293,8 +308,8 @@ class OGBDSManager:
                 
                 # CRITICAL: Refuse to save if file is too large (indicates corruption)
                 if json_size_kb > 100:
-                    _LOGGER.error(f"[{self.room}] ❌ State file too large ({json_size_kb:.1f}KB) - likely corrupted, NOT saving!")
-                    _LOGGER.error(f"[{self.room}] Delete {self.storage_path} and restart to fix")
+                    _LOGGER.error(f"[{self.room}] ❌ State file too large ({json_size_kb:.1f}KB) - saving reduced emergency state")
+
                     # Find the largest keys for debugging
                     for key, value in state.items():
                         try:
@@ -303,7 +318,11 @@ class OGBDSManager:
                                 _LOGGER.error(f"[{self.room}]   Large key: '{key}' = {key_size:.1f}KB")
                         except:
                             pass
-                    return  # Don't save corrupted state!
+
+                    # Fallback: persist a reduced state instead of losing all recent changes
+                    reduced_state = self._create_reduced_state_for_emergency(state)
+                    json_string = json.dumps(reduced_state, indent=2, default=str)
+                    _LOGGER.warning(f"[{self.room}] ⚠️ Reduced state persisted ({len(json_string) / 1024:.1f}KB) to prevent config loss")
                 elif json_size_kb > 50:
                     _LOGGER.warning(f"[{self.room}] ⚠️ State file size: {json_size_kb:.1f}KB - consider cleanup")
                 else:
@@ -330,9 +349,25 @@ class OGBDSManager:
         This catches issues that would cause file growth, like:
         - Tuple strings that weren't properly converted
         - Overly large values in growMediums
+        - Corrupted dataclass Field objects in DeviceProfiles
         """
         if not isinstance(state, dict):
             return state
+        
+        # CRITICAL FIX: Remove corrupted DeviceProfiles with dataclass Field objects
+        # These get serialized as strings like: "Field(name=DeviceProfiles,...)"
+        # and should never be persisted - they are runtime metadata
+        if "DeviceProfiles" in state:
+            dp = state["DeviceProfiles"]
+            # Check if corrupted (list with Field object string representation)
+            if isinstance(dp, list) and len(dp) > 0:
+                first_item = dp[0]
+                if isinstance(first_item, str) and "Field(name=DeviceProfiles" in first_item:
+                    _LOGGER.warning(
+                        f"[{self.room}] ❌ Found corrupted DeviceProfiles with Field objects, removing!"
+                    )
+                    # Remove entirely - these are runtime metadata, not user data
+                    state.pop("DeviceProfiles", None)
         
         # Sanitize growMediums
         if "growMediums" in state and isinstance(state["growMediums"], list):
@@ -369,13 +404,60 @@ class OGBDSManager:
             _LOGGER.warning(f"[{self.room}] Adding default plantsView to state")
             state["plantsView"] = {
                 "isTimeLapseActive": False,
-                "TimeLapseIntervall": "",
+                "TimeLapseIntervall": "900",
                 "StartDate": "",
                 "EndDate": "",
-                "OutPutFormat": "",
+                "OutPutFormat": "mp4",
+                "daily_snapshot_enabled": False,
+                "daily_snapshot_time": "09:00",
+                "capture_at_night": False,
             }
+        elif isinstance(state.get("plantsView"), dict):
+            pv = state["plantsView"]
+            pv.setdefault("TimeLapseIntervall", "900")
+            pv.setdefault("OutPutFormat", "mp4")
+            pv.setdefault("daily_snapshot_enabled", False)
+            pv.setdefault("daily_snapshot_time", "09:00")
+            pv.setdefault("capture_at_night", False)
+            state["plantsView"] = pv
         
         return state
+
+    def _create_reduced_state_for_emergency(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Create reduced state payload for emergency persistence.
+
+        Keeps critical operational keys (especially plantsView) and drops very large payloads.
+        """
+        reduced: Dict[str, Any] = {}
+
+        # Always keep plantsView to avoid timelapse config reset after restart
+        plants_view = state.get("plantsView") if isinstance(state, dict) else None
+        if not isinstance(plants_view, dict):
+            plants_view = {
+                "isTimeLapseActive": False,
+                "TimeLapseIntervall": "900",
+                "StartDate": "",
+                "EndDate": "",
+                "OutPutFormat": "mp4",
+                "daily_snapshot_enabled": False,
+                "daily_snapshot_time": "09:00",
+                "capture_at_night": False,
+            }
+        reduced["plantsView"] = plants_view
+
+        # Keep all reasonably small keys (<= 10KB serialized)
+        if isinstance(state, dict):
+            for key, value in state.items():
+                if key == "plantsView":
+                    continue
+                try:
+                    key_size = len(json.dumps(value, default=str))
+                    if key_size <= 10 * 1024:
+                        reduced[key] = value
+                except Exception:
+                    continue
+
+        return reduced
 
     def _sync_save(self, json_string):
         with open(self.storage_path, "w", encoding="utf-8") as f:

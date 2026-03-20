@@ -1146,19 +1146,6 @@ class OGBConfigurationManager:
         _LOGGER.info(f"{self.room}: Emitting SetDeviceMinMax for {device_type}")
         await self.event_manager.emit("SetDeviceMinMax", device_type)
 
-
-
-    async def _device_from_label(self, data):
-        """Update device label identification setting."""
-        value = data.newState[0]
-        current_value = self._string_to_bool(
-            self.data_store.getDeep("DeviceLabelIdent")
-        )
-        if current_value != value:
-            bool_value = self._string_to_bool(value)
-            self.data_store.setDeep("DeviceLabelIdent", bool_value)
-            _LOGGER.info(f"{self.room}: Device label identification set to {bool_value}")
-
     async def _update_work_mode_control(self, data):
         """Update work mode control."""
         value = data.newState[0]

@@ -16,7 +16,7 @@ class Humidifier(Device):
         dataStore,
         deviceType,
         inRoom,
-        hass=None,
+        hass,
         deviceLabel="EMPTY",
         allLabels=[],
     ):

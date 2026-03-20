@@ -8,7 +8,7 @@ class Device:
     # Optional class attributes - may be set by subclasses
     PlantStageMinMax = None  # type: ignore - Set by Light.py subclass
 
-    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass=None,deviceLabel="EMPTY",allLabels=[]):
+    def __init__(self, deviceName, deviceData, eventManager,dataStore, deviceType,inRoom, hass,deviceLabel="EMPTY",allLabels=[]):
         self.hass = hass
         self.eventManager = eventManager
         self.event_manager = eventManager  # Backwards compatibility alias

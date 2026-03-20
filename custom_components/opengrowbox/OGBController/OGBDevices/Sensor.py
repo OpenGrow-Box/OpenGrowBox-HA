@@ -29,7 +29,7 @@ class Sensor:
         dataStore,
         deviceType,
         room,
-        hass=None,
+        hass,
         deviceLabel="EMPTY",
         allLabels=[],
         reMapped=False,

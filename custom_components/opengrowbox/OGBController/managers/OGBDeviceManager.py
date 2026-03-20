@@ -46,9 +46,23 @@ class OGBDeviceManager:
         """initialized Device Manager."""
         # Clean up any duplicate capabilities from previous sessions
         self.deduplicateCapabilities()
-        self.device_Worker()
+        # DON'T start device_Worker() yet - it will be started after coordinator finishes initialization
+        # This prevents race condition with coordinator's parallel device setup
         self.is_initialized = True
-        _LOGGER.debug("OGBDeviceManager initialized with event listeners.")
+        _LOGGER.debug("OGBDeviceManager initialized (periodic refresh not started yet)")
+
+    def start_periodic_refresh(self):
+        """Start the periodic device refresh worker.
+        
+        CRITICAL: This should be called AFTER the coordinator has completed
+        initial device setup to prevent race conditions and duplicate device creation.
+        """
+        if self._devicerefresh_task and not self._devicerefresh_task.done():
+            _LOGGER.debug("Device refresh task is already running. Skipping start.")
+            return
+        
+        _LOGGER.info(f"🔄 {self.room}: Starting periodic device refresh")
+        self.device_Worker()
 
     async def setupDevice(self, device):
 
@@ -483,12 +497,10 @@ class OGBDeviceManager:
             return
 
         async def periodicWorker():
-            # CRITICAL FIX: First update immediately, then loop with delay
-            try:
-                await self.DeviceUpdater()
-                _LOGGER.info(f"{self.room}: Initial device refresh completed")
-            except Exception as e:
-                _LOGGER.error(f"{self.room}: Error during initial device refresh: {e}")
+            # ARCHITECTURAL FIX: Start periodic refresh loop AFTER coordinator setup
+            # Don't call DeviceUpdater() immediately - devices are already initialized
+            # by coordinator. Only run periodic refresh to detect new/removed devices.
+            _LOGGER.info(f"{self.room}: Periodic device refresh loop started")
 
             while True:
                 try:

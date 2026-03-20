@@ -69,6 +69,12 @@ class DataStore(SimpleEventEmitter):
         "pause_event",
         # workData - runtime sensor data, reconstructed on startup
         "workData",
+        # CRITICAL FIX: Runtime metadata that should never be persisted!
+        # These are dataclass Field objects that get corrupted when saved
+        "DeviceProfiles",
+        "lightLedTypes",
+        "Light",
+        "weather"
     }
     
     # Keys within CropSteering that should NOT be persisted (runtime data)

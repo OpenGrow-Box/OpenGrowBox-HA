@@ -25,7 +25,7 @@ class OGBConf:
     growManagerActive: bool = False
     growAreaM2: int = 0.0
     notifyControl: str = "Disabled"
-    DeviceLabelIdent: bool = False
+    DeviceLabelIdent: bool = True
     Hydro: Dict[str, Any] = field(
         default_factory=lambda: {
             "Active": False,
@@ -299,7 +299,10 @@ class OGBConf:
             "TimeLapseIntervall": 300,
             "StartDate": "",
             "EndDate": "",
-            "OutPutFormat": "",
+            "OutPutFormat": "mp4",
+            "daily_snapshot_enabled": False,
+            "daily_snapshot_time": "09:00",
+            "capture_at_night": False,
         }
     )
     plantStages: Dict[str, Dict[str, Any]] = field(
@@ -456,7 +459,7 @@ class OGBConf:
             "LateFlower": LightStage(min=70, max=100, phase=""),
         }
     )
-    lightLedTyes: Dict[str, Any] = field(
+    lightLedTypes: Dict[str, Any] = field(
         default_factory=lambda: {
             "fullspektrum_grow": 15,
             "quantum_board": 16,
