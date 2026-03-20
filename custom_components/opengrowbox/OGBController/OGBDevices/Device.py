@@ -971,35 +971,34 @@ class Device:
                             if "select." in option["entity_id"]
                         ]
 
-                if not entity_ids:
-                    _LOGGER.warning(f"{self.deviceName}: AcInfinity control has no select entity - skipping turn_on fallback")
+                if entity_ids:
+                    for entity_id in entity_ids:
+                        _LOGGER.debug(f"{self.deviceName} ON ACTION with ID {entity_id}")
+                        await self.hass.services.async_call(
+                            domain="select",
+                            service="select_option",
+                            service_data={
+                                "entity_id": entity_id,
+                                "option": "On"
+                            },
+                        )
+
+                    # Zusatzaktionen je nach Gerätetyp
+                    if self.deviceType in ["Light", "Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"]:
+                        # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
+                        if self.deviceType == "Light":
+                            if brightness_pct is not None:
+                                _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
+                                await self.set_value(int(brightness_pct/10))
+                        else:
+                            if percentage is not None:
+                                _LOGGER.warning(f"{self.deviceName}: set value to {percentage}")
+                                await self.set_value(percentage/10)
+
+                    self.isRunning = True
                     return
 
-                for entity_id in entity_ids:
-                    _LOGGER.debug(f"{self.deviceName} ON ACTION with ID {entity_id}")
-                    await self.hass.services.async_call(
-                        domain="select",
-                        service="select_option",
-                        service_data={
-                            "entity_id": entity_id,
-                            "option": "On"
-                        },
-                    )
-
-                # Zusatzaktionen je nach Gerätetyp
-                if self.deviceType in ["Light", "Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"]:
-                    # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
-                    if self.deviceType == "Light":
-                        if brightness_pct is not None:
-                            _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
-                            await self.set_value(int(brightness_pct/10))
-                    else:
-                        if percentage is not None:
-                            _LOGGER.warning(f"{self.deviceName}: set value to {percentage}")
-                            await self.set_value(percentage/10)
-
-                self.isRunning = True
-                return
+                _LOGGER.warning(f"{self.deviceName}: AcInfinity without select entity - using standard fallback path")
 
             # === Standardgeräte ===
             if not self.switches:
@@ -1330,34 +1329,33 @@ class Device:
                             if "select." in option["entity_id"]
                         ]
 
-                if not entity_ids:
-                    _LOGGER.warning(f"{self.deviceName}: AcInfinity control has no select entity - skipping turn_off fallback")
-                    return
-
-                for entity_id in entity_ids:
-                    _LOGGER.debug(f"{self.deviceName} OFF ACTION with ID {entity_id}")
-                    await self.hass.services.async_call(
-                        domain="select",
-                        service="select_option",
-                        service_data={
-                            "entity_id": entity_id,
-                            "option": "Off"
-                        },
-                    )
-                    self.isRunning = False
-                    # Zusatzaktionen je nach Gerätetyp
-                    if self.deviceType in ["Light", "Humidifier","Exhaust","Ventilation"]:
+                if entity_ids:
+                    for entity_id in entity_ids:
+                        _LOGGER.debug(f"{self.deviceName} OFF ACTION with ID {entity_id}")
                         await self.hass.services.async_call(
-                            domain="number",
-                            service="set_value",
+                            domain="select",
+                            service="select_option",
                             service_data={
                                 "entity_id": entity_id,
-                                "value": 0  # Use 0 to fully turn off AcInfinity devices
+                                "option": "Off"
                             },
                         )
                         self.isRunning = False
-                    _LOGGER.debug(f"{self.deviceName}: AcInfinity über select OFF.")
-                return
+                        # Zusatzaktionen je nach Gerätetyp
+                        if self.deviceType in ["Light", "Humidifier","Exhaust","Ventilation"]:
+                            await self.hass.services.async_call(
+                                domain="number",
+                                service="set_value",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "value": 0  # Use 0 to fully turn off AcInfinity devices
+                                },
+                            )
+                            self.isRunning = False
+                        _LOGGER.debug(f"{self.deviceName}: AcInfinity über select OFF.")
+                    return
+
+                _LOGGER.warning(f"{self.deviceName}: AcInfinity without select entity - using standard fallback off path")
 
             # === Standardgeräte ===
             if not self.switches:
