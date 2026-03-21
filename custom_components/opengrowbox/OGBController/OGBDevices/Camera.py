@@ -2527,10 +2527,6 @@ class Camera(Device):
                 output_count = len(output_files)
                 output_counts["mp4"] = len([f for f in output_files if f.get("format") == "mp4"])
                 output_counts["zip"] = len([f for f in output_files if f.get("format") == "zip"])
-
-                for output_file in output_files:
-                    if "mtime" in output_file:
-                        del output_file["mtime"]
             except Exception as e:
                 _LOGGER.warning(f"{self.deviceName}: Error listing timelapse outputs: {e}")
 
