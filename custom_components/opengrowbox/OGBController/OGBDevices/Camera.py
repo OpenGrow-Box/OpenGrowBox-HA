@@ -708,8 +708,19 @@ class Camera(Device):
                 start_dt = oldest_start_time
 
             if not resume:
-                self.tl_image_count = 0
-                plants_view["tl_image_count"] = 0
+                # Count existing photos in timelapse directory instead of resetting to 0
+                # This preserves the cumulative count across all recordings
+                storage_path = getattr(self, 'camera_storage_path', f"/config/ogb_data/{self.inRoom}_img/{self.deviceName}")
+                timelapse_path = os.path.join(storage_path, "timelapse")
+
+                # Ensure directory exists
+                if not os.path.exists(timelapse_path):
+                    os.makedirs(timelapse_path, exist_ok=True)
+
+                # Count existing photos
+                existing_photos = self._list_photos_in_directory_sync(timelapse_path, False, False)
+                self.tl_image_count = len(existing_photos)
+                plants_view["tl_image_count"] = self.tl_image_count
 
             plants_view["isTimeLapseActive"] = True
             self._set_plants_view(plants_view)
