@@ -13,6 +13,7 @@ from homeassistant.helpers.label_registry import \
 
 from .data.OGBDataClasses.OGBPublications import (OGBEventPublication, OGBVPDPublication)
 from .data.OGBParams.OGBParams import (INVALID_VALUES, RELEVANT_KEYWORDS, RELEVANT_PREFIXES)
+from .utils.sensor_identification import resolve_sensor_types
 from .utils.lightTimeHelpers import update_light_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +65,20 @@ class OGBRegistryEvenListener:
 
         return any(any(keyword in label for keyword in modbus_keywords)
                   for label in entity_labels)
+
+    def _matches_sensor_translations(self, entity, label_registry) -> bool:
+        """Return True if a sensor entity matches translated sensor types."""
+        entity_id = getattr(entity, "entity_id", "") or ""
+        if not entity_id.startswith("sensor."):
+            return False
+
+        labels = []
+        for label_id in (getattr(entity, "labels", None) or []):
+            label_entry = label_registry.labels.get(label_id)
+            if label_entry:
+                labels.append({"id": label_id, "name": label_entry.name})
+
+        return bool(resolve_sensor_types(entity_id, labels))
 
     async def get_entities_and_devices_by_room(self, room_name):
         """Hole alle Entitäten und Geräte nach Raum."""
@@ -187,6 +202,7 @@ class OGBRegistryEvenListener:
             if not (
                 entity.entity_id.startswith(RELEVANT_PREFIXES)
                 or any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
+                or self._matches_sensor_translations(entity, label_registry)
             ):
                 return None
 
@@ -206,10 +222,18 @@ class OGBRegistryEvenListener:
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
-                _LOGGER.debug(
-                    f"Skipping {entity.entity_id}, value invalid after retries ({state_value})"
-                )
-                return None
+                # Keep sensor entities even if value is currently unavailable/unknown.
+                # They can recover later and should still be discovered/mapped as sensors.
+                if entity.entity_id.startswith("sensor."):
+                    _LOGGER.debug(
+                        f"Keeping {entity.entity_id} despite invalid initial value ({state_value})"
+                    )
+                    state_value = None
+                else:
+                    _LOGGER.debug(
+                        f"Skipping {entity.entity_id}, value invalid after retries ({state_value})"
+                    )
+                    return None
 
             platform = getattr(entity, "platform", "unknown")
 
@@ -344,6 +368,7 @@ class OGBRegistryEvenListener:
             if not (
                 entity.entity_id.startswith(RELEVANT_PREFIXES)
                 or any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
+                or self._matches_sensor_translations(entity, label_registry)
             ):
                 return None
 
@@ -364,10 +389,16 @@ class OGBRegistryEvenListener:
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
-                _LOGGER.debug(
-                    f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping..."
-                )
-                return None
+                if entity.entity_id.startswith("sensor."):
+                    _LOGGER.debug(
+                        f"Keeping {entity.entity_id} despite invalid initial value ({state_value})"
+                    )
+                    state_value = None
+                else:
+                    _LOGGER.debug(
+                        f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping..."
+                    )
+                    return None
 
             # Platform-Information
             platform = getattr(entity, "platform", "unknown")

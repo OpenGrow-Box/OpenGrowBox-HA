@@ -166,11 +166,11 @@ class OGBPremiumIntegration:
             if hasattr(self, 'subscription_data') and self.subscription_data:
                 plan_name = self.subscription_data.get("plan_name", "free")
                 limits = self.subscription_data.get("limits", {})
-                max_connections = limits.get("max_sessions") or limits.get("max_concurrent_connections") or 1
+                max_connections = limits.get("maxConcurrentConnections") or limits.get("max_sessions") or limits.get("max_concurrent_connections") or 1
 
-                # FREE plan always limited to 1 connection
-                if plan_name == "free":
-                    max_connections = 1
+            # FREE plan always limited to 1 connection
+            if plan_name == "free":
+                max_connections = 1
 
             _LOGGER.debug(f"🔍 {self.room} Plan: {plan_name}, Active connections: {active_premium_connections}, Max allowed: {max_connections} - {self.subscription_data}")
             if blocked_rooms:
@@ -299,6 +299,8 @@ class OGBPremiumIntegration:
 
         # API Usage updates from WebSocket - CRITICAL for browser refresh to show current values
         self.event_manager.on("api_usage_update", self._on_api_usage_update)
+        self.event_manager.on("plan_changed", self._on_plan_changed)
+        self.event_manager.on("maintenance_alert", self._on_maintenance_alert)
 
         # Webapp control sync events
         self.event_manager.on("WebappControlChange", self._on_webapp_ctrl_change)
@@ -429,6 +431,10 @@ class OGBPremiumIntegration:
             old_plan = data.get("old_plan")
             new_plan = data.get("new_plan")
 
+            if not new_plan:
+                _LOGGER.debug(f"⏭️ {self.room} Ignoring subscription_changed without new_plan: {data}")
+                return
+
             _LOGGER.info(f"📊 {self.room} Subscription changed: {old_plan} → {new_plan}")
 
             # Update subscription data
@@ -489,14 +495,15 @@ class OGBPremiumIntegration:
             self._update_feature_manager()
 
             # Fire HA event
-            self.hass.bus.async_fire("ogb_premium_subscription_changed", {
-                "room": self.room,
-                "old_plan": old_plan,
-                "new_plan": new_plan,
-                "features": data.get("features", {}),
-                "limits": data.get("limits", {}),
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            })
+            if old_plan != new_plan:
+                self.hass.bus.async_fire("ogb_premium_subscription_changed", {
+                    "room": self.room,
+                    "old_plan": old_plan,
+                    "new_plan": new_plan,
+                    "features": data.get("features", {}),
+                    "limits": data.get("limits", {}),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
 
             # Update UI controls based on new plan features
             await self._managePremiumControls()
@@ -798,6 +805,8 @@ class OGBPremiumIntegration:
                 normalized_active_rooms = []
                 rooms_used = 0
             
+            old_plan = self.subscription_data.get("plan_name", "free") if self.subscription_data else "free"
+
             # Update subscription_data with FULL structure
             if not self.subscription_data:
                 self.subscription_data = {}
@@ -833,10 +842,11 @@ class OGBPremiumIntegration:
                 if value is not None:
                     self.subscription_data["usage"][field] = value
             
-            # Override room-specific fields with validated values
-            self.subscription_data["usage"]["activeConnections"] = active_connections
-            self.subscription_data["usage"]["activeRooms"] = normalized_active_rooms
-            self.subscription_data["usage"]["roomsUsed"] = rooms_used
+            # FIX: Use server values directly instead of overwriting with local calculations
+            # This prevents ping-pong between multiple rooms that each think they're the only one
+            self.subscription_data["usage"]["activeConnections"] = usage.get("activeConnections", 0)
+            self.subscription_data["usage"]["activeRooms"] = usage.get("activeRooms", [])
+            self.subscription_data["usage"]["roomsUsed"] = usage.get("roomsUsed", len(usage.get("activeRooms", [])))
             
             # Sync with WebSocket client's subscription_data
             if self.ogb_ws:
@@ -844,6 +854,27 @@ class OGBPremiumIntegration:
             
             # Update datastore so frontend can read current state
             self.data_store.set("subscriptionData", self.subscription_data)
+
+            # CRITICAL FIX: Also store limits globally so all rooms share the same limits
+            # This prevents flickering when different rooms send api_usage_update with different limits
+            premium_store = self.data_store.get("OGBPremium") or {}
+            if not isinstance(premium_store, dict):
+                premium_store = {}
+
+            safe_limits = limits if isinstance(limits, dict) and limits else premium_store.get("limits", {})
+            safe_features = features if isinstance(features, dict) and features else premium_store.get("features", {})
+            safe_plan_name = server_plan or premium_store.get("plan_name") or old_plan
+
+            premium_store.update({
+                "limits": safe_limits,
+                "features": safe_features,
+                "plan_name": safe_plan_name,
+            })
+            self.data_store.set("OGBPremium", premium_store)
+            _LOGGER.debug(
+                f"📦 {self.room} Updated global datastore with limits: {len(safe_limits)} "
+                f"features: {len(safe_features)} plan: {safe_plan_name}"
+            )
             
             _LOGGER.debug(
                 f"📊 {self.room} subscription_data updated: "
@@ -851,10 +882,10 @@ class OGBPremiumIntegration:
             )
             
             # Check if plan actually changed and notify frontend
-            old_plan = self.subscription_data.get("plan_name", "free")
-            new_plan = server_plan
-            
-            if old_plan != new_plan:
+            new_plan = server_plan if server_plan else old_plan
+
+            # Only emit plan change for valid, explicit plan transitions
+            if server_plan and old_plan != new_plan:
                 _LOGGER.info(f"🔄 {self.room} Plan changed from {old_plan} to {new_plan}, emitting event to frontend")
                 
                 # Update local premium status
@@ -905,6 +936,135 @@ class OGBPremiumIntegration:
             )
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} API usage update error: {e}")
+
+    async def _on_plan_changed(self, data):
+        """Handle explicit plan change events from Premium API immediately."""
+        try:
+            plan_id = data.get("plan_id")
+            action = data.get("action", "sync")
+            old_plan = self.subscription_data.get("plan_name", "free") if self.subscription_data else "free"
+
+            _LOGGER.info(
+                f"🔄 {self.room} Received plan_changed event: plan_id={plan_id}, action={action}, current_plan={old_plan}"
+            )
+
+            fresh_subscription_data = await self._fetch_subscription_data_from_api()
+            if fresh_subscription_data:
+                self.subscription_data = fresh_subscription_data
+                new_plan = fresh_subscription_data.get("plan_name") or old_plan
+                self.is_premium = new_plan not in ["free", "trial"]
+
+                self.data_store.set("subscriptionData", self.subscription_data)
+
+                if self.ogb_ws:
+                    self.ogb_ws.subscription_data = self.subscription_data
+                    self.ogb_ws.is_premium = self.is_premium
+
+                self._sync_runtime_usage_snapshot()
+                self._update_feature_manager()
+
+                try:
+                    await self._managePremiumControls()
+                except Exception as control_error:
+                    _LOGGER.error(
+                        f"❌ {self.room} Error updating premium controls after plan_changed: {control_error}"
+                    )
+
+                if old_plan != new_plan and new_plan:
+                    self.hass.bus.async_fire(
+                        "ogb_premium_subscription_changed",
+                        {
+                            "room": self.room,
+                            "old_plan": old_plan,
+                            "new_plan": new_plan,
+                            "features": self.subscription_data.get("features", {}),
+                            "limits": self.subscription_data.get("limits", {}),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+
+                await self._send_auth_response(
+                    event_id="plan_changed_sync",
+                    status="success",
+                    message="Profile retrieved",
+                    data={
+                        "user": {
+                            "user_id": self.user_id,
+                            "currentPlan": new_plan,
+                        },
+                        "currentPlan": new_plan,
+                        "is_premium": self.is_premium,
+                        "is_logged_in": self.is_logged_in,
+                        "subscription_data": self.subscription_data,
+                        "user_id": self.user_id,
+                        "connection_info": self.ogb_ws.get_connection_info() if self.ogb_ws else {},
+                        "ogb_max_sessions": self.ogb_ws.ogb_max_sessions if self.ogb_ws else 0,
+                        "ogb_sessions": self.ogb_ws.ogb_sessions if self.ogb_ws else 0,
+                    },
+                )
+
+                await self._save_request(True)
+                _LOGGER.info(
+                    f"✅ {self.room} plan_changed sync complete: {old_plan} -> {new_plan}"
+                )
+            else:
+                _LOGGER.warning(
+                    f"⚠️ {self.room} plan_changed received but fresh subscription fetch returned no data"
+                )
+
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} plan_changed handling error: {e}", exc_info=True)
+
+    async def _on_maintenance_alert(self, data):
+        """Handle maintenance alert events from Premium API."""
+        try:
+            title = data.get("title", "Maintenance")
+            message = data.get("message", "System maintenance in progress")
+            level = data.get("level", "info")
+            start_time = data.get("start_time")
+            end_time = data.get("end_time")
+            requires_action = data.get("requires_action", False)
+
+            _LOGGER.warning(
+                f"🔧 {self.room} Maintenance alert: {title} - {message} (level: {level})"
+            )
+
+            # Send notification to user via OGBNotificator
+            try:
+                if not hasattr(self, 'notificator'):
+                    from ..managers.OGBNotifyManager import OGBNotificator
+                    self.notificator = OGBNotificator(self.hass, self.room)
+                
+                await self.notificator.notify_maintenance_alert(
+                    title=title,
+                    message=message,
+                    level=level,
+                    start_time=start_time,
+                    end_time=end_time,
+                    requires_action=requires_action
+                )
+            except Exception as notify_error:
+                _LOGGER.error(f"❌ {self.room} Error sending maintenance notification: {notify_error}")
+
+            # Fire HA event for frontend
+            self.hass.bus.async_fire(
+                "ogb_maintenance_alert",
+                {
+                    "room": self.room,
+                    "title": title,
+                    "message": message,
+                    "level": level,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "requires_action": requires_action,
+                    "timestamp": data.get("timestamp")
+                }
+            )
+
+            _LOGGER.info(f"✅ {self.room} Maintenance alert processed: {title}")
+
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} maintenance_alert handling error: {e}", exc_info=True)
 
     async def _on_grow_completed(self, data):
         """
@@ -1787,6 +1947,23 @@ class OGBPremiumIntegration:
             return
 
         try:
+            # CRITICAL FIX: NEVER overwrite server values from api_usage_update!
+            # The server is the source of truth for activeConnections and roomsUsed
+            # If we have server values with connections > 0, DON'T refresh from runtime
+            
+            if self.subscription_data and "usage" in self.subscription_data:
+                usage = self.subscription_data["usage"]
+                server_connections = usage.get("activeConnections")
+                server_rooms = usage.get("roomsUsed")
+                
+                # If server says we have connections, TRUST those values!
+                if server_connections is not None and server_connections > 0:
+                    _LOGGER.debug(
+                        f"📊 {self.room} Skipping refresh - server values already set: "
+                        f"connections={server_connections}, rooms={server_rooms}"
+                    )
+                    return
+
             session_data = await self.ogb_ws.get_session_status()
             if not isinstance(session_data, dict):
                 return
@@ -1865,6 +2042,21 @@ class OGBPremiumIntegration:
             self.subscription_data["usage"] = {}
 
         usage = self.subscription_data["usage"]
+
+        # CRITICAL FIX: NEVER overwrite server values from api_usage_update!
+        # The server is the source of truth for activeConnections and roomsUsed
+        # If we have server values with connections > 0, DON'T sync from runtime
+        
+        server_connections = usage.get("activeConnections")
+        server_rooms = usage.get("roomsUsed")
+        
+        # If server says we have connections, TRUST those values!
+        if server_connections is not None and server_connections > 0:
+            _LOGGER.debug(
+                f"📊 {self.room} Sync: skipping - server values already set: "
+                f"connections={server_connections}, rooms={server_rooms}"
+            )
+            return
 
         ogb_sessions_data = self.ogb_ws.ogb_sessions if self.ogb_ws else 0
         if isinstance(ogb_sessions_data, dict):

@@ -207,6 +207,8 @@ class OGBMediumManager:
             plant_name=data.get("plant_name"),
             breeder_name=breeder_name,
             plant_type=data.get("plant_type"),
+            moisture_min=data.get("moisture_min"),
+            moisture_max=data.get("moisture_max"),
         )
 
     async def _on_request_plants_data(self, data: Dict[str, Any]):
@@ -952,6 +954,8 @@ class OGBMediumManager:
         plant_name: Optional[str] = None,
         breeder_name: Optional[str] = None,
         plant_type: Optional[str] = None,
+        moisture_min: Optional[float] = None,
+        moisture_max: Optional[float] = None,
     ) -> bool:
         """
         Update plant dates for a specific medium.
@@ -983,6 +987,32 @@ class OGBMediumManager:
         if breeder_bloom_days is not None:
             _LOGGER.debug(f"[{self.room}] Setting breeder_bloom_days: {medium.breeder_bloom_days} -> {breeder_bloom_days}")
             medium.breeder_bloom_days = breeder_bloom_days
+
+        # Update moisture thresholds if provided
+        if moisture_min is not None:
+            try:
+                min_value = float(moisture_min)
+                _LOGGER.debug(f"[{self.room}] Setting moisture_min: {medium.thresholds.moisture_min} -> {min_value}")
+                medium.thresholds.moisture_min = min_value
+            except (TypeError, ValueError):
+                _LOGGER.error(f"[{self.room}] Invalid moisture_min value: {moisture_min}")
+
+        if moisture_max is not None:
+            try:
+                max_value = float(moisture_max)
+                _LOGGER.debug(f"[{self.room}] Setting moisture_max: {medium.thresholds.moisture_max} -> {max_value}")
+                medium.thresholds.moisture_max = max_value
+            except (TypeError, ValueError):
+                _LOGGER.error(f"[{self.room}] Invalid moisture_max value: {moisture_max}")
+
+        # Keep thresholds consistent when both values are available
+        current_min = medium.thresholds.moisture_min
+        current_max = medium.thresholds.moisture_max
+        if current_min is not None and current_max is not None and current_min > current_max:
+            if moisture_min is not None and moisture_max is None:
+                medium.thresholds.moisture_max = current_min
+            elif moisture_max is not None and moisture_min is None:
+                medium.thresholds.moisture_min = current_max
         
         # Update grow start date
         if grow_start is not None:

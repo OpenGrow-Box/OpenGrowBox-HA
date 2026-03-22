@@ -210,7 +210,13 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     entity_count = len(group.get('entities', []))
                     _LOGGER.info(f"  📦 {group['name']}: {entity_count} entities")
                 ogbTasks = [self.OGB.managerInit(group) for group in ogbGroup]
-                await asyncio.gather(*ogbTasks)
+                ogbResults = await asyncio.gather(*ogbTasks, return_exceptions=True)
+                for group, result in zip(ogbGroup, ogbResults):
+                    if isinstance(result, Exception):
+                        _LOGGER.error(
+                            f"❌ {self.room_name}: OGB config group '{group.get('name', 'unknown')}' failed during init: {result}",
+                            exc_info=(type(result), result, result.__traceback__),
+                        )
                 _LOGGER.info(f"✅ {self.room_name}: OGB configuration complete")
             else:
                 _LOGGER.error(
@@ -231,7 +237,13 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.OGB.deviceManager.setupDevice(deviceGroup)
                     for deviceGroup in realDevices
                 ]
-                await asyncio.gather(*deviceTasks)
+                deviceResults = await asyncio.gather(*deviceTasks, return_exceptions=True)
+                for deviceGroup, result in zip(realDevices, deviceResults):
+                    if isinstance(result, Exception):
+                        _LOGGER.error(
+                            f"❌ {self.room_name}: Device '{deviceGroup.get('name', 'unknown')}' failed during init: {result}",
+                            exc_info=(type(result), result, result.__traceback__),
+                        )
                 _LOGGER.info(f"✅ {self.room_name}: Device initialization complete")
 
                 # CRITICAL: Start periodic device refresh AFTER initial setup is complete
@@ -252,7 +264,10 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.info(f"✅ {self.room_name}: Orchestrator signaled initialization complete")
 
         except Exception as e:
-            _LOGGER.error(f"Error during OpenGrowBox initialization: {e}")
+            _LOGGER.error(
+                f"Error during OpenGrowBox initialization in room '{self.room_name}': {e}",
+                exc_info=True,
+            )
         finally:
             self.is_ready = True
 

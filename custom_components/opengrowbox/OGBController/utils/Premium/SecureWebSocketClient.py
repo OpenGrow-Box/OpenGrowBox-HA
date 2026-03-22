@@ -1450,6 +1450,42 @@ class OGBWebSocketConManager:
             except Exception as e:
                 logging.error(f"❌ {self.ws_room} Error handling api_limit_reached: {e}")
         
+        @self.sio.on("maintenance_alert", namespace=ns)
+        async def on_maintenance_alert(data):
+            """Handle maintenance_alert event from server"""
+            try:
+                title = data.get("title", "Maintenance")
+                message = data.get("message", "System maintenance in progress")
+                level = data.get("level", "info")
+                start_time = data.get("startTime", time.time())
+                end_time = data.get("endTime")
+                requires_action = data.get("requiresAction", False)
+                
+                level_prefix = {
+                    "info": "ℹ️",
+                    "warning": "⚠️",
+                    "critical": "🚨"
+                }.get(level, "ℹ️")
+                
+                logging.warning(f"{level_prefix} {self.ws_room} Maintenance alert: {title} - {message}")
+                
+                # Emit to Home Assistant frontend for notification
+                emit_data = {
+                    "type": "maintenance_alert",
+                    "title": title,
+                    "message": message,
+                    "level": level,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "requires_action": requires_action,
+                    "timestamp": data.get("timestamp", time.time())
+                }
+                
+                await self._safe_emit("maintenance_alert", emit_data, haEvent=True)
+                
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling maintenance_alert: {e}")
+        
         # V1 Debug: Catch ALL events from server (namespace-specific)
         @self.sio.on('*', namespace=ns)
         async def v1_debug_all_events(event, *args):
@@ -1524,7 +1560,8 @@ class OGBWebSocketConManager:
             logging.info(f"📊 {self.ws_room} Processing api_usage_update: {data}")
             
             # New consistent API structure: { plan, features, limits, usage, timestamp, ... }
-            server_plan = data.get("plan")
+            # API may send "plan" (snake_case) or "planName" (from API response)
+            server_plan = data.get("plan") or data.get("plan_name")
             features = data.get("features", {})
             limits = data.get("limits", {})
             usage = data.get("usage", {})

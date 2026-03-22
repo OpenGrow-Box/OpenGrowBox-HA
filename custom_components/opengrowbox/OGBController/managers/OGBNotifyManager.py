@@ -363,3 +363,59 @@ class OGBNotificator:
             message=f"API usage: {percent:.0f}% ({used}/{limit} calls). Consider upgrading your plan to avoid interruption.",
             title=f"OGB API Warning - {self.room}"
         )
+
+    # =================================================================
+    # Maintenance Notifications
+    # =================================================================
+
+    async def notify_maintenance_alert(
+        self,
+        title: str = "Scheduled Maintenance",
+        message: str = "System maintenance in progress",
+        level: str = "info",
+        start_time: int = None,
+        end_time: int = None,
+        requires_action: bool = False,
+        service: str = None
+    ):
+        """
+        Notify user about scheduled maintenance from the API.
+        
+        Args:
+            title: Alert title
+            message: Alert message describing the maintenance
+            level: Alert level - 'info', 'warning', or 'critical'
+            start_time: Unix timestamp when maintenance starts
+            end_time: Unix timestamp when maintenance is expected to end
+            requires_action: Whether user needs to take action
+            service: Override notification service
+        """
+        level_methods = {
+            "info": self.info,
+            "warning": self.warning,
+            "critical": self.critical
+        }
+        
+        notify_method = level_methods.get(level, self.info)
+        
+        # Format time info if provided
+        time_info = ""
+        if start_time:
+            from datetime import datetime
+            start_dt = datetime.fromtimestamp(start_time)
+            time_info = f" | Started: {start_dt.strftime('%H:%M')}"
+        
+        if end_time:
+            from datetime import datetime
+            end_dt = datetime.fromtimestamp(end_time)
+            time_info += f" | Expected end: {end_dt.strftime('%H:%M')}"
+        
+        action_info = " | Action required!" if requires_action else ""
+        
+        formatted_message = f"{message}{time_info}{action_info}"
+        
+        await notify_method(
+            message=formatted_message,
+            title=f"🔧 {title} - {self.room}",
+            service=service
+        )

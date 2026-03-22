@@ -99,6 +99,10 @@ class CustomSensor(RestoreEntity):
     async def async_added_to_hass(self):
         """Restore last known state on startup."""
         await super().async_added_to_hass()
+
+        if not self._should_restore:
+            return
+
         last_state = await self.async_get_last_state()
 
         if last_state and last_state.state is not None:
@@ -117,8 +121,8 @@ class CustomSensor(RestoreEntity):
                         )
                         restored_value = self._state  # Keep initial value
 
-                # Only update if current state is None (initial state) AND restoration is enabled
-                if self._state is None and self._should_restore:
+                # Only update if current state is None (initial state)
+                if self._state is None:
                     self._state = restored_value
                     _LOGGER.info(
                         f"✅ RESTORED: '{self._name}' state restored to: {restored_value}"

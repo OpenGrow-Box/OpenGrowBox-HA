@@ -425,6 +425,28 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             unit="%",
             initial_value=0,
         ),
+        # OGB Soil Moisture
+        CustomNumber(
+            f"OGB_SoilMoistureMin_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            min_value=15,
+            max_value=85,
+            step=1,
+            unit="%",
+            initial_value=35,
+        ),
+            CustomNumber(
+            f"OGB_SoilMoistureMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            min_value=15,
+            max_value=85,
+            step=1,
+            unit="%",
+            initial_value=55,
+        ),
+    
         # Crop Steering P0
         CustomNumber(
             f"OGB_CropSteering_P0_Shot_Duration_{coordinator.room_name}",

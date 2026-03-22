@@ -257,11 +257,22 @@ class OGBCastManager:
             intervall = None
             duration = None
 
-        # Note: Crop-Steering and Plant-Watering have their own timing, so don't require intervall/duration
-        hydro_timing_required = mode in ("Hydro", "OFF")
-        if hydro_timing_required and (intervall is None or duration is None or intervall <= 0 or duration <= 0):
-            _LOGGER.error(f"❌ {self.room} HYDRO NOT CONFIGURED: Intervall={intervall_raw}, Duration={duration_raw}")
-            _LOGGER.error(f"💡 {self.room} Set values via: number.ogb_hydropumpintervall_{self.room.lower()} and number.ogb_hydropumpduration_{self.room.lower()}")
+        # Hydro and Plant-Watering both require timing values.
+        # - Hydro mode: interval = cycle pause, duration = on-time
+        # - Plant-Watering sensor mode: interval = safety cooldown, duration = max shot length
+        timing_required = mode in ("Hydro", "Plant-Watering", "OFF")
+        if timing_required and (
+            intervall is None or duration is None or intervall <= 0 or duration <= 0
+        ):
+            _LOGGER.error(
+                f"❌ {self.room} HYDRO/PLANT-WATERING NOT CONFIGURED: "
+                f"Intervall={intervall_raw}, Duration={duration_raw}, Mode={mode}"
+            )
+            _LOGGER.error(
+                f"💡 {self.room} Set values via: "
+                f"number.ogb_hydropumpintervall_{self.room.lower()} and "
+                f"number.ogb_hydropumpduration_{self.room.lower()}"
+            )
             return
 
         # Stoppe ALLE laufenden Tasks bei jedem Moduswechsel

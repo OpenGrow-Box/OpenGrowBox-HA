@@ -259,8 +259,21 @@ class OpenGrowBox:
         for entity in ogbEntity['entities']:
             entity_id = entity['entity_id']
             value = entity['value']
-            entityPublication = OGBInitData(Name=entity_id, newState=[value])
-            await self.manager(entityPublication)
+            entity_platform = entity.get('platform', 'unknown')
+
+            try:
+                _LOGGER.debug(
+                    f"{self.room}: managerInit processing entity '{entity_id}' "
+                    f"(platform={entity_platform}, value={value})"
+                )
+                entityPublication = OGBInitData(Name=entity_id, newState=[value])
+                await self.manager(entityPublication)
+            except Exception as e:
+                _LOGGER.error(
+                    f"{self.room}: managerInit failed for entity '{entity_id}' "
+                    f"(platform={entity_platform}, value={value}): {e}",
+                    exc_info=True,
+                )
 
     async def handle_room_update(self, entity):
         """

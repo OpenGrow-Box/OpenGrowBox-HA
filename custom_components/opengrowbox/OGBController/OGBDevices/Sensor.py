@@ -8,10 +8,10 @@ from ..data.OGBDataClasses.OGBPublications import (OGBDLIPublication,
                                               OGBPPFDPublication,
                                               OGBWaterPublication)
 from ..data.OGBParams.OGBParams import (SENSOR_CONTEXTS,
-                                   extract_context_from_entity,
-                                   get_sensor_config)
-from ..data.OGBParams.OGBTranslations import SENSOR_TRANSLATIONS
+                                    extract_context_from_entity,
+                                    get_sensor_config)
 from ..utils.calcs import calc_light_to_ppfd_dli, calculate_orp
+from ..utils.sensor_identification import resolve_sensor_types
 from ..utils.lightTimeHelpers import hours_between
 from ..utils.sensorUpdater import _update_specific_sensor
 
@@ -57,8 +57,6 @@ class Sensor:
         self.isRunning = None
         self._alert_active = False
         self.isInitialized = False
-
-        self._translation_cache = self._build_translation_cache()
 
         self.medium_label = self._extract_medium_label(deviceLabel)
         self.ppfdDLI_label = None
@@ -199,22 +197,18 @@ class Sensor:
             else:
                 context = extract_context_from_entity(entity_id) or "air"
 
-            # Sensor-Typen anhand Label + Entity bestimmen
-            sensor_types = []
-            for lid in label_ids:
-                if lid in self._translation_cache:
-                    sensor_types.append(self._translation_cache[lid])
+            # Sensor-Typen anhand Label + Translation + englischem Fallback bestimmen
+            # Use merged labels (entity labels + device-level labels), not only entry labels.
+            sensor_types = resolve_sensor_types(entity_id, entity_labels)
 
-            # Fallback, falls kein Label matcht → aus Entity ableiten
             if not sensor_types:
                 suffix = entity_id.split("_")[-1].lower()
-                sensor_type = self._identify_sensor_type(suffix)
-                if sensor_type:
-                    sensor_types.append(sensor_type)
-                    _LOGGER.debug(f"[{self.room}] Identified '{suffix}' as '{sensor_type}' for {entity_id}")
-                else:
-                    unrecognized_suffixes.append(suffix)
-                    _LOGGER.warning(f"[{self.room}] ⚠️ UNRECOGNIZED sensor suffix: '{suffix}' from {entity_id}")
+                unrecognized_suffixes.append(suffix)
+                _LOGGER.warning(f"[{self.room}] ⚠️ UNRECOGNIZED sensor suffix: '{suffix}' from {entity_id}")
+            else:
+                _LOGGER.debug(
+                    f"[{self.room}] Resolved sensor types {sensor_types} for {entity_id}"
+                )
 
             # Sensoren registrieren
             for sensor_type in sensor_types:
@@ -243,19 +237,6 @@ class Sensor:
         _LOGGER.info(f"{self.deviceName} - SensorMap mit Label-Mapping erstellt")
         return self.sensorMap
 
-    def _identify_sensor_type(self, entity_suffix):
-        """Identifiziert den kanonischen Sensortyp."""
-        normalized_suffix = entity_suffix.lower().strip()
-
-        if normalized_suffix in self._translation_cache:
-            return self._translation_cache[normalized_suffix]
-
-        for translation, canonical_type in self._translation_cache.items():
-            if translation in normalized_suffix or normalized_suffix in translation:
-                return canonical_type
-
-        return None
-
     async def sensorDataGetter(self):
         """Initialisiere alle Sensoren aus der sensorMap mit Kontext."""
         try:
@@ -283,14 +264,6 @@ class Sensor:
                 f"Fehler bei Initialisierung von Sensor {self.deviceName}: {e}"
             )
             self.isInitialized = False
-
-    def _build_translation_cache(self):
-        """Erstellt einen Reverse-Lookup-Cache."""
-        cache = {}
-        for canonical_type, translations in SENSOR_TRANSLATIONS.items():
-            for translation in translations:
-                cache[translation.lower()] = canonical_type
-        return cache
 
     async def _initializeSensorType(self, sensor_type, sensor_entry, context):
         """

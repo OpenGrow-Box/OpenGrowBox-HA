@@ -65,16 +65,35 @@ class OGBDeviceManager:
         self.device_Worker()
 
     async def setupDevice(self, device):
-
         controlOption = self.data_store.get("mainControl")
+        device_name = device.get("name", "unknown")
+        entity_ids = [entity.get("entity_id") for entity in device.get("entities", [])]
 
         if controlOption not in ["HomeAssistant", "Premium"]:
             _LOGGER.warning(f"Device setup skipped - mainControl '{controlOption}' not valid")
             return False
 
-        _LOGGER.info(f"🔧 Setting up device: {device.get('name', 'unknown')}")
-        await self.addDevice(device)
-        _LOGGER.info(f"✅ Device setup completed: {device.get('name', 'unknown')}")
+        _LOGGER.info(f"🔧 Setting up device: {device_name}")
+
+        try:
+            identified_device = await self.addDevice(device)
+            if not identified_device:
+                _LOGGER.warning(
+                    f"⚠️ {self.room}: Device setup skipped/failed for '{device_name}'"
+                )
+                self._record_failed_device(device, "identify_or_add_failed")
+                return False
+
+            self._clear_failed_device(device_name)
+            _LOGGER.info(f"✅ Device setup completed: {device_name}")
+            return True
+        except Exception as e:
+            _LOGGER.error(
+                f"❌ {self.room}: Device setup failed for '{device_name}' with entities {entity_ids}: {e}",
+                exc_info=True,
+            )
+            self._record_failed_device(device, str(e))
+            return False
 
     async def addDevice(self, device):
         """Gerät aus eigener Geräteliste hinzufügen."""
@@ -144,6 +163,29 @@ class OGBDeviceManager:
         _LOGGER.info(f"Added new device From List: {identified_device}")
         return identified_device
 
+    def _record_failed_device(self, device, error):
+        failed_devices = self.data_store.getDeep("workData.failedDevices") or {}
+        device_name = device.get("name", "unknown")
+        failed_devices[device_name] = {
+            "error": str(error),
+            "entity_ids": [
+                entity.get("entity_id") for entity in device.get("entities", [])
+            ],
+            "platforms": sorted(
+                {
+                    entity.get("platform", "unknown")
+                    for entity in device.get("entities", [])
+                }
+            ),
+        }
+        self.data_store.setDeep("workData.failedDevices", failed_devices)
+
+    def _clear_failed_device(self, device_name):
+        failed_devices = self.data_store.getDeep("workData.failedDevices") or {}
+        if device_name in failed_devices:
+            failed_devices.pop(device_name, None)
+            self.data_store.setDeep("workData.failedDevices", failed_devices)
+
     async def removeDevice(self, deviceName: str):
         """Entfernt ein Gerät anhand des Gerätenamens aus der Geräteliste."""
 
@@ -156,7 +198,7 @@ class OGBDeviceManager:
         # Add-on Sensoren sollen nicht entfernt werden
         if any(
             deviceName.endswith(suffix)
-            for suffix in ["_humidity", "_temperature", "_dewpoint"]
+            for suffix in ["_humidity", "_temperature", "_dewpoint", "_co2"]
         ):
             _LOGGER.debug(f"Skipped remove for derived sensor device: {deviceName}")
             return False

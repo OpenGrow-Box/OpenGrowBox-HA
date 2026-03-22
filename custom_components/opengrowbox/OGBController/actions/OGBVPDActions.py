@@ -38,6 +38,10 @@ class OGBVPDActions:
         self.ogb = ogb
         self.action_manager: OGBActionManager = ogb.actionManager
 
+    def _is_light_on(self) -> bool:
+        """Return True only when plant day/light is active."""
+        return bool(self.ogb.dataStore.getDeep("isPlantDay.islightON", False))
+
     # =================================================================
     # Basic VPD Control Actions
     # =================================================================
@@ -50,6 +54,7 @@ class OGBVPDActions:
             capabilities: Device capabilities and states
         """
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        is_light_on = self._is_light_on()
         action_message = "VPD-Increase Action"
 
         action_map = []
@@ -87,7 +92,13 @@ class OGBVPDActions:
         # Check CO2 control switch for VPD-based CO2 actions
         co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
         if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            action_map.append(self._create_action("canCO2", "Increase", action_message))
+            if is_light_on:
+                action_map.append(self._create_action("canCO2", "Increase", action_message))
+            else:
+                action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Night mode active - CO2 increase blocked, forcing CO2 off"
+                )
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
@@ -104,6 +115,7 @@ class OGBVPDActions:
             capabilities: Device capabilities and states
         """
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        is_light_on = self._is_light_on()
         action_message = "VPD-Reduce Action"
 
         action_map = []
@@ -141,6 +153,10 @@ class OGBVPDActions:
         co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
         if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Reduce", action_message))
+            if not is_light_on:
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
+                )
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
@@ -152,6 +168,7 @@ class OGBVPDActions:
     async def increase_vpd_target(self, capabilities: Dict[str, Any]):
         """Increase VPD for VPD Target mode."""
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        is_light_on = self._is_light_on()
         action_message = "VPD-Target Increase Action"
 
         action_map = []
@@ -175,7 +192,13 @@ class OGBVPDActions:
 
         co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
         if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            action_map.append(self._create_action("canCO2", "Increase", action_message))
+            if is_light_on:
+                action_map.append(self._create_action("canCO2", "Increase", action_message))
+            else:
+                action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Night mode active - CO2 target increase blocked, forcing CO2 off"
+                )
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Increase", action_message))
@@ -185,6 +208,7 @@ class OGBVPDActions:
     async def reduce_vpd_target(self, capabilities: Dict[str, Any]):
         """Reduce VPD for VPD Target mode."""
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        is_light_on = self._is_light_on()
         action_message = "VPD-Target Reduce Action"
 
         action_map = []
@@ -209,6 +233,10 @@ class OGBVPDActions:
         co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
         if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
             action_map.append(self._create_action("canCO2", "Reduce", action_message))
+            if not is_light_on:
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
+                )
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Reduce", action_message))

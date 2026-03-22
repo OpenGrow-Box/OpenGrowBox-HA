@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from ..data.OGBParams.OGBParams import CAP_MAPPING
+from ..utils.sensor_identification import resolve_remappable_sensor_type
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,7 +143,23 @@ class Device:
             for container in (self, *self.switches, *self.options, *self.ogbsettings)
         )
         device_sensors = len(self.sensors)
-        child_sensors = sensor_count - device_sensors
+
+        # Include remapped child sensor-devices (e.g. <device>_temperature)
+        remapped_children = 0
+        try:
+            all_devices = self.dataStore.get("devices") or []
+            prefix = f"{self.deviceName}_"
+            remapped_children = sum(
+                1
+                for dev in all_devices
+                if getattr(dev, "deviceType", "") == "Sensor"
+                and str(getattr(dev, "deviceName", "")).startswith(prefix)
+            )
+        except Exception:
+            remapped_children = 0
+
+        child_sensors = (sensor_count - device_sensors) + remapped_children
+        sensor_count = device_sensors + child_sensors
         
         lines.extend([
             f"║ Total Sensors: {sensor_count:<65} ║",
@@ -241,18 +258,94 @@ class Device:
             "dewpoint": [],
             "co2": [],
         }
+        sensor_group_entity_ids = {
+            "temperature": set(),
+            "humidity": set(),
+            "dewpoint": set(),
+            "co2": set(),
+        }
 
         used_entities = set()
 
-        # Schritt 1: Gruppiere Sensor-Entities nach Typ
+        # Safety net: pull matching sensor entities directly from HA state machine
+        # in case RegistryListener grouped list is temporarily incomplete.
+        try:
+            if self.hass and hasattr(self.hass, "states"):
+                known_ids = {
+                    e.get("entity_id")
+                    for e in entitys
+                    if isinstance(e, dict) and e.get("entity_id")
+                }
+                prefix = f"sensor.{str(self.deviceName).lower()}_"
+                for state in self.hass.states.async_all("sensor"):
+                    entity_id = getattr(state, "entity_id", "")
+                    if not entity_id:
+                        continue
+                    entity_id_lower = entity_id.lower()
+                    if not entity_id_lower.startswith(prefix):
+                        continue
+                    if entity_id in known_ids:
+                        continue
+
+                    # Only backfill sensors that can actually be remapped
+                    # (translated temperature/humidity/dewpoint/co2 types).
+                    if not resolve_remappable_sensor_type(entity_id, []):
+                        continue
+
+                    entitys.append(
+                        {
+                            "entity_id": entity_id,
+                            "value": getattr(state, "state", None),
+                            "platform": "unknown",
+                            "labels": [],
+                        }
+                    )
+                    known_ids.add(entity_id)
+                    _LOGGER.debug(
+                        f"[{self.deviceName}] Added missing sensor from HA states: {entity_id}"
+                    )
+        except Exception as e:
+            _LOGGER.debug(f"[{self.deviceName}] HA state sensor backfill skipped: {e}")
+
+        # Schritt 1: Gruppiere sensor.-Entities nach Typ
         for entity in entitys:
             entity_id = entity.get("entity_id", "")
-            for sensor_type in sensor_groups.keys():
-                if sensor_type in entity_id and entity_id.startswith("sensor."):
-                    sensor_groups[sensor_type].append(entity)
-                    used_entities.add(entity_id)
-                    _LOGGER.debug(f"[{self.deviceName}] Found {sensor_type} entity: {entity_id}")
-                    break
+            if not entity_id.startswith("sensor."):
+                continue
+
+            merged_labels = []
+            if isinstance(entity.get("labels"), list):
+                merged_labels.extend(entity.get("labels", []))
+            if isinstance(self.labelMap, list):
+                merged_labels.extend(
+                    lbl
+                    for lbl in self.labelMap
+                    if isinstance(lbl, dict)
+                    and (lbl.get("entity") == entity_id or lbl.get("entity") is None)
+                )
+
+            sensor_type = resolve_remappable_sensor_type(
+                entity_id, merged_labels
+            )
+
+            if not sensor_type:
+                # Backward-compatible fallback for legacy entity suffixes
+                object_id = entity_id.split(".", 1)[-1].lower()
+                if object_id.endswith("_temperature"):
+                    sensor_type = "temperature"
+                elif object_id.endswith("_humidity"):
+                    sensor_type = "humidity"
+                elif object_id.endswith("_dewpoint") or object_id.endswith("_dew_point"):
+                    sensor_type = "dewpoint"
+                elif object_id.endswith("_co2"):
+                    sensor_type = "co2"
+
+            if sensor_type:
+                sensor_groups[sensor_type].append(entity)
+                sensor_group_entity_ids[sensor_type].add(entity_id)
+                _LOGGER.debug(
+                    f"[{self.deviceName}] Remapping sensor entity '{entity_id}' as '{sensor_type}'"
+                )
 
         # Schritt 2: Erstelle Sensor-Objekte für jede Gruppe
         for sensor_type, sensor_entities in sensor_groups.items():
@@ -268,8 +361,7 @@ class Device:
             )
             if already_exists:
                 _LOGGER.debug(f"[{self.deviceName}] Sensor '{sensor_name}' already exists – skipping")
-                for entity in sensor_entities:
-                    used_entities.add(entity.get("entity_id", ""))
+                used_entities.update(sensor_group_entity_ids.get(sensor_type, set()))
                 continue
 
             _LOGGER.debug(
@@ -294,6 +386,7 @@ class Device:
 
                 if new_sensor:
                     new_sensors.append(new_sensor)
+                    used_entities.update(sensor_group_entity_ids.get(sensor_type, set()))
                     _LOGGER.debug(
                         f"[{self.deviceName}] ✓ Remapped sensor '{sensor_name}' Label:{sensor_type} initialized successfully"
                     )
@@ -463,7 +556,13 @@ class Device:
 
     # Eval sensor if Intressted in 
     def evalSensors(self, sensor_id: str) -> bool:
-        interested_mapping = ("_temperature", "_humidity", "_dewpoint", "_co2","_duty","_moisture","_intensity","_ph","_ec","_tds",'_conductivity')
+        interested_mapping = (
+            "_temperature", "temperature",
+            "_humidity", "humidity",
+            "_dewpoint", "_dew_point", "dewpoint",
+            "_co2", "co2",
+            "_duty", "_moisture", "_intensity", "_ph", "_ec", "_tds", "_conductivity"
+        )
         return any(keyword in sensor_id for keyword in interested_mapping)
 
     # Mapp Entity Types to Class vars
@@ -1086,11 +1185,11 @@ class Device:
                             return
 
                     elif self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(True)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
                             await self.set_value(percentage)
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON via select+number ({percentage}%).")
+                            _LOGGER.debug(f"{self.deviceName}: Exhaust ON via power+number ({percentage}%).")
                             return
                         else:
                             await self.hass.services.async_call(
@@ -1139,11 +1238,11 @@ class Device:
                             _LOGGER.debug(f"{self.deviceName}: Intake ON (Switch).")
                             return
                     elif self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(True)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
                             await self.set_value(percentage)
                             self.isRunning = True
-                            _LOGGER.debug(f"{self.deviceName}: Intake ON via select+number ({percentage}%).")
+                            _LOGGER.debug(f"{self.deviceName}: Intake ON via power+number ({percentage}%).")
                             return
                         else:
                             await self.hass.services.async_call(
@@ -1178,8 +1277,8 @@ class Device:
                             },
                         )
                     elif self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(True)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
                             await self.set_value(percentage)
                         else:
                             await self.hass.services.async_call(
@@ -1219,7 +1318,19 @@ class Device:
 
                 # Humidifier einschalten
                 elif self.deviceType == "Humidifier":
-                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass:
+                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={"entity_id": entity_id, "percentage": percentage},
+                        )
+                    elif entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif hasattr(self, 'realHumidifierClass') and self.realHumidifierClass:
                         await self.hass.services.async_call(
                             domain="humidifier",
                             service="turn_on",
@@ -1235,8 +1346,8 @@ class Device:
                     # Non-AC-Infinity dimmable humidifier path:
                     # turn on first, then set numeric output value (duty/intensity/number).
                     if self.isDimmable and percentage is not None:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(True)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
                         await self.set_value(percentage)
 
                     self.isRunning = True
@@ -1245,7 +1356,19 @@ class Device:
 
                 # Dehumidifier einschalten
                 elif self.deviceType == "Dehumidifier":
-                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
+                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={"entity_id": entity_id, "percentage": percentage},
+                        )
+                    elif entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
                         await self.hass.services.async_call(
                             domain="humidifier",
                             service="turn_on",
@@ -1261,8 +1384,8 @@ class Device:
                     # Non-AC-Infinity dimmable dehumidifier path:
                     # turn on first, then set numeric output value (duty/intensity/number).
                     if self.isDimmable and percentage is not None:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(True)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
                         await self.set_value(percentage)
 
                     self.isRunning = True
@@ -1384,10 +1507,16 @@ class Device:
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
                     if self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(False)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
                         await self.set_value(0)
-                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
+                    if entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
                         await self.hass.services.async_call(
                             domain="humidifier",
                             service="turn_off",
@@ -1406,10 +1535,16 @@ class Device:
                 # Dehumidifier ausschalten
                 elif self.deviceType == "Dehumidifier":
                     if self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(False)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
                         await self.set_value(0)
-                    if hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
+                    if entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif hasattr(self, 'realHumidifierClass') and self.realHumidifierClass and hasattr(self, 'humidifierEntityId') and self.humidifierEntityId:
                         await self.hass.services.async_call(
                             domain="humidifier",
                             service="turn_off",
@@ -1452,8 +1587,8 @@ class Device:
                 # Exhaust ausschalten
                 elif self.deviceType == "Exhaust":
                     if self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(False)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
                             await self.set_value(0)
                             self.isRunning = False
                         return  # Deaktiviert for fan-percentage exhaust
@@ -1470,8 +1605,8 @@ class Device:
                 # Intake ausschalten
                 elif self.deviceType == "Intake":
                     if self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(False)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
                             await self.set_value(0)
                             self.isRunning = False
                         return
@@ -1494,8 +1629,8 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                     elif self.isDimmable:
-                        if self._has_select_and_number_control():
-                            await self._set_select_power_option(False)
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
                             await self.set_value(0)
                         else:
                             await self.hass.services.async_call(
@@ -1590,22 +1725,25 @@ class Device:
 
         _LOGGER.warning(f"{self.deviceName}: keine Option mit 'duty' oder 'intensity' in entity_id gefunden.")
 
-    def _has_select_and_number_control(self) -> bool:
-        """Return True if device exposes both select and number control entities."""
+    def _has_power_and_number_control(self) -> bool:
+        """Return True if device exposes (select or switch) plus number control."""
         all_entities = []
         all_entities.extend(self.options or [])
         all_entities.extend(self.switches or [])
 
-        has_select = any(
-            str(entity.get("entity_id", "")).startswith("select.") for entity in all_entities
+        has_power = any(
+            str(entity.get("entity_id", "")).startswith(("select.", "switch.", "fan.", "humidifier."))
+            for entity in all_entities
         )
         has_number = any(
             str(entity.get("entity_id", "")).startswith("number.") for entity in all_entities
         )
-        return has_select and has_number
+        if has_power and has_number:
+            _LOGGER.debug(f"{self.deviceName}: found power+number control combination")
+        return has_power and has_number
 
-    async def _set_select_power_option(self, power_on: bool) -> None:
-        """Set select control to an On/Off-like option if available."""
+    async def _set_power_control(self, power_on: bool) -> None:
+        """Set power via select or switch control entities if available."""
         target_candidates = ["on", "auto"] if power_on else ["off"]
 
         all_entities = []
@@ -1646,6 +1784,69 @@ class Device:
             except Exception as e:
                 _LOGGER.debug(
                     f"{self.deviceName}: select option '{selected_option}' failed on {entity_id}: {e}"
+                )
+
+        for option in all_entities:
+            entity_id = str(option.get("entity_id", ""))
+            if not entity_id.startswith("switch."):
+                continue
+
+            service = "turn_on" if power_on else "turn_off"
+            try:
+                await self.hass.services.async_call(
+                    domain="switch",
+                    service=service,
+                    service_data={"entity_id": entity_id},
+                )
+                _LOGGER.debug(
+                    f"{self.deviceName}: set switch power '{service}' on {entity_id}"
+                )
+                return
+            except Exception as e:
+                _LOGGER.debug(
+                    f"{self.deviceName}: switch power '{service}' failed on {entity_id}: {e}"
+                )
+
+        for option in all_entities:
+            entity_id = str(option.get("entity_id", ""))
+            if not entity_id.startswith("fan."):
+                continue
+
+            service = "turn_on" if power_on else "turn_off"
+            try:
+                await self.hass.services.async_call(
+                    domain="fan",
+                    service=service,
+                    service_data={"entity_id": entity_id},
+                )
+                _LOGGER.debug(
+                    f"{self.deviceName}: set fan power '{service}' on {entity_id}"
+                )
+                return
+            except Exception as e:
+                _LOGGER.debug(
+                    f"{self.deviceName}: fan power '{service}' failed on {entity_id}: {e}"
+                )
+
+        for option in all_entities:
+            entity_id = str(option.get("entity_id", ""))
+            if not entity_id.startswith("humidifier."):
+                continue
+
+            service = "turn_on" if power_on else "turn_off"
+            try:
+                await self.hass.services.async_call(
+                    domain="humidifier",
+                    service=service,
+                    service_data={"entity_id": entity_id},
+                )
+                _LOGGER.debug(
+                    f"{self.deviceName}: set humidifier power '{service}' on {entity_id}"
+                )
+                return
+            except Exception as e:
+                _LOGGER.debug(
+                    f"{self.deviceName}: humidifier power '{service}' failed on {entity_id}: {e}"
                 )
 
     async def set_mode(self, mode: str) -> None:

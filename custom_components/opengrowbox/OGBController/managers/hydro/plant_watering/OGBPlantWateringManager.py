@@ -19,6 +19,8 @@ class OGBPlantWateringManager:
         self.medium_manager = medium_manager
         self.cast_manager = cast_manager
         self._last_client_signature = None
+        self._sensor_blocked = False
+        self._wet_lock_active = False
 
     async def start(self, duration: float, pump_devices, cooldown_minutes: Optional[float] = None):
         """Start the plant-watering monitor loop."""
@@ -67,6 +69,28 @@ class OGBPlantWateringManager:
         try:
             while True:
                 snapshot = self._get_moisture_snapshot()
+
+                if snapshot.get("sensor_count", 0) <= 0:
+                    self._sensor_blocked = True
+                    await self._turn_off_pumps(active_pumps)
+                    await self._emit_log(
+                        message="Plant-Watering Sensor-Based: NO SENSOR - I will stop using pump until sensor available.",
+                        actions=["SAFETY STOP", "No sensor available"],
+                        devices=active_pumps,
+                        force=False,
+                    )
+                    await asyncio.sleep(60)
+                    continue
+
+                if self._sensor_blocked:
+                    self._sensor_blocked = False
+                    await self._emit_log(
+                        message="Plant-Watering Sensor-Based: Sensor available again - monitoring resumed.",
+                        actions=["Safety cleared"],
+                        devices=active_pumps,
+                        force=True,
+                    )
+
                 should_water, reason = self._should_water(snapshot, cooldown_minutes)
 
                 if should_water:
@@ -100,12 +124,15 @@ class OGBPlantWateringManager:
     def _get_moisture_snapshot(self) -> Dict[str, Any]:
         mediums = self.medium_manager.get_mediums() if self.medium_manager else []
         moisture_values = []
-        threshold_values = []
+        threshold_min_values = []
+        threshold_max_values = []
         source_names = []
 
         for medium in mediums:
             moisture = getattr(medium, "current_moisture", None)
-            threshold = getattr(getattr(medium, "thresholds", None), "moisture_min", None)
+            thresholds = getattr(medium, "thresholds", None)
+            threshold_min = getattr(thresholds, "moisture_min", None)
+            threshold_max = getattr(thresholds, "moisture_max", None)
 
             try:
                 if moisture is not None:
@@ -115,17 +142,38 @@ class OGBPlantWateringManager:
                 pass
 
             try:
-                if threshold is not None:
-                    threshold_values.append(float(threshold))
+                if threshold_min is not None:
+                    threshold_min_values.append(float(threshold_min))
+            except (TypeError, ValueError):
+                pass
+
+            try:
+                if threshold_max is not None:
+                    threshold_max_values.append(float(threshold_max))
             except (TypeError, ValueError):
                 pass
 
         average_moisture = sum(moisture_values) / len(moisture_values) if moisture_values else None
-        threshold = sum(threshold_values) / len(threshold_values) if threshold_values else None
+        threshold_min = (
+            sum(threshold_min_values) / len(threshold_min_values)
+            if threshold_min_values
+            else None
+        )
+        threshold_max = (
+            sum(threshold_max_values) / len(threshold_max_values)
+            if threshold_max_values
+            else None
+        )
+
+        dryback_midpoint = None
+        if threshold_min is not None and threshold_max is not None:
+            dryback_midpoint = (threshold_min + threshold_max) / 2.0
 
         return {
             "average_moisture": average_moisture,
-            "threshold": threshold,
+            "threshold_min": threshold_min,
+            "threshold_max": threshold_max,
+            "dryback_midpoint": dryback_midpoint,
             "sensor_count": len(moisture_values),
             "sources": source_names,
             "last_watering": self.data_store.getDeep("Hydro.PlantWatering.lastWatering"),
@@ -133,15 +181,33 @@ class OGBPlantWateringManager:
 
     def _should_water(self, snapshot: Dict[str, Any], cooldown_minutes: float):
         average_moisture = snapshot.get("average_moisture")
-        threshold = snapshot.get("threshold")
+        threshold_min = snapshot.get("threshold_min")
+        threshold_max = snapshot.get("threshold_max")
+        dryback_midpoint = snapshot.get("dryback_midpoint")
+
+        if self._sensor_blocked:
+            return False, "SAFETY: Sensor fehlt - Pumpe gesperrt"
 
         if average_moisture is None:
             return False, "Warte: kein Medium-Feuchtesensor"
 
-        if threshold is None:
+        if threshold_min is None:
             return False, "Warte: kein Feuchte-Schwellwert"
 
-        if average_moisture >= threshold:
+        if threshold_max is not None and average_moisture >= threshold_max:
+            self._wet_lock_active = True
+            return False, "Stop: Feuchte-Maximum erreicht"
+
+        if self._wet_lock_active:
+            release_threshold = dryback_midpoint if dryback_midpoint is not None else threshold_min
+            if average_moisture > release_threshold:
+                return (
+                    False,
+                    f"Warte: Dryback-Lock aktiv bis <= {self._format_value(release_threshold)}",
+                )
+            self._wet_lock_active = False
+
+        if average_moisture >= threshold_min:
             return False, "Warte: Medium feucht genug"
 
         if not self._cooldown_elapsed(snapshot.get("last_watering"), cooldown_minutes):
@@ -175,6 +241,36 @@ class OGBPlantWateringManager:
 
     async def _run_watering_shot(self, active_pumps: List[str], duration: float, reason: str):
         snapshot = self._get_moisture_snapshot()
+
+        if snapshot.get("sensor_count", 0) <= 0:
+            self._sensor_blocked = True
+            await self._turn_off_pumps(active_pumps)
+            await self._emit_log(
+                message="Plant-Watering Sensor-Based: NO SENSOR - I will stop using pump until sensor available.",
+                actions=["SAFETY STOP", "No sensor available"],
+                devices=active_pumps,
+                force=True,
+            )
+            return
+
+        max_threshold = snapshot.get("threshold_max")
+        avg_moisture = snapshot.get("average_moisture")
+        if (
+            max_threshold is not None
+            and avg_moisture is not None
+            and avg_moisture >= max_threshold
+        ):
+            self._wet_lock_active = True
+            await self._emit_status_log(
+                action="Stop: Feuchte-Maximum bereits erreicht",
+                moisture_snapshot=snapshot,
+                duration=duration,
+                cooldown_minutes=self._resolve_cooldown_minutes(None),
+                devices=active_pumps,
+                force=True,
+            )
+            return
+
         await self._emit_status_log(
             action=reason,
             moisture_snapshot=snapshot,
@@ -191,7 +287,43 @@ class OGBPlantWateringManager:
             )
             await self.event_manager.emit("PumpAction", pump_action)
 
-        await asyncio.sleep(duration)
+        remaining = max(float(duration), 0.0)
+        check_step_sec = 2.0
+
+        while remaining > 0:
+            sleep_for = min(check_step_sec, remaining)
+            await asyncio.sleep(sleep_for)
+            remaining -= sleep_for
+
+            current_snapshot = self._get_moisture_snapshot()
+            if current_snapshot.get("sensor_count", 0) <= 0:
+                self._sensor_blocked = True
+                await self._emit_log(
+                    message="Plant-Watering Sensor-Based: SENSOR LOST during shot - pump stopped immediately.",
+                    actions=["SAFETY STOP", "No sensor available"],
+                    devices=active_pumps,
+                    force=True,
+                )
+                break
+
+            current_max = current_snapshot.get("threshold_max")
+            current_avg = current_snapshot.get("average_moisture")
+            if (
+                current_max is not None
+                and current_avg is not None
+                and current_avg >= current_max
+            ):
+                self._wet_lock_active = True
+                await self._emit_status_log(
+                    action="Stop: Feuchte-Maximum erreicht",
+                    moisture_snapshot=current_snapshot,
+                    duration=duration,
+                    cooldown_minutes=self._resolve_cooldown_minutes(None),
+                    devices=active_pumps,
+                    force=True,
+                )
+                break
+
         await self._turn_off_pumps(active_pumps)
         self.data_store.setDeep("Hydro.PlantWatering.lastWatering", datetime.now().isoformat())
 
@@ -213,12 +345,15 @@ class OGBPlantWateringManager:
         force: bool,
     ):
         moisture = moisture_snapshot.get("average_moisture")
-        threshold = moisture_snapshot.get("threshold")
+        threshold_min = moisture_snapshot.get("threshold_min")
+        threshold_max = moisture_snapshot.get("threshold_max")
+        dryback_midpoint = moisture_snapshot.get("dryback_midpoint")
         sources = ", ".join(moisture_snapshot.get("sources") or []) or "N/A"
 
         await self._emit_log(
             message=(
-                f"Medium {self._format_value(moisture)} / Min {self._format_value(threshold)} | "
+                f"Medium {self._format_value(moisture)} / Min {self._format_value(threshold_min)} / "
+                f"Max {self._format_value(threshold_max)} / Mid {self._format_value(dryback_midpoint)} | "
                 f"Shot {duration:.0f}s | Cooldown {cooldown_minutes:.0f}m"
             ),
             actions=[action, f"Sensoren: {sources}"],

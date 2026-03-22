@@ -63,6 +63,19 @@ class OGBConfigurationManager:
         str_value = str(value).lower().strip()
         return str_value in ("unavailable", "unknown", "none", "")
 
+    def _coerce_float(self, value, *, context: str = "value") -> float | None:
+        """Convert HA-style values to float without raising during init."""
+        if self._is_unavailable_state(value):
+            return None
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                f"{self.room}: Ignoring non-numeric {context}: {value}"
+            )
+            return None
+
     def get_configuration_mapping(self):
         """Get the mapping of entity keys to configuration handlers."""
         return {
@@ -216,7 +229,10 @@ class OGBConfigurationManager:
             f"ogb_cropsteering_p1_vwc_min_{self.room.lower()}": self._crop_steering_sets,
             f"ogb_cropsteering_p2_vwc_min_{self.room.lower()}": self._crop_steering_sets,
             f"ogb_cropsteering_p3_vwc_min_{self.room.lower()}": self._crop_steering_sets,
-            
+
+            f"ogb_soilmoisturemin_{self.room.lower()}": self._soil_moisture_threshold_sets,
+            f"ogb_soilmoisturemax_{self.room.lower()}": self._soil_moisture_threshold_sets,
+           
             # Special Lights - Far Red
             f"ogb_light_farred_enabled_{self.room.lower()}": self._update_farred_enabled,
             f"ogb_light_farred_mode_{self.room.lower()}": self._update_farred_mode,
@@ -1147,16 +1163,33 @@ class OGBConfigurationManager:
         self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
         _LOGGER.info(f"{self.room}: Auto-activated {device_type} min/max control")
 
+        numeric_value = self._coerce_float(value, context=name)
+        if numeric_value is None:
+            _LOGGER.warning(
+                f"{self.room}: Skipping {device_type} min/max update for invalid init value '{value}'"
+            )
+            return
+
         if "min" in name:
-            self.data_store.setDeep(min_path, float(value))
+            self.data_store.setDeep(min_path, numeric_value)
             _LOGGER.info(f"{self.room}: Set {device_type.lower()} min {('duty' if device_type != 'Light' else 'voltage')} = {value}")
         elif "max" in name:
-            self.data_store.setDeep(max_path, float(value))
+            self.data_store.setDeep(max_path, numeric_value)
             _LOGGER.info(f"{self.room}: Set {device_type.lower()} max {('duty' if device_type != 'Light' else 'voltage')} = {value}")
 
         # Get current values and validate
-        min_val = self.data_store.getDeep(min_path)
-        max_val = self.data_store.getDeep(max_path)
+        min_val = self._coerce_float(
+            self.data_store.getDeep(min_path), context=f"{device_type} min"
+        )
+        max_val = self._coerce_float(
+            self.data_store.getDeep(max_path), context=f"{device_type} max"
+        )
+
+        if min_val is not None:
+            self.data_store.setDeep(min_path, min_val)
+        if max_val is not None:
+            self.data_store.setDeep(max_path, max_val)
+
         if min_val is not None and max_val is not None and min_val >= max_val:
             adjustment = 10
             _LOGGER.debug(
@@ -1415,6 +1448,72 @@ class OGBConfigurationManager:
                 return
         
         _LOGGER.error(f"⚠️ {self.room}: NO MATCH found for crop steering parameter: {name}")
+
+    async def _soil_moisture_threshold_sets(self, data):
+        """Update global soil moisture thresholds and sync them to all mediums."""
+        value = self._coerce_float(
+            data.newState[0] if getattr(data, "newState", None) else None,
+            context="soil moisture threshold",
+        )
+        if value is None:
+            return
+
+        entity_name = (getattr(data, "Name", "") or "").lower()
+        room_suffix = f"_{self.room.lower()}"
+        is_min = f"ogb_soilmoisturemin{room_suffix}" in entity_name
+        is_max = f"ogb_soilmoisturemax{room_suffix}" in entity_name
+
+        if not (is_min or is_max):
+            _LOGGER.debug(
+                f"{self.room}: Ignoring soil moisture update for unknown entity '{entity_name}'"
+            )
+            return
+
+        min_path = "Hydro.PlantWatering.soilMoistureMin"
+        max_path = "Hydro.PlantWatering.soilMoistureMax"
+
+        current_min = self._coerce_float(
+            self.data_store.getDeep(min_path), context="soil moisture min"
+        )
+        current_max = self._coerce_float(
+            self.data_store.getDeep(max_path), context="soil moisture max"
+        )
+
+        if current_min is None:
+            current_min = 50.0
+        if current_max is None:
+            current_max = 50.0
+
+        new_min = value if is_min else current_min
+        new_max = value if is_max else current_max
+
+        if new_min > new_max:
+            if is_min:
+                new_max = new_min
+            else:
+                new_min = new_max
+
+        self.data_store.setDeep(min_path, new_min)
+        self.data_store.setDeep(max_path, new_max)
+
+        grow_mediums = self.data_store.get("growMediums") or []
+        medium_count = len(grow_mediums)
+
+        for medium_index in range(medium_count):
+            await self.event_manager.emit(
+                "UpdateMediumPlantDates",
+                {
+                    "room": self.room,
+                    "medium_index": medium_index,
+                    "moisture_min": new_min,
+                    "moisture_max": new_max,
+                },
+                haEvent=True,
+            )
+
+        _LOGGER.info(
+            f"{self.room}: Soil moisture thresholds updated - min={new_min}, max={new_max}, mediums={medium_count}"
+        )
 
     def get_configuration_info(self):
         """Get current configuration information."""
