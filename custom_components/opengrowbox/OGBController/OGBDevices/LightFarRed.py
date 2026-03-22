@@ -161,7 +161,7 @@ class LightFarRed(Light):
                         self.isRunning = state.state == "on"
                         return
                 
-                _LOGGER.error(
+                _LOGGER.debug(
                     f"{self.deviceName}: Could not find any valid entity in Home Assistant. "
                     f"Tried: {possible_entity_ids}. "
                     f"Please check that your Far Red light device exists and is correctly configured."

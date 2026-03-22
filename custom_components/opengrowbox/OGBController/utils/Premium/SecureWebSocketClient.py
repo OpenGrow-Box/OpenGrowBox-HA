@@ -119,6 +119,7 @@ class OGBWebSocketConManager:
         self._health_monitor_task = None
         self._connection_monitoring_paused = False
         self._connection_start_time = None
+        self._last_plan_fallback_check = 0.0
 
         # Stored auth callback for V1 authentication
         self._pending_auth_callback = None
@@ -3234,6 +3235,10 @@ class OGBWebSocketConManager:
                         )
                         asyncio.create_task(trigger_recovery("stale_pong"))
                         continue
+
+                # Fallback safety: refresh subscription plan from cached API endpoint.
+                # This prevents long-lived stale plan state when real-time events are missed.
+                await self._refresh_plan_from_cache_fallback()
                 
                 # All checks passed
                 logging.debug(
@@ -3247,6 +3252,65 @@ class OGBWebSocketConManager:
             logging.debug(f"🏥 {self.ws_room} Health monitor cancelled")
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Health monitor error: {e}")
+
+    async def _refresh_plan_from_cache_fallback(self):
+        """Refresh plan every 5 minutes via cached API endpoint (fallback only)."""
+        if not self.authenticated or not self._access_token:
+            return
+
+        now = time.time()
+        if now - self._last_plan_fallback_check < 1800:
+            return
+
+        self._last_plan_fallback_check = now
+
+        try:
+            url = f"{self.api_url}/api/v1/subscriptions/current"
+            headers = dict(self.headers)
+            headers["Authorization"] = f"Bearer {self._access_token}"
+
+            timeout_config = aiohttp.ClientTimeout(total=8)
+            async with aiohttp.ClientSession(timeout=timeout_config) as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        logging.warning(
+                            f"⚠️ {self.ws_room} Plan fallback check failed HTTP {response.status}"
+                        )
+                        return
+
+                    data = await response.json()
+                    server_plan = data.get("plan")
+                    if not server_plan:
+                        return
+
+                    current_plan = (self.subscription_data or {}).get("plan_name")
+                    if current_plan != server_plan:
+                        self.subscription_data["plan_name"] = server_plan
+                        self._plan = server_plan
+                        logging.info(
+                            f"🔁 {self.ws_room} Plan fallback sync: {current_plan} -> {server_plan} "
+                            f"(source={data.get('source', 'unknown')}, cached={data.get('cached', False)})"
+                        )
+
+                        await self._safe_emit(
+                            "api_usage_update",
+                            {
+                                "plan": server_plan,
+                                "features": data.get("features", {}),
+                                "limits": data.get("limits", {}),
+                                "usage": data.get("usage", {}),
+                                "source": "fallback_poll",
+                                "timestamp": data.get("timestamp"),
+                            },
+                            haEvent=True,
+                        )
+                    else:
+                        logging.debug(
+                            f"📦 {self.ws_room} Plan fallback check OK: {server_plan} "
+                            f"(source={data.get('source', 'unknown')}, cached={data.get('cached', False)})"
+                        )
+        except Exception as e:
+            logging.warning(f"⚠️ {self.ws_room} Plan fallback check error: {e}")
 
     # =================================================================
     # Helper Methods

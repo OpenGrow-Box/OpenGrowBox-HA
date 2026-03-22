@@ -222,9 +222,18 @@ class OGBRegistryEvenListener:
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
-                # Keep sensor entities even if value is currently unavailable/unknown.
-                # They can recover later and should still be discovered/mapped as sensors.
-                if entity.entity_id.startswith("sensor."):
+                # Keep sensor + actuator entities even if value is currently unavailable/unknown.
+                # This is important during startup when some entities report None/unknown briefly,
+                # otherwise device discovery can miss control entities (e.g. special lights).
+                keep_prefixes = (
+                    "sensor.",
+                    "light.",
+                    "switch.",
+                    "fan.",
+                    "climate.",
+                    "humidifier.",
+                )
+                if entity.entity_id.startswith(keep_prefixes):
                     _LOGGER.debug(
                         f"Keeping {entity.entity_id} despite invalid initial value ({state_value})"
                     )
