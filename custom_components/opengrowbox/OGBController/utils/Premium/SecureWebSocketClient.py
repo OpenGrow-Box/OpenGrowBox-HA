@@ -1397,10 +1397,11 @@ class OGBWebSocketConManager:
                 plan_name = data.get("plan_name")
                 action = data.get("action", "sync")
                 source = data.get("source", "unknown")
+                scheduled = data.get("scheduled", False)
 
                 logging.info(
                     f"📊 {self.ws_room} {event_name}: plan_id={plan_id}, plan_name={plan_name}, "
-                    f"action={action}, source={source}"
+                    f"action={action}, source={source}, scheduled={scheduled}"
                 )
 
                 # connection_status will usually follow with full plan/features/limits snapshot.
@@ -1410,10 +1411,13 @@ class OGBWebSocketConManager:
                     "plan_name": plan_name,
                     "action": action,
                     "source": source,
+                    "scheduled": scheduled,
                     "timestamp": data.get("timestamp", time.time()),
                 }
 
+                logging.info(f"📤 {self.ws_room} Emitting plan_changed event to event_manager: {emit_data}")
                 await self._safe_emit("plan_changed", emit_data, haEvent=True)
+                logging.info(f"✅ {self.ws_room} plan_changed event emitted successfully")
 
             except Exception as e:
                 logging.error(f"❌ {self.ws_room} Error handling {event_name}: {e}")

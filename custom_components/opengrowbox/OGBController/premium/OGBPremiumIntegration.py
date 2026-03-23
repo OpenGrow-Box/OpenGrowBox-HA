@@ -1019,6 +1019,22 @@ class OGBPremiumIntegration:
                         f"ℹ️ {self.room} plan_changed had no transition (old={old_plan}, new={new_plan}), "
                         f"sent sync confirmation notification for action={action}"
                     )
+                else:
+                    # For sync actions with no transition: always send notification so user knows sync happened
+                    try:
+                        from ..managers.OGBNotifyManager import OGBNotificator
+                        if not hasattr(self, 'notificator'):
+                            self.notificator = OGBNotificator(self.hass, self.room)
+                        await self.notificator.info(
+                            message=f"OpenGrowBox plan sync completed: {new_plan}",
+                            title=f"OGB Plan Synced - {self.room}",
+                        )
+                    except Exception as notify_error:
+                        _LOGGER.error(f"❌ {self.room} Error sending plan sync notification: {notify_error}")
+                    _LOGGER.info(
+                        f"ℹ️ {self.room} plan_changed sync action completed (old={old_plan}, new={new_plan}), "
+                        f"sent confirmation notification"
+                    )
 
                 await self._send_auth_response(
                     event_id="plan_changed_sync",
