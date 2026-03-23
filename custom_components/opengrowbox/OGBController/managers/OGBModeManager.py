@@ -85,11 +85,11 @@ class OGBModeManager:
         elif tentMode == "Drying":
             await self.handle_drying()
         elif tentMode == "MPC Control":
-            await self.handle_premium_modes(False)
+            await self.handle_premium_mode_cycle(tentMode)
         elif tentMode == "PID Control":
-            await self.handle_premium_modes(False)
+            await self.handle_premium_mode_cycle(tentMode)
         elif tentMode == "AI Control":
-            await self.handle_premium_modes(False)
+            await self.handle_premium_mode_cycle(tentMode)
         elif tentMode == "Closed Environment":
             await self.handle_closed_environment()
         elif tentMode == "Script Mode":
@@ -260,6 +260,68 @@ class OGBModeManager:
             )
 
     ## Premium Handle
+    async def handle_premium_mode_cycle(self, tent_mode: str):
+        """
+        Handle premium control mode cycle by triggering DataRelease to API.
+
+        The API is responsible for controller execution (PID/MPC/AI) and returns
+        actions asynchronously via websocket. This method only validates access
+        and triggers the data send path.
+        """
+        mainControl = self.data_store.get("mainControl")
+        if mainControl != "Premium":
+            _LOGGER.debug(
+                f"{self.room}: Premium mode '{tent_mode}' selected but mainControl is '{mainControl}' - skipping API controller cycle"
+            )
+            return
+
+        tent_mode_to_controller = {
+            "PID Control": "PID",
+            "MPC Control": "MPC",
+            "AI Control": "AI",
+        }
+
+        controllerType = tent_mode_to_controller.get(tent_mode)
+        if not controllerType:
+            _LOGGER.warning(f"{self.room}: Unknown premium tent mode '{tent_mode}'")
+            return
+
+        # Check feature flags before sending data to API
+        subscription_data = self.data_store.get("subscriptionData") or {}
+        features = subscription_data.get("features", {})
+        controller_feature_map = {
+            "PID": "pidControllers",
+            "MPC": "mpcControllers",
+            "AI": "aiControllers",
+        }
+        feature_key = controller_feature_map.get(controllerType)
+        feature_enabled = features.get(feature_key, False)
+
+        if not feature_enabled:
+            _LOGGER.warning(
+                f"{self.room}: {controllerType} mode selected but feature '{feature_key}' is not enabled"
+            )
+            await self.event_manager.emit(
+                "LogForClient",
+                {
+                    "Name": self.room,
+                    "Warning": f"{controllerType} controller not available in your subscription",
+                    "Feature": feature_key,
+                    "Enabled": False,
+                },
+                haEvent=True,
+                debug_type="WARNING",
+            )
+            return
+
+        _LOGGER.info(
+            f"{self.room}: Premium controller cycle for {controllerType} - emitting DataRelease to API"
+        )
+        await self.event_manager.emit("DataRelease", True)
+
+        if controllerType == "AI" and not self._ai_bridge_started:
+            await self.start_ai_data_bridge()
+
     async def handle_premium_modes(self, data):
         """
         Handle premium controller modes (PID, MPC, AI).
@@ -270,10 +332,15 @@ class OGBModeManager:
         2. Tenant override (admin dashboard)
         3. Subscription plan features (from API)
         """
-        if data == False:
+        if not isinstance(data, dict):
             return
-            
-        controllerType = data.get("controllerType")
+
+        controllerTypeRaw = data.get("controllerType")
+        if isinstance(controllerTypeRaw, str):
+            controllerType = controllerTypeRaw.strip().upper()
+        else:
+            controllerType = None
+
         if not controllerType:
             return
             
@@ -313,15 +380,16 @@ class OGBModeManager:
         
         _LOGGER.info(f"{self.room}: Executing {controllerType} controller (feature '{feature_key}' enabled)")
         
+        actionData = data.get("actionData")
+        if not actionData:
+            _LOGGER.debug(f"{self.room}: PremiumCheck received without actionData for {controllerType}")
+            return
+
         if controllerType == "PID":
             await self.event_manager.emit("PIDActions", data)
         elif controllerType == "MPC":
             await self.event_manager.emit("MPCActions", data)
         elif controllerType == "AI":
-            # Only emit DataRelease for Premium users
-            mainControl = self.data_store.get("mainControl")
-            if mainControl == "Premium":
-                await self.event_manager.emit("DataRelease", True)
             await self.event_manager.emit("AIActions", data)
 
             # Start AI Data Bridge for cropsteering learning when AI control is active

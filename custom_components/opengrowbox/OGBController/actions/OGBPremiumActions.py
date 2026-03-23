@@ -7,7 +7,7 @@ for premium users. Provides sophisticated device control and optimization.
 
 import copy
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -34,6 +34,126 @@ class OGBPremiumActions:
         """
         self.ogb = ogb
 
+    def _extract_control_payload(self, prem_actions: Dict[str, Any], controller_type: str) -> Dict[str, Any]:
+        """Normalize incoming premium controller payload to a consistent structure."""
+        action_data = prem_actions.get("actionData")
+
+        # Some senders pass actionData as list directly (legacy)
+        if isinstance(action_data, list):
+            control_data = {
+                "controlCommands": action_data,
+                "controllerType": controller_type,
+            }
+        elif isinstance(action_data, dict):
+            control_data = copy.deepcopy(action_data)
+        else:
+            control_data = {}
+
+        # Compatibility aliases
+        if not isinstance(control_data.get("controlCommands"), list):
+            if isinstance(control_data.get("actions"), list):
+                control_data["controlCommands"] = control_data.get("actions")
+            else:
+                control_data["controlCommands"] = []
+
+        control_data["controllerType"] = (
+            str(control_data.get("controllerType") or controller_type).upper()
+        )
+        control_data["room"] = self.ogb.room
+        return control_data
+
+    async def _execute_controller_actions(self, prem_actions: Dict[str, Any], controller_type: str):
+        """Shared executor for PID/MPC/AI action payloads."""
+        control_data = self._extract_control_payload(prem_actions, controller_type)
+        action_data = control_data.get("controlCommands", [])
+
+        if not isinstance(action_data, list):
+            _LOGGER.error(
+                f"{self.ogb.room}: Invalid {controller_type} controlCommands type: {type(action_data)}"
+            )
+            return
+
+        _LOGGER.info(
+            f"{self.ogb.room}: {controller_type} action payload received - commands={len(action_data)}"
+        )
+
+        if len(action_data) == 0:
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "Type": controller_type,
+                    "Message": f"{controller_type} cycle completed - no actions required",
+                    "ControllerType": controller_type,
+                },
+                haEvent=True,
+                debug_type="INFO",
+            )
+            await self.ogb.eventManager.emit("SaveState", True)
+            return
+
+        import time
+
+        current_time = time.time()
+        previous_actions = self.ogb.dataStore.get("previousActions") or []
+
+        action_set = {
+            "actions": [],
+            "timestamp": current_time,
+            "room": self.ogb.room,
+            "controllerType": controller_type,
+            "pidStates": copy.deepcopy(control_data.get("pidStates")) if control_data.get("pidStates") else None,
+            "controllerStates": copy.deepcopy(control_data.get("controllerStates")) if control_data.get("controllerStates") else None,
+        }
+
+        for action in action_data:
+            device = str(action.get("device", "")).lower()
+            action_set["actions"].append(
+                {
+                    "device": device,
+                    "action": action.get("action", "Eval"),
+                    "priority": action.get("priority", "medium") or "medium",
+                    "reason": action.get("reason", "") or f"{controller_type} control: {device}",
+                    "timestamp": current_time,
+                    "controllerType": controller_type,
+                    "capability": f"can{device.capitalize()}",
+                }
+            )
+
+        if action_set["actions"]:
+            previous_actions.append(action_set)
+
+        self.ogb.dataStore.set("previousActions", previous_actions[-5:])
+
+        # Group by device and resolve conflicts (highest priority wins)
+        device_actions: Dict[str, List[Dict[str, Any]]] = {}
+        for action in action_data:
+            device = str(action.get("device", "")).lower()
+            device_actions.setdefault(device, []).append(action)
+
+        await self.ogb.eventManager.emit("LogForClient", control_data, haEvent=True, debug_type="DEBUG")
+
+        priority_order = {"high": 1, "medium": 2, "low": 3}
+        for _, actions in device_actions.items():
+            if len(actions) > 1:
+                best_action = min(
+                    actions,
+                    key=lambda x: priority_order.get(x.get("priority", "medium"), 2),
+                )
+                actions = [best_action]
+
+            for action in actions:
+                device_action = str(action.get("action") or "Eval")
+                requested_device = str(action.get("device", "")).lower()
+
+                if requested_device == "error":
+                    _LOGGER.error(f"{self.ogb.room}: Requested CONTROL ERROR {control_data}")
+                    return
+
+                await self._execute_device_action(requested_device, device_action)
+
+        await self.ogb.eventManager.emit("SaveState", True)
+
     async def PIDActions(self, premActions: Dict[str, Any]):
         """
         Execute PID-based control actions.
@@ -45,84 +165,7 @@ class OGBPremiumActions:
             premActions: Premium action data with PID states and commands
         """
         _LOGGER.warning(f"{self.ogb.room}: Start PID Actions Handling")
-
-        controlData = premActions.get("actionData")
-        actionData = controlData.get("controlCommands", [])
-        pidStates = controlData.get("pidStates")
-        controlData["room"] = self.ogb.room
-
-        # Store actions in API-compatible format
-        # Format: {actions: [{device, action, priority, reason, timestamp, controllerType}, ...], timestamp, room, controllerType}
-        import time
-        current_time = time.time()
-        
-        previousActions = self.ogb.dataStore.get("previousActions") or []
-        
-        # Build action set with all actions from this PID execution cycle
-        action_set = {
-            "actions": [],
-            "timestamp": current_time,
-            "room": self.ogb.room,
-            "controllerType": "PID",
-            "pidStates": copy.deepcopy(pidStates) if pidStates else None,  # Keep pidStates as metadata
-        }
-        
-        for action in actionData:
-            device = action.get("device", "").lower()
-            action_entry = {
-                "device": device,
-                "action": action.get("action", "Eval"),
-                "priority": action.get("priority", "medium") or "medium",
-                "reason": action.get("reason", "") or f"PID control: {device}",
-                "timestamp": current_time,
-                "controllerType": "PID",
-                "capability": f"can{device.capitalize()}",
-            }
-            action_set["actions"].append(action_entry)
-        
-        # Only add if we have actions
-        if action_set["actions"]:
-            previousActions.append(action_set)
-        
-        # Keep only the last 5 action sets (API expects max 5)
-        previousActions = previousActions[-5:]
-        self.ogb.dataStore.set("previousActions", previousActions)
-
-        # Group actions by device to detect conflicts
-        device_actions = {}
-        for action in actionData:
-            device = action.get("device", "").lower()
-            if device not in device_actions:
-                device_actions[device] = []
-            device_actions[device].append(action)
-
-        # Process each device
-        for device, actions in device_actions.items():
-            if len(actions) > 1:
-                # Multiple actions: highest priority wins
-                priority_order = {"high": 1, "medium": 2, "low": 3}
-                best_action = min(
-                    actions,
-                    key=lambda x: priority_order.get(x.get("priority", "medium"), 2),
-                )
-                actions = [best_action]
-
-            await self.ogb.eventManager.emit("LogForClient", controlData, haEvent=True, debug_type="DEBUG")
-
-            for action in actions:
-                deviceAction = action.get("action")
-                requestedDevice = action.get("device", "").lower()
-
-                if requestedDevice == "error":
-                    _LOGGER.error(
-                        f"{self.ogb.room}: Requested CONTROL ERROR {controlData}"
-                    )
-                    return
-
-                # Execute device-specific actions
-                await self._execute_device_action(requestedDevice, deviceAction)
-
-        await self.ogb.eventManager.emit("SaveState", True)
+        await self._execute_controller_actions(premActions, "PID")
 
     async def MPCActions(self, premActions: Dict[str, Any]):
         """
@@ -134,52 +177,8 @@ class OGBPremiumActions:
         Args:
             premActions: Premium action data with MPC optimization results
         """
-        actionData = premActions.get("actionData")
-        _LOGGER.warning(
-            f"{self.ogb.room}: Start MPC Actions Handling with data {actionData}"
-        )
-
-        # Group by device to detect conflicts
-        device_actions = {}
-        for action in actionData:
-            device = action.get("device", "").lower()
-            if device not in device_actions:
-                device_actions[device] = []
-            device_actions[device].append(action)
-
-        # Process each device individually
-        for device, actions in device_actions.items():
-            if len(actions) > 1:
-                # Multiple actions: highest priority wins
-                priority_order = {"high": 1, "medium": 2, "low": 3}
-                best_action = min(
-                    actions,
-                    key=lambda x: priority_order.get(x.get("priority", "medium"), 2),
-                )
-                actions = [best_action]
-
-            for action in actions:
-                deviceAction = action.get("action")
-                requestedDevice = action.get("device", "").lower()
-
-                if requestedDevice == "error":
-                    _LOGGER.error(
-                        f"{self.ogb.room}: Requested CONTROL ERROR {premActions}"
-                    )
-                    return
-
-                # Check night VPD hold conditions
-                nightVPDHold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold")
-                islightON = self.ogb.dataStore.getDeep("isPlantDay.islightON")
-
-                if not islightON and not nightVPDHold:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: VPD Night Hold Not Active - Ignoring VPD"
-                    )
-                    return None
-
-                # Execute device-specific actions
-                await self._execute_device_action(requestedDevice, deviceAction)
+        _LOGGER.warning(f"{self.ogb.room}: Start MPC Actions Handling")
+        await self._execute_controller_actions(premActions, "MPC")
 
     async def AIActions(self, premActions: Dict[str, Any]):
         """
@@ -192,15 +191,7 @@ class OGBPremiumActions:
             premActions: Premium action data with AI decisions
         """
         _LOGGER.warning(f"{self.ogb.room}: Start AI Actions Handling")
-
-        # AI actions would use machine learning models to determine optimal actions
-        # This is a placeholder for AI-based control logic
-
-        # For now, delegate to MPC or PID based on available data
-        if "predictive" in premActions.get("algorithm", "").lower():
-            await self.MPCActions(premActions)
-        else:
-            await self.PIDActions(premActions)
+        await self._execute_controller_actions(premActions, "AI")
 
     async def _execute_device_action(self, device: str, action: str):
         """
@@ -278,7 +269,7 @@ class OGBPremiumActions:
             "last_training": None,  # Would track model training
         }
 
-    def _get_last_pid_time(self) -> str:
+    def _get_last_pid_time(self) -> Optional[str]:
         """
         Get timestamp of last PID action.
 

@@ -72,6 +72,35 @@ class OGBDampeningActions:
             temp_weight, hum_weight
         )
 
+        # Emit VPD Perfection diagnostics (similar visibility as VPD Target chain)
+        current_vpd = self.ogb.dataStore.getDeep("vpd.current")
+        # For VPD Perfection, prefer perfection values and fall back to targeted values.
+        target_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
+        if target_vpd is None:
+            target_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
+
+        target_min = self.ogb.dataStore.getDeep("vpd.perfectMin")
+        if target_min is None:
+            target_min = self.ogb.dataStore.getDeep("vpd.targetedMin")
+
+        target_max = self.ogb.dataStore.getDeep("vpd.perfectMax")
+        if target_max is None:
+            target_max = self.ogb.dataStore.getDeep("vpd.targetedMax")
+        await self.ogb.eventManager.emit(
+            "LogForClient",
+            {
+                "Name": self.ogb.room,
+                "message": "VPD Perfection chain started",
+                "vpdCurrent": current_vpd,
+                "vpdTarget": target_vpd,
+                "vpdTargetMin": target_min,
+                "vpdTargetMax": target_max,
+                "incomingActions": len(action_map),
+            },
+            haEvent=True,
+            debug_type="DEBUG",
+        )
+
         # Publish weight information
         await self._publish_weight_info(
             weight_message, temp_deviation, hum_deviation, temp_weight, hum_weight
@@ -115,6 +144,23 @@ class OGBDampeningActions:
             await self._handle_blocked_actions(
                 enhanced_action_map, emergency_conditions, temp_deviation, hum_deviation
             )
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Perfection chain: all actions blocked by dampening/cooldown",
+                    "incomingActions": len(action_map),
+                    "enhancedActions": len(enhanced_action_map),
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
+                    "vpdCurrent": current_vpd,
+                    "vpdTarget": target_vpd,
+                    "vpdTargetMin": target_min,
+                    "vpdTargetMax": target_max,
+                },
+                haEvent=True,
+                debug_type="WARNING",
+            )
             return []
 
         # Resolve conflicts between actions
@@ -123,6 +169,26 @@ class OGBDampeningActions:
         _LOGGER.info(
             f"{self.ogb.room}: Executing {len(final_actions)} of {len(enhanced_action_map)} actions "
             f"(VPD status: {vpd_status}, blocked: {len(enhanced_action_map) - len(dampened_actions)})"
+        )
+        await self.ogb.eventManager.emit(
+            "LogForClient",
+            {
+                "Name": self.ogb.room,
+                "message": "VPD Perfection chain: executing filtered actions",
+                "incomingActions": len(action_map),
+                "enhancedActions": len(enhanced_action_map),
+                "filteredActions": len(dampened_actions),
+                "finalActions": len(final_actions),
+                "vpdStatus": vpd_status,
+                "tempDeviation": temp_deviation,
+                "humDeviation": hum_deviation,
+                "vpdCurrent": current_vpd,
+                "vpdTarget": target_vpd,
+                "vpdTargetMin": target_min,
+                "vpdTargetMax": target_max,
+            },
+            haEvent=True,
+            debug_type="INFO",
         )
 
         # Log detailed action information
@@ -285,6 +351,10 @@ class OGBDampeningActions:
                     "message": "VPD Target chain: all actions blocked by dampening/cooldown",
                     "resolvedActions": len(resolved_actions),
                     "emergency": emergency_conditions,
+                    "vpdCurrent": current_vpd,
+                    "vpdTarget": targeted_vpd,
+                    "vpdTargetMin": targeted_min,
+                    "vpdTargetMax": targeted_max,
                 },
                 haEvent=True,
                 debug_type="WARNING",
@@ -300,6 +370,10 @@ class OGBDampeningActions:
                 "filteredActions": len(filtered_actions),
                 "tempDeviation": temp_deviation,
                 "humDeviation": hum_deviation,
+                "vpdCurrent": current_vpd,
+                "vpdTarget": targeted_vpd,
+                "vpdTargetMin": targeted_min,
+                "vpdTargetMax": targeted_max,
             },
             haEvent=True,
             debug_type="INFO",

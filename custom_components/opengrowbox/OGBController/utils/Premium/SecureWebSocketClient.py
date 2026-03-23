@@ -37,12 +37,11 @@ class OGBWebSocketConManager:
     ):
         # Connect to the main API URL - Socket.IO will use default /socket.io path
         self.base_url = self._validate_url(base_url)
-        self.api_url = base_url.replace("ws://", "http://").replace(
-            "wss://", "https://"
-        )
+        self.api_url = self._derive_api_root(base_url)
         # V1 API endpoints
         self.login_url = f"{self.api_url}/api/v1/auth/login"
         self.profile_url = f"{self.api_url}/api/v1/auth/profile"
+        self.subscription_current_url = f"{self.api_url}/api/v1/subscriptions/current"
         self.timeout = timeout
         self.ogbevents = eventManager
         self.ws_room = ws_room
@@ -120,6 +119,8 @@ class OGBWebSocketConManager:
         self._connection_monitoring_paused = False
         self._connection_start_time = None
         self._last_plan_fallback_check = 0.0
+        # Deduplicate controller completion events (API can emit legacy + v1 ack for same event_id)
+        self._processed_controller_events = {}
 
         # Stored auth callback for V1 authentication
         self._pending_auth_callback = None
@@ -1120,6 +1121,24 @@ class OGBWebSocketConManager:
         async def grow_data_acknowledged(data):
             """Handle grow data acknowledgement from V1 API"""
             logging.info(f"✅ {self.ws_room} Grow data acknowledged: {data}")
+            # Legacy acknowledgment (kept for compatibility). We route controller
+            # actions from v1:control:grow-data:completed only to avoid double execution.
+
+        @self.sio.on("v1:control:grow-data:completed", namespace=ns)
+        async def v1_grow_data_completed(data):
+            """Handle V1 grow-data completion with controller actions."""
+            logging.info(f"✅ {self.ws_room} V1 grow data completed: {data}")
+            await self._handle_controller_completed(data, "v1:control:grow-data:completed")
+
+        @self.sio.on("grow-completed_acknowledged", namespace=ns)
+        async def grow_completed_acknowledged(data):
+            """Handle grow completion ack from API."""
+            logging.info(f"🏁 {self.ws_room} Grow completed acknowledged: {data}")
+
+        @self.sio.on("v1:grow:completed:ack", namespace=ns)
+        async def v1_grow_completed_ack(data):
+            """Handle V1 grow completion ack from API."""
+            logging.info(f"🏁 {self.ws_room} V1 grow completed ack: {data}")
 
         @self.sio.on("message_acknowledged", namespace=ns)
         async def message_acknowledged(data):
@@ -1371,27 +1390,41 @@ class OGBWebSocketConManager:
             except Exception as e:
                 logging.error(f"❌ {self.ws_room} Error handling connection_status: {e}")
         
-        @self.sio.on("plan_changed", namespace=ns)
-        async def on_plan_changed(data):
-            """Handle plan_changed event from server (contains plan_id)"""
+        async def _handle_plan_changed_event(data, event_name="plan_changed"):
+            """Handle plan change events from server and forward to PremiumIntegration."""
             try:
                 plan_id = data.get("plan_id")
+                plan_name = data.get("plan_name")
                 action = data.get("action", "sync")
-                
-                logging.info(f"📊 {self.ws_room} Plan changed event: plan_id={plan_id}, action={action}")
-                
-                # connection_status will be sent by server with updated plan, features, limits
-                # Forward event to Premium Integration for handling
+                source = data.get("source", "unknown")
+
+                logging.info(
+                    f"📊 {self.ws_room} {event_name}: plan_id={plan_id}, plan_name={plan_name}, "
+                    f"action={action}, source={source}"
+                )
+
+                # connection_status will usually follow with full plan/features/limits snapshot.
+                # Forward explicit event immediately so PremiumIntegration can trigger notifications.
                 emit_data = {
                     "plan_id": plan_id,
+                    "plan_name": plan_name,
                     "action": action,
-                    "timestamp": time.time()
+                    "source": source,
+                    "timestamp": data.get("timestamp", time.time()),
                 }
-                
+
                 await self._safe_emit("plan_changed", emit_data, haEvent=True)
-                
+
             except Exception as e:
-                logging.error(f"❌ {self.ws_room} Error handling plan_changed: {e}")
+                logging.error(f"❌ {self.ws_room} Error handling {event_name}: {e}")
+
+        @self.sio.on("plan_changed", namespace=ns)
+        async def on_plan_changed(data):
+            await _handle_plan_changed_event(data, "plan_changed")
+
+        @self.sio.on("v1:management:plan-changed", namespace=ns)
+        async def on_v1_plan_changed(data):
+            await _handle_plan_changed_event(data, "v1:management:plan-changed")
         
         @self.sio.on("storage_limit_reached", namespace=ns)
         async def on_storage_limit_reached(data):
@@ -1843,28 +1876,22 @@ class OGBWebSocketConManager:
         """Handle plant view need from webapp"""
         try:
             room_id = data.get("room_id")
+            request_socket_id = data.get("request_socket_id")
+            device_name = data.get("device_name")
+            force_new = data.get("force_new", False)
             logging.info(f"📷 {self.ws_room} plant_view_need received, room_id: {room_id}")
             
             # Emit to HA for camera to handle - pass room_id in event data
             await self._safe_emit("NeedViewPlant", {
                 "room_id": room_id,
-                "room": self.ws_room
+                "room": self.ws_room,
+                "request_socket_id": request_socket_id,
+                "device_name": device_name,
+                "force_new": bool(force_new),
             }, haEvent=True)
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling plant_view_need: {e}")
-
-
-        try:           
-            # Emit to HA for mode manager to handle
-            await self._safe_emit("HasPlantViewed", {
-                "room": self.ws_room,
-                "plantStage": plant_stage,
-                "source": "webapp"
-            }, haEvent=True)
-            
-        except Exception as e:
-            logging.error(f"❌ {self.ws_room} Error handling plant_stage_change: {e}")
 
     async def _handle_plant_stage_change(self, data: dict):
         """Handle plant stage change from webapp"""
@@ -1900,6 +1927,73 @@ class OGBWebSocketConManager:
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling prem_actions: {e}")
+
+    async def _handle_controller_completed(self, data: dict, source_event: str):
+        """Route API controller completion payloads to HA premium action pipeline."""
+        try:
+            if not isinstance(data, dict):
+                return
+
+            status = data.get("status")
+            if status != "success":
+                reason = data.get("message") or "no message"
+                logging.debug(
+                    f"📦 {self.ws_room} {source_event} status={status} - no controller actions to apply (reason: {reason})"
+                )
+                return
+
+            action_data = data.get("actionData") or {}
+            if not isinstance(action_data, dict):
+                logging.warning(f"⚠️ {self.ws_room} {source_event} invalid actionData type: {type(action_data)}")
+                return
+
+            control_commands = action_data.get("controlCommands") or []
+            if not isinstance(control_commands, list):
+                logging.warning(f"⚠️ {self.ws_room} {source_event} controlCommands is not a list")
+                return
+
+            controller_type = (
+                data.get("controllerType")
+                or action_data.get("controllerType")
+                or "PID"
+            )
+            if isinstance(controller_type, str):
+                controller_type = controller_type.strip().upper()
+            else:
+                controller_type = "PID"
+
+            payload = {
+                "controllerType": controller_type,
+                "actionData": action_data,
+                "room_id": data.get("room_id", self.room_id),
+                "room_name": data.get("room_name", self.ws_room),
+                "event_id": data.get("event_id"),
+                "source": source_event,
+                "timestamp": data.get("timestamp", time.time()),
+            }
+
+            event_id = payload.get("event_id")
+            dedupe_key = f"{event_id}:{controller_type}:{status}" if event_id else None
+            now = time.time()
+            # prune old dedupe entries (>120s)
+            self._processed_controller_events = {
+                k: ts for k, ts in self._processed_controller_events.items() if now - ts < 120
+            }
+            if dedupe_key and dedupe_key in self._processed_controller_events:
+                logging.debug(
+                    f"🔁 {self.ws_room} Duplicate controller completion ignored: {dedupe_key}"
+                )
+                return
+            if dedupe_key:
+                self._processed_controller_events[dedupe_key] = now
+
+            logging.info(
+                f"⚡ {self.ws_room} Controller result routed: controller={controller_type}, commands={len(control_commands)}, source={source_event}"
+            )
+            await self._safe_emit("PremiumCheck", payload)
+
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error routing controller completion ({source_event}): {e}")
 
     async def _handle_session_update(self, data: dict):
         """Handle session updates from server"""
@@ -2551,31 +2645,16 @@ class OGBWebSocketConManager:
     # =================================================================
 
     async def send_encrypted_message(self, message_type: str, data: dict) -> bool:
-        """Send encrypted message"""
+        """Send encrypted message (backward-compatible wrapper).
+
+        Uses V1 encrypted transport by default.
+        """
         try:
-            # Check connection state first
-            if not self.ws_connected:
-                logging.warning(f"⚠️ {self.ws_room} Cannot send - WebSocket not connected")
-                return False
-
-            if not self.authenticated or not self._aes_gcm:
-                logging.error(
-                    f"❌ {self.ws_room} Cannot send - not authenticated or no encryption key"
-                )
-                return False
-
-            message_data = {
-                "type": message_type,
-                "data": data,
-                "timestamp": int(time.time()),
-                "from": self._user_id,
-                "client_id": self.client_id,
-            }
-
-            encrypted_data = self._encrypt_message(message_data)
-            await self.sio.emit("encrypted_message", encrypted_data, namespace=self._v1_namespace)
-            logging.debug(f"📤 {self.ws_room} Sent encrypted message: {message_type}")
-            return True
+            logging.debug(
+                f"⚠️ {self.ws_room} send_encrypted_message() is deprecated; "
+                f"using V1 transport for type={message_type}"
+            )
+            return await self.send_v1_encrypted_message(message_type, data)
 
         except aiohttp.ClientConnectionResetError as e:
             logging.warning(f"⚠️ {self.ws_room} Connection reset while sending: {e}")
@@ -3254,18 +3333,18 @@ class OGBWebSocketConManager:
             logging.error(f"❌ {self.ws_room} Health monitor error: {e}")
 
     async def _refresh_plan_from_cache_fallback(self):
-        """Refresh plan every 5 minutes via cached API endpoint (fallback only)."""
+        """Refresh plan every 10 minutes via cached API endpoint (fallback only)."""
         if not self.authenticated or not self._access_token:
             return
 
         now = time.time()
-        if now - self._last_plan_fallback_check < 1800:
+        if now - self._last_plan_fallback_check < 600:
             return
 
         self._last_plan_fallback_check = now
 
         try:
-            url = f"{self.api_url}/api/v1/subscriptions/current"
+            url = self.subscription_current_url
             headers = dict(self.headers)
             headers["Authorization"] = f"Bearer {self._access_token}"
 
@@ -3378,6 +3457,32 @@ class OGBWebSocketConManager:
             return url.strip()
         except Exception as e:
             raise ValueError(f"URL validation failed: {e}")
+
+    def _derive_api_root(self, url: str) -> str:
+        """Normalize incoming URL to API root (scheme://host[:port])."""
+        parsed = urlparse(url.strip())
+
+        # Convert websocket schemes to HTTP(S) for REST endpoints
+        if parsed.scheme == "ws":
+            scheme = "http"
+        elif parsed.scheme == "wss":
+            scheme = "https"
+        else:
+            scheme = parsed.scheme
+
+        netloc = parsed.netloc
+        if not netloc:
+            raise ValueError("Invalid URL: missing host")
+
+        api_root = f"{scheme}://{netloc}"
+
+        # Helpful warning if caller passed path-based websocket URL (e.g. /ws)
+        if parsed.path and parsed.path not in ("", "/"):
+            logging.debug(
+                f"🔧 {self.ws_room} Normalized base URL from '{url}' to API root '{api_root}'"
+            )
+
+        return api_root
 
     def is_connected(self) -> bool:
         """Check if WebSocket is connected and authenticated"""

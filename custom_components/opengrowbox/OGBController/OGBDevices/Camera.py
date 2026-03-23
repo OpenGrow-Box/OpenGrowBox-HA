@@ -96,6 +96,7 @@ class Camera(Device):
         self._generation_lock = asyncio.Lock()
         self._last_generation_time = None
         self._generation_cooldown = 5.0  # seconds
+        self._notificator = None
 
         # Init lifecycle guards (prevent duplicate startup/restore loops)
         self._init_started = False
@@ -431,22 +432,74 @@ class Camera(Device):
         Response goes via Premium Integration (encrypted).
         """
         try:
+            # Event can come from HA bus (event.data) or internal emitter (plain dict)
+            if hasattr(event, "data"):
+                event_data = event.data or {}
+            elif isinstance(event, dict):
+                event_data = event
+            else:
+                event_data = {}
 
-            event_data = event.data
             device_name = event_data.get("device_name")
+            request_socket_id = event_data.get("request_socket_id")
+            request_room_id = event_data.get("room_id")
+            force_new = bool(event_data.get("force_new", False))
 
             # Only respond if this event is for this camera
             # If no device_name specified (NeedViewPlant from API), process for this room
             if device_name and not self._is_device_for_event(device_name):
                 _LOGGER.debug(f"{self.deviceName}: Event not for this camera (device: {device_name})")
+                await self.event_manager.emit("LogForClient", {
+                    "Name": self.inRoom,
+                    "Type": "Security",
+                    "Message": (
+                        f"Camera request mismatch: requested={device_name}, "
+                        f"current={self.camera_entity_id}"
+                    ),
+                    "ControllerType": "API",
+                    "DebugType": "WARNING"
+                }, haEvent=True, debug_type="WARNING")
+                try:
+                    from ..managers.OGBNotifyManager import OGBNotificator
+                    if self._notificator is None:
+                        self._notificator = OGBNotificator(self.hass, self.inRoom)
+                    await self._notificator.warning(
+                        title=f"OGB {self.inRoom}: Camera Request Mismatch",
+                        message=(
+                            f"Image request target mismatch. Requested device: {device_name}, "
+                            f"handled camera: {self.camera_entity_id}."
+                        )
+                    )
+                except Exception as notify_error:
+                    _LOGGER.debug(f"{self.deviceName}: Could not send mismatch notification: {notify_error}")
                 return
 
             _LOGGER.info(f"{self.deviceName}: Processing plant view request for room: {self.inRoom}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.inRoom,
+                "Type": "Camera",
+                "Message": f"NeedViewPlant received for {self.camera_entity_id}",
+                "ControllerType": "API",
+                "DebugType": "INFO"
+            }, haEvent=True, debug_type="INFO")
+            try:
+                from ..managers.OGBNotifyManager import OGBNotificator
+                if self._notificator is None:
+                    self._notificator = OGBNotificator(self.hass, self.inRoom)
+                await self._notificator.info(
+                    title=f"OGB {self.inRoom}: Plant Image Requested",
+                    message=(
+                        f"NeedViewPlant received for {self.camera_entity_id}. "
+                        f"Request socket: {request_socket_id or 'n/a'}"
+                    )
+                )
+            except Exception as notify_error:
+                _LOGGER.debug(f"{self.deviceName}: Could not send request notification: {notify_error}")
 
             # Check if we have a recent cached image (<5 minutes)
             five_minutes_ago = dt_util.now() - timedelta(minutes=5)
 
-            if (self.last_image is not None and
+            if (not force_new and self.last_image is not None and
                 self.last_capture_time is not None and
                 self.last_capture_time > five_minutes_ago):
 
@@ -458,7 +511,10 @@ class Camera(Device):
 
             else:
                 # Capture new image
-                _LOGGER.info(f"{self.deviceName}: Capturing new image (no cache or too old)")
+                _LOGGER.info(
+                    f"{self.deviceName}: Capturing new image "
+                    f"({'forced' if force_new else 'no cache or too old'})"
+                )
                 camera_entity_id = self.camera_entity_id
                 image_data = await self._get_ha_camera_image(camera_entity_id)
 
@@ -505,13 +561,42 @@ class Camera(Device):
                 "cache_status": cache_status,
                 "capture_time": capture_time.isoformat() if capture_time else None,
                 "room": self.inRoom,
+                "room_id": request_room_id,
+                "request_socket_id": request_socket_id,
                 "plant_data": plant_data,
             })
 
             _LOGGER.info(f"{self.deviceName}: HasPlantViewed emitted with image and plant data")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.inRoom,
+                "Type": "Camera",
+                "Message": (
+                    f"Plant image captured ({cache_status}) and queued for encrypted API forwarding"
+                ),
+                "ControllerType": "API",
+                "DebugType": "INFO"
+            }, haEvent=True, debug_type="INFO")
+            try:
+                if self._notificator is not None:
+                    await self._notificator.info(
+                        title=f"OGB {self.inRoom}: Plant Image Captured",
+                        message=(
+                            f"Image captured ({cache_status}) and queued for encrypted API forwarding "
+                            f"from {self.camera_entity_id}."
+                        )
+                    )
+            except Exception as notify_error:
+                _LOGGER.debug(f"{self.deviceName}: Could not send capture notification: {notify_error}")
 
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling user_needs_image: {e}")
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.inRoom,
+                "Type": "Security",
+                "Message": f"user_needs_image failed: {e}",
+                "ControllerType": "API",
+                "DebugType": "ERROR"
+            }, haEvent=True, debug_type="ERROR")
             await self.event_manager.emit("user_image_response", {
                 "device_name": self.camera_entity_id,
                 "success": False,

@@ -45,6 +45,8 @@ class OGBPremiumIntegration:
     while maintaining full backwards compatibility.
     """
 
+    PREMIUM_CONTROLLER_MODES = {"PID Control", "MPC Control", "AI Control"}
+
     def __init__(self, hass, data_store, event_manager, room):
         """
         Initialize the premium integration manager.
@@ -941,11 +943,14 @@ class OGBPremiumIntegration:
         """Handle explicit plan change events from Premium API immediately."""
         try:
             plan_id = data.get("plan_id")
+            plan_name = data.get("plan_name")
             action = data.get("action", "sync")
+            source = data.get("source", "unknown")
             old_plan = self.subscription_data.get("plan_name", "free") if self.subscription_data else "free"
 
             _LOGGER.info(
-                f"🔄 {self.room} Received plan_changed event: plan_id={plan_id}, action={action}, current_plan={old_plan}"
+                f"🔄 {self.room} Received plan_changed event: plan_id={plan_id}, plan_name={plan_name}, "
+                f"action={action}, source={source}, current_plan={old_plan}"
             )
 
             fresh_subscription_data = await self._fetch_subscription_data_from_api()
@@ -970,7 +975,9 @@ class OGBPremiumIntegration:
                         f"❌ {self.room} Error updating premium controls after plan_changed: {control_error}"
                     )
 
-                if old_plan != new_plan and new_plan:
+                plan_transition = old_plan != new_plan and bool(new_plan)
+
+                if plan_transition:
                     self.hass.bus.async_fire(
                         "ogb_premium_subscription_changed",
                         {
@@ -981,6 +988,36 @@ class OGBPremiumIntegration:
                             "limits": self.subscription_data.get("limits", {}),
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         },
+                    )
+
+                    try:
+                        from ..managers.OGBNotifyManager import OGBNotificator
+                        if not hasattr(self, 'notificator'):
+                            self.notificator = OGBNotificator(self.hass, self.room)
+                        await self.notificator.notify_plan_changed(
+                            old_plan,
+                            new_plan,
+                            self.subscription_data.get("features", {}),
+                            self.subscription_data.get("limits", {}),
+                        )
+                    except Exception as notify_error:
+                        _LOGGER.error(f"❌ {self.room} Error sending plan_changed notification: {notify_error}")
+                elif action != "sync" and new_plan:
+                    # Non-sync actions can arrive after state is already updated by connection_status.
+                    # Emit informational notification so user still gets feedback for explicit plan actions.
+                    try:
+                        from ..managers.OGBNotifyManager import OGBNotificator
+                        if not hasattr(self, 'notificator'):
+                            self.notificator = OGBNotificator(self.hass, self.room)
+                        await self.notificator.info(
+                            message=f"OpenGrowBox plan sync confirmed: {new_plan} (action: {action})",
+                            title=f"OGB Plan Sync - {self.room}",
+                        )
+                    except Exception as notify_error:
+                        _LOGGER.error(f"❌ {self.room} Error sending plan sync notification: {notify_error}")
+                    _LOGGER.info(
+                        f"ℹ️ {self.room} plan_changed had no transition (old={old_plan}, new={new_plan}), "
+                        f"sent sync confirmation notification for action={action}"
                     )
 
                 await self._send_auth_response(
@@ -1133,9 +1170,11 @@ class OGBPremiumIntegration:
             
             _LOGGER.info(f"📤 {self.room} Sending grow completion to Premium API: {harvest_payload.get('plant_name')}")
             
-            # Send to Premium API via WebSocket
+            # Send to Premium API via V1 encrypted WebSocket
+            # IMPORTANT: This is lifecycle completion (entire grow),
+            # not controller-cycle completion.
             try:
-                success = await self.ogb_ws.send_encrypted_message("grow-completed", harvest_payload)
+                success = await self.ogb_ws.send_v1_encrypted_message("v1:grow-completed", harvest_payload)
                 if success:
                     _LOGGER.info(f"✅ {self.room} Grow completion data sent to Premium API")
                 else:
@@ -1212,6 +1251,18 @@ class OGBPremiumIntegration:
         try:
             _LOGGER.info(f"📷 {self.room} HasPlantViewed received, sending encrypted")
 
+            # Optional operator visibility via notification manager
+            try:
+                from ..managers.OGBNotifyManager import OGBNotificator
+                if not hasattr(self, "notificator") or self.notificator is None:
+                    self.notificator = OGBNotificator(self.hass, self.room)
+                await self.notificator.info(
+                    title=f"OGB {self.room}: Image Forward Start",
+                    message="Plant image created. Starting encrypted forward to API."
+                )
+            except Exception as notify_error:
+                _LOGGER.debug(f"📷 {self.room} Could not send forward-start notification: {notify_error}")
+
             # Check if logged in and WebSocket available
             if not self.is_logged_in or not self.ogb_ws:
                 _LOGGER.debug(f"📷 {self.room} Not logged in, cannot send encrypted plant view")
@@ -1220,23 +1271,47 @@ class OGBPremiumIntegration:
             # Prepare encrypted payload
             encrypted_payload = {
                 "room": data.get("room"),
+                "room_id": data.get("room_id"),
                 "device_name": data.get("device_name"),
                 "image_data": data.get("image_data"),
                 "cache_status": data.get("cache_status"),
                 "capture_time": data.get("capture_time"),
                 "plant_data": data.get("plant_data"),
+                "request_socket_id": data.get("request_socket_id"),
             }
 
             # Send encrypted message via WebSocket
-            success = await self.ogb_ws.send_encrypted_message(
+            success = await self.ogb_ws.send_v1_encrypted_message(
                 "has-plant-viewed",
                 encrypted_payload
             )
 
             if success:
                 _LOGGER.info(f"📷 {self.room} HasPlantViewed sent encrypted successfully")
+                try:
+                    if hasattr(self, "notificator") and self.notificator is not None:
+                        await self.notificator.info(
+                            title=f"OGB {self.room}: Image Forwarded",
+                            message=(
+                                "Plant image forwarded to API via encrypted channel "
+                                "(not persisted)."
+                            )
+                        )
+                except Exception as notify_error:
+                    _LOGGER.debug(f"📷 {self.room} Could not send forward-success notification: {notify_error}")
             else:
                 _LOGGER.error(f"📷 {self.room} Failed to send encrypted HasPlantViewed")
+                try:
+                    if hasattr(self, "notificator") and self.notificator is not None:
+                        await self.notificator.warning(
+                            title=f"OGB {self.room}: Image Forward Failed",
+                            message=(
+                                "Plant image capture succeeded, but encrypted forwarding to API failed. "
+                                "Please check secure WebSocket connectivity."
+                            )
+                        )
+                except Exception as notify_error:
+                    _LOGGER.debug(f"📷 {self.room} Could not send forward-failure notification: {notify_error}")
 
         except Exception as e:
             _LOGGER.error(f"📷 {self.room} Error handling HasPlantViewed: {e}", exc_info=True)
@@ -1310,6 +1385,11 @@ class OGBPremiumIntegration:
         self.ogb_login_email = state_data.get("ogb_login_email", None)
         self.is_premium_selected = state_data.get("is_premium_selected", False)
         self.is_primary_auth_room = is_primary_auth_room
+
+        # Keep desired mode in datastore early so mode-dependent flows can restore
+        # once premium feature flags are re-applied.
+        if self.lastTentMode:
+            self.data_store.set("tentMode", self.lastTentMode)
         
         # DEBUG: Log what's in the state
         _LOGGER.debug(f"🔍 {self.room} State keys: {list(state_data.keys())}")
@@ -1435,6 +1515,7 @@ class OGBPremiumIntegration:
                         strain_name = state_data.get("strain_name", None)
                         planRequestData = {"event_id": "starting_event", "strain_name": strain_name}
                         await self.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                        await self._restore_tent_mode_after_premium_restore()
                         await self._send_auth_to_other_rooms()
                         await self._broadcast_restored_state()
                         return True
@@ -1460,6 +1541,7 @@ class OGBPremiumIntegration:
                     strain_name = state_data.get("strain_name", None)
                     planRequestData = {"event_id": "starting_event", "strain_name": strain_name}
                     await self.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                    await self._restore_tent_mode_after_premium_restore()
                     await self._send_auth_to_other_rooms()
                     await self._broadcast_restored_state()
                 else:
@@ -1940,6 +2022,33 @@ class OGBPremiumIntegration:
 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Failed to broadcast restored state: {e}")
+
+    async def _restore_tent_mode_after_premium_restore(self):
+        """Restore last premium controller mode after premium/session recovery."""
+        try:
+            desired_mode = self.lastTentMode
+            if not desired_mode:
+                return
+
+            # Force a fresh controls reconciliation (bypass debounce window).
+            self._last_manage_controls_time = 0
+            await self._managePremiumControls()
+
+            available_modes = self._get_available_premium_modes()
+            current_mode = self.data_store.get("tentMode")
+
+            if desired_mode in available_modes and current_mode != desired_mode:
+                _LOGGER.info(
+                    f"🔄 {self.room} Restoring tent mode after premium restore: {current_mode} -> {desired_mode}"
+                )
+                await self._change_ctrl_values(tentmode=desired_mode)
+            else:
+                _LOGGER.debug(
+                    f"ℹ️ {self.room} Tent mode restore check: desired={desired_mode}, "
+                    f"current={current_mode}, available={available_modes}"
+                )
+        except Exception as mode_restore_error:
+            _LOGGER.error(f"❌ {self.room} Error restoring tent mode after premium restore: {mode_restore_error}")
 
     async def _refresh_runtime_usage_from_backend(self):
         """Refresh live session/room usage from the premium backend before sending UI state."""
@@ -2437,6 +2546,8 @@ class OGBPremiumIntegration:
             "growMediums": self.data_store.get("growMediums"),
             "controlOptions": self.data_store.get("controlOptions"),
             "capabilities": self.data_store.get("capabilities"),
+            # Compatibility alias expected by OpenGrowBoxDataAdapter in ogb-grow-api
+            "devCaps": self.data_store.get("capabilities"),
             "vpdDetermination": self.data_store.get("vpdDetermination"),
             # CRITICAL: Include previous actions for API processing (CompactDataSchema.js)
             "previousActions": self.data_store.get("previousActions") or [],
@@ -2475,8 +2586,8 @@ class OGBPremiumIntegration:
         try:
             _LOGGER.debug(f"📤 {self.room} #{event_id} Attempting to send grow data (size: {len(str(grow_data))} chars)")
 
-            # Use legacy encrypted messaging (like the working test)
-            success = await self.ogb_ws.send_encrypted_message("grow-data", grow_data)
+            # Use V1 encrypted messaging (authoritative path)
+            success = await self.ogb_ws.send_v1_grow_data(grow_data)
 
             if success:
                 # Update last send time on success for debouncing
@@ -2484,11 +2595,11 @@ class OGBPremiumIntegration:
                 _LOGGER.debug(f"✅ {self.room} #{event_id} Grow data sent successfully to Premium API")
                 return True
             else:
-                _LOGGER.warning(f"❌ {self.room} #{event_id} send_encrypted_message returned False - no network request sent")
+                _LOGGER.warning(f"❌ {self.room} #{event_id} send_v1_grow_data returned False - no network request sent")
                 return False
 
         except Exception as e:
-            _LOGGER.warning(f"💥 {self.room} #{event_id} Exception in send_encrypted_message: {type(e).__name__}: {e}")
+            _LOGGER.warning(f"💥 {self.room} #{event_id} Exception in send_v1_grow_data: {type(e).__name__}: {e}")
             import traceback
             _LOGGER.warning(f"📋 {self.room} #{event_id} Full traceback: {traceback.format_exc()}")
             return False
@@ -2652,6 +2763,11 @@ class OGBPremiumIntegration:
 
         if tentmode is not None:
             tent_control = f"select.ogb_tentmode_{self.room.lower()}"
+
+            # Preserve the last known premium mode across restarts.
+            if tentmode in self.PREMIUM_CONTROLLER_MODES:
+                self.lastTentMode = tentmode
+
             self.data_store.set("tentMode", tentmode)
             await self.hass.services.async_call(
                 domain="select",
@@ -2758,11 +2874,17 @@ class OGBPremiumIntegration:
         TentMode = self.data_store.get("tentMode")
         StrainName = self.data_store.get("strainName")
 
+        # Persist the last premium controller mode even when runtime temporarily
+        # falls back to VPD during startup before premium options are restored.
+        saved_last_tent_mode = self.lastTentMode
+        if TentMode in self.PREMIUM_CONTROLLER_MODES:
+            saved_last_tent_mode = TentMode
+
         try:
             ws_backup = self.ogb_ws.get_session_backup_data() if self.ogb_ws else {}
 
             state_data = {
-                "lastTentMode": TentMode,
+                "lastTentMode": saved_last_tent_mode,
                 "user_id": self.user_id,
                 "is_logged_in": self.is_logged_in,
                 "is_premium": self.is_premium,
@@ -3148,9 +3270,33 @@ class OGBPremiumIntegration:
             restore_mode = "VPD Perfection"
 
         if tent_select:
-            tent_select._attr_current_option = restore_mode
-            tent_select.async_write_ha_state()
-        
+            try:
+                # Use service call so HA state machine and downstream listeners restore correctly.
+                if restore_mode in tent_select._attr_options and tent_select._attr_current_option != restore_mode:
+                    tent_control = f"select.ogb_tentmode_{self.room.lower()}"
+                    await self.hass.services.async_call(
+                        domain="select",
+                        service="select_option",
+                        service_data={
+                            "entity_id": tent_control,
+                            "option": restore_mode,
+                        },
+                        blocking=True,
+                    )
+                else:
+                    tent_select._attr_current_option = restore_mode
+                    tent_select.async_write_ha_state()
+            except Exception as restore_error:
+                _LOGGER.warning(
+                    f"⚠️ {self.room} Failed to apply restored tent mode '{restore_mode}' via service, "
+                    f"falling back to direct state write: {restore_error}"
+                )
+                tent_select._attr_current_option = restore_mode
+                tent_select.async_write_ha_state()
+
+        if restore_mode in self.PREMIUM_CONTROLLER_MODES:
+            self.lastTentMode = restore_mode
+
         self.data_store.set("tentMode", restore_mode)
 
     # =================================================================
