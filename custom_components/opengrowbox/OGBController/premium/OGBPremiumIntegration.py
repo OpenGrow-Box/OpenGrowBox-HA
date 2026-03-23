@@ -956,18 +956,20 @@ class OGBPremiumIntegration:
             # TEMPORARY DISABLED: Commented out to test if this causes HTTP 500 errors
             # fresh_subscription_data = await self._fetch_subscription_data_from_api()
             fresh_subscription_data = None  # TODO: Re-enable after testing
+            
+            if fresh_subscription_data:
                 new_plan = fresh_subscription_data.get("plan_name") or old_plan
                 self.is_premium = new_plan not in ["free", "trial"]
-
+                
                 self.data_store.set("subscriptionData", self.subscription_data)
-
+                
                 if self.ogb_ws:
                     self.ogb_ws.subscription_data = self.subscription_data
                     self.ogb_ws.is_premium = self.is_premium
-
+                
                 self._sync_runtime_usage_snapshot()
                 self._update_feature_manager()
-
+                
                 try:
                     await self._managePremiumControls()
                 except Exception as control_error:
