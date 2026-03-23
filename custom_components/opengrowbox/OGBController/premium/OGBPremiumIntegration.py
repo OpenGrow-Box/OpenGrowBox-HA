@@ -952,10 +952,10 @@ class OGBPremiumIntegration:
                 f"🔄 {self.room} Received plan_changed event: plan_id={plan_id}, plan_name={plan_name}, "
                 f"action={action}, source={source}, current_plan={old_plan}"
             )
-
-            fresh_subscription_data = await self._fetch_subscription_data_from_api()
-            if fresh_subscription_data:
-                self.subscription_data = fresh_subscription_data
+            
+            # TEMPORARY DISABLED: Commented out to test if this causes HTTP 500 errors
+            # fresh_subscription_data = await self._fetch_subscription_data_from_api()
+            fresh_subscription_data = None  # TODO: Re-enable after testing
                 new_plan = fresh_subscription_data.get("plan_name") or old_plan
                 self.is_premium = new_plan not in ["free", "trial"]
 
