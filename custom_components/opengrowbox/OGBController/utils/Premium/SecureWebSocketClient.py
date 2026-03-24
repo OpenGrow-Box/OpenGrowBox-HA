@@ -34,6 +34,7 @@ class OGBWebSocketConManager:
         ws_room="",
         room_id="",
         timeout: float = CONNECTION_TIMEOUT,
+        notify_manager=None,
     ):
         # Connect to the main API URL - Socket.IO will use default /socket.io path
         self.base_url = self._validate_url(base_url)
@@ -47,6 +48,7 @@ class OGBWebSocketConManager:
         self.ws_room = ws_room
         self.room_id = room_id
         self.client_id = f"ogb-client-{self.ws_room}-{secrets.token_hex(8)}"
+        self.notify_manager = notify_manager  # Store notification manager
 
         # User data
         self.user_data = {}
@@ -313,6 +315,33 @@ class OGBWebSocketConManager:
                         await self._send_auth_response(
                             event_id, "error", "Server returned invalid response"
                         )
+                        return False
+
+                    # Check for PLAN_LIMIT_EXCEEDED error - block reconnection to prevent memory leak
+                    if result.get("code") == "PLAN_LIMIT_EXCEEDED":
+                        usage = result.get("usage", {})
+                        api_calls = usage.get("api_calls", 0)
+                        limit = usage.get("limit", 0)
+                        percentage = usage.get("percentage", 100)
+                        plan = result.get("plan", "unknown")
+                        
+                        logging.error(
+                            f"🛑 {self.ws_room} Login BLOCKED - API limit exceeded: "
+                            f"{api_calls}/{limit} calls ({percentage}%) on {plan} plan"
+                        )
+                        
+                        # Disable reconnection to prevent memory leak from retry loop
+                        self._should_reconnect = False
+                        logging.warning(f"🔴 {self.ws_room} Auto-reconnection DISABLED due to API limit exceeded")
+                        
+                        # Send error response to client
+                        await self._send_auth_response(
+                            event_id, "error", 
+                            f"API limit exceeded ({api_calls}/{limit} calls). Please upgrade your plan."
+                        )
+                        
+                        # Trigger cleanup to clean up
+                        asyncio.create_task(self.cleanup_prem(None))
                         return False
 
                     if result.get("status") != "success":
@@ -1238,6 +1267,104 @@ class OGBWebSocketConManager:
             """Handle direct api_usage_update event from server"""
             logging.info(f"📊 {self.ws_room} Received api_usage_update: {data}")
             await self._handle_api_usage_update(data)
+
+        @self.sio.on("limit_warning", namespace=ns)
+        async def on_limit_warning(data):
+            """Handle limit warning from server (80% or 90% of limit reached)"""
+            logging.warning(f"⚠️ {self.ws_room} Limit warning: {data}")
+            
+            resource = data.get("resource", "unknown")
+            current = data.get("current", 0)
+            limit = data.get("limit", 0)
+            percentage = data.get("percentage", 0)
+            warning_level = data.get("warningLevel", "warning")
+            message = data.get("message", "")
+            
+            # Emit to HA frontend for notification
+            await self._safe_emit(
+                "limit_warning",
+                {
+                    "resource": resource,
+                    "current": current,
+                    "limit": limit,
+                    "percentage": percentage,
+                    "message": message,
+                    "warning_level": warning_level,
+                    "blocking": False,
+                    "room": self.ws_room,
+                    "timestamp": time.time(),
+                },
+                haEvent=True,
+            )
+            
+            # Send notification via OGBNotifyManager if available
+            if self.notify_manager:
+                if resource == "apiCalls" or resource == "api_calls":
+                    await self.notify_manager.notify_api_warning(
+                        used=current,
+                        limit=limit,
+                        percent=percentage
+                    )
+                elif resource == "storage":
+                    await self.notify_manager.notify_storage_warning(
+                        used_gb=current,
+                        limit_gb=limit,
+                        percent=percentage
+                    )
+
+        @self.sio.on("limit_exceeded", namespace=ns)
+        async def on_limit_exceeded(data):
+            """Handle limit exceeded from server (operation blocked)"""
+            logging.error(f"🛑 {self.ws_room} Limit EXCEEDED (blocking): {data}")
+            
+            resource = data.get("resource", "unknown")
+            current = data.get("current", 0)
+            limit = data.get("limit", 0)
+            message = data.get("message", "Limit exceeded")
+            blocking = data.get("blocking", True)
+            
+            # Emit to HA frontend for notification
+            await self._safe_emit(
+                "limit_exceeded",
+                {
+                    "resource": resource,
+                    "current": current,
+                    "limit": limit,
+                    "message": message,
+                    "blocking": blocking,
+                    "room": self.ws_room,
+                    "timestamp": time.time(),
+                },
+                haEvent=True,
+            )
+            
+            # Send critical notification via OGBNotifyManager if available
+            if self.notify_manager:
+                if resource == "apiCalls" or resource == "api_calls":
+                    await self.notify_manager.notify_api_limit_reached(
+                        used=current,
+                        limit=limit,
+                        percent=round((current / limit) * 100) if limit > 0 else 100
+                    )
+                elif resource == "storage":
+                    await self.notify_manager.notify_storage_limit_reached(
+                        used_gb=current,
+                        limit_gb=limit,
+                        percent=round((current / limit) * 100) if limit > 0 else 100
+                    )
+            
+            # CRITICAL: Disable reconnection and cleanup to prevent memory leak from retry loop
+            # When API limit is exceeded, the client should stop trying to reconnect
+            if resource == "apiCalls" or resource == "api_calls":
+                logging.error(f"🛑 {self.ws_room} API limit exceeded - disabling auto-reconnection to prevent memory leak")
+                self._should_reconnect = False
+                
+                # Trigger cleanup to disconnect and clean up session on server
+                logging.info(f"🔴 {self.ws_room} Initiating cleanup due to API limit exceeded")
+                try:
+                    await self.cleanup_prem(None)
+                except Exception as e:
+                    logging.error(f"❌ {self.ws_room} Cleanup failed after limit exceeded: {e}")
 
         @self.sio.on("new_grow_plans", namespace=ns)
         async def on_new_grow_plans(data):

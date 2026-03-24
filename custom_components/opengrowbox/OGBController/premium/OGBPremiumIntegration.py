@@ -96,7 +96,16 @@ class OGBPremiumIntegration:
 
         # Feature manager for subscription-based feature access control
         self.feature_manager: Optional[OGBFeatureManager] = None
-
+        
+        # Initialize notification manager
+        self.notificator = None
+        try:
+            from ..managers.OGBNotifyManager import OGBNotificator
+            self.notificator = OGBNotificator(self.hass, self.room)
+            _LOGGER.info(f"✅ {self.room} Notification manager initialized")
+        except Exception as e:
+            _LOGGER.warning(f"⚠️ {self.room} Failed to initialize notification manager: {e}")
+        
         # Initialize WebSocket client - use shared client if available
         self.ogb_ws = None
         # No shared WebSocket clients - each room has its own
@@ -219,6 +228,7 @@ class OGBPremiumIntegration:
             self.event_manager,  # eventManager
             self.room,           # ws_room (unique per room)
             self.room_id,        # room_id (unique per room)
+            notify_manager=self.notificator  # Pass notification manager for limit warnings
         )
 
         # Give WebSocket client access to credentials for auto-relogin
