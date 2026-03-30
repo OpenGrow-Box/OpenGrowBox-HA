@@ -83,6 +83,7 @@ class OGBWebSocketConManager:
         self._reconnect_delay = 5
         self.reconnect_task = None
         self._reconnect_task = None
+        self._recovery_task = None
         self._connection_lock = asyncio.Lock()
         self._reconnection_lock = (
             asyncio.Lock()
@@ -172,6 +173,67 @@ class OGBWebSocketConManager:
 
         self._setup_event_listeners()
         self._setup_event_handlers()
+
+    def _get_api_limit_from_subscription(self) -> Optional[int]:
+        """Return the best known API call limit from subscription data."""
+        if not isinstance(self.subscription_data, dict):
+            return None
+
+        limits = self.subscription_data.get("limits", {})
+        if not isinstance(limits, dict):
+            return None
+
+        for key in (
+            "apiCallsPerMonth",
+            "api_calls_per_month",
+            "apiCallLimit",
+            "api_call_limit",
+            "maxApiCalls",
+            "max_api_calls",
+        ):
+            value = limits.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                return int(value)
+
+        return None
+
+    def _normalize_api_limit_payload(
+        self, used: Any, limit: Any, percent: Optional[Any] = None
+    ) -> Optional[Dict[str, int]]:
+        """Sanitize API limit payloads and reject invalid 0/0 server events."""
+        try:
+            used_value = int(float(used or 0))
+        except (TypeError, ValueError):
+            used_value = 0
+
+        try:
+            limit_value = int(float(limit or 0))
+        except (TypeError, ValueError):
+            limit_value = 0
+
+        if limit_value <= 0:
+            fallback_limit = self._get_api_limit_from_subscription()
+            if fallback_limit and used_value <= fallback_limit:
+                limit_value = fallback_limit
+            else:
+                logging.error(
+                    f"❌ {self.ws_room} Ignoring invalid API limit payload: used={used}, limit={limit}, percent={percent}"
+                )
+                return None
+
+        try:
+            percent_value = int(round(float(percent))) if percent is not None else None
+        except (TypeError, ValueError):
+            percent_value = None
+
+        if percent_value is None:
+            percent_value = round((used_value / limit_value) * 100)
+
+        return {
+            "used": used_value,
+            "limit": limit_value,
+            "percent": percent_value,
+        }
 
     # =================================================================
     # Connection
@@ -320,9 +382,25 @@ class OGBWebSocketConManager:
                     # Check for PLAN_LIMIT_EXCEEDED error - block reconnection to prevent memory leak
                     if result.get("code") == "PLAN_LIMIT_EXCEEDED":
                         usage = result.get("usage", {})
-                        api_calls = usage.get("api_calls", 0)
-                        limit = usage.get("limit", 0)
-                        percentage = usage.get("percentage", 100)
+                        normalized_limit = self._normalize_api_limit_payload(
+                            usage.get("api_calls", 0),
+                            usage.get("limit", 0),
+                            usage.get("percentage"),
+                        )
+                        if not normalized_limit:
+                            logging.error(
+                                f"❌ {self.ws_room} Received PLAN_LIMIT_EXCEEDED with invalid payload, skipping hard block: {result}"
+                            )
+                            await self._send_auth_response(
+                                event_id,
+                                "error",
+                                "API returned an invalid limit state. Please retry in a moment.",
+                            )
+                            return False
+
+                        api_calls = normalized_limit["used"]
+                        limit = normalized_limit["limit"]
+                        percentage = normalized_limit["percent"]
                         plan = result.get("plan", "unknown")
                         
                         logging.error(
@@ -877,7 +955,7 @@ class OGBWebSocketConManager:
                             logging.error(
                                 f"❌ Health check permanently failed for {self.ws_room} - triggering reconnection"
                             )
-                            asyncio.create_task(self._trigger_reconnect_with_lock("keepalive_failure"))
+                            self._schedule_recovery_task("reconnect", "keepalive_failure")
                             break
                     else:
                         # Reset consecutive failures on successful pong
@@ -899,7 +977,7 @@ class OGBWebSocketConManager:
                         logging.error(
                             f"❌ Keep-alive permanently failed for {self.ws_room} - triggering reconnection"
                         )
-                        asyncio.create_task(self._trigger_reconnect_with_lock("keepalive_exception"))
+                        self._schedule_recovery_task("reconnect", "keepalive_exception")
                         break
 
         except asyncio.CancelledError:
@@ -975,10 +1053,10 @@ class OGBWebSocketConManager:
                 
                 if has_credentials:
                     logging.info(f"🔐 {self.ws_room} Have credentials - triggering immediate re-login after disconnect...")
-                    asyncio.create_task(self._trigger_relogin("disconnect_with_credentials"))
+                    self._schedule_recovery_task("relogin", "disconnect_with_credentials")
                 else:
                     logging.info(f"🔄 {self.ws_room} No stored credentials - scheduling reconnection after disconnect...")
-                    asyncio.create_task(self._trigger_reconnect_with_lock("disconnect_event"))
+                    self._schedule_recovery_task("reconnect", "disconnect_event")
 
         @self.sio.on('auth_success', namespace=ns)
         async def on_auth_success(data):
@@ -1142,7 +1220,7 @@ class OGBWebSocketConManager:
                     # Set flag to prevent disconnect handler from interfering
                     self._session_error_relogin_triggered = True
                     logging.info(f"🔐 {self.ws_room} Have credentials - scheduling re-login task")
-                    asyncio.create_task(self._trigger_relogin("v1_error_session_invalid"))
+                    self._schedule_recovery_task("relogin", "v1_error_session_invalid")
                 else:
                     logging.error(f"❌ {self.ws_room} Cannot re-login: no credentials available")
 
@@ -1187,7 +1265,7 @@ class OGBWebSocketConManager:
                 self._auth_confirmed.set()  # Wake waiting authentication code with failure
                 
                 # Trigger re-login for session recovery
-                asyncio.create_task(self._trigger_relogin("message_error_empty"))
+                self._schedule_recovery_task("relogin", "message_error_empty")
 
         @self.sio.on("pong", namespace=ns)
         async def pong(data):
@@ -1279,6 +1357,19 @@ class OGBWebSocketConManager:
             percentage = data.get("percentage", 0)
             warning_level = data.get("warningLevel", "warning")
             message = data.get("message", "")
+
+            if resource == "apiCalls" or resource == "api_calls":
+                api_limit_data = self._normalize_api_limit_payload(
+                    current, limit, percentage
+                )
+                if not api_limit_data:
+                    logging.warning(
+                        f"⚠️ {self.ws_room} Ignoring invalid API limit warning event: {data}"
+                    )
+                    return
+                current = api_limit_data["used"]
+                limit = api_limit_data["limit"]
+                percentage = api_limit_data["percent"]
             
             # Emit to HA frontend for notification
             await self._safe_emit(
@@ -1322,6 +1413,17 @@ class OGBWebSocketConManager:
             limit = data.get("limit", 0)
             message = data.get("message", "Limit exceeded")
             blocking = data.get("blocking", True)
+
+            api_limit_data = None
+            if resource == "apiCalls" or resource == "api_calls":
+                api_limit_data = self._normalize_api_limit_payload(current, limit)
+                if not api_limit_data:
+                    logging.warning(
+                        f"⚠️ {self.ws_room} Ignoring invalid blocking API limit event: {data}"
+                    )
+                    return
+                current = api_limit_data["used"]
+                limit = api_limit_data["limit"]
             
             # Emit to HA frontend for notification
             await self._safe_emit(
@@ -1344,7 +1446,7 @@ class OGBWebSocketConManager:
                     await self.notify_manager.notify_api_limit_reached(
                         used=current,
                         limit=limit,
-                        percent=round((current / limit) * 100) if limit > 0 else 100
+                        percent=api_limit_data["percent"] if api_limit_data else round((current / limit) * 100)
                     )
                 elif resource == "storage":
                     await self.notify_manager.notify_storage_limit_reached(
@@ -1390,6 +1492,25 @@ class OGBWebSocketConManager:
             """Handle subscription expired event"""
             logging.error(f"🚨 {self.ws_room} Subscription EXPIRED: {data}")
             await self._handle_subscription_expired(data)
+
+        # === OGB Token Expiration Events ===
+        @self.sio.on("v1:token:expiring:warning", namespace=ns)
+        async def on_token_expiring_warning(data):
+            """Handle OGB token expiring warning (7 days before)"""
+            logging.warning(f"⚠️ {self.ws_room} OGB Token expiring soon: {data}")
+            await self._handle_token_expiring_warning(data)
+
+        @self.sio.on("v1:token:expiring:critical", namespace=ns)
+        async def on_token_expiring_critical(data):
+            """Handle OGB token expiring critical (3 days before)"""
+            logging.error(f"🔴 {self.ws_room} OGB Token EXPIRING CRITICAL: {data}")
+            await self._handle_token_expiring_critical(data)
+
+        @self.sio.on("v1:token:expired", namespace=ns)
+        async def on_token_expired(data):
+            """Handle OGB token expired event"""
+            logging.error(f"🚨 {self.ws_room} OGB Token EXPIRED: {data}")
+            await self._handle_token_expired(data)
 
         # === Control Sync Events (from Webapp) ===
         @self.sio.on("ctrl_change", namespace=ns)
@@ -1592,9 +1713,20 @@ class OGBWebSocketConManager:
             try:
                 used = data.get("used", 0)
                 limit = data.get("limit", 1000)
-                percent = data.get("percent", 100)
+                percent = data.get("percent")
                 upgrade_url = data.get("upgradeUrl", "/settings/upgrade")
                 plan = data.get("plan", "free")
+
+                normalized_limit = self._normalize_api_limit_payload(used, limit, percent)
+                if not normalized_limit:
+                    logging.warning(
+                        f"⚠️ {self.ws_room} Ignoring invalid api_limit_reached event: {data}"
+                    )
+                    return
+
+                used = normalized_limit["used"]
+                limit = normalized_limit["limit"]
+                percent = normalized_limit["percent"]
                 
                 logging.warning(f"🚫 {self.ws_room} API limit REACHED: {used}/{limit} calls ({percent:.0f}%)")
                 
@@ -1949,6 +2081,116 @@ class OGBWebSocketConManager:
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling subscription_expired: {e}")
+
+    # =================================================================
+    # OGB Token Expiration Handlers
+    # =================================================================
+
+    async def _handle_token_expiring_warning(self, data: dict):
+        """Handle OGB token expiring warning (7 days before expiration)"""
+        try:
+            token_id = data.get("token_id", "unknown")
+            token_name = data.get("token_name", "OGB Token")
+            expires_at = data.get("expires_at")
+            days_remaining = data.get("days_remaining", 0)
+            hours_remaining = data.get("hours_remaining", 0)
+            action_required = data.get("action_required", "")
+
+            logging.warning(
+                f"⚠️ {self.ws_room} OGB Token '{token_name}' expiring in {days_remaining} days!"
+            )
+
+            # Send notification via notify_manager
+            if self.notify_manager:
+                await self.notify_manager.warning(
+                    message=f"OGB Token '{token_name}' expires in {days_remaining} day(s). {action_required}",
+                    title=f"OGB Token Expiring - {self.ws_room}"
+                )
+
+            # Emit to HA for Premium Integration to handle
+            await self._safe_emit("TokenExpiringWarning", {
+                "room": self.ws_room,
+                "token_id": token_id,
+                "token_name": token_name,
+                "expires_at": expires_at,
+                "days_remaining": days_remaining,
+                "hours_remaining": hours_remaining,
+                "action_required": action_required,
+                "timestamp": data.get("timestamp", time.time())
+            }, haEvent=True)
+
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling token_expiring_warning: {e}")
+
+    async def _handle_token_expiring_critical(self, data: dict):
+        """Handle OGB token expiring critical (3 days before expiration)"""
+        try:
+            token_id = data.get("token_id", "unknown")
+            token_name = data.get("token_name", "OGB Token")
+            expires_at = data.get("expires_at")
+            days_remaining = data.get("days_remaining", 0)
+            hours_remaining = data.get("hours_remaining", 0)
+            action_required = data.get("action_required", "")
+
+            logging.error(
+                f"🔴 {self.ws_room} OGB Token '{token_name}' EXPIRING CRITICAL in {days_remaining} days ({hours_remaining}h)!"
+            )
+
+            # Send notification via notify_manager
+            if self.notify_manager:
+                await self.notify_manager.critical(
+                    message=f"URGENT: OGB Token '{token_name}' expires in {hours_remaining} hours! {action_required}",
+                    title=f"OGB Token Expiring CRITICAL - {self.ws_room}"
+                )
+
+            # Emit to HA for Premium Integration to handle
+            await self._safe_emit("TokenExpiringCritical", {
+                "room": self.ws_room,
+                "token_id": token_id,
+                "token_name": token_name,
+                "expires_at": expires_at,
+                "days_remaining": days_remaining,
+                "hours_remaining": hours_remaining,
+                "action_required": action_required,
+                "timestamp": data.get("timestamp", time.time())
+            }, haEvent=True)
+
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling token_expiring_critical: {e}")
+
+    async def _handle_token_expired(self, data: dict):
+        """Handle OGB token expired event"""
+        try:
+            token_id = data.get("token_id", "unknown")
+            token_name = data.get("token_name", "OGB Token")
+            message = data.get("message", "Token has expired")
+            grace_period_seconds = data.get("grace_period_seconds", 300)
+            action_required = data.get("action_required", "")
+
+            logging.error(
+                f"🚨 {self.ws_room} OGB Token '{token_name}' EXPIRED! {message}"
+            )
+
+            # Send notification via notify_manager
+            if self.notify_manager:
+                await self.notify_manager.critical(
+                    message=f"OGB Token '{token_name}' has EXPIRED! {message} Reconnect required within {grace_period_seconds}s. {action_required}",
+                    title=f"OGB Token EXPIRED - {self.ws_room}"
+                )
+
+            # Emit to HA for Premium Integration to handle
+            await self._safe_emit("TokenExpired", {
+                "room": self.ws_room,
+                "token_id": token_id,
+                "token_name": token_name,
+                "message": message,
+                "grace_period_seconds": grace_period_seconds,
+                "action_required": action_required,
+                "timestamp": data.get("timestamp", time.time())
+            }, haEvent=True)
+
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling token_expired: {e}")
 
     # =================================================================
     # Control Sync Handlers (from Webapp)
@@ -2444,6 +2686,14 @@ class OGBWebSocketConManager:
             except asyncio.CancelledError:
                 pass
 
+        if self._recovery_task and not self._recovery_task.done():
+            self._recovery_task.cancel()
+            try:
+                await self._recovery_task
+            except asyncio.CancelledError:
+                pass
+        self._recovery_task = None
+
         # Disconnect socket
         if hasattr(self, "sio") and self.ws_connected:
             try:
@@ -2530,6 +2780,21 @@ class OGBWebSocketConManager:
                     await self.reconnect_task
                 except asyncio.CancelledError:
                     pass
+
+            if self._reconnect_task and not self._reconnect_task.done():
+                self._reconnect_task.cancel()
+                try:
+                    await self._reconnect_task
+                except asyncio.CancelledError:
+                    pass
+
+            if self._recovery_task and not self._recovery_task.done():
+                self._recovery_task.cancel()
+                try:
+                    await self._recovery_task
+                except asyncio.CancelledError:
+                    pass
+            self._recovery_task = None
 
             # Stop keep-alive
             await self._stop_keepalive()
@@ -2805,6 +3070,12 @@ class OGBWebSocketConManager:
         """Handle connection loss and cleanup state"""
         logging.warning(f"🔌 {self.ws_room} Connection lost: {reason}")
 
+        if self._connection_closing or not self._should_reconnect:
+            logging.debug(
+                f"⏭️ {self.ws_room} Ignoring connection_lost while closing/reconnect disabled ({reason})"
+            )
+            return
+
         # Mark connection as closed
         self.ws_connected = False
         self.authenticated = False
@@ -2817,9 +3088,10 @@ class OGBWebSocketConManager:
         self._user_id = None
         self._session_id = None
 
-        # Schedule reconnection attempt after a delay
-        if hasattr(self, '_reconnect_task') and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
+        # Schedule reconnection attempt after a delay (deduplicated)
+        if self._reconnect_task and not self._reconnect_task.done():
+            logging.debug(f"⏭️ {self.ws_room} Reconnect scheduler already running ({reason})")
+            return
 
         self._reconnect_task = asyncio.create_task(self._schedule_reconnection(reason))
 
@@ -2832,6 +3104,10 @@ class OGBWebSocketConManager:
         max_attempts = 10
 
         for attempt in range(max_attempts):
+            if self._connection_closing or not self._should_reconnect:
+                logging.info(f"⏭️ {self.ws_room} Reconnection scheduler stopped ({reason})")
+                return
+
             delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
             logging.info(f"🔄 {self.ws_room} Scheduling reconnection in {delay:.1f}s (attempt {attempt + 1}/{max_attempts}, reason: {reason})")
 
@@ -2849,6 +3125,42 @@ class OGBWebSocketConManager:
                 logging.error(f"❌ {self.ws_room} Reconnection error: {e}")
 
         logging.error(f"❌ {self.ws_room} Failed to reconnect after {max_attempts} attempts")
+
+    def _schedule_recovery_task(self, action: str, reason: str) -> None:
+        """Schedule one recovery task at a time to avoid reconnect storms."""
+        if self._connection_closing or not self._should_reconnect:
+            logging.debug(
+                f"⏭️ {self.ws_room} Recovery skipped while closing/reconnect disabled ({action}:{reason})"
+            )
+            return
+
+        if self._recovery_task and not self._recovery_task.done():
+            logging.debug(
+                f"⏭️ {self.ws_room} Recovery task already running, skipping duplicate ({action}:{reason})"
+            )
+            return
+
+        if action == "relogin":
+            coro = self._trigger_relogin(reason)
+        else:
+            coro = self._trigger_reconnect_with_lock(reason)
+
+        self._recovery_task = asyncio.create_task(coro)
+        self._recovery_task.add_done_callback(self._on_recovery_task_done)
+
+    def _on_recovery_task_done(self, task: asyncio.Task) -> None:
+        """Clear recovery task reference and surface unexpected failures."""
+        try:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc:
+                logging.error(f"❌ {self.ws_room} Recovery task failed: {exc}")
+        except Exception as err:
+            logging.error(f"❌ {self.ws_room} Recovery task completion error: {err}")
+        finally:
+            if self._recovery_task is task:
+                self._recovery_task = None
 
     async def prem_event(self, message_type: str, data: dict) -> bool:
         """Send encrypted message via WebSocket - all logged-in users (free + premium)
@@ -3426,13 +3738,13 @@ class OGBWebSocketConManager:
                 # Check 1: Should be connected but isn't
                 if self.is_logged_in and not self.ws_connected:
                     logging.warning(f"🏥 {self.ws_room} Health check FAILED: logged in but WebSocket not connected")
-                    asyncio.create_task(trigger_recovery("disconnected"))
+                    await trigger_recovery("disconnected")
                     continue
                 
                 # Check 2: Connected but not authenticated (stuck state)
                 if self.ws_connected and not self.authenticated and self.is_logged_in:
                     logging.warning(f"🏥 {self.ws_room} Health check FAILED: connected but not authenticated")
-                    asyncio.create_task(trigger_recovery("auth_stuck"))
+                    await trigger_recovery("auth_stuck")
                     continue
                 
                 # Check 3: No pong received for too long (connection is dead but not detected)
@@ -3443,7 +3755,7 @@ class OGBWebSocketConManager:
                             f"🏥 {self.ws_room} Health check FAILED: no pong for {pong_age:.0f}s "
                             f"(max: {MAX_PONG_AGE}s)"
                         )
-                        asyncio.create_task(trigger_recovery("stale_pong"))
+                        await trigger_recovery("stale_pong")
                         continue
 
                 # Fallback safety: refresh subscription plan from cached API endpoint.

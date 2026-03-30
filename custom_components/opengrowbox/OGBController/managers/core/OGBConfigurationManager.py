@@ -83,7 +83,6 @@ class OGBConfigurationManager:
             f"ogb_vpd_determination_{self.room.lower()}": self._ogb_vpd_determination,
             f"ogb_maincontrol_{self.room.lower()}": self._update_control_option,
             f"ogb_notifications_{self.room.lower()}": self._update_notify_option,
-            f"ogb_ai_learning_{self.room.lower()}": self._update_ai_learning,
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
             f"ogb_planttype_{self.room.lower()}": self._update_plant_type,
@@ -343,17 +342,6 @@ class OGBConfigurationManager:
             self.event_manager.change_notify_set(False)
         elif value == "Enabled":
             self.event_manager.change_notify_set(True)
-
-    async def _update_ai_learning(self, data):
-        """Update AI learning control."""
-        value = data.newState[0]
-        current_value = self._string_to_bool(
-            self.data_store.getDeep("controlOptions.aiLearning")
-        )
-        if current_value != value:
-            self.data_store.setDeep(
-                "controlOptions.aiLearning", self._string_to_bool(value)
-            )
 
     async def _update_vpd_tolerance(self, data):
         """Update VPD tolerance."""

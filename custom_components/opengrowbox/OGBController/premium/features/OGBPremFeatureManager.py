@@ -686,7 +686,7 @@ class OGBFeatureManager:
             "feature": feature_name,
             "current_tier": self.plan_name,
             "required_tier": required_tier,
-            "upgrade_url": f"https://opengrowbox.com/pricing?upgrade={required_tier}",
+            "upgrade_url": f"https://opengrowbox.net/pricing?upgrade={required_tier}",
             "description": self.FEATURES[feature_name]["description"],
         }
 
@@ -787,7 +787,7 @@ class OGBFeatureManager:
                 "current_rooms": current_rooms,
                 "room_limit": room_limit,
                 "required_tier": next_tier,
-                "upgrade_url": f"https://opengrowbox.com/pricing?upgrade={next_tier}",
+                "upgrade_url": f"https://opengrowbox.net/pricing?upgrade={next_tier}",
                 "message": f"Room limit exceeded ({current_rooms}/{room_limit}). Upgrade to {next_tier.title()} plan for more rooms.",
             }
 

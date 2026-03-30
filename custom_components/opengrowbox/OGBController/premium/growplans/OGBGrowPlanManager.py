@@ -43,8 +43,11 @@ class OGBGrowPlanManager:
         
         # Timer für tägliche Aktualisierungen
         self._daily_update_task = None
+        self._init_task = None
+        self._ha_unsubscribers = []
+        self._event_bindings = []
         
-        asyncio.create_task(self.init())
+        self._init_task = asyncio.create_task(self.init())
             
     async def init(self):
         """Initialize Grow Plan Manager"""
@@ -55,10 +58,18 @@ class OGBGrowPlanManager:
 
     def _setup_event_listeners(self):
         """Setup Home Assistant event listeners."""
-        self.event_manager.on("new_grow_plans", self._on_new_grow_plans)
-        self.event_manager.on("plan_activation",self._on_plan_activation)
-        self.hass.bus.async_listen("ogb_premium_growplan_pause", self._pause_manager)   
-        self.hass.bus.async_listen("ogb_premium_growplan_resume", self._resume_manager)   
+        self._register_event_listener("new_grow_plans", self._on_new_grow_plans)
+        self._register_event_listener("plan_activation", self._on_plan_activation)
+        self._register_bus_listener("ogb_premium_growplan_pause", self._pause_manager)
+        self._register_bus_listener("ogb_premium_growplan_resume", self._resume_manager)
+
+    def _register_bus_listener(self, event_name, callback):
+        unsub = self.hass.bus.async_listen(event_name, callback)
+        self._ha_unsubscribers.append(unsub)
+
+    def _register_event_listener(self, event_name, callback):
+        self.event_manager.on(event_name, callback)
+        self._event_bindings.append((event_name, callback))
 
     async def _pause_manager(self,data):
         if self.managerActive == True:
@@ -472,3 +483,33 @@ class OGBGrowPlanManager:
         """Cleanup when destroying the instance"""
         if self._daily_update_task and not self._daily_update_task.done():
             self._daily_update_task.cancel()
+
+    async def async_shutdown(self):
+        """Cleanup tasks and listeners to avoid restart-time leaks."""
+        if self._init_task and not self._init_task.done():
+            self._init_task.cancel()
+            try:
+                await self._init_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._daily_update_task and not self._daily_update_task.done():
+            self._daily_update_task.cancel()
+            try:
+                await self._daily_update_task
+            except asyncio.CancelledError:
+                pass
+
+        for unsub in self._ha_unsubscribers:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._ha_unsubscribers.clear()
+
+        for event_name, callback in self._event_bindings:
+            try:
+                self.event_manager.remove(event_name, callback)
+            except Exception:
+                pass
+        self._event_bindings.clear()

@@ -90,6 +90,7 @@ class OGBPremiumIntegration:
         # Debounce for _managePremiumControls to prevent excessive calls
         self._last_manage_controls_time = 0
         self._manage_controls_cooldown = 2.0  # seconds
+        self._manage_controls_task = None
 
         # Premium sensors registry
         self._premium_sensors = {}
@@ -114,10 +115,13 @@ class OGBPremiumIntegration:
         self.growPlanManager = None
 
         # Set up event listeners
+        self._ha_unsubscribers = []
+        self._event_bindings = []
+        self._init_task = None
         self._setup_event_listeners()
 
         # Start async initialization
-        asyncio.create_task(self._safe_init())
+        self._init_task = asyncio.create_task(self._safe_init())
 
     @property
     def is_ready(self):
@@ -147,9 +151,6 @@ class OGBPremiumIntegration:
             blocked_rooms = []
 
             for entry_id, coordinator in domain_data.items():
-                if entry_id == "_premium_services_registered":
-                    continue  # Skip the service registration flag
-
                 # Check if this coordinator has an active premium integration
                 if hasattr(coordinator, 'premium_integration') and coordinator.premium_integration:
                     prem_integration = coordinator.premium_integration
@@ -271,64 +272,72 @@ class OGBPremiumIntegration:
         """Setup Home Assistant event listeners."""
         # Authentication events
 
-        self.hass.bus.async_listen("ogb_premium_login", self._on_prem_login)
-        self.hass.bus.async_listen("ogb_premium_logout", self._on_prem_logout)
-        self.hass.bus.async_listen("ogb_premium_get_profile", self._get_user_profile)
+        self._register_bus_listener("ogb_premium_login", self._on_prem_login)
+        self._register_bus_listener("ogb_premium_logout", self._on_prem_logout)
+        self._register_bus_listener("ogb_premium_get_profile", self._get_user_profile)
 
         # GrowPlan handlers
-        self.hass.bus.async_listen("ogb_premium_get_growplans", self._ui_get_growplans_request)
-        self.hass.bus.async_listen("ogb_premium_add_growplan", self._ui_grow_plan_add_request)
-        self.hass.bus.async_listen("ogb_premium_del_growplan", self._ui_grow_plan_del_request)
-        self.hass.bus.async_listen("ogb_premium_growplan_activate", self._ui_grow_plan_activation)
+        self._register_bus_listener("ogb_premium_get_growplans", self._ui_get_growplans_request)
+        self._register_bus_listener("ogb_premium_add_growplan", self._ui_grow_plan_add_request)
+        self._register_bus_listener("ogb_premium_del_growplan", self._ui_grow_plan_del_request)
+        self._register_bus_listener("ogb_premium_growplan_activate", self._ui_grow_plan_activation)
 
         # Feature Service handlers (for frontend featureService.js)
-        self.hass.bus.async_listen("ogb_features_get_subscription", self._handle_get_subscription)
-        self.hass.bus.async_listen("ogb_features_get_available", self._handle_get_available_features)
-        self.hass.bus.async_listen("ogb_features_check_access", self._handle_check_feature_access)
+        self._register_bus_listener("ogb_features_get_subscription", self._handle_get_subscription)
+        self._register_bus_listener("ogb_features_get_available", self._handle_get_available_features)
+        self._register_bus_listener("ogb_features_check_access", self._handle_check_feature_access)
 
         # V1 WebSocket event handlers
-        self.event_manager.on("AnalyticsUpdate", self._handle_analytics_update)
-        self.hass.bus.async_listen("ogb_features_get_definitions", self._handle_get_feature_definitions)
+        self._register_event_listener("AnalyticsUpdate", self._handle_analytics_update)
+        self._register_bus_listener("ogb_features_get_definitions", self._handle_get_feature_definitions)
 
         # Internal event manager events
-        self.event_manager.on("DataRelease", self._send_growdata_to_prem_api)
-        self.event_manager.on("PremiumChange", self._handle_premium_change)
-        self.event_manager.on("SaveRequest", self._save_request)
-        self.event_manager.on("PremUICTRLChange", self._handle_ctrl_change)
+        self._register_event_listener("DataRelease", self._send_growdata_to_prem_api)
+        self._register_event_listener("PremiumChange", self._handle_premium_change)
+        self._register_event_listener("SaveRequest", self._save_request)
+        self._register_event_listener("PremUICTRLChange", self._handle_ctrl_change)
 
         # WebSocket events from Premium API
-        self.event_manager.on("FeatureFlagUpdated", self._on_feature_flag_updated)
-        self.event_manager.on("KillSwitchActivated", self._on_kill_switch_activated)
-        self.event_manager.on("SubscriptionChanged", self._on_subscription_changed)
+        self._register_event_listener("FeatureFlagUpdated", self._on_feature_flag_updated)
+        self._register_event_listener("KillSwitchActivated", self._on_kill_switch_activated)
+        self._register_event_listener("SubscriptionChanged", self._on_subscription_changed)
 
         # Subscription lifecycle events
-        self.event_manager.on("SubscriptionExpiringSoon", self._on_subscription_expiring_soon)
-        self.event_manager.on("SubscriptionExpired", self._on_subscription_expired)
+        self._register_event_listener("SubscriptionExpiringSoon", self._on_subscription_expiring_soon)
+        self._register_event_listener("SubscriptionExpired", self._on_subscription_expired)
 
         # Grow Plan events from WebSocket
-        self.event_manager.on("new_grow_plans", self._on_new_grow_plans)
-        self.event_manager.on("plan_activation", self._on_plan_activated)
+        self._register_event_listener("new_grow_plans", self._on_new_grow_plans)
+        self._register_event_listener("plan_activation", self._on_plan_activated)
 
         # API Usage updates from WebSocket - CRITICAL for browser refresh to show current values
-        self.event_manager.on("api_usage_update", self._on_api_usage_update)
-        self.event_manager.on("plan_changed", self._on_plan_changed)
-        self.event_manager.on("maintenance_alert", self._on_maintenance_alert)
+        self._register_event_listener("api_usage_update", self._on_api_usage_update)
+        self._register_event_listener("plan_changed", self._on_plan_changed)
+        self._register_event_listener("maintenance_alert", self._on_maintenance_alert)
 
         # Webapp control sync events
-        self.event_manager.on("WebappControlChange", self._on_webapp_ctrl_change)
-        self.event_manager.on("WebappControlValuesChange", self._on_webapp_ctrl_values_change)
-        self.event_manager.on("WebappControlValueUpdate", self._on_webapp_ctrl_value_update)
-        self.event_manager.on("WebappPlantStageChange", self._on_webapp_plant_stage_change)
-        self.event_manager.on("WebappPremiumActions", self._on_webapp_premium_actions)
+        self._register_event_listener("WebappControlChange", self._on_webapp_ctrl_change)
+        self._register_event_listener("WebappControlValuesChange", self._on_webapp_ctrl_values_change)
+        self._register_event_listener("WebappControlValueUpdate", self._on_webapp_ctrl_value_update)
+        self._register_event_listener("WebappPlantStageChange", self._on_webapp_plant_stage_change)
+        self._register_event_listener("WebappPremiumActions", self._on_webapp_premium_actions)
 
         # Grow completion events - send harvest data to Premium API
-        self.event_manager.on("GrowCompleted", self._on_grow_completed)
+        self._register_event_listener("GrowCompleted", self._on_grow_completed)
 
         # Camera plant view events - send image and plant data to Premium API
-        self.event_manager.on("HasPlantViewed", self._handle_has_plant_viewed)
+        self._register_event_listener("HasPlantViewed", self._handle_has_plant_viewed)
 
         # Cross-room authentication
-        self.hass.bus.async_listen("isAuthenticated", self._handle_authenticated)
+        self._register_bus_listener("isAuthenticated", self._handle_authenticated)
+
+    def _register_bus_listener(self, event_name, callback):
+        unsub = self.hass.bus.async_listen(event_name, callback)
+        self._ha_unsubscribers.append(unsub)
+
+    def _register_event_listener(self, event_name, callback):
+        self.event_manager.on(event_name, callback)
+        self._event_bindings.append((event_name, callback))
 
     # =================================================================
     # WebSocket Event Handlers (Premium API Real-time Updates)
@@ -2973,7 +2982,7 @@ class OGBPremiumIntegration:
                     f"(plan: {self.feature_manager.plan_name})"
                 )
                 # CRITICAL: After feature manager init, update TentMode options
-                self.hass.async_create_task(self._managePremiumControls())
+                self._schedule_manage_controls_refresh()
             else:
                 self.feature_manager.update_subscription(self.subscription_data)
                 _LOGGER.debug(
@@ -2981,9 +2990,17 @@ class OGBPremiumIntegration:
                     f"(plan: {self.feature_manager.plan_name})"
                 )
                 # CRITICAL: After feature update, update TentMode options
-                self.hass.async_create_task(self._managePremiumControls())
+                self._schedule_manage_controls_refresh()
         else:
             _LOGGER.debug(f"{self.room} No subscription data available for feature manager")
+
+    def _schedule_manage_controls_refresh(self):
+        """Queue one premium-control refresh task at a time."""
+        if self._manage_controls_task and not self._manage_controls_task.done():
+            return
+        self._manage_controls_task = self.hass.async_create_task(
+            self._managePremiumControls()
+        )
 
     def _get_available_premium_modes(self) -> list:
         """
@@ -3633,6 +3650,50 @@ class OGBPremiumIntegration:
     async def async_shutdown(self):
         """Shutdown premium integration."""
         _LOGGER.info(f"Shutting down premium integration for {self.room}")
+
+        if self._init_task and not self._init_task.done():
+            self._init_task.cancel()
+            try:
+                await self._init_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                _LOGGER.debug(f"{self.room} init task cancellation error: {e}")
+
+        if self._manage_controls_task and not self._manage_controls_task.done():
+            self._manage_controls_task.cancel()
+            try:
+                await self._manage_controls_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                _LOGGER.debug(f"{self.room} manage controls task cancellation error: {e}")
+
+        if self.growPlanManager and hasattr(self.growPlanManager, "async_shutdown"):
+            try:
+                await self.growPlanManager.async_shutdown()
+            except Exception as e:
+                _LOGGER.error(f"Error shutting down grow plan manager: {e}")
+
+        if self.notificator and hasattr(self.notificator, "async_shutdown"):
+            try:
+                await self.notificator.async_shutdown()
+            except Exception as e:
+                _LOGGER.error(f"Error shutting down notificator: {e}")
+
+        for unsub in self._ha_unsubscribers:
+            try:
+                unsub()
+            except Exception:
+                pass
+        self._ha_unsubscribers.clear()
+
+        for event_name, callback in self._event_bindings:
+            try:
+                self.event_manager.remove(event_name, callback)
+            except Exception:
+                pass
+        self._event_bindings.clear()
 
         if self.ogb_ws:
             try:

@@ -737,7 +737,7 @@ class Device:
             return
 
         relevant_keys = ["_duty", "_intensity", "_dutyCycle"]
-        duty_types    = {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"}
+        duty_types    = {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier", "Heater", "Cooler"}
 
         def convert_to_int(value, multiply_by_10: bool = False) -> int | None:
             try:
@@ -955,7 +955,7 @@ class Device:
             else:
                 _LOGGER.debug(f"{self.deviceName}: Using existing voltage: {self.voltage}%")
                 
-        elif self.deviceType in {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier"}:
+        elif self.deviceType in {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier", "Heater", "Cooler"}:
             if self.dutyCycle is None:
                 self.dutyCycle = 50.0  # Default duty cycle
                 _LOGGER.info(f"{self.deviceName}: No control value found - using default duty cycle: {self.dutyCycle}%")
@@ -1390,6 +1390,78 @@ class Device:
 
                     self.isRunning = True
                     _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON ({percentage}%).")
+                    return
+
+                # Heater einschalten
+                elif self.deviceType == "Heater":
+                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={"entity_id": entity_id, "percentage": percentage},
+                        )
+                    elif entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif entity_id.startswith("climate."):
+                        await self.hass.services.async_call(
+                            domain="climate",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+
+                    if self.isDimmable and percentage is not None:
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
+                        await self.set_value(percentage)
+
+                    self.isRunning = True
+                    _LOGGER.debug(f"{self.deviceName}: Heater ON ({percentage}%).")
+                    return
+
+                # Cooler einschalten
+                elif self.deviceType == "Cooler":
+                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="set_percentage",
+                            service_data={"entity_id": entity_id, "percentage": percentage},
+                        )
+                    elif entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif entity_id.startswith("climate."):
+                        await self.hass.services.async_call(
+                            domain="climate",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_on",
+                            service_data={"entity_id": entity_id},
+                        )
+
+                    if self.isDimmable and percentage is not None:
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(True)
+                        await self.set_value(percentage)
+
+                    self.isRunning = True
+                    _LOGGER.debug(f"{self.deviceName}: Cooler ON ({percentage}%).")
                     return
 
 

@@ -371,11 +371,11 @@ This project is licensed under the **OGBCL (OpenGrowBox Community License)**.
 
 ## 📞 Support & Community
 
-- **📧 Email**: support@opengrowbox.com
+- **📧 Email**: support@opengrowbox.net
 - **💬 Discord**: [Join our community](https://discord.gg/opengrowbox)
 - **🐛 Issues**: [GitHub Issues](https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues)
 - **📖 Wiki**: [Community Wiki](https://github.com/OpenGrow-Box/OpenGrowBox/wiki/)
-- **📧 Newsletter**: [Stay updated](https://opengrowbox.com/newsletter)
+- **📧 Newsletter**: [Stay updated](https://opengrowbox.net/newsletter)
 
 ---
 

@@ -151,7 +151,7 @@ curl http://localhost:8123/api/states | jq '.[] | select(.entity_id | contains("
 ### Premium Features Setup
 
 1. **Get Premium Account**:
-   - Visit [OpenGrowBox Premium](https://opengrowbox.com/premium)
+   - Visit [OpenGrowBox Premium](https://opengrowbox.net/premium)
    - Create account and subscribe
 
 2. **Activate in HA**:

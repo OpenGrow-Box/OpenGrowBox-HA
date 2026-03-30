@@ -13,7 +13,6 @@ from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
 from .const import DOMAIN
 from .OGBController.OGB import OpenGrowBox
 from .OGBController.RegistryListener import OGBRegistryEvenListener
-from .premium_services import register_premium_services
 from .select import OpenGrowBoxRoomSelector
 from .text import OpenGrowBoxAccessToken
 
@@ -280,17 +279,6 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception as e:
                 _LOGGER.error(
                     f"Failed to register core services: {e}", exc_info=True
-                )
-
-        # Register premium services (only once for first coordinator)
-        if not self.hass.data[DOMAIN].get("_premium_services_registered", False):
-            try:
-                await register_premium_services(self.hass, self)
-                self.hass.data[DOMAIN]["_premium_services_registered"] = True
-                _LOGGER.info("✅ Premium services registered successfully")
-            except Exception as e:
-                _LOGGER.error(
-                    f"Failed to register premium services: {e}", exc_info=True
                 )
 
         # Start the monitoring with tracked task

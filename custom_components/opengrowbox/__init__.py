@@ -1,5 +1,10 @@
 import logging
 import os
+import shutil
+from glob import glob
+from typing import Any
+
+import yaml
 
 import voluptuous as vol
 
@@ -17,12 +22,100 @@ from .frontend import async_register_frontend
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "number", "select", "time", "switch", "date", "text"]
+_CONFIG_CHECK_FLAG = "__config_checked__"
+_REQUIRED_LOGGER_DEFAULT = "info"
+_REQUIRED_LOGGER_LEVEL = "debug"
+_REQUIRED_LOGGER_OVERRIDES = {
+    "homeassistant.config_entries": _REQUIRED_LOGGER_LEVEL,
+    "homeassistant.setup": _REQUIRED_LOGGER_LEVEL,
+    "homeassistant.loader": _REQUIRED_LOGGER_LEVEL,
+    "custom_components.opengrowbox": _REQUIRED_LOGGER_LEVEL,
+    "custom_components.ogb-dev-env": _REQUIRED_LOGGER_LEVEL,
+}
+
+
+def _load_configuration_yaml(path: str) -> dict[str, Any]:
+    """Load Home Assistant configuration.yaml as dict."""
+    if not os.path.exists(path):
+        return {}
+
+    with open(path, "r", encoding="utf-8") as file:
+        loaded = yaml.safe_load(file)
+
+    if isinstance(loaded, dict):
+        return loaded
+    return {}
+
+
+def _as_level(value: Any) -> str:
+    """Normalize logger level value to lowercase string."""
+    if value is None:
+        return ""
+    return str(value).strip().lower()
+
+
+def _apply_minimal_log_fallback() -> None:
+    """Use minimal runtime logging if requested logger config is missing."""
+    logging.getLogger("custom_components.opengrowbox").setLevel(logging.WARNING)
+    logging.getLogger("custom_components.ogb-dev-env").setLevel(logging.WARNING)
+
+
+async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
+    """Validate required configuration.yaml entries for default_config and logger."""
+    config_path = hass.config.path("configuration.yaml")
+
+    try:
+        config = await hass.async_add_executor_job(_load_configuration_yaml, config_path)
+    except Exception as err:
+        _LOGGER.warning(
+            "Could not read configuration.yaml (%s). Using minimal OpenGrowBox log level.",
+            err,
+        )
+        _apply_minimal_log_fallback()
+        return
+
+    has_default_config_key = "default_config" in config
+    logger_config = config.get("logger")
+    logger_default_ok = False
+    logger_overrides_ok = False
+
+    if isinstance(logger_config, dict):
+        logger_default_ok = _as_level(logger_config.get("default")) == _REQUIRED_LOGGER_DEFAULT
+        logs_block = logger_config.get("logs")
+        if isinstance(logs_block, dict):
+            logger_overrides_ok = all(
+                _as_level(logs_block.get(name)) == required_level
+                for name, required_level in _REQUIRED_LOGGER_OVERRIDES.items()
+            )
+
+    if has_default_config_key and logger_default_ok and logger_overrides_ok:
+        return
+
+    missing_reasons = []
+    if not has_default_config_key:
+        missing_reasons.append("default_config missing")
+    if not logger_default_ok:
+        missing_reasons.append("logger.default != info")
+    if not logger_overrides_ok:
+        missing_reasons.append("required logger.logs entries missing")
+
+    _LOGGER.warning(
+        "configuration.yaml check failed (%s). "
+        "Expected: default_config and logger settings for OpenGrowBox diagnostics. "
+        "Applying minimal OpenGrowBox runtime log level (WARNING).",
+        ", ".join(missing_reasons),
+    )
+    _apply_minimal_log_fallback()
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up the OpenGrowBox integration via the UI."""
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
+
+    if not hass.data[DOMAIN].get(_CONFIG_CHECK_FLAG):
+        await _check_required_ha_logging_config(hass)
+        hass.data[DOMAIN][_CONFIG_CHECK_FLAG] = True
 
     # Check if this entry is already set up to prevent duplicate initialization
     if config_entry.entry_id in hass.data[DOMAIN]:
@@ -146,3 +239,105 @@ async def async_reload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     if not await async_unload_entry(hass, config_entry):
         return
     await async_setup_entry(hass, config_entry)
+
+
+def _remove_path(path: str) -> bool:
+    """Remove file or directory recursively if present."""
+    if not os.path.exists(path):
+        return False
+
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=False)
+    else:
+        os.remove(path)
+
+    return True
+
+
+async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Remove room-scoped integration data when one config entry is deleted."""
+    room_name = str(config_entry.data.get("room_name", "")).strip()
+    room_lower = room_name.lower()
+
+    _LOGGER.warning(
+        "Removing OpenGrowBox entry %s for room '%s' - deleting room-scoped data",
+        config_entry.entry_id,
+        room_name or "unknown",
+    )
+
+    if not room_name:
+        _LOGGER.warning(
+            "Room name missing in config entry %s - skip filesystem cleanup to avoid deleting other rooms",
+            config_entry.entry_id,
+        )
+        return
+
+    targets: list[str] = []
+
+    # Room-specific state and media in ogb_data / legacy ogb-data
+    for base_name in ("ogb_data", "ogb-data"):
+        base_dir = hass.config.path(base_name)
+        targets.extend(
+            [
+                os.path.join(base_dir, f"ogb_{room_lower}_state.json"),
+                os.path.join(base_dir, f"{room_name}_img"),
+                os.path.join(base_dir, f"{room_lower}_img"),
+                os.path.join(base_dir, "scripts", f"{room_lower}_script.yaml"),
+                os.path.join(base_dir, "scripts", f"{room_lower}_script_backup.yaml"),
+            ]
+        )
+
+    # Public timelapse output mirror in www/ogb_data
+    targets.extend(
+        [
+            hass.config.path("www", "ogb_data", f"{room_name}_img"),
+            hass.config.path("www", "ogb_data", f"{room_lower}_img"),
+        ]
+    )
+
+    # Room-specific premium files only (do not remove shared key/other rooms)
+    for base_name in (".ogb_premium", ".ogb-premium"):
+        base_dir = hass.config.path(base_name)
+        targets.extend(
+            [
+                os.path.join(base_dir, f"ogb_premium_state_{room_lower}.enc"),
+                os.path.join(base_dir, f"ogb_{room_name}_room_id.txt"),
+                os.path.join(base_dir, f"ogb_{room_lower}_room_id.txt"),
+            ]
+        )
+
+    # Additional room-id files with special characters normalized differently
+    premium_dirs = [hass.config.path(".ogb_premium"), hass.config.path(".ogb-premium")]
+    for premium_dir in premium_dirs:
+        for candidate in glob(os.path.join(premium_dir, "ogb_*_room_id.txt")):
+            filename = os.path.basename(candidate)
+            if filename.startswith("ogb_") and filename.endswith("_room_id.txt"):
+                extracted = filename[len("ogb_"):-len("_room_id.txt")]
+                if extracted.lower() == room_lower:
+                    targets.append(candidate)
+
+        for candidate in glob(os.path.join(premium_dir, "ogb_premium_state_*.enc")):
+            filename = os.path.basename(candidate)
+            if filename.startswith("ogb_premium_state_") and filename.endswith(".enc"):
+                extracted = filename[len("ogb_premium_state_"):-len(".enc")]
+                if extracted.lower() == room_lower:
+                    targets.append(candidate)
+
+    # Deduplicate while preserving order
+    seen = set()
+    deduped_targets = []
+    for target_path in targets:
+        if target_path in seen:
+            continue
+        seen.add(target_path)
+        deduped_targets.append(target_path)
+
+    for target_path in deduped_targets:
+        try:
+            removed = await hass.async_add_executor_job(_remove_path, target_path)
+            if removed:
+                _LOGGER.warning("Deleted OpenGrowBox room data path: %s", target_path)
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            _LOGGER.error("Failed to delete room-scoped path %s: %s", target_path, e)

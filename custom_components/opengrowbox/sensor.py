@@ -7,7 +7,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import OGBIntegrationCoordinator
-from .premium_entities import should_register_premium_entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -328,115 +327,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             device_class="mV",
         ),
     ]
-
-    # Add premium sensors (conditionally based on feature availability)
-    room_name = coordinator.room_name
-
-    # Analytics sensors (Basic plan+)
-    if should_register_premium_entity(coordinator, room_name, "advanced_analytics"):
-        from .premium_sensors import (YieldPredictionSensor, AnomalyScoreSensor,
-                                     PerformanceScoreSensor)
-        sensors.extend(
-            [
-                YieldPredictionSensor(room_name, coordinator),
-                AnomalyScoreSensor(room_name, coordinator),
-                PerformanceScoreSensor(room_name, coordinator),
-            ]
-        )
-        _LOGGER.info(f"✅ {room_name} Registered 3 analytics sensors")
-
-    # Compliance sensors (Professional plan+)
-    if should_register_premium_entity(coordinator, room_name, "compliance"):
-        from .premium_sensors import (ComplianceStatusSensor, ViolationsCountSensor)
-        sensors.extend(
-            [
-                ComplianceStatusSensor(room_name, coordinator),
-                ViolationsCountSensor(room_name, coordinator),
-            ]
-        )
-        _LOGGER.info(f"✅ {room_name} Registered 2 compliance sensors")
-
-    # Research sensors (Professional plan+)
-    if should_register_premium_entity(coordinator, room_name, "research_data"):
-        from .premium_sensors import (DatasetCountSensor, DataQualitySensor)
-        sensors.extend(
-            [
-                DatasetCountSensor(room_name, coordinator),
-                DataQualitySensor(room_name, coordinator),
-            ]
-        )
-        _LOGGER.info(f"✅ {room_name} Registered 2 research sensors")
-
-    # Register premium sensors with OGBPremManager for WebSocket-driven state updates
-    prem_manager = getattr(coordinator.OGB, room_name, None)
-    if prem_manager:
-        # Calculate how many premium sensors were added (count backwards from end)
-        analytics_registered = should_register_premium_entity(
-            coordinator, room_name, "advanced_analytics"
-        )
-        compliance_registered = should_register_premium_entity(
-            coordinator, room_name, "compliance"
-        )
-        research_registered = should_register_premium_entity(
-            coordinator, room_name, "research_data"
-        )
-
-        # Total premium sensors added
-        total_premium = 0
-        if analytics_registered:
-            total_premium += 3
-        if compliance_registered:
-            total_premium += 2
-        if research_registered:
-            total_premium += 2
-
-        # Register sensors by counting backwards from total
-        current_index = total_premium
-
-        # Register analytics sensors (first 3 premium sensors added)
-        if analytics_registered:
-            prem_manager.register_premium_sensor(
-                "yield_prediction", sensors[-current_index]
-            )
-            prem_manager.register_premium_sensor(
-                "anomaly_score", sensors[-(current_index - 1)]
-            )
-            prem_manager.register_premium_sensor(
-                "performance_score", sensors[-(current_index - 2)]
-            )
-            current_index -= 3
-            _LOGGER.debug(
-                f"✅ {room_name} Linked 3 analytics sensors to WebSocket updates"
-            )
-
-        # Register compliance sensors (next 2 premium sensors added)
-        if compliance_registered:
-            prem_manager.register_premium_sensor(
-                "compliance_status", sensors[-current_index]
-            )
-            prem_manager.register_premium_sensor(
-                "violations_count", sensors[-(current_index - 1)]
-            )
-            current_index -= 2
-            _LOGGER.debug(
-                f"✅ {room_name} Linked 2 compliance sensors to WebSocket updates"
-            )
-
-        # Register research sensors (last 2 premium sensors added)
-        if research_registered:
-            prem_manager.register_premium_sensor(
-                "dataset_count", sensors[-current_index]
-            )
-            prem_manager.register_premium_sensor(
-                "data_quality", sensors[-(current_index - 1)]
-            )
-            _LOGGER.debug(
-                f"✅ {room_name} Linked 2 research sensors to WebSocket updates"
-            )
-    else:
-        _LOGGER.warning(
-            f"⚠️ {room_name} OGBPremManager not found, premium sensors will not receive WebSocket updates"
-        )
 
     # Register the sensors globally in hass.data
     if "sensors" not in hass.data[DOMAIN]:

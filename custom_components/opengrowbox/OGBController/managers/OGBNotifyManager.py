@@ -1,7 +1,9 @@
-import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Dict, Optional
+
+from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,10 +36,123 @@ class OGBNotificator:
             "warning": [],
             "info": [],
         }
+        self._dst_unsub = None
+
+        self._ensure_dst_monitor_started()
 
         _LOGGER.info(
             f"[{self.room}] OGB Notificator initialized with service '{self.service}'"
         )
+
+    def _ensure_dst_monitor_started(self):
+        """Start one DST monitor per room instance."""
+        if not hasattr(self.hass, "data"):
+            return
+
+        ogb_notify_data = self.hass.data.setdefault("opengrowbox_notify", {})
+        dst_monitors = ogb_notify_data.setdefault("dst_monitors", {})
+
+        if self.room in dst_monitors:
+            self._dst_unsub = dst_monitors[self.room]
+            return
+
+        self._schedule_next_dst_check()
+        dst_monitors[self.room] = self._dst_unsub
+        self.hass.loop.create_task(self.check_daylight_saving_change())
+
+    def _schedule_next_dst_check(self):
+        """Schedule the next midday local-time DST check."""
+        now = dt_util.now()
+        next_run = now.replace(hour=12, minute=0, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+
+        if self._dst_unsub:
+            self._dst_unsub()
+
+        self._dst_unsub = async_track_point_in_time(
+            self.hass, self._handle_scheduled_dst_check, next_run
+        )
+
+    async def _handle_scheduled_dst_check(self, _now):
+        """Run DST check and reschedule the next one."""
+        try:
+            await self.check_daylight_saving_change()
+        finally:
+            self._schedule_next_dst_check()
+            self.hass.data.setdefault("opengrowbox_notify", {}).setdefault(
+                "dst_monitors", {}
+            )[self.room] = self._dst_unsub
+
+    async def async_shutdown(self):
+        """Cleanup scheduled callbacks to avoid restart-time leaks."""
+        if self._dst_unsub:
+            try:
+                self._dst_unsub()
+            except Exception:
+                pass
+            self._dst_unsub = None
+
+        if hasattr(self.hass, "data"):
+            ogb_notify_data = self.hass.data.setdefault("opengrowbox_notify", {})
+            dst_monitors = ogb_notify_data.setdefault("dst_monitors", {})
+            dst_monitors.pop(self.room, None)
+
+    def _find_next_dst_transition(self):
+        """Return the next local DST offset change and offsets."""
+        now_local = dt_util.as_local(dt_util.now())
+        tzinfo = now_local.tzinfo
+        if tzinfo is None:
+            return None
+
+        current_offset = now_local.utcoffset()
+        for day_offset in range(1, 370):
+            probe = datetime.combine(
+                now_local.date() + timedelta(days=day_offset),
+                time(hour=12),
+                tzinfo=tzinfo,
+            )
+            probe_offset = probe.utcoffset()
+            if probe_offset != current_offset:
+                transition_day = probe.date()
+                transition_dt = datetime.combine(
+                    transition_day,
+                    time(hour=2),
+                    tzinfo=tzinfo,
+                )
+                return transition_dt, current_offset, probe_offset
+
+        return None
+
+    async def check_daylight_saving_change(self):
+        """Notify once when the next DST change is about one day away."""
+        transition = self._find_next_dst_transition()
+        if not transition:
+            return
+
+        transition_dt, old_offset, new_offset = transition
+        now_local = dt_util.as_local(dt_util.now())
+        remaining = transition_dt - now_local
+        if remaining <= timedelta(0) or remaining > timedelta(days=1, hours=12):
+            return
+
+        notify_state = self.hass.data.setdefault("opengrowbox_notify", {}).setdefault(
+            "dst_notifications", {}
+        )
+        transition_key = f"{self.room}:{transition_dt.date().isoformat()}"
+        if notify_state.get(transition_key):
+            return
+
+        direction = "vor" if new_offset > old_offset else "zurueck"
+        hours = max(1, round(remaining.total_seconds() / 3600))
+        await self.warning(
+            message=(
+                f"Die Zeitumstellung erfolgt in ca. {hours} Stunde(n). "
+                f"Die Uhr wird {direction} gestellt. Bitte pruefe Licht- und Zeitplaene."
+            ),
+            title=f"OGB Zeitumstellung - {self.room}",
+        )
+        notify_state[transition_key] = True
 
     async def _send(
         self,
@@ -347,6 +462,11 @@ class OGBNotificator:
         upgrade_url: str = "/settings/upgrade"
     ):
         """Notify user that API call limit is reached - data processing has stopped."""
+        if limit <= 0:
+            _LOGGER.warning(
+                f"[{self.room}] Skip API limit notification because limit is invalid: used={used}, limit={limit}"
+            )
+            return
         await self.critical(
             message=f"API limit REACHED ({used}/{limit} calls = {percent:.0f}%). Data processing has stopped. Upgrade your plan to continue.",
             title=f"OGB API Limit Reached - {self.room}"
@@ -359,6 +479,11 @@ class OGBNotificator:
         percent: float
     ):
         """Notify user that API calls are nearly exhausted (80-95%)."""
+        if limit <= 0:
+            _LOGGER.warning(
+                f"[{self.room}] Skip API warning notification because limit is invalid: used={used}, limit={limit}"
+            )
+            return
         await self.warning(
             message=f"API usage: {percent:.0f}% ({used}/{limit} calls). Consider upgrading your plan to avoid interruption.",
             title=f"OGB API Warning - {self.room}"

@@ -34,6 +34,7 @@ class Cooler(Device):
         self.event_manager.on("Reduce Cooler", self.reduceAction)
 
         if self.isAcInfinDev:
+            self.checkMinMax(False)
             self.dutyCycle = 0
             self.steps = 10
             self.maxDuty = 100

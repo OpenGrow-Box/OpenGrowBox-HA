@@ -438,7 +438,7 @@ Please include:
 
 ### Security Issues
 
-For security-related issues, please email security@opengrowbox.com instead of creating a public issue.
+For security-related issues, please email security@opengrowbox.net instead of creating a public issue.
 
 ## Recognition
 
