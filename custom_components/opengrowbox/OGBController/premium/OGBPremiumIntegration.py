@@ -2542,27 +2542,27 @@ class OGBPremiumIntegration:
 
         # Check all conditions
         if not self.is_logged_in:
-            _LOGGER.warning(f"❌ {self.room} #{event_id} Not logged in, skipping grow data send")
+            _LOGGER.debug(f"⏭️ {self.room} #{event_id} Not logged in, skipping grow data send (expected behavior)")
             return
 
         mainControl = self.data_store.get("mainControl")
         if mainControl != "Premium":
-            _LOGGER.warning(f"❌ {self.room} #{event_id} Not in Premium mode: {mainControl}, skipping grow data send")
+            _LOGGER.debug(f"⏭️ {self.room} #{event_id} Not in Premium mode: {mainControl}, skipping grow data send (expected behavior)")
             return
 
         # Ensure we have a valid WebSocket connection
         if not self.ogb_ws:
-            _LOGGER.warning(f"❌ {self.room} #{event_id} No WebSocket client available")
+            _LOGGER.debug(f"⏭️ {self.room} #{event_id} No WebSocket client available (expected behavior)")
             return
 
         _LOGGER.info(f"🔍 {self.room} #{event_id} WebSocket state: connected={self.ogb_ws.ws_connected}, authenticated={self.ogb_ws.authenticated}")
 
         if not self.ogb_ws.ws_connected:
-            _LOGGER.warning(f"❌ {self.room} #{event_id} WebSocket not connected")
+            _LOGGER.debug(f"⏭️ {self.room} #{event_id} WebSocket not connected (expected behavior)")
             return
 
         if not self.ogb_ws.authenticated:
-            _LOGGER.warning(f"❌ {self.room} #{event_id} WebSocket not authenticated")
+            _LOGGER.debug(f"⏭️ {self.room} #{event_id} WebSocket not authenticated (expected behavior)")
             return
 
         # Core grow data - essential fields only to avoid "Data too large" errors
