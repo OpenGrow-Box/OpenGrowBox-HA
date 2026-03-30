@@ -309,14 +309,24 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     # Additional room-id files with special characters normalized differently
     premium_dirs = [hass.config.path(".ogb_premium"), hass.config.path(".ogb-premium")]
     for premium_dir in premium_dirs:
-        for candidate in glob(os.path.join(premium_dir, "ogb_*_room_id.txt")):
+        # Use async glob to avoid blocking event loop
+        candidates = await hass.async_add_executor_job(
+            glob,
+            os.path.join(premium_dir, "ogb_*_room_id.txt")
+        )
+        for candidate in candidates:
             filename = os.path.basename(candidate)
             if filename.startswith("ogb_") and filename.endswith("_room_id.txt"):
                 extracted = filename[len("ogb_"):-len("_room_id.txt")]
                 if extracted.lower() == room_lower:
                     targets.append(candidate)
 
-        for candidate in glob(os.path.join(premium_dir, "ogb_premium_state_*.enc")):
+        # Use async glob to avoid blocking event loop
+        candidates = await hass.async_add_executor_job(
+            glob,
+            os.path.join(premium_dir, "ogb_premium_state_*.enc")
+        )
+        for candidate in candidates:
             filename = os.path.basename(candidate)
             if filename.startswith("ogb_premium_state_") and filename.endswith(".enc"):
                 extracted = filename[len("ogb_premium_state_"):-len(".enc")]

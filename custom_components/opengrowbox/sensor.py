@@ -11,6 +11,24 @@ from .coordinator import OGBIntegrationCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 
+def _handle_missing_coordinator(room: str, available_entries: list) -> bool:
+    """
+    Handle missing coordinator gracefully.
+
+    Returns True if the room is already removed/unavailable (no error should be logged),
+    False if it's a genuine missing coordinator error.
+    """
+    if room.lower() in ("unavailable", "") or room is None:
+        # Room is already removed or not available - clean exit without error
+        _LOGGER.debug(f"⚠️ Skipping service for room: {room} (room already removed)")
+        return True
+    else:
+        # Genuine error - log it
+        _LOGGER.error(f"❌ No coordinator found for room: {room}")
+        _LOGGER.error(f"❌ Available entries: {available_entries}")
+        return False
+
+
 class CustomSensor(RestoreEntity):
     """Custom sensor for multiple hubs with update capability and graph support."""
 
@@ -405,12 +423,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                         coordinator = coord
                         _LOGGER.warning(f"✅ Found coordinator for room: {room}")
                         break
-            
+
             if not coordinator:
-                _LOGGER.error(f"❌ No coordinator found for room: {room}")
-                _LOGGER.error(f"❌ Available entries: {[k for k in hass.data[DOMAIN].keys()]}")
+                if _handle_missing_coordinator(room, [k for k in hass.data[DOMAIN].keys()]):
+                    return
                 return
-            
+
             # Emit RequestMediumPlantsData event - backend will respond with MediumPlantsUpdate
             try:
                 await coordinator.OGB.eventManager.emit("RequestMediumPlantsData", {"room": room}, haEvent=True)
@@ -445,12 +463,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                         coordinator = coord
                         _LOGGER.warning(f"✅ Found coordinator for room: {room}")
                         break
-            
+
             if not coordinator:
-                _LOGGER.error(f"❌ No coordinator found for room: {room}")
-                _LOGGER.error(f"❌ Available entries: {[k for k in hass.data[DOMAIN].keys()]}")
+                if _handle_missing_coordinator(room, [k for k in hass.data[DOMAIN].keys()]):
+                    return
                 return
-            
+
             # Emit UpdateMediumPlantDates event
             try:
                 _LOGGER.warning(f"📤 Emitting UpdateMediumPlantDates event with data: {dict(call.data)}")
@@ -499,12 +517,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                         coordinator = coord
                         _LOGGER.warning(f"✅ Found coordinator for room: {room}")
                         break
-            
+
             if not coordinator:
-                _LOGGER.error(f"❌ No coordinator found for room: {room}")
-                _LOGGER.error(f"❌ Available entries: {[k for k in hass.data[DOMAIN].keys()]}")
+                if _handle_missing_coordinator(room, [k for k in hass.data[DOMAIN].keys()]):
+                    return
                 return
-            
+
             # Emit FinishGrow event - MediumManager will handle the logic
             try:
                 _LOGGER.warning(f"📤 Emitting FinishGrow event with data: {dict(call.data)}")
