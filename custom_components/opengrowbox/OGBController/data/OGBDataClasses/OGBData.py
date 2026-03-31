@@ -284,6 +284,21 @@ class OGBConf:
             "closedEnvironment": {"ambientInfluenceStrength": 0.3},
         }
     )
+    safety: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "airExchangeColdGuard": {
+                "blockedCount": 0,
+                "windowStart": None,
+                "lockUntil": None,
+                "lastDecision": None,
+                "lastReason": None,
+                "lastSource": None,
+                "lastUpdate": None,
+                "lastAmbientTemp": None,
+                "lastIndoorTemp": None,
+            }
+        }
+    )
     isPlantDay: Dict[str, Any] = field(
         default_factory=lambda: {
             "islightON": False,

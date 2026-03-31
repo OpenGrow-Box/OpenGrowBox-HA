@@ -4,6 +4,38 @@
 
 This document details the complete action cycle from VPD sensor readings through decision-making to device control actions for VPD-Perfection, VPD-Target, and Drying control modes.
 
+## Air Exchange Cold Guard (Cross-Mode Safety)
+
+To prevent cold ambient air from repeatedly worsening an already cold room,
+OpenGrowBox applies a shared Air Exchange Cold Guard to these capabilities:
+
+- `canExhaust`
+- `canIntake`
+- `canVentilate`
+
+### Decision Inputs
+
+The guard prefers ambient/outside measurements when available:
+
+1. `tentData.AmbientTemp` / `tentData.AmbientHum`
+2. `tentData.OutsiteTemp` / `tentData.OutsiteHum`
+3. Fallback to indoor-only risk checks (`tentData.temperature`, `tentData.minTemp`, humidity limits)
+
+### Behavior
+
+- Risk action: `Increase` is rewritten to `Reduce` for air-exchange capabilities.
+- Learning lockout: after repeated blocked attempts in a short window, a timed lock is set.
+- Hysteresis unlock: lock can clear early once ambient and indoor conditions recover.
+- Safety override: critical O2/CO2 conditions always bypass the cold guard.
+
+### Coverage Across Modes
+
+- Central path: action batches in `OGBActionManager.publicationActionHandler()`
+- Direct device-event path: `Increase Exhaust/Intake/Ventilation` handlers also evaluate guard logic
+
+This ensures protection is active for VPD modes, Drying, Premium controller actions,
+and direct event emissions.
+
 ## VPD Sensing Pipeline
 
 ### 1. Sensor Data Collection

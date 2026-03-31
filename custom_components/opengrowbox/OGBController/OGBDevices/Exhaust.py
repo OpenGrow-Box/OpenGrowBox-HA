@@ -130,6 +130,23 @@ class Exhaust(Device):
     # Actions
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""
+        if self.should_block_air_exchange_increase("canExhaust", "Direct Increase Exhaust event"):
+            await self.event_manager.emit(
+                "LogForClient",
+                {
+                    "Name": self.room,
+                    "Action": "AirExchangeColdGuard",
+                    "Device": "canExhaust",
+                    "From": "Increase",
+                    "To": "Reduce",
+                    "Message": "Direct Increase Exhaust blocked by cold ambient guard",
+                },
+                haEvent=True,
+                debug_type="WARNING",
+            )
+            await self.reduceAction(data)
+            return
+
         if self.isDimmable:
             if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)

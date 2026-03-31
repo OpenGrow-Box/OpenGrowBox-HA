@@ -2,6 +2,7 @@ import logging
 import asyncio
 from ..data.OGBParams.OGBParams import CAP_MAPPING
 from ..utils.sensor_identification import resolve_remappable_sensor_type
+from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,6 +68,25 @@ class Device:
 
     def __iter__(self):
         return iter(self.__dict__.items())
+
+    def should_block_air_exchange_increase(self, capability: str, context_message: str = "") -> bool:
+        """Guard direct air-exchange increase events when ambient conditions are too cold."""
+        should_block, metadata = evaluate_air_exchange_cold_guard(
+            self.dataStore,
+            self.room,
+            capability,
+            "Increase",
+            message=context_message,
+            source=f"device:{self.deviceType}",
+        )
+
+        if should_block:
+            _LOGGER.info(
+                f"{self.deviceName}: AirExchangeColdGuard blocked direct increase "
+                f"for {capability} (reason={metadata.get('reason')})"
+            )
+
+        return should_block
 
     def __repr__(self):
         """Kompakte Darstellung für Debugging."""

@@ -15,10 +15,11 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..data.OGBDataClasses.OGBPublications import (OGBActionPublication,
-                                             OGBHydroAction, OGBRetrieveAction,
-                                             OGBWaterAction,
-                                             OGBWeightPublication)
+                                              OGBHydroAction, OGBRetrieveAction,
+                                              OGBWaterAction,
+                                              OGBWeightPublication)
 from ..data.OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
+from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -760,6 +761,8 @@ class OGBActionManager:
         if tentMode == "Disabled":
             _LOGGER.info(f"{self.room}: Actions skipped - tent mode is Disabled")
             return
+
+        actionMap = await self._apply_air_exchange_cold_guard(actionMap)
         _LOGGER.debug(f"{self.room}: Executing {len(actionMap)} validated actions")
 
         # Store previous actions for analytics - API expects specific format
@@ -881,6 +884,79 @@ class OGBActionManager:
         mainControl = self.data_store.get("mainControl")
         if mainControl == "Premium":
             await self.event_manager.emit("DataRelease", True)
+
+    async def _apply_air_exchange_cold_guard(self, action_map: List) -> List:
+        """Rewrite unsafe air-exchange increases to reductions under cold ambient risk."""
+        if not action_map:
+            return action_map
+
+        guarded_actions = []
+
+        for action in action_map:
+            cap = getattr(action, "capability", None)
+            action_type = getattr(action, "action", None)
+
+            if not cap or not action_type:
+                guarded_actions.append(action)
+                continue
+
+            should_block, metadata = evaluate_air_exchange_cold_guard(
+                self.data_store,
+                self.room,
+                cap,
+                action_type,
+                message=getattr(action, "message", ""),
+                priority=getattr(action, "priority", ""),
+                source="action_manager",
+            )
+
+            if should_block:
+                reason = metadata.get("reason", "cold_guard")
+                old_message = getattr(action, "message", "")
+                new_message = f"{old_message} (AirExchangeColdGuard:{reason})".strip()
+                try:
+                    guarded_actions.append(
+                        dataclasses.replace(
+                            action,
+                            action="Reduce",
+                            message=new_message,
+                            priority=getattr(action, "priority", "medium") or "medium",
+                        )
+                    )
+                except TypeError:
+                    setattr(action, "action", "Reduce")
+                    setattr(action, "message", new_message)
+                    guarded_actions.append(action)
+
+                _LOGGER.info(
+                    f"{self.room}: AirExchangeColdGuard rewrote {cap} Increase -> Reduce "
+                    f"(reason={reason}, source={metadata.get('source')})"
+                )
+                await self.event_manager.emit(
+                    "LogForClient",
+                    {
+                        "Name": self.room,
+                        "Action": "AirExchangeColdGuard",
+                        "Device": cap,
+                        "From": "Increase",
+                        "To": "Reduce",
+                        "Reason": reason,
+                        "Message": (
+                            f"Cold ambient guard active: rewrote {cap} Increase -> Reduce "
+                            f"(reason={reason})"
+                        ),
+                        "ambientTemp": metadata.get("ambientTemp"),
+                        "indoorTemp": metadata.get("indoorTemp"),
+                        "blockedCount": metadata.get("blockedCount"),
+                        "lockUntil": metadata.get("lockUntil"),
+                    },
+                    haEvent=True,
+                    debug_type="WARNING",
+                )
+            else:
+                guarded_actions.append(action)
+
+        return guarded_actions
 
     def _selectCriticalEmergencyAction(self, actionMap: List, emergencyConditions: List[str]):
         """

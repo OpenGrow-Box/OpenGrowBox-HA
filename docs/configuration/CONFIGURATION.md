@@ -194,6 +194,24 @@ All advanced settings are available through the web interface:
 - Backup and restore settings
 - Schedule-based adjustments
 
+### Air Exchange Cold Guard (Advanced)
+
+OpenGrowBox can automatically suppress repeated cold-air exchange actions when
+ambient/outside air is too cold for the room's current minimum temperature range.
+
+Optional tunables (stored in `controlOptions`):
+
+- `airExchangeColdAmbientDelta` (default `1.2` C)
+- `airExchangeColdMinMargin` (default `0.8` C)
+- `airExchangeColdHumidityDelta` (default `15` %RH)
+- `airExchangeColdHumidityMargin` (default `5` %RH)
+- `airExchangeColdWindowMinutes` (default `30`)
+- `airExchangeColdLockMinutes` (default `60`)
+- `airExchangeUnlockMargin` (default `1.2` C)
+
+Runtime state is stored in `safety.airExchangeColdGuard` and includes block count,
+lock timeout, and last decision metadata for troubleshooting.
+
 ### Analytics (Premium)
 - Growth tracking and reporting
 - Environmental history
