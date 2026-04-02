@@ -7,6 +7,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import OGBIntegrationCoordinator
+from .naming import display_name_from_raw, legacy_entity_id, room_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,12 +33,15 @@ def _handle_missing_coordinator(room: str, available_entries: list) -> bool:
 class CustomSensor(RestoreEntity):
     """Custom sensor for multiple hubs with update capability and graph support."""
 
+    _attr_has_entity_name = False
+
     def __init__(
         self, name, room_name, coordinator, initial_value=None, device_class=None, should_restore=True
     ):
         """Initialize the sensor."""
 
         self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
         self._state = initial_value  # Initial value
         self.room_name = room_name
         self.coordinator = coordinator  # Store coordinator reference for premium features
@@ -45,6 +49,7 @@ class CustomSensor(RestoreEntity):
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
         self._attr_unique_id = self._unique_id
         self._should_restore = should_restore  # Control state restoration
+        self.entity_id = legacy_entity_id("sensor", name)
 
     @property
     def unique_id(self):
@@ -54,7 +59,7 @@ class CustomSensor(RestoreEntity):
     @property
     def name(self):
         """Return the name of the entity."""
-        return self._name
+        return self._attr_name
 
     @property
     def state(self):
@@ -74,13 +79,7 @@ class CustomSensor(RestoreEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information to link this entity to a device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._unique_id)},
-            name=f"Device for {self._name}",
-            model="Sensor Device",
-            manufacturer="OpenGrowBox",
-            suggested_area=self.room_name,
-        )
+        return DeviceInfo(**room_device_info(self.room_name, "Sensor Device"))
 
     @property
     def unit_of_measurement(self):

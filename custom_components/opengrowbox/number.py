@@ -5,12 +5,15 @@ from homeassistant.components.number import NumberEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
+from .naming import display_name_from_raw, legacy_entity_id, room_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class CustomNumber(NumberEntity, RestoreEntity):
     """Custom number entity for multiple hubs."""
+
+    _attr_has_entity_name = False
 
     def __init__(
         self,
@@ -25,6 +28,7 @@ class CustomNumber(NumberEntity, RestoreEntity):
     ):
         """Initialize the number entity."""
         self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
         self.room_name = room_name
         self._min_value = min_value
         self._max_value = max_value
@@ -33,6 +37,7 @@ class CustomNumber(NumberEntity, RestoreEntity):
         self._value = initial_value or min_value
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
+        self.entity_id = legacy_entity_id("number", name)
 
     @property
     def unique_id(self):
@@ -42,7 +47,7 @@ class CustomNumber(NumberEntity, RestoreEntity):
     @property
     def name(self):
         """Return the name of the entity."""
-        return self._name
+        return self._attr_name
 
     @property
     def native_min_value(self):
@@ -68,13 +73,7 @@ class CustomNumber(NumberEntity, RestoreEntity):
     @property
     def device_info(self):
         """Return device information to link this entity to a device."""
-        return {
-            "identifiers": {(DOMAIN, self._unique_id)},
-            "name": f"Device for {self._name}",
-            "model": "Number Device",
-            "manufacturer": "OpenGrowBox",
-            "suggested_area": self.room_name,
-        }
+        return room_device_info(self.room_name, "Number Device")
 
     async def async_added_to_hass(self):
         """Restore last known state on startup."""

@@ -6,6 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
+from .naming import display_name_from_raw, legacy_entity_id, room_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -13,12 +14,16 @@ _LOGGER = logging.getLogger(__name__)
 class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
     """Custom text entity for OpenGrowBox with state restoration."""
 
+    _attr_has_entity_name = False
+
     def __init__(self, name, room_name, coordinator, initial_value=""):
         self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
         self.room_name = room_name
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_access_token"
         self._value = initial_value
+        self.entity_id = legacy_entity_id("text", name)
 
         self._attr_min = 0
         self._attr_max = 254
@@ -30,7 +35,7 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
 
     @property
     def name(self):
-        return self._name
+        return self._attr_name
 
     @property
     def native_value(self) -> str:
@@ -38,13 +43,7 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
 
     @property
     def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._unique_id)},
-            "name": f"Device for {self._name}",
-            "model": "Token Device",
-            "manufacturer": "OpenGrowBox",
-            "suggested_area": self.room_name,
-        }
+        return room_device_info(self.room_name, "Token Device")
 
     async def async_set_value(self, value: str) -> None:
         if len(value) > 254:
@@ -69,12 +68,16 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
 class CustomText(TextEntity, RestoreEntity):
     """Custom text entity for OpenGrowBox with state restoration."""
 
+    _attr_has_entity_name = False
+
     def __init__(self, name, room_name, coordinator, initial_value=""):
         self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
         self.room_name = room_name
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
         self._value = initial_value
+        self.entity_id = legacy_entity_id("text", name)
 
         self._attr_min = 0
         self._attr_max = 254
@@ -86,7 +89,7 @@ class CustomText(TextEntity, RestoreEntity):
 
     @property
     def name(self):
-        return self._name
+        return self._attr_name
 
     @property
     def native_value(self) -> str:
@@ -94,13 +97,7 @@ class CustomText(TextEntity, RestoreEntity):
 
     @property
     def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._unique_id)},
-            "name": f"Device for {self._name}",
-            "model": "Text Device",
-            "manufacturer": "OpenGrowBox",
-            "suggested_area": self.room_name,
-        }
+        return room_device_info(self.room_name, "Text Device")
 
     async def async_set_value(self, value: str) -> None:
         if len(value) > 254:

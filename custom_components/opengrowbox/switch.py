@@ -5,6 +5,7 @@ from homeassistant.helpers.entity import ToggleEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
+from .naming import display_name_from_raw, legacy_entity_id, room_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,13 +13,17 @@ _LOGGER = logging.getLogger(__name__)
 class CustomSwitch(ToggleEntity, RestoreEntity):
     """Custom switch for multiple hubs with state restoration."""
 
+    _attr_has_entity_name = False
+
     def __init__(self, name, room_name, coordinator, initial_state=False):
         """Initialize the switch."""
         self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
         self._state = initial_state  # Initial state
         self.room_name = room_name
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
+        self.entity_id = legacy_entity_id("switch", name)
 
     @property
     def unique_id(self):
@@ -28,7 +33,7 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
     @property
     def name(self):
         """Return the name of the entity."""
-        return self._name
+        return self._attr_name
 
     @property
     def is_on(self):
@@ -38,13 +43,7 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
     @property
     def device_info(self):
         """Return device information to link this entity to a device."""
-        return {
-            "identifiers": {(DOMAIN, self._unique_id)},
-            "name": f"Device for {self._name}",
-            "model": "Switch Device",
-            "manufacturer": "OpenGrowBox",
-            "suggested_area": self.room_name,
-        }
+        return room_device_info(self.room_name, "Switch Device")
 
     async def async_turn_on(self, **kwargs):
         """Turn the switch on."""

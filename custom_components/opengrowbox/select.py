@@ -5,6 +5,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
+from .naming import display_name_from_raw, legacy_entity_id, room_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -14,11 +15,12 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
 
     def __init__(self, name, options):
         """Initialize the Room Selector."""
-        self._attr_name = name  # Der Name der Entität
+        self._attr_name = name
         self._name = name  # Sicherstellen, dass _name definiert ist
         self._options = options or []
         self._attr_current_option = options[0] if options else None
         self._unique_id = f"{DOMAIN}_room_selector"
+        self.entity_id = legacy_entity_id("select", name)
 
     @property
     def unique_id(self):
@@ -78,9 +80,12 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
 class CustomSelect(SelectEntity, RestoreEntity):
     """Custom select entity with state restoration."""
 
+    _attr_has_entity_name = False
+
     def __init__(self, name, room_name, coordinator, options=None, initial_value=None):
         """Initialize the custom select."""
         self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
         self.room_name = room_name
         self._attr_options = options or []  # Home Assistant erwartet _attr_options
         self._attr_current_option = (
@@ -88,6 +93,7 @@ class CustomSelect(SelectEntity, RestoreEntity):
         )
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
+        self.entity_id = legacy_entity_id("select", name)
 
     async def async_added_to_hass(self):
         """Restore last known state on startup."""
@@ -107,7 +113,7 @@ class CustomSelect(SelectEntity, RestoreEntity):
     @property
     def name(self):
         """Return the name of the entity."""
-        return self._name
+        return self._attr_name
 
     @property
     def options(self):
@@ -149,13 +155,7 @@ class CustomSelect(SelectEntity, RestoreEntity):
     @property
     def device_info(self):
         """Return device information to link this entity to a device."""
-        return {
-            "identifiers": {(DOMAIN, self._unique_id)},
-            "name": f"Device for {self._name}",
-            "model": "Select Device",
-            "manufacturer": "OpenGrowBox",
-            "suggested_area": self.room_name,
-        }
+        return room_device_info(self.room_name, "Select Device")
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
