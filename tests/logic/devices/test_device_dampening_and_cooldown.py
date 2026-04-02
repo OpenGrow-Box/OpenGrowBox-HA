@@ -80,11 +80,37 @@ class TestDeviceCooldownBasics:
         # Register an action
         manager._registerAction("canHeat", "Increase", 2.0)
         
-        # Try a different action - should be allowed
-        assert manager._isActionAllowed("canHeat", "Reduce", 2.0) is True
+        # Main cooldown blocks ALL actions on this capability
+        assert manager._isActionAllowed("canHeat", "Reduce", 2.0) is False, \
+            "Different action should also be blocked by main cooldown"
         
-        # Try the same action - should be blocked by repeat cooldown
+        # Same action is also blocked (by main cooldown, not just repeat cooldown)
         assert manager._isActionAllowed("canHeat", "Increase", 2.0) is False
+    
+    def test_repeat_cooldown_blocks_same_action_after_main_cooldown(self):
+        """Test that repeat cooldown blocks same action even after main cooldown expires."""
+        from datetime import datetime, timedelta
+        
+        manager, _, _ = _make_action_manager()
+        
+        # Register an action
+        manager._registerAction("canHeat", "Increase", 2.0)
+        
+        # Simulate main cooldown passing (but not repeat cooldown)
+        # Main cooldown = 3 min, repeat cooldown = 1.5 min
+        history = manager.actionHistory["canHeat"]
+        # Move main cooldown into the past
+        history["cooldown_until"] = datetime.now() - timedelta(seconds=1)
+        # Keep repeat cooldown in the future
+        history["repeat_cooldown"] = datetime.now() + timedelta(minutes=1)
+        
+        # Different action should now be allowed (main cooldown expired)
+        assert manager._isActionAllowed("canHeat", "Reduce", 2.0) is True, \
+            "Different action should be allowed after main cooldown expires"
+        
+        # Same action should still be blocked (by repeat cooldown)
+        assert manager._isActionAllowed("canHeat", "Increase", 2.0) is False, \
+            "Same action should still be blocked by repeat cooldown"
 
 
 class TestUserDefinedCooldowns:
