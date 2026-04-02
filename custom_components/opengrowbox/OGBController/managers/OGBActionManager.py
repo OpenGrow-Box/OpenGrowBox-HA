@@ -171,8 +171,12 @@ class OGBActionManager:
                 
                 if updated_count > 0:
                     _LOGGER.info(
-                        f"{self.room}: Loaded {updated_count} user-defined cooldown(s) from datastore"
+                        f"{self.room}: Loaded {updated_count} user-defined cooldown(s) from datastore: {user_cooldowns}"
                     )
+            else:
+                _LOGGER.debug(
+                    f"{self.room}: No user cooldowns found in datastore (user_cooldowns={user_cooldowns})"
+                )
         except Exception as e:
             _LOGGER.warning(
                 f"{self.room}: Failed to load user cooldowns from datastore: {e}. Using defaults."

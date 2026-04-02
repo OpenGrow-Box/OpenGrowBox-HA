@@ -257,10 +257,16 @@ class TestCooldownIntegrationWithDampening:
         })
         event_manager = FakeEventManager()
         
+        # Verify data is in datastore
+        stored = data_store.getDeep("controlOptions.deviceCooldowns")
+        assert stored is not None, "User cooldowns should be in datastore"
+        assert stored["canDehumidify"] == 10, "canDehumidify should be 10 in datastore"
+        
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify custom cooldown is loaded
-        assert manager.defaultCooldownMinutes["canDehumidify"] == 10
+        assert manager.defaultCooldownMinutes["canDehumidify"] == 10, \
+            f"Expected 10, got {manager.defaultCooldownMinutes['canDehumidify']}"
         
         # Register action
         manager._registerAction("canDehumidify", "Increase", 5.0)
@@ -271,7 +277,7 @@ class TestCooldownIntegrationWithDampening:
         
         # Allow some tolerance for timing
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
-        assert time_diff < 1.0, f"Should use 10 min cooldown, got {time_diff}s difference"
+        assert time_diff < 1.0, f"Should use 10 min cooldown, got {time_diff}s difference (actual cooldown: {(cooldown_until - datetime.now()).total_seconds()/60:.1f} min)"
     
     def test_multiple_adjustments_persist_correctly(self):
         """Test that multiple cooldown adjustments persist correctly."""
