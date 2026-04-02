@@ -291,16 +291,17 @@ class TestCooldownWithRealDevices:
         # Set custom cooldown for canDehumidify
         manager.defaultCooldownMinutes["canDehumidify"] = 8
         
-        # Register action
+        # Register action with deviation 5.0 (triggers adaptive cooldown: 8 * 1.2 = 9.6 min)
         manager._registerAction("canDehumidify", "Increase", 5.0)
         
-        # Check that cooldown uses custom value
+        # Check that cooldown uses custom value with adaptive scaling
+        # Deviation 5.0 > 3 triggers 1.2x multiplier: 8 * 1.2 = 9.6 min
         cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
-        expected_cooldown = datetime.now() + timedelta(minutes=8)
+        expected_cooldown = datetime.now() + timedelta(minutes=9.6)
         
         # Allow some tolerance for timing
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
-        assert time_diff < 1.0, f"Cooldown should be ~8 minutes, got {time_diff} seconds difference"
+        assert time_diff < 1.0, f"Cooldown should be ~9.6 minutes (8 * 1.2 adaptive), got {time_diff} seconds difference"
     
     def test_multiple_devices_same_capability_share_cooldown(self):
         """Test that multiple devices with same capability share cooldown."""
