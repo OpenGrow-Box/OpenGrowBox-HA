@@ -158,6 +158,8 @@ def _make_sunrise_light(plant_stage="MidFlower", user_minmax_active=False, user_
     light.isRunning = True
     light.ogbLightControl = True
     light.initVoltage = 20
+    light.sun_phase_paused = False
+    light.sunset_phase_active = False
     
     brightness_values = []
     async def fake_turn_on(**kwargs):
