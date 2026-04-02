@@ -6,7 +6,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
-from .naming import display_name_from_raw, legacy_entity_id, room_device_info
+from .naming import (display_name_from_raw, global_device_info, legacy_entity_id,
+                     room_device_info)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
 
     @property
     def device_info(self):
-        return room_device_info(self.room_name, "Token Device")
+        return global_device_info("Token Device")
 
     async def async_set_value(self, value: str) -> None:
         if len(value) > 254:
@@ -128,7 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     if "access_token_entity" not in hass.data[DOMAIN]:
         access_token_entity = OpenGrowBoxAccessToken(
             name="OGB_AccessToken",
-            room_name="Ambient",
+            room_name="Hub",
             coordinator=coordinator,
             initial_value="AccessToken",
         )
@@ -143,12 +144,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
     texts = [
         CustomText(
             f"OGB_Notes_{coordinator.room_name}",
-            coordinator.room_name,
-            coordinator,
-            initial_value="",
-        ),
-        CustomText(
-            f"OGB_StrainName_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             initial_value="",

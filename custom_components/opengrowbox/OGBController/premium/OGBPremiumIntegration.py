@@ -1590,6 +1590,11 @@ class OGBPremiumIntegration:
                 _LOGGER.error(f"❌ {self.room} Error during state restore: {e}")
                 return False
 
+        # Auto-login on startup if credentials exist but is_logged_in is False
+        if not self.is_logged_in and self.ogb_login_email and self.ogb_login_token and self.is_premium_selected:
+            _LOGGER.info(f"🔐 {self.room} Credentials exist but not logged in - triggering auto-login on startup")
+            asyncio.create_task(self._auto_login_premium())
+
         return True
 
     def _get_credentials_for_relogin(self):
@@ -1598,6 +1603,42 @@ class OGBPremiumIntegration:
             "email": self.ogb_login_email,
             "token": self.ogb_login_token
         }
+
+    async def _auto_login_premium(self):
+        """Auto-login using stored credentials without user interaction."""
+        if self._login_in_progress:
+            _LOGGER.debug(f"⏳ {self.room} Auto-login already in progress, skipping")
+            return
+        
+        if not self.ogb_login_email or not self.ogb_login_token:
+            _LOGGER.warning(f"❌ {self.room} Auto-login failed: no stored credentials")
+            return
+        
+        _LOGGER.info(f"🔐 {self.room} Starting auto-login with stored credentials...")
+        
+        self._login_in_progress = True
+        self.is_premium_selected = True
+        
+        try:
+            success = await self.ogb_ws.login_and_connect(
+                email=self.ogb_login_email,
+                OGBToken=self.ogb_login_token,
+                room_id=self.room_id or "",
+                room_name=self.room,
+                event_id="AutoLogin",
+                auth_callback=self._handle_auth_result
+            )
+            
+            if success:
+                _LOGGER.info(f"✅ {self.room} Auto-login initiated successfully")
+            else:
+                _LOGGER.error(f"❌ {self.room} Auto-login failed to initiate")
+                self.is_premium_selected = False
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Auto-login error: {e}", exc_info=True)
+            self.is_premium_selected = False
+        finally:
+            self._login_in_progress = False
 
     # =================================================================
     # User Profile
@@ -2542,7 +2583,12 @@ class OGBPremiumIntegration:
 
         # Check all conditions
         if not self.is_logged_in:
-            _LOGGER.debug(f"⏭️ {self.room} #{event_id} Not logged in, skipping grow data send (expected behavior)")
+            if self.ogb_login_email and self.ogb_login_token:
+                _LOGGER.debug(f"⚠️ {self.room} #{event_id} Not logged in but credentials exist - triggering auto-login...")
+                self.is_premium_selected = True
+                asyncio.create_task(self._auto_login_premium())
+                return
+            _LOGGER.debug(f"⚠️ {self.room} #{event_id} Not logged in, skipping grow data send")
             return
 
         mainControl = self.data_store.get("mainControl")

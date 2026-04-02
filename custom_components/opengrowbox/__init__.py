@@ -23,6 +23,8 @@ from .frontend import async_register_frontend
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "number", "select", "time", "switch", "date", "text"]
 _CONFIG_CHECK_FLAG = "__config_checked__"
+_CLEANUP_DONE_FLAG = "__cleanup_done__"
+_AMBIENT_ENSURE_FLAG = "__ambient_ensure_done__"
 _REQUIRED_LOGGER_DEFAULT = "info"
 _REQUIRED_LOGGER_LEVEL = "debug"
 _REQUIRED_LOGGER_OVERRIDES = {
@@ -40,11 +42,56 @@ def _load_configuration_yaml(path: str) -> dict[str, Any]:
         return {}
 
     with open(path, "r", encoding="utf-8") as file:
-        loaded = yaml.safe_load(file)
+        content = file.read()
+
+    try:
+        loaded = yaml.safe_load(content)
+    except yaml.constructor.ConstructorError as err:
+        err_msg = str(err)
+        if "!include" in err_msg or "tag:yaml.org,2002:python/object" in err_msg:
+            return _parse_yaml_with_ha_includes(content)
+        raise
 
     if isinstance(loaded, dict):
         return loaded
     return {}
+
+
+def _parse_yaml_with_ha_includes(content: str) -> dict[str, Any]:
+    """Parse YAML handling Home Assistant !include tags by extracting logger config only."""
+    result = {}
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("logger:"):
+            result["logger"] = _extract_logger_block(content)
+            break
+        if stripped.startswith("default_config:"):
+            result["default_config"] = {}
+    return result
+
+
+def _extract_logger_block(content: str) -> dict[str, Any]:
+    """Extract logger section from YAML content."""
+    logger_block = {}
+    in_logs = False
+    for line in content.split("\n"):
+        if line.strip().startswith("logger:"):
+            continue
+        if "logs:" in line and "logs" not in logger_block:
+            in_logs = True
+            continue
+        if in_logs and line and not line[0].isspace():
+            in_logs = False
+        if in_logs and ":" in line:
+            parts = line.split(":", 1)
+            if len(parts) == 2 and parts[0].strip():
+                logger_block["logs"] = logger_block.get("logs", {})
+                logger_block["logs"][parts[0].strip()] = parts[1].strip()
+        elif "default:" in line:
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                logger_block["default"] = parts[1].strip()
+    return logger_block
 
 
 def _as_level(value: Any) -> str:
@@ -131,9 +178,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         _LOGGER.error(f"Frontend integration not found: {e}")
         return False
 
-    # Clean up orphaned/missing OGB entities from entity registry
-    await _cleanup_orphaned_entities(hass)
-
     # Create the coordinator
     coordinator = OGBIntegrationCoordinator(hass, config_entry)
     hass.data[DOMAIN][config_entry.entry_id] = coordinator
@@ -145,6 +189,21 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await coordinator.startOGB()
 
+    # Ensure matching HA Area exists and attach room hub device to it.
+    await _ensure_room_area_and_assign_hub(hass, config_entry)
+
+    # Run registry cleanup once per HA runtime after platforms are loaded.
+    if not hass.data[DOMAIN].get(_CLEANUP_DONE_FLAG):
+        await _cleanup_orphaned_entities(hass)
+        hass.data[DOMAIN][_CLEANUP_DONE_FLAG] = True
+
+    # Ensure ambient room exists through config flow import (same creation path as UI).
+    room_name = str(config_entry.data.get("room_name", "")).strip().lower()
+    if room_name != "ambient" and not hass.data[DOMAIN].get(_AMBIENT_ENSURE_FLAG):
+        ambient_ok = await _ensure_ambient_room_entry(hass)
+        if ambient_ok:
+            hass.data[DOMAIN][_AMBIENT_ENSURE_FLAG] = True
+
     # Service registration happens in sensor.py to access sensor objects directly
     _LOGGER.info(f"✅ Integration setup complete, waiting for sensor platform to register services")
 
@@ -155,13 +214,18 @@ async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
     """
     Clean up orphaned OGB entities from the entity registry.
     
-    Removes entities that are registered to OpenGrowBox but no longer exist
-    or are no longer available. This prevents HA warnings about missing entities.
+    Removes entities that are retired or tied to removed config entries.
+    Also removes legacy orphaned devices for retired strainname entities.
     """
     try:
+        from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
         
-        entity_reg = await er.async_get(hass)
+        entity_reg = er.async_get(hass)
+        device_reg = dr.async_get(hass)
+        active_entry_ids = {
+            entry.entry_id for entry in hass.config_entries.async_entries(DOMAIN)
+        }
         
         # Get all OGB-related entries
         ogb_entities = []
@@ -171,29 +235,160 @@ async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
         
         if not ogb_entities:
             return
-            
-        # Check each entity and remove if it's orphaned (not available)
+        
+        # Define retired entity patterns to remove (version-specific)
+        retired_patterns = [
+            "text.ogb_strainname_",  # Removed in 1.4.2 - strain now via medium
+        ]
+        
+        # Check each entity and remove if orphaned or retired
         removed_count = 0
         for entity_id, entry in ogb_entities:
-            # Try to get the entity state - if it doesn't exist, it's orphaned
-            state = hass.states.get(entity_id)
+            # Check for retired pattern match first
+            is_retired = any(pattern in entity_id.lower() for pattern in retired_patterns)
+
+            # Remove entities bound to deleted config entries (true orphan)
+            config_entry_id = getattr(entry, "config_entry_id", None)
+            has_invalid_entry = bool(config_entry_id) and config_entry_id not in active_entry_ids
+
+            # Remove if retired pattern OR orphaned config-entry binding
+            should_remove = is_retired or has_invalid_entry
             
-            if state is None:
-                # Entity doesn't exist - remove from registry
+            if should_remove:
                 try:
-                    await entity_reg.async_remove(entity_id)
+                    entity_reg.async_remove(entity_id)
                     removed_count += 1
-                    _LOGGER.info(f"🧹 Removed orphaned entity: {entity_id}")
+                    reason = "retired pattern" if is_retired else "orphaned config entry"
+                    _LOGGER.warning(f"🧹 Removed orphaned entity ({reason}): {entity_id}")
                 except Exception as e:
                     _LOGGER.debug(f"Could not remove {entity_id}: {e}")
+
+        # Remove leftover legacy strainname devices if they no longer have entities.
+        removed_devices = 0
+        for device in list(device_reg.devices.values()):
+            identifiers = getattr(device, "identifiers", set()) or set()
+            identifier_strings = [str(value).lower() for _, value in identifiers]
+            device_name = str(getattr(device, "name", "") or "")
+
+            is_legacy_strain_device = (
+                "device for ogb_strainname_" in device_name.lower()
+                or any("ogb_strainname_" in value for value in identifier_strings)
+            )
+
+            if not is_legacy_strain_device:
+                continue
+
+            linked_entities = er.async_entries_for_device(entity_reg, device.id)
+            if linked_entities:
+                continue
+
+            try:
+                device_reg.async_remove_device(device.id)
+                removed_devices += 1
+                _LOGGER.warning("🧹 Removed orphaned legacy device: %s", device_name or device.id)
+            except Exception as e:
+                _LOGGER.debug("Could not remove orphaned device %s: %s", device.id, e)
         
         if removed_count > 0:
             _LOGGER.info(f"✅ Cleaned up {removed_count} orphaned OpenGrowBox entities")
         else:
             _LOGGER.debug("No orphaned entities found")
+
+        if removed_devices > 0:
+            _LOGGER.info("✅ Cleaned up %s orphaned OpenGrowBox devices", removed_devices)
             
     except Exception as e:
         _LOGGER.debug(f"Entity cleanup skipped: {e}")
+
+
+async def _ensure_ambient_room_entry(hass: HomeAssistant) -> bool:
+    """Create ambient room via config-flow if missing."""
+    await _ensure_area_exists(hass, "ambient")
+
+    existing_entries = hass.config_entries.async_entries(DOMAIN)
+    has_ambient = any(
+        str(entry.data.get("room_name", "")).strip().lower() == "ambient"
+        for entry in existing_entries
+    )
+    if has_ambient:
+        await _ensure_area_exists(hass, "ambient")
+        return True
+
+    try:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "user"},
+            data={"room_name": "ambient"},
+        )
+
+        result_type = result.get("type") if isinstance(result, dict) else None
+        if result_type == "form" and result.get("flow_id"):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {"room_name": "ambient"},
+            )
+            result_type = result.get("type") if isinstance(result, dict) else None
+
+        if result_type in {"create_entry", "abort"}:
+            _LOGGER.warning("🌿 Auto-created ambient room via user flow: %s", result_type)
+            await _ensure_area_exists(hass, "ambient")
+            return True
+
+        _LOGGER.error("Failed to auto-create ambient room, unexpected flow result: %s", result_type)
+        return False
+    except Exception as err:
+        _LOGGER.error("Failed to auto-create ambient room: %s", err)
+        return False
+
+
+async def _ensure_area_exists(hass: HomeAssistant, room_name: str) -> str | None:
+    """Ensure a Home Assistant area exists for the room name."""
+    try:
+        from homeassistant.helpers import area_registry as ar
+
+        area_reg = ar.async_get(hass)
+        normalized = str(room_name or "").strip()
+        if not normalized:
+            return None
+
+        for area in area_reg.async_list_areas():
+            if str(area.name).strip().lower() == normalized.lower():
+                return area.id
+
+        created = area_reg.async_create(normalized)
+        _LOGGER.warning("📍 Created HA area for room: %s", normalized)
+        return created.id
+    except Exception as err:
+        _LOGGER.debug("Could not ensure area for room %s: %s", room_name, err)
+        return None
+
+
+async def _ensure_room_area_and_assign_hub(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Create area for room and attach OGB room hub device to it."""
+    room_name = str(config_entry.data.get("room_name", "")).strip()
+    if not room_name:
+        return
+
+    area_id = await _ensure_area_exists(hass, room_name)
+    if not area_id:
+        return
+
+    try:
+        from homeassistant.helpers import device_registry as dr
+
+        device_reg = dr.async_get(hass)
+        entry_devices = dr.async_entries_for_config_entry(device_reg, config_entry.entry_id)
+
+        room_slug = room_name.lower().replace(" ", "_")
+        room_identifier = (DOMAIN, f"room_{room_slug}")
+
+        for device in entry_devices:
+            identifiers = getattr(device, "identifiers", set()) or set()
+            if room_identifier in identifiers and device.area_id != area_id:
+                device_reg.async_update_device(device.id, area_id=area_id)
+                _LOGGER.warning("📍 Assigned OGB room hub '%s' to area '%s'", device.name or device.id, room_name)
+    except Exception as err:
+        _LOGGER.debug("Could not assign room hub to area for %s: %s", room_name, err)
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

@@ -2,7 +2,6 @@ import logging
 import asyncio
 from ..data.OGBParams.OGBParams import CAP_MAPPING
 from ..utils.sensor_identification import resolve_remappable_sensor_type
-from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +70,16 @@ class Device:
 
     def should_block_air_exchange_increase(self, capability: str, context_message: str = "") -> bool:
         """Guard direct air-exchange increase events when ambient conditions are too cold."""
+        # Lazy import avoids startup/module-order issues on some HA installs.
+        try:
+            from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
+        except ModuleNotFoundError:
+            _LOGGER.warning(
+                "%s: OGBAirExchangeGuard module missing, skipping direct increase guard",
+                self.deviceName,
+            )
+            return False
+
         should_block, metadata = evaluate_air_exchange_cold_guard(
             self.dataStore,
             self.room,
@@ -622,7 +631,9 @@ class Device:
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
                     continue
                         
-                if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.")):
+                if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.", "cover.")):
+                    self.switches.append(entity)
+                elif entityID.startswith("binary_sensor.") and self.deviceType == "Door":
                     self.switches.append(entity)
                 elif entityID.startswith(("select.", "number.","date.", "text.", "time.","camera.")):
                     self.options.append(entity)
@@ -707,10 +718,10 @@ class Device:
             # Check switches
             for switch in self.switches:
                 switch_value = switch.get("value")
-                if switch_value == "on":
+                if switch_value in ("on", "open", "opening"):
                     self.isRunning = True
                     return
-                elif switch_value == "off":
+                elif switch_value in ("off", "closed", "closing"):
                     self.isRunning = False
                     return
                 elif switch_value in (None, "unknown", "Unbekannt", "unavailable"):
@@ -1223,6 +1234,12 @@ class Device:
                             self.isRunning = True
                             _LOGGER.debug(f"{self.deviceName}: Exhaust ON ({percentage}%).")
                             return
+                    elif entity_id.startswith("cover."):
+                        await self.hass.services.async_call(
+                            domain="cover",
+                            service="open_cover",
+                            service_data={"entity_id": entity_id},
+                        )
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -1613,6 +1630,12 @@ class Device:
                             domain="humidifier",
                             service="turn_off",
                             service_data={"entity_id": self.humidifierEntityId},
+                        )
+                    elif entity_id.startswith("cover."):
+                        await self.hass.services.async_call(
+                            domain="cover",
+                            service="close_cover",
+                            service_data={"entity_id": entity_id},
                         )
                     else:
                         await self.hass.services.async_call(
@@ -2427,7 +2450,7 @@ class Device:
                         _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
 
             # Switch/Control Entitäten → Wert updaten dann Running-State aktualisieren
-            elif any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier.", "select."]):
+            elif any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier.", "select.", "cover."]):
                 updated = update_entity_in_lists([self.switches, self.options, self.sensors], entity_id, new_state_value)
                 if updated:
                     try:

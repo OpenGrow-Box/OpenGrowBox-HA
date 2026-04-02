@@ -425,7 +425,7 @@ class OGBMainController:
         if self.room.lower() == "ambient":
             return
 
-        _LOGGER.debug(f"Received ambient data for {self.room}")
+        _LOGGER.warning(f"📥 {self.room} Received AmbientData: Temp={event.data.get('AvgTemp')}, Hum={event.data.get('AvgHum')}")
 
         payload = event.data
         temp = payload.get("AvgTemp")
@@ -451,7 +451,7 @@ class OGBMainController:
         if self.room.lower() == "ambient":
             return
 
-        _LOGGER.debug(f"Received outside data for {self.room}: {event}")
+        _LOGGER.warning(f"🌍 {self.room} Received OutsiteData: Temp={event.data.get('temperature')}°C, Hum={event.data.get('humidity')}%")
 
         payload = event.data
         temp = payload.get("temperature")

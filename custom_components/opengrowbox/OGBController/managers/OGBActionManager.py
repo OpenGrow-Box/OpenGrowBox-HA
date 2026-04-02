@@ -19,7 +19,6 @@ from ..data.OGBDataClasses.OGBPublications import (OGBActionPublication,
                                               OGBWaterAction,
                                               OGBWeightPublication)
 from ..data.OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
-from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -854,6 +853,9 @@ class OGBActionManager:
                 elif actionCap == "canVentilate":
                     await self.event_manager.emit(f"{actionType} Ventilation", actionType)
                     _LOGGER.debug(f"{self.room}: {actionType} Ventilation executed.")
+                elif actionCap == "canWindow":
+                    await self.event_manager.emit(f"{actionType} Ventilation", actionType)
+                    _LOGGER.debug(f"{self.room}: {actionType} Window (via Ventilation) executed.")
                 elif actionCap == "canHumidify":
                     await self.event_manager.emit(f"{actionType} Humidifier", actionType)
                     _LOGGER.debug(f"{self.room}: {actionType} Humidifier executed.")
@@ -888,6 +890,16 @@ class OGBActionManager:
     async def _apply_air_exchange_cold_guard(self, action_map: List) -> List:
         """Rewrite unsafe air-exchange increases to reductions under cold ambient risk."""
         if not action_map:
+            return action_map
+
+        # Lazy import avoids circular import during module initialization.
+        try:
+            from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
+        except ModuleNotFoundError:
+            _LOGGER.warning(
+                "%s: OGBAirExchangeGuard module missing, skipping cold guard rewrite",
+                self.room,
+            )
             return action_map
 
         guarded_actions = []

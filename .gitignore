@@ -1,5 +1,40 @@
-#AI
+# Project notes
 AGENTS.md
 
-#Tests
-/tests
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Home Assistant runtime/log artifacts
+home-assistant.log
+home-assistant.log.*
+*.log
+*.log.*
+OZW_Log.txt
+home-assistant_v2.db
+home-assistant_v2.db-*
+
+# Ensure tests are tracked
+!tests/
+!tests/**

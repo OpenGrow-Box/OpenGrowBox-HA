@@ -9,6 +9,7 @@ from ..OGBDevices.Dehumidifier import Dehumidifier
 from ..OGBDevices.Exhaust import Exhaust
 from ..OGBDevices.Fridge import Fridge
 from ..OGBDevices.Camera import Camera
+from ..OGBDevices.Door import Door
 from ..OGBDevices.GenericSwitch import GenericSwitch
 from ..OGBDevices.Heater import Heater
 from ..OGBDevices.Humidifier import Humidifier
@@ -21,6 +22,7 @@ from ..OGBDevices.ModbusDevice import OGBModbusDevice
 from ..OGBDevices.Pump import Pump
 from ..OGBDevices.FridgeGrow.FridgeGrowDevice import FridgeGrowDevice
 from ..OGBDevices.Ventilation import Ventilation
+from ..OGBDevices.Window import Window
 from ..data.OGBParams.OGBParams import CAP_MAPPING, DEVICE_TYPE_MAPPING
 
 _LOGGER = logging.getLogger(__name__)
@@ -424,6 +426,7 @@ class OGBDeviceManager:
             "Exhaust": Exhaust,
             "Intake": Intake,
             "Ventilation": Ventilation,
+            "Window": Window,
             "Heater": Heater,
             "Cooler": Cooler,
             "LightFarRed": LightFarRed,
@@ -435,6 +438,7 @@ class OGBDeviceManager:
             "Generic": GenericSwitch,
             "CO2": CO2,
             "Camera": Camera,
+            "Door": Door,
             "Fridge": Fridge,
             "Modbus": OGBModbusDevice,
             "ModbusDevice": OGBModbusDevice,
@@ -616,57 +620,47 @@ class OGBDeviceManager:
         Special light types (LightFarRed, LightUV, etc.) must be matched
         before generic Light type.
         """
-        
-        # Priority-ordered list - special types before generic (includes LightSpectrum)
-        PRIORITY_DEVICE_TYPES = [
+        priority_device_types = [
             "LightFarRed",
             "LightUV",
             "LightBlue",
             "LightRed",
-            "LightSpectrum",  # Handles blue/red spectrum lights
+            "Window",
+            "Door",
         ]
-        
+
+        # Exact matches first
         for lbl in labels:
             label_name = lbl.get("name", "").lower()
             if not label_name:
                 continue
-            
-            # First: Check exact match for priority types
-            for device_type in PRIORITY_DEVICE_TYPES:
+
+            for device_type in priority_device_types:
                 keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
                 if label_name in keywords:
                     return device_type
-            
-            # Second: Check exact match for all types
+
             for device_type, keywords in DEVICE_TYPE_MAPPING.items():
                 if label_name in keywords:
                     return device_type
 
-            # Check if we have special light labels - if so, don't fall back to generic Light
-            special_light_labels = [lbl.get("name", "").lower() for lbl in labels if lbl.get("name", "").lower() in ["light_blue", "light_red", "light_uv", "light_fr", "light_farred", "light_uvb", "light_uva", "uvlight"]]
-            if any(keyword in special_light_labels for keyword in ["blue", "red", "uv", "uvb", "uva", "farred"]):
-                # Already identified as special light, don't fall back to generic Light
-                return "Light"
-
-            # Third: Contains matching with priority ordering
+        # Fallback contains matching
         for lbl in labels:
             label_name = lbl.get("name", "").lower()
             if not label_name:
                 continue
-            
-            # Check priority types first
-            for device_type in PRIORITY_DEVICE_TYPES:
+
+            for device_type in priority_device_types:
                 keywords = DEVICE_TYPE_MAPPING.get(device_type, [])
                 if any(keyword in label_name for keyword in keywords):
                     return device_type
-            
-            # Then check all other types
+
             for device_type, keywords in DEVICE_TYPE_MAPPING.items():
-                if device_type in PRIORITY_DEVICE_TYPES:
+                if device_type in priority_device_types:
                     continue
                 if any(keyword in label_name for keyword in keywords):
                     return device_type
-        
+
         return "EMPTY"
 
     def _normalize_device_label_for_compare(self, label: str) -> str:

@@ -11,6 +11,8 @@ RELEVANT_PREFIXES = (
     "climate.",
     "fan.",
     "camera.",
+    "cover.",
+    "binary_sensor.",
 )
 RELEVANT_KEYWORDS = (
     "_temperature",
@@ -63,6 +65,7 @@ DEVICE_TYPE_MAPPING = {
     ],
     "Exhaust": ["exhaust", "abluft"],
     "Intake": ["intake", "zuluft"],
+    "Window": ["window", "fenster", "cover", "shutter"],
     "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet"],
     "Dehumidifier": ["dehumidifier", "entfeuchter"],
     "Humidifier": ["humidifier", "befeuchter"],
@@ -81,6 +84,7 @@ DEVICE_TYPE_MAPPING = {
     "Pump": ["pump", "dripper", "feedsystem", "tank"],
     "Switch": ["generic", "switch"],
     "Fridge": ["fridge", "kuehlschrank"],
+    "Door": ["door", "tuer", "tür", "kontakt", "contact", "entry"],
     # Modbus devices
     "ModbusDevice": ["modbus", "modbus_device", "modbus_rtu", "modbus_tcp"],
     "ModbusSensor": ["modbus_sensor", "modbus_temp", "modbus_humidity"],
@@ -96,7 +100,9 @@ CAP_MAPPING = {
     "canClimate": ["climate"],
     "canHumidify": ["humidifier"],
     "canDehumidify": ["dehumidifier"],
-    "canVentilate": ["ventilation"],
+    "canVentilate": ["ventilation", "window"],
+    "canWindow": ["window"],
+    "canDoor": ["door"],
     "canExhaust": ["exhaust"],
     "canIntake": ["intake"],
     "canLight": ["light"],
@@ -481,6 +487,8 @@ DEFAULT_DEVICE_COOLDOWNS = {
     "canExhaust": 1,  # Abluft reagiert schnell
     "canIntake": 1,  # Zuluft reagiert schnell
     "canVentilate": 1,  # Ventilation reagiert schnell
+    "canWindow": 1,  # Window actuator reacts quickly
+    "canDoor": 1,  # Door contact events should not spam
     "canLight": 1,  # Licht reagiert sofort, aber VPD-Effekt braucht Zeit
     "canCO2": 2,  # CO2 braucht Zeit zur Verteilung
     "canClimate": 2,  # Klima-System braucht Zeit

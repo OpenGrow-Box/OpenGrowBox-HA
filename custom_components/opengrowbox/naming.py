@@ -82,3 +82,13 @@ def room_device_info(room_name: str, model: str) -> dict:
         "manufacturer": "OpenGrowBox",
         "suggested_area": room,
     }
+
+
+def global_device_info(model: str) -> dict:
+    """Return a stable global hub device info for non-room entities."""
+    return {
+        "identifiers": {(DOMAIN, "global_hub")},
+        "name": "OpenGrowBox Hub",
+        "model": model,
+        "manufacturer": "OpenGrowBox",
+    }

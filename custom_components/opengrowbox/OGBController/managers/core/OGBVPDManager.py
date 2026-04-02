@@ -36,6 +36,11 @@ class OGBVPDManager:
         # VPD determination mode
         self.vpd_determination = "LIVE"  # LIVE or INTERVAL
 
+        # Weather data rate limiting (10 minute cooldown)
+        self._weather_last_fetch = None
+        self._weather_cache = None
+        self._weather_min_interval = 600  # 10 minutes in seconds
+
         # Register event handlers
         self.event_manager.on("VPDCreation", self.handle_new_vpd)
 
@@ -146,7 +151,7 @@ class OGBVPDManager:
                 tentMode = OGBModeRunPublication(currentMode=currentMode)
 
                 if self.room.lower() == "ambient":
-                    _LOGGER.debug(f"New-Ambient-VPD: {vpdPub} newStoreVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
+                    _LOGGER.warning(f"📡 {self.room} AmbientData emitted: VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
                     await self.event_manager.emit("AmbientData",vpdPub,haEvent=True)
                     # Also emit selectActionMode for ambient rooms so mode manager processes VPD changes
                     await self.event_manager.emit("selectActionMode",tentMode)
@@ -284,6 +289,7 @@ class OGBVPDManager:
 
         # Handle ambient room special case
         if self.room.lower() == "ambient":
+            _LOGGER.warning(f"📡 {self.room} AmbientData emitted (init): VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
             await self.event_manager.emit("AmbientData", vpdPub, haEvent=True)
             await self.get_weather_data()
             return
@@ -300,7 +306,34 @@ class OGBVPDManager:
         return vpdPub
 
     async def get_weather_data(self):
-        """Fetch weather data from Open-Meteo API."""
+        """Fetch weather data from Open-Meteo API with rate limiting (10 min cache)."""
+        import time
+        
+        now = time.time()
+        
+        # Check if we can use cached data (within cooldown period)
+        if self._weather_last_fetch and self._weather_cache:
+            elapsed = now - self._weather_last_fetch
+            if elapsed < self._weather_min_interval:
+                _LOGGER.warning(f"🌤️ {self.room} Using cached weather data (age: {int(elapsed)}s)")
+                await self.event_manager.emit(
+                    "OutsiteData",
+                    self._weather_cache,
+                    haEvent=True,
+                )
+                return
+        
+        # Check if we need to fetch (allow one fetch even without cache)
+        can_fetch = True
+        if self._weather_last_fetch and not self._weather_cache:
+            elapsed = now - self._weather_last_fetch
+            if elapsed < 60:  # Minimum 60 seconds between failed attempts
+                can_fetch = False
+                _LOGGER.warning(f"🌤️ {self.room} Skipping weather fetch - too soon after failed attempt")
+        
+        if not can_fetch:
+            return
+        
         try:
             lat = self.hass.config.latitude
             lon = self.hass.config.longitude
@@ -319,24 +352,27 @@ class OGBVPDManager:
                         temperature = round(current.get("temperature_2m", 20.0), 1)
                         humidity = current.get("relative_humidity_2m", 60)
 
-                        _LOGGER.debug(
-                            f"{self.room} Open-Meteo: {temperature}°C, {humidity}%"
+                        weather_data = {"temperature": temperature, "humidity": humidity}
+                        
+                        # Cache the successful result
+                        self._weather_cache = weather_data
+                        self._weather_last_fetch = now
+
+                        _LOGGER.warning(
+                            f"🌤️ {self.room} Open-Meteo: {temperature}°C, {humidity}% (cached)"
                         )
                         await self.event_manager.emit(
                             "OutsiteData",
-                            {"temperature": temperature, "humidity": humidity},
+                            weather_data,
                             haEvent=True,
                         )
                     else:
                         _LOGGER.error(f"Open-Meteo API Error: {response.status}")
-                        return None, None
 
         except asyncio.TimeoutError:
             _LOGGER.error("Timeout Open-Meteo")
-            return 20.0, 60.0
         except Exception as e:
             _LOGGER.error(f"Fetch Error Open-Meteo: {e}")
-            return 20.0, 60.0
 
     def update_vpd_determination(self, value):
         """Update VPD determination mode."""
