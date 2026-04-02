@@ -72,5 +72,62 @@ def _bootstrap_homeassistant_stubs():
         sys.modules["homeassistant.helpers.event"] = event_module
 
 
+def _bootstrap_pymodbus_stubs():
+    """Provide minimal pymodbus client stubs for logic tests."""
+    pymodbus_module = sys.modules.get("pymodbus")
+    if pymodbus_module is None:
+        pymodbus_module = types.ModuleType("pymodbus")
+        sys.modules["pymodbus"] = pymodbus_module
+
+    client_module = sys.modules.get("pymodbus.client")
+    if client_module is None:
+        client_module = types.ModuleType("pymodbus.client")
+
+        class _DummyResult:
+            def __init__(self):
+                self.registers = [0]
+                self.bits = [False]
+
+            def isError(self):
+                return False
+
+        class _BaseClient:
+            def __init__(self, *args, **kwargs):
+                self._open = False
+
+            def connect(self):
+                self._open = True
+                return True
+
+            def is_socket_open(self):
+                return self._open
+
+            def read_holding_registers(self, *args, **kwargs):
+                return _DummyResult()
+
+            def read_input_registers(self, *args, **kwargs):
+                return _DummyResult()
+
+            def read_coils(self, *args, **kwargs):
+                return _DummyResult()
+
+            def write_register(self, *args, **kwargs):
+                return _DummyResult()
+
+            def write_coil(self, *args, **kwargs):
+                return _DummyResult()
+
+        class ModbusSerialClient(_BaseClient):
+            pass
+
+        class ModbusTcpClient(_BaseClient):
+            pass
+
+        client_module.ModbusSerialClient = ModbusSerialClient
+        client_module.ModbusTcpClient = ModbusTcpClient
+        sys.modules["pymodbus.client"] = client_module
+
+
 _bootstrap_opengrowbox_namespace()
 _bootstrap_homeassistant_stubs()
+_bootstrap_pymodbus_stubs()
