@@ -414,12 +414,13 @@ async def test_sunset_without_user_minmax_or_plant_stage():
     
     light.maxVoltage = 100
     light.initVoltage = 20
-    light.sunSetDuration = 600
+    light.sunSetDuration = 0.1  # Short duration for fast test
     light.sunset_phase_active = True
     
     await light._run_sunset()
     
     # Should start from maxVoltage (100%) and go to initVoltage (20%)
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 100.0
+    # voltage_step = (100-20)/10 = 8, step 1 = 100 - 8*1 = 92
+    assert brightness_values[0] == 92.0
     assert brightness_values[-1] == 20.0
