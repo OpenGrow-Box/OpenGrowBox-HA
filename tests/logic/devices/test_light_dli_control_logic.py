@@ -181,6 +181,7 @@ def _make_sunrise_light(plant_stage="MidFlower", user_minmax_active=False, user_
     light.turn_on = fake_turn_on
     light.turn_off = lambda **kwargs: None
     light.log_action = lambda *_args, **_kwargs: None
+    light._wait_if_paused = asyncio.sleep(0)  # Mock the pause wait method
     
     return light, brightness_values
 
@@ -391,7 +392,7 @@ async def test_sunset_without_user_minmax_or_plant_stage():
     
     light.maxVoltage = 100
     light.initVoltage = 20
-    light.sunSetDuration = 0.1
+    light.sunSetDuration = 0.1  # Short duration for fast test
     light.sunset_phase_active = True
     
     await light._run_sunset()
