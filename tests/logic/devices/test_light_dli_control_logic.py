@@ -192,6 +192,10 @@ async def test_sunrise_with_user_minmax_active():
         user_max=85
     )
     
+    # Set user min/max values (they must be set on the device object, not just in datastore)
+    light.minVoltage = 25
+    light.maxVoltage = 85
+    
     # Use very short duration for fast tests (0.1 seconds = 10ms per step)
     light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
@@ -276,6 +280,10 @@ async def test_sunrise_respects_user_minmax_over_plant_stage():
         user_max=90
     )
     
+    # Set user min/max values
+    light.minVoltage = 30
+    light.maxVoltage = 90
+    
     light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
@@ -333,6 +341,10 @@ async def test_sunset_with_user_minmax_active():
         user_min=25,
         user_max=85
     )
+    
+    # Set user min/max values
+    light.minVoltage = 25
+    light.maxVoltage = 85
     
     light.sunSetDuration = 0.1
     light.sunset_phase_active = True
