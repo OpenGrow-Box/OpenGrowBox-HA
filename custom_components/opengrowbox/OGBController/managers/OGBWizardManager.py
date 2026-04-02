@@ -223,6 +223,7 @@ class OGBWizardManager:
             self.data_store.set("plantStageSource", "custom")
             self.data_store.set("plantStages", normalized)
             self.data_store.set("lightPlantStages", normalized_light)
+            await self._emit_current_stage_reapply("custom")
             return normalized, normalized_light
 
         if normalized_mode == "live":
@@ -242,6 +243,7 @@ class OGBWizardManager:
             self.data_store.set("plantStageSource", "live")
             self.data_store.set("plantStages", normalized)
             self.data_store.set("lightPlantStages", normalized_light)
+            await self._emit_current_stage_reapply("live")
             return normalized, normalized_light
 
         default_config = deepcopy(self.default_plant_stages or self._get_plant_config())
@@ -253,7 +255,35 @@ class OGBWizardManager:
         self.data_store.set("plantStageSource", "default")
         self.data_store.set("plantStages", default_config)
         self.data_store.set("lightPlantStages", default_light_config)
+        await self._emit_current_stage_reapply("default")
         return default_config, default_light_config
+
+    async def _emit_current_stage_reapply(self, source):
+        """Re-emit current plant stage so listeners apply updated stage presets immediately."""
+        current_stage = self.data_store.get("plantStage")
+        if not current_stage:
+            _LOGGER.warning(
+                "[%s] No current plantStage set after wizard %s apply; skipping reapply event",
+                self.room,
+                source,
+            )
+            return
+
+        await self.event_manager.emit(
+            "PlantStageChange",
+            {
+                "room": self.room,
+                "plantStage": current_stage,
+                "source": f"wizard_{source}",
+                "reapply": True,
+            },
+        )
+        _LOGGER.info(
+            "[%s] Re-applied plant stage '%s' after wizard %s apply",
+            self.room,
+            current_stage,
+            source,
+        )
 
     async def restore_active_plant_stage_config(self):
         """Restore active plantStages from the saved source on startup."""
@@ -623,11 +653,48 @@ class OGBWizardManager:
                     continue
 
                 fallback = self._coerce_single_light_stage(fallback_light.get(store_key, {}))
-                intensity = str(stage.get("lighting", {}).get("intensity", "")).lower()
-                min_light, max_light = self.LIGHT_INTENSITY_PRESETS.get(
-                    intensity,
-                    (fallback.get("min", 0), fallback.get("max", 100)),
-                )
+                lighting_data = stage.get("lighting", {})
+                raw_min = None
+                raw_max = None
+
+                if isinstance(lighting_data, dict):
+                    raw_min = lighting_data.get("minLight")
+                    raw_max = lighting_data.get("maxLight")
+
+                if raw_min is None:
+                    raw_min = stage.get("minLight")
+                if raw_max is None:
+                    raw_max = stage.get("maxLight")
+
+                if raw_min is not None or raw_max is not None:
+                    min_light = self._normalize_light_value_to_percent(
+                        raw_min,
+                        fallback.get("min", 0),
+                        store_key,
+                        "minLight",
+                    )
+                    max_light = self._normalize_light_value_to_percent(
+                        raw_max,
+                        fallback.get("max", 100),
+                        store_key,
+                        "maxLight",
+                    )
+                else:
+                    intensity = str(stage.get("lighting", {}).get("intensity", "")).lower()
+                    min_light, max_light = self.LIGHT_INTENSITY_PRESETS.get(
+                        intensity,
+                        (fallback.get("min", 0), fallback.get("max", 100)),
+                    )
+
+                if min_light > max_light:
+                    _LOGGER.warning(
+                        "[%s] Light stage '%s' has min > max after normalization (%s > %s). Swapping values.",
+                        self.room,
+                        store_key,
+                        min_light,
+                        max_light,
+                    )
+                    min_light, max_light = max_light, min_light
 
                 normalized_light[store_key] = {
                     "min": min_light,
@@ -644,9 +711,32 @@ class OGBWizardManager:
                     continue
 
                 fallback = self._coerce_single_light_stage(fallback_light.get(store_key, {}))
+                min_light = self._normalize_light_value_to_percent(
+                    stage_data.get("minLight"),
+                    fallback.get("min", 0),
+                    store_key,
+                    "minLight",
+                )
+                max_light = self._normalize_light_value_to_percent(
+                    stage_data.get("maxLight"),
+                    fallback.get("max", 100),
+                    store_key,
+                    "maxLight",
+                )
+
+                if min_light > max_light:
+                    _LOGGER.warning(
+                        "[%s] Light stage '%s' has min > max after normalization (%s > %s). Swapping values.",
+                        self.room,
+                        store_key,
+                        min_light,
+                        max_light,
+                    )
+                    min_light, max_light = max_light, min_light
+
                 normalized_light[store_key] = {
-                    "min": stage_data.get("minLight", fallback.get("min", 0)),
-                    "max": stage_data.get("maxLight", fallback.get("max", 100)),
+                    "min": min_light,
+                    "max": max_light,
                     "phase": stage_data.get("phase", fallback.get("phase", "")),
                 }
 
@@ -664,6 +754,45 @@ class OGBWizardManager:
             "max": getattr(stage, "max", 100),
             "phase": getattr(stage, "phase", ""),
         }
+
+    def _normalize_light_value_to_percent(self, value, fallback, stage_key, field_name):
+        """Normalize light values to brightness percent (0-100).
+
+        Wizard payloads can provide either brightness percent (0-100) or PPFD-like
+        values (for example 150-800). Values above 100 are interpreted as PPFD and
+        converted to percent via 10:1 scaling.
+        """
+        fallback_value = fallback if isinstance(fallback, (int, float)) else 0
+
+        if value is None:
+            return int(round(max(0, min(100, fallback_value))))
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "[%s] Invalid %s for stage '%s': %s. Using fallback %s%%.",
+                self.room,
+                field_name,
+                stage_key,
+                value,
+                fallback_value,
+            )
+            return int(round(max(0, min(100, fallback_value))))
+
+        if numeric > 100:
+            converted = numeric / 10.0
+            _LOGGER.info(
+                "[%s] Converted %s for stage '%s' from PPFD-like value %s to brightness %s%%.",
+                self.room,
+                field_name,
+                stage_key,
+                numeric,
+                round(converted, 2),
+            )
+            numeric = converted
+
+        return int(round(max(0, min(100, numeric))))
 
     async def _get_live_plant_config(self):
         """Fetch live plant config server-side to avoid frontend CORS issues."""

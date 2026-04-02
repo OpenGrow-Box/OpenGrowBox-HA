@@ -739,38 +739,48 @@ class OGBPremiumIntegration:
         """Handle plant stage change from webapp."""
         try:
             plant_stage = data.get("plantStage")
+            force_reapply = bool(data.get("force_apply") or data.get("forceApply") or data.get("reapply"))
             
             if not plant_stage:
                 return
             
-            # Deduplicate: Skip if same stage already set
             current_stage = self.data_store.get("plantStage")
-            if current_stage == plant_stage:
-                _LOGGER.debug(f"🌱 {self.room} PlantStage unchanged, skipping: {plant_stage}")
-                return
+            stage_changed = current_stage != plant_stage
+
+            if stage_changed:
+                _LOGGER.info(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
+            elif force_reapply:
+                _LOGGER.info(f"🌱 {self.room} Webapp plant stage reapply (forced): {plant_stage}")
+            else:
+                _LOGGER.info(f"🌱 {self.room} Webapp plant stage unchanged, reapplying targets: {plant_stage}")
                 
-            _LOGGER.info(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
-            
-            # Update data store
+            # Keep datastore in sync even for reapply payloads
             self.data_store.set("plantStage", plant_stage)
             
             # Update Home Assistant select entity
             plant_stage_select = f"select.ogb_plantstage_{self.room.lower()}"
-            await self.hass.services.async_call(
-                domain="select",
-                service="select_option",
-                service_data={
-                    "entity_id": plant_stage_select,
-                    "option": plant_stage
-                },
-                blocking=True
-            )
+            try:
+                await self.hass.services.async_call(
+                    domain="select",
+                    service="select_option",
+                    service_data={
+                        "entity_id": plant_stage_select,
+                        "option": plant_stage
+                    },
+                    blocking=True
+                )
+            except Exception as select_error:
+                _LOGGER.warning(
+                    f"⚠️ {self.room} Could not update plant stage select '{plant_stage_select}' to '{plant_stage}': {select_error}"
+                )
             
             # Emit event for mode manager and other listeners
             await self.event_manager.emit("PlantStageChange", {
                 "room": self.room,
                 "plantStage": plant_stage,
-                "source": "webapp"
+                "source": "webapp",
+                "reapply": not stage_changed,
+                "forced": force_reapply,
             })
             
         except Exception as e:
@@ -1423,10 +1433,9 @@ class OGBPremiumIntegration:
         self.is_premium_selected = state_data.get("is_premium_selected", False)
         self.is_primary_auth_room = is_primary_auth_room
 
-        # Keep desired mode in datastore early so mode-dependent flows can restore
-        # once premium feature flags are re-applied.
-        if self.lastTentMode:
-            self.data_store.set("tentMode", self.lastTentMode)
+        # Do NOT pre-write lastTentMode into datastore here.
+        # The live HA select state (including explicit "Disabled") must remain the
+        # source of truth during startup. lastTentMode is only a premium restore hint.
         
         # DEBUG: Log what's in the state
         _LOGGER.debug(f"🔍 {self.room} State keys: {list(state_data.keys())}")
@@ -2106,6 +2115,14 @@ class OGBPremiumIntegration:
         try:
             desired_mode = self.lastTentMode
             if not desired_mode:
+                return
+
+            # Respect explicit user OFF choice across restarts.
+            # If Tent Mode is Disabled, never auto-restore to a premium mode.
+            if self.data_store.get("tentMode") == "Disabled":
+                _LOGGER.debug(
+                    f"ℹ️ {self.room} Skipping premium tent mode restore because current mode is Disabled"
+                )
                 return
 
             # Force a fresh controls reconciliation (bypass debounce window).
@@ -3352,11 +3369,22 @@ class OGBPremiumIntegration:
                 drying_select._attr_options = list(set(drying_select._attr_options + new_dry_options))
                 drying_select.async_write_ha_state()
 
-        # Restore previous mode if applicable
-        if current_tent_mode in [None, "Disabled", "VPD Perfection"] and self.lastTentMode in available_modes:
+        # Prefer current HA select state over cached datastore value when available.
+        current_select_mode = None
+        if tent_select:
+            current_select_mode = getattr(tent_select, "_attr_current_option", None)
+
+        effective_current_mode = current_select_mode or current_tent_mode
+
+        # Restore previous mode if applicable.
+        # IMPORTANT: Disabled is an explicit user OFF state and must never be
+        # auto-overwritten by lastTentMode on startup/reconnect.
+        if effective_current_mode == "Disabled":
+            restore_mode = "Disabled"
+        elif effective_current_mode in [None, "VPD Perfection"] and self.lastTentMode in available_modes:
             restore_mode = self.lastTentMode
-        elif current_tent_mode in available_modes or current_tent_mode not in all_premium_modes:
-            restore_mode = current_tent_mode or "VPD Perfection"
+        elif effective_current_mode in available_modes or effective_current_mode not in all_premium_modes:
+            restore_mode = effective_current_mode or "VPD Perfection"
         else:
             restore_mode = "VPD Perfection"
 
