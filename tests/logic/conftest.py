@@ -55,6 +55,7 @@ def _bootstrap_homeassistant_stubs():
     helpers_module = sys.modules.get("homeassistant.helpers")
     if helpers_module is None:
         helpers_module = types.ModuleType("homeassistant.helpers")
+        helpers_module.__path__ = []
         sys.modules["homeassistant.helpers"] = helpers_module
 
     event_module = sys.modules.get("homeassistant.helpers.event")
@@ -70,6 +71,65 @@ def _bootstrap_homeassistant_stubs():
         event_module.async_track_point_in_time = _track_point_in_time
         event_module.async_track_time_interval = _track_time_interval
         sys.modules["homeassistant.helpers.event"] = event_module
+
+    class _DummyAreaRegistry:
+        def __init__(self):
+            self.areas = {}
+
+        def async_list_areas(self):
+            return list(self.areas.values())
+
+        def async_create(self, name):
+            area = types.SimpleNamespace(id=name.lower().replace(" ", "_"), name=name)
+            self.areas[area.id] = area
+            return area
+
+    class _DummyDeviceRegistry:
+        def __init__(self):
+            self.devices = {}
+
+        def async_update_device(self, *_args, **_kwargs):
+            return None
+
+        def async_remove_device(self, *_args, **_kwargs):
+            return None
+
+    class _DummyEntityRegistry:
+        def __init__(self):
+            self.entities = {}
+
+        def async_remove(self, *_args, **_kwargs):
+            return None
+
+    class _DummyLabelRegistry:
+        def __init__(self):
+            self.labels = {}
+
+    area_module = sys.modules.get("homeassistant.helpers.area_registry")
+    if area_module is None:
+        area_module = types.ModuleType("homeassistant.helpers.area_registry")
+        area_module.async_get = lambda _hass=None: _DummyAreaRegistry()
+        sys.modules["homeassistant.helpers.area_registry"] = area_module
+
+    device_module = sys.modules.get("homeassistant.helpers.device_registry")
+    if device_module is None:
+        device_module = types.ModuleType("homeassistant.helpers.device_registry")
+        device_module.async_get = lambda _hass=None: _DummyDeviceRegistry()
+        device_module.async_entries_for_config_entry = lambda *_args, **_kwargs: []
+        sys.modules["homeassistant.helpers.device_registry"] = device_module
+
+    entity_module = sys.modules.get("homeassistant.helpers.entity_registry")
+    if entity_module is None:
+        entity_module = types.ModuleType("homeassistant.helpers.entity_registry")
+        entity_module.async_get = lambda _hass=None: _DummyEntityRegistry()
+        entity_module.async_entries_for_device = lambda *_args, **_kwargs: []
+        sys.modules["homeassistant.helpers.entity_registry"] = entity_module
+
+    label_module = sys.modules.get("homeassistant.helpers.label_registry")
+    if label_module is None:
+        label_module = types.ModuleType("homeassistant.helpers.label_registry")
+        label_module.async_get = lambda _hass=None: _DummyLabelRegistry()
+        sys.modules["homeassistant.helpers.label_registry"] = label_module
 
 
 def _bootstrap_pymodbus_stubs():
