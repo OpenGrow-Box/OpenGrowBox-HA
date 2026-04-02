@@ -160,6 +160,14 @@ def _make_sunrise_light(plant_stage="MidFlower", user_minmax_active=False, user_
     light.initVoltage = 20
     light.sun_phase_paused = False
     light.sunset_phase_active = False
+    light.PlantStageMinMax = {
+        "EarlyVeg": {"min": 20, "max": 35},
+        "MidVeg": {"min": 35, "max": 50},
+        "LateVeg": {"min": 50, "max": 70},
+        "EarlyFlower": {"min": 50, "max": 70},
+        "MidFlower": {"min": 70, "max": 90},
+        "LateFlower": {"min": 70, "max": 100},
+    }
     
     brightness_values = []
     async def fake_turn_on(**kwargs):
