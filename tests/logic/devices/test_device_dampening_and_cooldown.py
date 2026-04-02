@@ -24,7 +24,7 @@ def _make_action_manager(room="test_room"):
     })
     event_manager = FakeEventManager()
     
-    manager = OGBActionManager(room, data_store, event_manager)
+    manager = OGBActionManager(None, data_store, event_manager, room)
     return manager, data_store, event_manager
 
 
@@ -216,7 +216,7 @@ class TestCooldownPersistence:
         event_manager = FakeEventManager()
         
         # Create manager
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Expected: The values should be loaded from data_store
         # This will fail until the fix is implemented

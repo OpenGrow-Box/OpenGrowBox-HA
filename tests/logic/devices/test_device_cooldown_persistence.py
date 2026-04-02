@@ -30,7 +30,7 @@ class TestCooldownPersistenceImplementation:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Check that user values were loaded
         assert manager.defaultCooldownMinutes["canHeat"] == 15
@@ -55,7 +55,7 @@ class TestCooldownPersistenceImplementation:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Check that valid value was loaded
         assert manager.defaultCooldownMinutes["canHeat"] == 15
@@ -74,7 +74,7 @@ class TestCooldownPersistenceImplementation:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Should have all defaults
         assert manager.defaultCooldownMinutes == DEFAULT_DEVICE_COOLDOWNS
@@ -84,7 +84,7 @@ class TestCooldownPersistenceImplementation:
         data_store = FakeDataStore({})
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Modify a cooldown
         manager.defaultCooldownMinutes["canHeat"] = 20
@@ -103,7 +103,7 @@ class TestCooldownPersistenceImplementation:
         data_store = FakeDataStore({})
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Adjust cooldown via event
         adjustment_data = {"cap": "canHeat", "minutes": 25}
@@ -134,7 +134,7 @@ class TestCooldownPersistenceImplementation:
         event_manager = FakeEventManager()
         
         # Create first manager and load
-        manager1 = OGBActionManager("test_room", data_store, event_manager)
+        manager1 = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify loaded values
         assert manager1.defaultCooldownMinutes["canHeat"] == 18
@@ -145,7 +145,7 @@ class TestCooldownPersistenceImplementation:
         manager1._save_cooldowns_to_datastore()
         
         # Create second manager (simulating restart)
-        manager2 = OGBActionManager("test_room", data_store, event_manager)
+        manager2 = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify that new manager loads the saved values
         assert manager2.defaultCooldownMinutes["canHeat"] == 22
@@ -168,7 +168,7 @@ class TestCooldownWithDifferentDataTypes:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Should convert to float
         assert manager.defaultCooldownMinutes["canHeat"] == 15.0
@@ -188,7 +188,7 @@ class TestCooldownWithDifferentDataTypes:
         
         # Should not crash, but log warning
         try:
-            manager = OGBActionManager("test_room", data_store, event_manager)
+            manager = OGBActionManager(None, data_store, event_manager, "test_room")
             # Invalid values should be skipped, defaults used
             assert manager.defaultCooldownMinutes["canHeat"] == DEFAULT_DEVICE_COOLDOWNS["canHeat"]
             assert manager.defaultCooldownMinutes["canCool"] == DEFAULT_DEVICE_COOLDOWNS["canCool"]
@@ -213,7 +213,7 @@ class TestCooldownWithPartialData:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # User values should be used
         assert manager.defaultCooldownMinutes["canHeat"] == 20
@@ -235,7 +235,7 @@ class TestCooldownWithPartialData:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # All default capabilities should still be present
         for cap in DEFAULT_DEVICE_COOLDOWNS:
@@ -257,7 +257,7 @@ class TestCooldownIntegrationWithDampening:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify custom cooldown is loaded
         assert manager.defaultCooldownMinutes["canDehumidify"] == 10
@@ -285,7 +285,7 @@ class TestCooldownIntegrationWithDampening:
         })
         event_manager = FakeEventManager()
         
-        manager = OGBActionManager("test_room", data_store, event_manager)
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Initial values
         assert manager.defaultCooldownMinutes["canHeat"] == 15
@@ -301,7 +301,7 @@ class TestCooldownIntegrationWithDampening:
         assert saved["canCool"] == 12  # Should preserve other values
         
         # Create new manager to simulate restart
-        manager2 = OGBActionManager("test_room", data_store, event_manager)
+        manager2 = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify both values are correct
         assert manager2.defaultCooldownMinutes["canHeat"] == 25
