@@ -631,33 +631,38 @@ class Light(Device):
                 _LOGGER.debug(f"{self.deviceName}: SunRise kann nicht ausgeführt werden")
                 return
 
-            if self.maxVoltage is None:
-                _LOGGER.debug(f"{self.deviceName}: maxVoltage nicht gesetzt. SunRise abgebrochen.")
-                return
-
             if self.sun_phase_paused:
                 return
 
-            is_minmax_active = getattr(self, 'is_minmax_active', False)
             plantStage = self.data_store.get("plantStage")
 
-            if is_minmax_active:
-                target_voltage = float(self.maxVoltage if self.maxVoltage is not None else 100)
-                voltage_source = "User MinMax"
+            # Start voltage: User Min (wenn aktiv) → Plant Stage Min → 20%
+            if self._has_user_defined_minmax() and self.minVoltage is not None and self.minVoltage > 0:
+                start_voltage = float(self.minVoltage)
+                voltage_source_min = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
-                plant_range = self.PlantStageMinMax[plantStage]
-                target_voltage = float(plant_range["max"])
-                voltage_source = f"Plant Stage ({plantStage})"
+                start_voltage = float(self.PlantStageMinMax[plantStage]["min"])
+                voltage_source_min = f"Plant Stage ({plantStage})"
+            else:
+                start_voltage = 20.0
+                voltage_source_min = "Default 20%"
+
+            # Target voltage: User Max (wenn aktiv) → Plant Stage Max → self.maxVoltage
+            if self._has_user_defined_minmax() and self.maxVoltage is not None and self.maxVoltage > 0:
+                target_voltage = float(self.maxVoltage)
+                voltage_source_max = "User MinMax"
+            elif plantStage and plantStage in self.PlantStageMinMax:
+                target_voltage = float(self.PlantStageMinMax[plantStage]["max"])
+                voltage_source_max = f"Plant Stage ({plantStage})"
             else:
                 target_voltage = float(self.maxVoltage if self.maxVoltage is not None else 100)
-                voltage_source = "maxVoltage"
+                voltage_source_max = "maxVoltage"
 
-            start_voltage = float(self.minVoltage)
             step_duration = self.sunRiseDuration / 10
             voltage_step = (target_voltage - start_voltage) / 10
 
             self.sunPhaseActive = True
-            _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% bis {target_voltage}% ({voltage_source})")
+            _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% ({voltage_source_min}) bis {target_voltage}% ({voltage_source_max})")
 
             for i in range(1, 11):
                 if not self.islightON:
@@ -719,19 +724,34 @@ class Light(Device):
 
             self.sunPhaseActive = True
 
-            is_minmax_active = getattr(self, 'is_minmax_active', False)
+            plantStage = self.data_store.get("plantStage")
 
-            if is_minmax_active:
-                start_voltage  = float(self.maxVoltage if self.maxVoltage is not None else 100)
-                target_voltage = float(self.minVoltage if self.minVoltage is not None else 0)
+            # Start voltage: User Max (wenn aktiv) → Plant Stage Max → self.maxVoltage
+            if self._has_user_defined_minmax() and self.maxVoltage is not None and self.maxVoltage > 0:
+                start_voltage = float(self.maxVoltage)
+                voltage_source_start = "User MinMax"
+            elif plantStage and plantStage in self.PlantStageMinMax:
+                start_voltage = float(self.PlantStageMinMax[plantStage]["max"])
+                voltage_source_start = f"Plant Stage ({plantStage})"
             else:
-                start_voltage  = float(self.maxVoltage if self.maxVoltage is not None else 100)
-                target_voltage = float(self.initVoltage)
+                start_voltage = float(self.maxVoltage if self.maxVoltage is not None else 100)
+                voltage_source_start = "maxVoltage"
+
+            # Target voltage: User Min (wenn aktiv) → Plant Stage Min → initVoltage
+            if self._has_user_defined_minmax() and self.minVoltage is not None and self.minVoltage > 0:
+                target_voltage = float(self.minVoltage)
+                voltage_source_target = "User MinMax"
+            elif plantStage and plantStage in self.PlantStageMinMax:
+                target_voltage = float(self.PlantStageMinMax[plantStage]["min"])
+                voltage_source_target = f"Plant Stage ({plantStage})"
+            else:
+                target_voltage = float(self.initVoltage if self.initVoltage is not None else 20)
+                voltage_source_target = "initVoltage"
 
             step_duration = self.sunSetDuration / 10
-            voltage_step  = (start_voltage - target_voltage) / 10
+            voltage_step = (start_voltage - target_voltage) / 10
 
-            _LOGGER.debug(f"{self.deviceName}: Start SunSet {start_voltage}% bis {target_voltage}%")
+            _LOGGER.debug(f"{self.deviceName}: Start SunSet von {start_voltage}% ({voltage_source_start}) bis {target_voltage}% ({voltage_source_target})")
 
             for i in range(1, 11):
                 if not self.islightON:
@@ -790,7 +810,29 @@ class Light(Device):
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring base toggleLight - using dedicated scheduling")
             return
 
-        self.islightON = lightState
+        # Handle both payload formats:
+        # - bool: True/False
+        # - dict: {"state": True/False, "target_devices": ["DeviceA", ...]}
+        target_state_raw = lightState
+        is_targeted = True
+
+        if isinstance(lightState, dict):
+            target_state_raw = lightState.get("state", False)
+            target_devices = lightState.get("target_devices", [])
+            is_targeted = not target_devices or self.deviceName in target_devices
+
+            if not is_targeted:
+                _LOGGER.debug(
+                    f"{self.deviceName}: Not targeted by toggleLight event, ignoring"
+                )
+                return
+
+        if isinstance(target_state_raw, str):
+            target_state = target_state_raw.strip().lower() in {"1", "true", "on", "yes"}
+        else:
+            target_state = bool(target_state_raw)
+
+        self.islightON = target_state
         self.ogbLightControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
 
         if not self.ogbLightControl:
@@ -802,7 +844,7 @@ class Light(Device):
             _LOGGER.info(f"{self.deviceName}: OGB Plant in Drying Stage Light not Allowed")
             return False
 
-        if lightState:
+        if target_state:
             if not self.isRunning:
                 if not self.isDimmable:
                     message = "Turn On"

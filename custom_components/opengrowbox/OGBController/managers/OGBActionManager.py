@@ -57,7 +57,9 @@ class OGBActionManager:
         # Action state
         self.isInitialized = False
         self.actionHistory: Dict[str, Dict[str, Any]] = {}
-        self.defaultCooldownMinutes = DEFAULT_DEVICE_COOLDOWNS.copy()
+        
+        # Load cooldowns from datastore or use defaults
+        self.defaultCooldownMinutes = self._load_cooldowns_from_datastore()
         
         # Lock for thread-safe action history updates
         self._action_history_lock = asyncio.Lock()
@@ -140,6 +142,58 @@ class OGBActionManager:
         except Exception as e:
             _LOGGER.error(f"Error initializing action modules for {self.room}: {e}")
             self.isInitialized = False
+
+    def _load_cooldowns_from_datastore(self) -> Dict[str, float]:
+        """
+        Load user-defined cooldowns from datastore, falling back to defaults.
+        
+        Returns:
+            Dictionary of capability -> cooldown in minutes
+        """
+        # Start with default cooldowns
+        cooldowns = DEFAULT_DEVICE_COOLDOWNS.copy()
+        
+        try:
+            # Try to load user-defined cooldowns from datastore
+            user_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
+            
+            if user_cooldowns and isinstance(user_cooldowns, dict):
+                # Update defaults with user values
+                updated_count = 0
+                for capability, minutes in user_cooldowns.items():
+                    if capability in cooldowns:
+                        cooldowns[capability] = float(minutes)
+                        updated_count += 1
+                    else:
+                        _LOGGER.warning(
+                            f"{self.room}: Unknown capability '{capability}' in user cooldowns, skipping"
+                        )
+                
+                if updated_count > 0:
+                    _LOGGER.info(
+                        f"{self.room}: Loaded {updated_count} user-defined cooldown(s) from datastore"
+                    )
+        except Exception as e:
+            _LOGGER.warning(
+                f"{self.room}: Failed to load user cooldowns from datastore: {e}. Using defaults."
+            )
+        
+        return cooldowns
+
+    def _save_cooldowns_to_datastore(self):
+        """
+        Save current cooldowns to datastore for persistence.
+        """
+        try:
+            # Save current cooldowns to datastore
+            self.data_store.setDeep("controlOptions.deviceCooldowns", self.defaultCooldownMinutes)
+            _LOGGER.info(
+                f"{self.room}: Saved {len(self.defaultCooldownMinutes)} cooldown(s) to datastore"
+            )
+        except Exception as e:
+            _LOGGER.error(
+                f"{self.room}: Failed to save cooldowns to datastore: {e}"
+            )
 
     # =================================================================
     # Core Action Logic
@@ -394,6 +448,8 @@ class OGBActionManager:
             _LOGGER.warning(
                 f"Cooldown for {cap} set to {minutes} minutes. GCDS: {self.defaultCooldownMinutes}"
             )
+            # Save to datastore for persistence
+            self._save_cooldowns_to_datastore()
         else:
             _LOGGER.error(f"Unknown capability: {cap}")
 
