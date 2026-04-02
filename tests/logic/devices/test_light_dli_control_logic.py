@@ -1,6 +1,8 @@
 from datetime import datetime as real_datetime, timedelta
 
 import pytest
+import asyncio
+from unittest.mock import patch, AsyncMock
 
 from custom_components.opengrowbox.OGBController.OGBDevices import Light as light_module
 from custom_components.opengrowbox.OGBController.OGBDevices.Light import Light
@@ -190,14 +192,17 @@ async def test_sunrise_with_user_minmax_active():
         user_max=85
     )
     
-    light.sunRiseDuration = 600  # 10 minutes in seconds
+    # Use very short duration for fast tests (0.1 seconds = 10ms per step)
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
     await light._run_sunrise()
     
     # Should start from user min (25%) and go to user max (85%)
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 25.0
+    # First step should be start + 1 step = 25 + 6 = 31
+    assert brightness_values[0] == 31.0
+    # Last step should be exactly target voltage
     assert brightness_values[-1] == 85.0
 
 
@@ -209,14 +214,15 @@ async def test_sunrise_with_plant_stage_minmax():
         user_minmax_active=False
     )
     
-    light.sunRiseDuration = 600
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
     await light._run_sunrise()
     
     # EarlyVeg: min=20%, max=35%
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 20.0
+    # voltage_step = (35-20)/10 = 1.5, step 1 = 20 + 1.5*1 = 21.5, round(21.5) = 22
+    assert brightness_values[0] == 22.0
     assert brightness_values[-1] == 35.0
 
 
@@ -229,14 +235,14 @@ async def test_sunrise_without_user_minmax_or_plant_stage():
     )
     
     light.maxVoltage = 100
-    light.sunRiseDuration = 600
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
     await light._run_sunrise()
     
     # Should start from default 20% and go to maxVoltage (100%)
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 20.0
+    assert brightness_values[0] == 28.0  # 20 + (80/10) = 28
     assert brightness_values[-1] == 100.0
 
 
@@ -248,14 +254,15 @@ async def test_sunrise_with_flower_stage():
         user_minmax_active=False
     )
     
-    light.sunRiseDuration = 600
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
     await light._run_sunrise()
     
     # LateFlower: min=70%, max=100%
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 70.0
+    # voltage_step = (100-70)/10 = 3, step 1 = 70 + 3*1 = 73
+    assert brightness_values[0] == 73.0
     assert brightness_values[-1] == 100.0
 
 
@@ -269,14 +276,15 @@ async def test_sunrise_respects_user_minmax_over_plant_stage():
         user_max=90
     )
     
-    light.sunRiseDuration = 600
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
     await light._run_sunrise()
     
     # Should use user minmax (30-90%), NOT plant stage (70-100%)
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 30.0
+    # voltage_step = (90-30)/10 = 6, step 1 = 30 + 6*1 = 36
+    assert brightness_values[0] == 36.0
     assert brightness_values[-1] == 90.0
 
 
@@ -285,7 +293,7 @@ async def test_sunrise_paused():
     """Test that sunrise respects pause flag."""
     light, brightness_values = _make_sunrise_light(user_minmax_active=True)
     
-    light.sunRiseDuration = 600
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     light.sun_phase_paused = True
     
@@ -300,7 +308,7 @@ async def test_sunrise_light_turned_off():
     """Test that sunrise stops when light is turned off."""
     light, brightness_values = _make_sunrise_light(user_minmax_active=True)
     
-    light.sunRiseDuration = 600
+    light.sunRiseDuration = 0.1
     light.sunrise_phase_active = True
     
     async def fake_turn_on(**kwargs):
@@ -326,14 +334,15 @@ async def test_sunset_with_user_minmax_active():
         user_max=85
     )
     
-    light.sunSetDuration = 600
+    light.sunSetDuration = 0.1
     light.sunset_phase_active = True
     
     await light._run_sunset()
     
     # Should start from user max (85%) and go to user min (25%)
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 85.0
+    # voltage_step = (85-25)/10 = 6, step 1 = 85 - 6*1 = 79
+    assert brightness_values[0] == 79.0
     assert brightness_values[-1] == 25.0
 
 
@@ -345,14 +354,37 @@ async def test_sunset_with_plant_stage_minmax():
         user_minmax_active=False
     )
     
-    light.sunSetDuration = 600
+    light.sunSetDuration = 0.1
     light.sunset_phase_active = True
     
     await light._run_sunset()
     
     # EarlyVeg: min=20%, max=35%
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 35.0
+    # voltage_step = (35-20)/10 = 1.5, step 1 = 35 - 1.5*1 = 33.5, round(33.5) = 34
+    assert brightness_values[0] == 34.0
+    assert brightness_values[-1] == 20.0
+
+
+@pytest.mark.asyncio
+async def test_sunset_without_user_minmax_or_plant_stage():
+    """Test sunset without user minmax and without valid plant stage."""
+    light, brightness_values = _make_sunrise_light(
+        plant_stage="UnknownStage",
+        user_minmax_active=False
+    )
+    
+    light.maxVoltage = 100
+    light.initVoltage = 20
+    light.sunSetDuration = 0.1
+    light.sunset_phase_active = True
+    
+    await light._run_sunset()
+    
+    # Should start from maxVoltage (100%) and go to initVoltage (20%)
+    assert len(brightness_values) == 10
+    # voltage_step = (100-20)/10 = 8, step 1 = 100 - 8*1 = 92
+    assert brightness_values[0] == 92.0
     assert brightness_values[-1] == 20.0
 
 
