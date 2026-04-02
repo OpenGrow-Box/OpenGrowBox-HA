@@ -148,7 +148,9 @@ def _make_sunrise_light(plant_stage="MidFlower", user_minmax_active=False, user_
     light.deviceName = "test_light"
     light.inRoom = "test_room"
     light.deviceType = "Light"
-    light.event_manager = FakeEventManager()
+    fake_event_manager = FakeEventManager()
+    light.event_manager = fake_event_manager
+    light.eventManager = fake_event_manager  # Sunset logic uses eventManager (without underscore)
     light.data_store = store
     light.dataStore = store
     light.minVoltage = None
