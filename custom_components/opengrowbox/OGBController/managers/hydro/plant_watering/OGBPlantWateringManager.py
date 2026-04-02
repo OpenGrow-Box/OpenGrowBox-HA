@@ -114,7 +114,7 @@ class OGBPlantWateringManager:
         if not pump_devices or "devEntities" not in pump_devices:
             return []
 
-        valid_keywords = ["water", "cast"]
+        valid_keywords = ["water", "cast", "feedpump_w"]
         return [
             dev
             for dev in pump_devices["devEntities"]
