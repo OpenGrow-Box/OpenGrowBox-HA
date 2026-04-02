@@ -192,19 +192,49 @@ class TestUserDefinedCooldowns:
             MockAction("canDehumidify", "Increase"),
         ]
         
-        # Filter actions (all should pass initially)
+        # Filter actions - all should pass and be REGISTERED
         filtered, blocked = manager._filterActionsByDampening(actions, 2.0, 1.0)
-        assert len(filtered) == 3
-        assert len(blocked) == 0
+        assert len(filtered) == 3, "All actions should pass initial filter"
+        assert len(blocked) == 0, "No actions should be blocked initially"
         
-        # Register one action
+        # Verify all actions were registered
+        assert "canHeat" in manager.actionHistory
+        assert "canCool" in manager.actionHistory
+        assert "canDehumidify" in manager.actionHistory
+        
+        # Filter again - all should be blocked now (all are in cooldown)
+        filtered, blocked = manager._filterActionsByDampening(actions, 2.0, 1.0)
+        assert len(filtered) == 0, "All actions should be blocked by cooldown"
+        assert len(blocked) == 3, "All 3 actions should be blocked"
+    
+    def test_filter_actions_respects_selective_cooldown(self):
+        """Test that filtering respects cooldowns for specific capabilities."""
+        manager, _, _ = _make_action_manager()
+        
+        # Create mock actions
+        class MockAction:
+            def __init__(self, capability, action):
+                self.capability = capability
+                self.action = action
+        
+        actions = [
+            MockAction("canHeat", "Increase"),
+            MockAction("canCool", "Increase"),
+            MockAction("canDehumidify", "Increase"),
+        ]
+        
+        # Register ONLY canHeat manually (don't run filter yet)
         manager._registerAction("canHeat", "Increase", 2.0)
         
-        # Filter again - canHeat should be blocked
+        # Now filter - canHeat should be blocked, others allowed
         filtered, blocked = manager._filterActionsByDampening(actions, 2.0, 1.0)
-        assert len(filtered) == 2, "Should have 2 actions (canHeat blocked)"
-        assert len(blocked) == 1
+        assert len(filtered) == 2, "Should have 2 actions (canCool and canDehumidify)"
+        assert len(blocked) == 1, "Only canHeat should be blocked"
         assert blocked[0].capability == "canHeat"
+        
+        # Verify canCool and canDehumidify were registered (since they passed filter)
+        assert "canCool" in manager.actionHistory
+        assert "canDehumidify" in manager.actionHistory
 
 
 class TestCooldownPersistence:
