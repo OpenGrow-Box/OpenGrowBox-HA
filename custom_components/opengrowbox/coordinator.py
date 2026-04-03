@@ -185,8 +185,14 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 media_count = len(self.OGB.mediumManager.media) if self.OGB.mediumManager.media else 0
                 _LOGGER.info(f"🌱 {self.room_name}: MediumManager initialized with {media_count} restored mediums")
             
+            # CRITICAL: Wait for entities to be registered in HA's entity registry
+            # This fixes the issue where newly created rooms don't find OGB entities
+            # because async_forward_entry_setups returns before entities are fully registered
+            await asyncio.sleep(2)
+            _LOGGER.info(f"⏱️ {self.room_name}: Waited 2s for entities to be registered in registry")
+            
             groupedRoomEntities = (
-                await self.OGB.registryListener.get_filtered_entities_with_value(room)
+                await self.OGB.registryListener.get_filtered_entities_with_value(room, max_retries=10, retry_interval=0.5)
             )
 
             ogbGroup = [
@@ -197,6 +203,16 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for group in groupedRoomEntities
                 if "ogb" not in group["name"].lower()
             ]
+
+            if ogbGroup:
+                _LOGGER.info(
+                    f"✅ {self.room_name}: Found {len(ogbGroup)} OGB configuration groups"
+                )
+            else:
+                _LOGGER.warning(
+                    f"⚠️ {self.room_name}: No OGB groups found - this is normal for newly created rooms. "
+                    f"Initialization will proceed with default setup."
+                )
 
             if not realDevices:
                 _LOGGER.warning(f"No devices found in room {self.room_name}")
@@ -218,9 +234,8 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
                 _LOGGER.info(f"✅ {self.room_name}: OGB configuration complete")
             else:
-                _LOGGER.error(
-                    f"❌ {self.room_name}: No OGB groups found. Proceeding with device initialization."
-                )
+                # New room or room without OGB entities - continue with device setup
+                _LOGGER.info(f"ℹ️ {self.room_name}: Skipping OGB initialization (no OGB groups found)")
 
             if realDevices:
                 self.OGB.dataStore.setDeep("workData.Devices", realDevices)
