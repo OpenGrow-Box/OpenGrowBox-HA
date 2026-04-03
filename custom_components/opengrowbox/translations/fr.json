@@ -3,12 +3,12 @@
     "step": {
       "user": {
         "title": "Créer une pièce",
-        "description": "Entrez un nom pour la pièce.\n\n**Caractères autorisés :**\n{allowed_chars}\n\n**Longueur :** {min_length}-{max_length} caractères\n\n**Exemples de noms valides :**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "description": "Entrez un nom pour la pièce.\n\nCaractères autorisés: Lettres (a-z, A-Z), chiffres (0-9), tiret bas (_) ou trait d'union (-)\nLongueur: 1-50 caractères\n\nExemples de noms valides: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
       "invalid_room_name": "Nom de pièce invalide. Seules les lettres (a-z, A-Z), les chiffres (0-9), les tirets bas (_) et les traits d'union (-) sont autorisés.",
-      "invalid_length": "Le nom de la pièce doit comporter entre {min_length} et {max_length} caractères."
+      "invalid_length": "Le nom de la pièce doit comporter entre 1 et 50 caractères."
     }
   }
 }

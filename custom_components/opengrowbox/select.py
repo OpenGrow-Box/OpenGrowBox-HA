@@ -74,6 +74,7 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
             "name": "OGB Rooms",
             "model": "Room Selector Device",
             "manufacturer": "OpenGrowBox",
+            "suggested_area": "ambient",
         }
 
 

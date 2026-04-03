@@ -3,12 +3,12 @@
     "step": {
       "user": {
         "title": "Create room",
-        "description": "Enter a name for the room.\n\nAllowed characters: {allowed_chars}\nLength: {min_length}-{max_length} characters\n\nExamples for valid names: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Enter a name for the room.\n\nAllowed characters: Letters (a-z, A-Z), numbers (0-9), underscore (_) or hyphen (-)\nLength: 1-50 characters\n\nExamples for valid names: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
       "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_length": "Room name must be between 1 and 50 characters long."
     }
   }
 }

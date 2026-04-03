@@ -135,20 +135,43 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         areas = area_registry.async_list_areas()
         room_names = [area.name for area in areas] if areas else ["No rooms configured"]
 
-        if self.room_selector:
-            # Preserve the current selected room
-            current_option = self.room_selector.current_option
-            self.room_selector._options = room_names
+        # Use GLOBAL room selector instance, not local self.room_selector
+        global_room_selector = self.hass.data[DOMAIN].get("room_selector")
+        
+        if global_room_selector:
+            current_option = global_room_selector.current_option
+            global_room_selector._options = room_names
             if current_option in room_names:
-                self.room_selector._attr_current_option = current_option
+                global_room_selector._attr_current_option = current_option
             else:
-                self.room_selector._attr_current_option = (
+                global_room_selector._attr_current_option = (
                     room_names[0] if room_names else None
                 )
-            self.room_selector.async_write_ha_state()
+            global_room_selector.async_write_ha_state()
             _LOGGER.debug(
-                f"Updated Room Selector with rooms: {room_names} (current: {self.room_selector._attr_current_option})"
+                f"Updated Room Selector with rooms: {room_names} (current: {global_room_selector._attr_current_option})"
             )
+    
+    async def _update_room_selector_immediate(self):
+        """Immediately update the room selector with all current rooms."""
+        area_registry = async_get_area_registry(self.hass)
+        areas = area_registry.async_list_areas()
+        room_names = [area.name for area in areas] if areas else ["No rooms configured"]
+
+        # Use GLOBAL room selector instance, not local self.room_selector
+        global_room_selector = self.hass.data[DOMAIN].get("room_selector")
+        
+        if global_room_selector:
+            current_option = global_room_selector.current_option
+            global_room_selector._options = room_names
+            if current_option in room_names:
+                global_room_selector._attr_current_option = current_option
+            else:
+                global_room_selector._attr_current_option = room_names[0] if room_names else None
+            global_room_selector.async_write_ha_state()
+            _LOGGER.info(f"🔄 Immediate room selector update: {room_names} (current: {global_room_selector._attr_current_option})")
+        else:
+            _LOGGER.warning("Global room selector not available for immediate update")
 
     async def startOGB(self):
         _LOGGER.info(f"🚀 ============ STARTING OGB INTEGRATION FOR {self.room_name} ============")

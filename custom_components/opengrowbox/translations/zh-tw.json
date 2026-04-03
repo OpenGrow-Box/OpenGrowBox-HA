@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "title": "創建房間",
+        "description": "請輸入房間名稱。\n\n允許的字符: 字母(a-z, A-Z)、數字(0-9)、底線(_)或連字符(-)\n長度: 1-50個字符\n\n有效名稱範例: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
-      "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_room_name": "無效的房間名稱。僅允許字母(a-z, A-Z)、數字(0-9)、底線(_)和連字符(-)。",
+      "invalid_length": "房間名稱必須在1到50個字符之間。"
     }
   }
 }

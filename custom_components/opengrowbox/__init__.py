@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import shutil
@@ -192,6 +193,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # Ensure matching HA Area exists and attach room hub device to it.
     await _ensure_room_area_and_assign_hub(hass, config_entry)
 
+    # CRITICAL: Update room selector AFTER area is created
+    # Small delay to ensure area registry is fully updated
+    await asyncio.sleep(0.5)
+    await coordinator._update_room_selector_immediate()
+
     # Run registry cleanup once per HA runtime after platforms are loaded.
     if not hass.data[DOMAIN].get(_CLEANUP_DONE_FLAG):
         await _cleanup_orphaned_entities(hass)
@@ -375,18 +381,48 @@ async def _ensure_room_area_and_assign_hub(hass: HomeAssistant, config_entry: Co
 
     try:
         from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import area_registry as ar
 
         device_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
         entry_devices = dr.async_entries_for_config_entry(device_reg, config_entry.entry_id)
 
         room_slug = room_name.lower().replace(" ", "_")
         room_identifier = (DOMAIN, f"room_{room_slug}")
 
+        # Ensure ambient area exists
+        ambient_area_id = None
+        try:
+            ambient_area = area_reg.async_get_area_id("ambient")
+        except:
+            ambient_area_id = None
+
+        if not ambient_area_id:
+            try:
+                ambient_area = area_reg.async_create("ambient")
+                ambient_area_id = ambient_area.id
+                _LOGGER.info(f"Created 'ambient' area with ID: {ambient_area_id}")
+            except Exception as e:
+                _LOGGER.error(f"Failed to create 'ambient' area: {e}")
+                return
+
         for device in entry_devices:
             identifiers = getattr(device, "identifiers", set()) or set()
-            if room_identifier in identifiers and device.area_id != area_id:
+            device_name = device.name or device.id
+            
+            # Check if this is the token or room selector (global devices)
+            is_token = (DOMAIN, "global_hub") in identifiers
+            is_room_selector = (DOMAIN, "room_selector") in identifiers
+            
+            if is_token or is_room_selector:
+                # Force assign token and room selector to ambient area
+                if device.area_id != ambient_area_id:
+                    device_reg.async_update_device(device.id, area_id=ambient_area_id)
+                    _LOGGER.warning(f"🌐 Assigned global device '{device_name}' to 'ambient' area (was: {device.area_id})")
+            elif room_identifier in identifiers and device.area_id != area_id:
+                # Regular room device - assign to room area
                 device_reg.async_update_device(device.id, area_id=area_id)
-                _LOGGER.warning("📍 Assigned OGB room hub '%s' to area '%s'", device.name or device.id, room_name)
+                _LOGGER.warning("📍 Assigned OGB room hub '%s' to area '%s'", device_name, room_name)
     except Exception as err:
         _LOGGER.debug("Could not assign room hub to area for %s: %s", room_name, err)
 

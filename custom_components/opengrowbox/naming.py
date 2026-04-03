@@ -91,4 +91,5 @@ def global_device_info(model: str) -> dict:
         "name": "OpenGrowBox Hub",
         "model": model,
         "manufacturer": "OpenGrowBox",
+        "suggested_area": "ambient",
     }

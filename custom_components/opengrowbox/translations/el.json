@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "title": "Δημιουργία δωματίου",
+        "description": "Εισάγετε ένα όνομα για το δωμάτιο.\n\nΕπιτρεπόμενοι χαρακτήρες: Γράμματα (a-z, A-Z), αριθμοί (0-9), κάτω παύλα (_) ή ενωτικό (-)\nΜήκος: 1-50 χαρακτήρες\n\nΠαραδείγματα έγκυρων ονομάτων: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
-      "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_room_name": "Μη έγκυρο όνομα δωματίου. Επιτρέπονται μόνο γράμματα (a-z, A-Z), αριθμοί (0-9), κάτω παύλα (_) και ενωτικό (-).",
+      "invalid_length": "Το όνομα του δωματίου πρέπει να είναι μεταξύ 1 και 50 χαρακτήρων."
     }
   }
 }

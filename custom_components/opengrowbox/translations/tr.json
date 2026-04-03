@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "title": "Oda oluştur",
+        "description": "Oda için bir ad girin.\n\nİzin verilen karakterler: Harfler (a-z, A-Z), rakamlar (0-9), alt çizgi (_) veya tire (-)\nUzunluk: 1-50 karakter\n\nGeçerli ad örnekleri: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
-      "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_room_name": "Geçersiz oda adı. Sadece harfler (a-z, A-Z), rakamlar (0-9), alt çizgiler (_) ve tireler (-) izin verilir.",
+      "invalid_length": "Oda adı 1 ile 50 karakter uzunluğunda olmalıdır."
     }
   }
 }

@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "title": "إنشاء غرفة",
+        "description": "أدخل اسمًا للغرفة.\n\nالأحرف المسموح بها: الأحرف الإنجليزية (a-z, A-Z)، الأرقام (0-9)، الشرطة السفلية (_) أو الشرطة (-)\nالطول: 1-50 حرف\n\nأمثلة على أسماء صالحة: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
-      "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_room_name": "اسم الغرفة غير صالح. يُسمح فقط بالأحرف الإنجليزية (a-z, A-Z)، الأرقام (0-9)، الشرطة السفلية (_) والشرطة (-).",
+      "invalid_length": "يجب أن يكون اسم الغرفة بين 1 و 50 حرفًا."
     }
   }
 }

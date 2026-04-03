@@ -3,12 +3,12 @@
     "step": {
       "user": {
         "title": "Opret rum",
-        "description": "Indtast et navn til rummet.\n\n**Tilladte tegn:**\n{allowed_chars}\n\n**Længde:** {min_length}-{max_length} tegn\n\n**Eksempler på gyldige navne:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "description": "Indtast et navn til rummet.\n\nTilladte tegn: Bogstaver (a-z, A-Z), tal (0-9), understreger (_) eller bindestreger (-)\nLængde: 1-50 tegn\n\nEksempler på gyldige navne: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
       "invalid_room_name": "Ugyldigt rumnavn. Kun bogstaver (a-z, A-Z), tal (0-9), understreger (_) og bindestreger (-) er tilladt.",
-      "invalid_length": "Rumnavnet skal være mellem {min_length} og {max_length} tegn langt."
+      "invalid_length": "Rumnavnet skal være mellem 1 og 50 tegn langt."
     }
   }
 }

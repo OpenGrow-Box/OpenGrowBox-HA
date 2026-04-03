@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "title": "部屋を作成",
+        "description": "部屋の名前を入力してください。\n\n許可される文字: 英字(a-z, A-Z)、数字(0-9)、アンダースコア(_)またはハイフン(-)\n長さ: 1-50文字\n\n有効な名前の例: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
-      "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_room_name": "無効な部屋名です。英字(a-z, A-Z)、数字(0-9)、アンダースコア(_)とハイフン(-)のみ許可されています。",
+      "invalid_length": "部屋名は1から50文字の間である必要があります。"
     }
   }
 }
