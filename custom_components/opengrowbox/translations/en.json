@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "description": "Enter a name for the room.\n\nAllowed characters: {allowed_chars}\nLength: {min_length}-{max_length} characters\n\nExamples for valid names: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
       }
     },
     "error": {
