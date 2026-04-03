@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Crea stanza",
+        "description": "Inserisci un nome per la stanza.\n\n**Caratteri consentiti:**\n{allowed_chars}\n\n**Lunghezza:** {min_length}-{max_length} caratteri\n\n**Esempi di nomi validi:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Nome stanza non valido. Sono consentiti solo lettere (a-z, A-Z), numeri (0-9), trattini bassi (_) e trattini (-).",
+      "invalid_length": "Il nome della stanza deve essere lungo tra {min_length} e {max_length} caratteri."
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Opprett rom",
+        "description": "Skriv inn et navn for rommet.\n\n**Tillatte tegn:**\n{allowed_chars}\n\n**Lengde:** {min_length}-{max_length} tegn\n\n**Eksempler på gyldige navn:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Ugyldig romnavn. Kun bokstaver (a-z, A-Z), tall (0-9), understreker (_) og bindestreker (-) er tillatt.",
+      "invalid_length": "Romnavnet må være mellom {min_length} og {max_length} tegn langt."
+    }
+  }
+}

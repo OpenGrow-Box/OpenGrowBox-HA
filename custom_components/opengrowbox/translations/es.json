@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Crear habitación",
+        "description": "Introduzca un nombre para la habitación.\n\n**Caracteres permitidos:**\n{allowed_chars}\n\n**Longitud:** {min_length}-{max_length} caracteres\n\n**Ejemplos de nombres válidos:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Nombre de habitación inválido. Solo se permiten letras (a-z, A-Z), números (0-9), guiones bajos (_) y guiones (-).",
+      "invalid_length": "El nombre de la habitación debe tener entre {min_length} y {max_length} caracteres."
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Skapa rum",
+        "description": "Ange ett namn för rummet.\n\n**Tillåtna tecken:**\n{allowed_chars}\n\n**Längd:** {min_length}-{max_length} tecken\n\n**Exempel på giltiga namn:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Ogiltigt rumnamn. Endast bokstäver (a-z, A-Z), siffror (0-9), understreck (_) och bindestreck (-) är tillåtna.",
+      "invalid_length": "Rumnamnet måste vara mellan {min_length} och {max_length} tecken långt."
+    }
+  }
+}

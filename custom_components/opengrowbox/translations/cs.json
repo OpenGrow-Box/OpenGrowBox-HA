@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vytvořit místnost",
+        "description": "Zadejte název místnosti.\n\n**Povolené znaky:**\n{allowed_chars}\n\n**Délka:** {min_length}-{max_length} znaků\n\n**Příklady platných názvů:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Neplatný název místnosti. Jsou povoleny pouze písmena (a-z, A-Z), čísla (0-9), podtržítka (_) a pomlčky (-).",
+      "invalid_length": "Název místnosti musí mít délku od {min_length} do {max_length} znaků."
+    }
+  }
+}

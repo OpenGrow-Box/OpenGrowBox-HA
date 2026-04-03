@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Luo huone",
+        "description": "Anna huoneelle nimi.\n\n**Sallitut merkit:**\n{allowed_chars}\n\n**Pituus:** {min_length}-{max_length} merkkiä\n\n**Esimerkkejä kelvollisista nimistä:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Virheellinen huoneen nimi. Vain kirjaimet (a-z, A-Z), numerot (0-9), alaviivat (_) ja tavuviivat (-) ovat sallittuja.",
+      "invalid_length": "Huoneen nimen pituuden on oltava {min_length}-{max_length} merkkiä."
+    }
+  }
+}

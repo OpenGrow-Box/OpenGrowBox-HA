@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Utwórz pokój",
+        "description": "Wprowadź nazwę dla pokoju.\n\n**Dozwolone znaki:**\n{allowed_chars}\n\n**Długość:** {min_length}-{max_length} znaków\n\n**Przykłady prawidłowych nazw:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Nieprawidłowa nazwa pokoju. Dozwolone są tylko litery (a-z, A-Z), cyfry (0-9), podkreślenia (_) i myślniki (-).",
+      "invalid_length": "Nazwa pokoju musi mieć od {min_length} do {max_length} znaków."
+    }
+  }
+}

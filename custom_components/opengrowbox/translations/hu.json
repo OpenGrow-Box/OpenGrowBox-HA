@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Szoba létrehozása",
+        "description": "Adjon meg egy nevet a szobának.\n\n**Engedélyezett karakterek:**\n{allowed_chars}\n\n**Hossz:** {min_length}-{max_length} karakter\n\n**Példák érvényes nevekre:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Érvénytelen szobanév. Csak betűk (a-z, A-Z), számok (0-9), aláhúzások (_) és kötőjelek (-) engedélyezettek.",
+      "invalid_length": "A szobanévnek {min_length} és {max_length} karakter között kell lennie."
+    }
+  }
+}

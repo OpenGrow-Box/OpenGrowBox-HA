@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ruimte maken",
+        "description": "Voer een naam in voor de ruimte.\n\n**Toegestane tekens:**\n{allowed_chars}\n\n**Lengte:** {min_length}-{max_length} tekens\n\n**Voorbeelden van geldige namen:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Ongeldige ruimtenaam. Alleen letters (a-z, A-Z), cijfers (0-9), underscores (_) en koppeltekens (-) zijn toegestaan.",
+      "invalid_length": "De ruimtenaam moet tussen {min_length} en {max_length} tekens lang zijn."
+    }
+  }
+}
