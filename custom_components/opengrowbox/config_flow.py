@@ -52,7 +52,16 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required("room_name"): str,
                 }
             ),
+            description_placeholders={
+                "allowed_chars": "Buchstaben (a-z, A-Z), Zahlen (0-9), Unterstrich (_), Bindestrich (-)",
+                "min_length": "1",
+                "max_length": "50",
+            },
             errors=errors,
+            error_placeholders={
+                "min_length": "1",
+                "max_length": "50",
+            },
         )
 
     async def async_step_import(self, import_data=None):

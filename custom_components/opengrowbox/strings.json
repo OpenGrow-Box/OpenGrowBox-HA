@@ -1,0 +1,15 @@
+{
+  "title": "OpenGrowBox",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Raum erstellen",
+        "description": "Geben Sie einen Namen für den Raum an.\n\n**Erlaubte Zeichen:**\n{allowed_chars}\n\n**Länge:** {min_length}-{max_length} Zeichen\n\n**Beispiele für gültige Namen:**\n• GrowRoom1\n• anbau_kasten\n• Grow-Room-1\n• Anbaukasten"
+      }
+    },
+    "error": {
+      "invalid_room_name": "Ungültiger Raumname. Nur Buchstaben (a-z, A-Z), Zahlen (0-9), Unterstriche (_) und Bindestriche (-) sind erlaubt.",
+      "invalid_length": "Der Raumname muss zwischen {min_length} und {max_length} Zeichen lang sein."
+    }
+  }
+}
