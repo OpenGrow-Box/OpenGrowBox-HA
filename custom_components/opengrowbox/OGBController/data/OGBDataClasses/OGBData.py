@@ -282,6 +282,12 @@ class OGBConf:
             "weights": {"temp": 0, "hum": 0, "defaultValue": 1},
             "minmax": {"minTemp": 0, "maxTemp": 0, "minHum": 0, "maxHum": 0},
             "closedEnvironment": {"ambientInfluenceStrength": 0.3},
+            "deadband": {
+                "vpdDeadband": 0.05,
+                "vpdTargetDeadband": 0.05,
+                "closedTempDeadband": 0.5,
+                "closedHumidDeadband": 1.5,
+            },
         }
     )
     safety: Dict[str, Any] = field(

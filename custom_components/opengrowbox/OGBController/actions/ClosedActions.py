@@ -357,29 +357,44 @@ class ClosedActions:
     async def control_temperature_closed(self, capabilities: Dict[str, Any]):
         """
         Control temperature like VPD: control when outside min/max bounds.
-        
+
         Args:
             capabilities: Device capabilities and states
         """
         temp_dev = self.control_logic.calculate_temperature_deviation()
-        
+
         if temp_dev.get("status") == "no_data":
             _LOGGER.debug(f"{self.ogb.room}: Closed temperature control skipped - no data")
             return
-        
+
         if temp_dev.get("status") == "invalid":
             _LOGGER.warning(f"{self.ogb.room}: Closed temperature control skipped - invalid data")
             return
-        
+
         current = temp_dev.get("current")
         min_temp = temp_dev.get("min")
         max_temp = temp_dev.get("max")
         status = temp_dev.get("status")
-        
+
+        # Get deadband configuration
+        temp_deadband = self.ogb.data_store.getDeep("controlOptionData.deadband.closedTempDeadband") or 0.5
+
+        # Calculate deadband boundaries
+        deadband_min = min_temp + temp_deadband
+        deadband_max = max_temp - temp_deadband
+
+        # Check if within deadband (quiet mode)
+        if deadband_min <= current <= deadband_max:
+            _LOGGER.debug(
+                f"{self.ogb.room}: Temperature {current:.1f}°C within deadband "
+                f"({deadband_min:.1f} - {deadband_max:.1f}°C). No action."
+            )
+            return
+
         _LOGGER.debug(
             f"{self.ogb.room}: Closed temp control: {current:.1f}°C (min={min_temp:.1f}, max={max_temp:.1f}, status={status})"
         )
-        
+
         if status == "too_low":
             action_message = f"Closed temp: too cold ({current:.1f}°C < {min_temp:.1f}°C)"
             await self._increase_temperature(capabilities, action_message)
@@ -433,29 +448,44 @@ class ClosedActions:
         """
         Control humidity like VPD: control when outside min/max bounds.
         For closed environments, humidity rises continuously so we act when too high.
-        
+
         Args:
             capabilities: Device capabilities and states
         """
         hum_dev = self.control_logic.calculate_humidity_deviation()
-        
+
         if hum_dev.get("status") == "no_data":
             _LOGGER.debug(f"{self.ogb.room}: Closed humidity control skipped - no data")
             return
-        
+
         if hum_dev.get("status") == "invalid":
             _LOGGER.warning(f"{self.ogb.room}: Closed humidity control skipped - invalid data")
             return
-        
+
         current = hum_dev.get("current")
         min_hum = hum_dev.get("min")
         max_hum = hum_dev.get("max")
         status = hum_dev.get("status")
-        
+
+        # Get deadband configuration
+        humid_deadband = self.ogb.data_store.getDeep("controlOptionData.deadband.closedHumidDeadband") or 1.5
+
+        # Calculate deadband boundaries
+        deadband_min = min_hum + humid_deadband
+        deadband_max = max_hum - humid_deadband
+
+        # Check if within deadband (quiet mode)
+        if deadband_min <= current <= deadband_max:
+            _LOGGER.debug(
+                f"{self.ogb.room}: Humidity {current:.1f}% within deadband "
+                f"({deadband_min:.1f} - {deadband_max:.1f}%). No action."
+            )
+            return
+
         _LOGGER.debug(
             f"{self.ogb.room}: Closed humidity control: {current:.1f}% (min={min_hum:.1f}, max={max_hum:.1f}, status={status})"
         )
-        
+
         if status == "too_low":
             action_message = f"Closed humidity: too dry ({current:.1f}% < {min_hum:.1f}%)"
             await self._increase_humidity(capabilities, action_message)

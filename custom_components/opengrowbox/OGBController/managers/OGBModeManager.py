@@ -158,6 +158,25 @@ class OGBModeManager:
             )
             return
 
+        # Get deadband configuration
+        vpdDeadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
+
+        # Calculate deadband boundaries
+        deadband_min = perfectionVPD - vpdDeadband
+        deadband_max = perfectionVPD + vpdDeadband
+
+        # Check if within deadband first (quiet mode)
+        if deadband_min <= currentVPD <= deadband_max:
+            _LOGGER.debug(
+                f"{self.room}: Current VPD ({currentVPD}) is within deadband "
+                f"({deadband_min:.2f} - {deadband_max:.2f} kPa). No action required."
+            )
+            # Still maintain CO2 if enabled
+            if self.data_store.getDeep("controlOptions.co2Control"):
+                capabilities = self.data_store.get("capabilities")
+                await self.event_manager.emit("maintain_co2", capabilities)
+            return
+
         # Verfügbare Capabilities abrufen
         capabilities = self.data_store.get("capabilities")
 
@@ -171,7 +190,7 @@ class OGBModeManager:
                 f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD."
             )
             await self.event_manager.emit("reduce_vpd", capabilities)
-        elif abs(currentVPD - perfectionVPD) > 0.01:
+        elif abs(currentVPD - perfectionVPD) > vpdDeadband:
             _LOGGER.debug(
                 f"{self.room}: Current VPD ({currentVPD}) is within range but not at perfection ({perfectionVPD}). Fine-tuning."
             )
@@ -216,6 +235,21 @@ class OGBModeManager:
             currentVPD = float(currentVPD_raw)
             targetedVPD = float(targetedVPD_raw)
 
+            # Get deadband configuration
+            vpdTargetDeadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+
+            # Calculate deadband boundaries
+            deadband_min = targetedVPD - vpdTargetDeadband
+            deadband_max = targetedVPD + vpdTargetDeadband
+
+            # Check if within deadband first (quiet mode)
+            if deadband_min <= currentVPD <= deadband_max:
+                _LOGGER.debug(
+                    f"{self.room}: Current VPD ({currentVPD}) is within deadband "
+                    f"({deadband_min:.2f} - {deadband_max:.2f} kPa). No action required."
+                )
+                return
+
             if min_vpd_raw is None or max_vpd_raw is None:
                 if tolerance_raw is None:
                     _LOGGER.warning(
@@ -236,7 +270,7 @@ class OGBModeManager:
 
             # Verfügbare Capabilities abrufen
             capabilities = self.data_store.get("capabilities")
-            
+
             # Validate capabilities exist
             if not capabilities:
                 _LOGGER.warning(
@@ -255,7 +289,7 @@ class OGBModeManager:
                     f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD."
                 )
                 await self.event_manager.emit("vpdt_reduce_vpd", capabilities)
-            elif abs(currentVPD - targetedVPD) > 0.01:
+            elif abs(currentVPD - targetedVPD) > vpdTargetDeadband:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is within range but not at Targeted ({targetedVPD}). Fine-tuning."
                 )
