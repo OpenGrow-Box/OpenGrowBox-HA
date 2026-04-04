@@ -93,3 +93,14 @@ def global_device_info(model: str) -> dict:
         "manufacturer": "OpenGrowBox",
         "suggested_area": "ambient",
     }
+
+
+def room_selector_device_info() -> dict:
+    """Return device info for the global room selector entity."""
+    return {
+        "identifiers": {(DOMAIN, "room_selector")},
+        "name": "OGB Rooms",
+        "model": "Room Selector Device",
+        "manufacturer": "OpenGrowBox",
+        "suggested_area": "ambient",
+    }

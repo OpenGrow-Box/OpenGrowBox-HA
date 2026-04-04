@@ -210,6 +210,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         if ambient_ok:
             hass.data[DOMAIN][_AMBIENT_ENSURE_FLAG] = True
 
+    # CRITICAL: Re-run global device area assignment after ambient is ensured
+    # This ensures global devices (global_hub, room_selector) are assigned to ambient
+    await _ensure_global_devices_in_ambient(hass)
+
     # Service registration happens in sensor.py to access sensor objects directly
     _LOGGER.info(f"✅ Integration setup complete, waiting for sensor platform to register services")
 
@@ -385,28 +389,54 @@ async def _ensure_room_area_and_assign_hub(hass: HomeAssistant, config_entry: Co
 
         device_reg = dr.async_get(hass)
         area_reg = ar.async_get(hass)
-        entry_devices = dr.async_entries_for_config_entry(device_reg, config_entry.entry_id)
 
+        # Get room area ID
         room_slug = room_name.lower().replace(" ", "_")
         room_identifier = (DOMAIN, f"room_{room_slug}")
 
-        # Ensure ambient area exists
+        # Get ambient area ID
         ambient_area_id = None
         try:
             ambient_area = area_reg.async_get_area_id("ambient")
+            ambient_area_id = ambient_area.id
         except:
             ambient_area_id = None
 
         if not ambient_area_id:
             try:
-                ambient_area = area_reg.async_create("ambient")
-                ambient_area_id = ambient_area.id
-                _LOGGER.info(f"Created 'ambient' area with ID: {ambient_area_id}")
+                # Check if area already exists by name
+                existing = None
+                for area in area_reg.areas.values():
+                    if area.name.lower() == "ambient":
+                        existing = area
+                        break
+                if existing:
+                    ambient_area_id = existing.id
+                    _LOGGER.info(f"Found existing 'ambient' area with ID: {ambient_area_id}")
+                else:
+                    ambient_area = area_reg.async_create("ambient")
+                    ambient_area_id = ambient_area.id
+                    _LOGGER.info(f"Created 'ambient' area with ID: {ambient_area_id}")
             except Exception as e:
-                _LOGGER.error(f"Failed to create 'ambient' area: {e}")
-                return
+                _LOGGER.warning(f"Could not create/get 'ambient' area: {e}")
+                # Don't return - try to continue with room assignment anyway
 
-        for device in entry_devices:
+        # Small delay to ensure devices are fully registered in the device registry
+        await asyncio.sleep(0.3)
+
+        # CRITICAL: Get ALL OGB devices from entire registry, not just current config_entry
+        # This ensures global devices (global_hub, room_selector) get assigned to ambient
+        # even when they were created as part of a room's config_entry
+        all_ogb_devices = []
+        for device in device_reg.devices.values():
+            identifiers = getattr(device, "identifiers", set()) or set()
+            if any(ident[0] == DOMAIN for ident in identifiers):
+                all_ogb_devices.append(device)
+
+        # Get devices for current config entry
+        entry_devices = dr.async_entries_for_config_entry(device_reg, config_entry.entry_id)
+
+        for device in all_ogb_devices:
             identifiers = getattr(device, "identifiers", set()) or set()
             device_name = device.name or device.id
             
@@ -419,12 +449,74 @@ async def _ensure_room_area_and_assign_hub(hass: HomeAssistant, config_entry: Co
                 if device.area_id != ambient_area_id:
                     device_reg.async_update_device(device.id, area_id=ambient_area_id)
                     _LOGGER.warning(f"🌐 Assigned global device '{device_name}' to 'ambient' area (was: {device.area_id})")
-            elif room_identifier in identifiers and device.area_id != area_id:
-                # Regular room device - assign to room area
-                device_reg.async_update_device(device.id, area_id=area_id)
-                _LOGGER.warning("📍 Assigned OGB room hub '%s' to area '%s'", device_name, room_name)
+            elif room_identifier in identifiers:
+                # Regular room device - assign to room area (only if this is the room's own config_entry)
+                if device in entry_devices and device.area_id != area_id:
+                    device_reg.async_update_device(device.id, area_id=area_id)
+                    _LOGGER.warning("📍 Assigned OGB room hub '%s' to area '%s'", device_name, room_name)
     except Exception as err:
         _LOGGER.debug("Could not assign room hub to area for %s: %s", room_name, err)
+
+
+async def _ensure_global_devices_in_ambient(hass: HomeAssistant) -> None:
+    """Ensure all global OGB devices (token, room_selector) are in ambient area."""
+    try:
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import area_registry as ar
+
+        device_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+
+        # Get or create ambient area
+        ambient_area_id = None
+        try:
+            ambient_area = area_reg.async_get_area_id("ambient")
+            ambient_area_id = ambient_area.id
+        except:
+            # Area doesn't exist, try to create it
+            try:
+                existing = None
+                for area in area_reg.areas.values():
+                    if area.name.lower() == "ambient":
+                        existing = area
+                        break
+                if existing:
+                    ambient_area_id = existing.id
+                else:
+                    created = area_reg.async_create("ambient")
+                    ambient_area_id = created.id
+                    _LOGGER.info("Created ambient area in _ensure_global_devices_in_ambient")
+            except Exception as create_err:
+                _LOGGER.warning(f"Could not create ambient area: {create_err}")
+
+        if not ambient_area_id:
+            _LOGGER.warning("No ambient area ID available, skipping global device assignment")
+            return
+
+        # Get ALL OGB devices with detailed logging
+        _LOGGER.debug(f"Searching for global OGB devices in device registry...")
+        ogb_devices_updated = 0
+        for device in device_reg.devices.values():
+            identifiers = getattr(device, "identifiers", set()) or set()
+            
+            is_token = (DOMAIN, "global_hub") in identifiers
+            is_room_selector = (DOMAIN, "room_selector") in identifiers
+            
+            if is_token or is_room_selector:
+                device_name = device.name or device.id
+                current_area = device.area_id or "none"
+                _LOGGER.debug(f"Found global device: {device_name}, current area: {current_area}, identifiers: {identifiers}")
+                
+                if device.area_id != ambient_area_id:
+                    device_reg.async_update_device(device.id, area_id=ambient_area_id)
+                    ogb_devices_updated += 1
+                    _LOGGER.warning(f"🌐 Re-assigned global device '{device_name}' to 'ambient' (was: {current_area})")
+
+        _LOGGER.info(f"✅ Global device assignment complete: {ogb_devices_updated} device(s) assigned to ambient")
+    except Exception as err:
+        _LOGGER.error(f"CRITICAL: Could not ensure global devices in ambient: {err}")
+    except Exception as err:
+        _LOGGER.warning(f"Could not ensure global devices in ambient: {err}")
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

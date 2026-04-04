@@ -5,7 +5,8 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
-from .naming import display_name_from_raw, legacy_entity_id, room_device_info
+from .naming import (display_name_from_raw, global_device_info, legacy_entity_id,
+                     room_device_info, room_selector_device_info)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,13 +70,7 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
     @property
     def device_info(self):
         """Return device information for the Room Selector."""
-        return {
-            "identifiers": {(DOMAIN, self._unique_id)},
-            "name": "OGB Rooms",
-            "model": "Room Selector Device",
-            "manufacturer": "OpenGrowBox",
-            "suggested_area": "ambient",
-        }
+        return room_selector_device_info()
 
 
 class CustomSelect(SelectEntity, RestoreEntity):

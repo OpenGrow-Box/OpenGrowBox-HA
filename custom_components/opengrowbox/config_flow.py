@@ -1,8 +1,11 @@
+import logging
 import re
 import voluptuous as vol
 from homeassistant import config_entries
 
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -17,6 +20,16 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not re.match(r"^[a-zA-Z0-9_-]+$", room_name):
             return False
         return 1 <= len(room_name) <= 50
+
+    def _has_existing_entries(self) -> bool:
+        """Check if any OpenGrowBox entries already exist."""
+        from homeassistant.core import HomeAssistant
+        
+        # Get the hass instance from the flow context
+        if hasattr(self, 'hass') and self.hass:
+            entries = self.hass.config_entries.async_entries(DOMAIN)
+            return len(entries) > 0
+        return False
 
     async def _async_create_room_entry(self, room_name: str):
         normalized = self._normalize_room_name(room_name)
@@ -43,6 +56,24 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             elif len(room_name) < 1 or len(room_name) > 50:
                 errors["room_name"] = "invalid_length"
             else:
+                # CRITICAL: Ensure ambient exists FIRST on fresh install
+                # Check if this is the first room being created
+                existing_entries = []
+                if hasattr(self, 'hass') and self.hass:
+                    existing_entries = self.hass.config_entries.async_entries(DOMAIN)
+                
+                has_ambient = any(
+                    str(entry.data.get("room_name", "")).strip().lower() == "ambient"
+                    for entry in existing_entries
+                )
+                
+                # Only create ambient automatically on first setup (no existing entries)
+                # Skip if user explicitly names their room "ambient"
+                if not existing_entries and room_name.lower() != "ambient" and not has_ambient:
+                    _LOGGER.info("First-time setup: Creating 'ambient' room first")
+                    await self._async_create_room_entry("ambient")
+                    _LOGGER.info("Ambient room created, now creating user room: %s", room_name)
+                
                 return await self._async_create_room_entry(room_name)
 
         return self.async_show_form(
@@ -61,5 +92,19 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if not self._is_valid_room_name(room_name):
             return self.async_abort(reason="invalid_room_name")
+
+        # Same logic for import: ensure ambient first if this is first room
+        existing_entries = []
+        if hasattr(self, 'hass') and self.hass:
+            existing_entries = self.hass.config_entries.async_entries(DOMAIN)
+        
+        has_ambient = any(
+            str(entry.data.get("room_name", "")).strip().lower() == "ambient"
+            for entry in existing_entries
+        )
+        
+        if not existing_entries and room_name.lower() != "ambient" and not has_ambient:
+            _LOGGER.info("Import setup (first room): Creating 'ambient' room first")
+            await self._async_create_room_entry("ambient")
 
         return await self._async_create_room_entry(room_name)
