@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Criar sala",
-        "description": "Digite um nome para a sala.\n\nCaracteres permitidos: Letras (a-z, A-Z), números (0-9), sublinhados (_) ou hífens (-)\nComprimento: 1-50 caracteres\n\nExemplos de nomes válidos: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Digite um nome para a sala.",
+        "data": {
+          "room_name": "Nome da sala"
+        },
+        "data_description": {
+          "room_name": "Caracteres permitidos: a-z, A-Z, 0-9, _ ou -\nComprimento: 1-50 caracteres\n\nExemplos: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "룸 생성",
-        "description": "룸 이름을 입력하세요.\n\n허용되는 문자: 영문(a-z, A-Z), 숫자(0-9), 밑줄(_) 또는 하이픈(-)\n길이: 1-50자\n\n유효한 이름 예시: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "룸 이름을 입력하세요.",
+        "data": {
+          "room_name": "룸 이름"
+        },
+        "data_description": {
+          "room_name": "허용 문자: a-z, A-Z, 0-9, _ 또는 -\n길이: 1-50자\n\n예시: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {
@@ -12,49 +18,3 @@
     }
   }
 }
-cat > ./custom_components/opengrowbox/translations/id.json << 'EOF'
-{
-  "config": {
-    "step": {
-      "user": {
-        "title": "Buat ruangan",
-        "description": "Masukkan nama untuk ruangan.\n\nKarakter yang diizinkan: Huruf (a-z, A-Z), angka (0-9), garis bawah (_) atau tanda hubung (-)\nPanjang: 1-50 karakter\n\nContoh nama yang valid: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
-      }
-    },
-    "error": {
-      "invalid_room_name": "Nama ruangan tidak valid. Hanya huruf (a-z, A-Z), angka (0-9), garis bawah (_) dan tanda hubung (-) yang diizinkan.",
-      "invalid_length": "Nama ruangan harus antara 1 dan 50 karakter."
-    }
-  }
-}
-cat > ./custom_components/opengrowbox/translations/vi.json << 'EOF'
-{
-  "config": {
-    "step": {
-      "user": {
-        "title": "Tạo phòng",
-        "description": "Nhập tên cho phòng.\n\nKý tự được phép: Chữ cái (a-z, A-Z), số (0-9), gạch dưới (_) hoặc gạch nối (-)\nĐộ dài: 1-50 ký tự\n\nVí dụ tên hợp lệ: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
-      }
-    },
-    "error": {
-      "invalid_room_name": "Tên phòng không hợp lệ. Chỉ cho phép chữ cái (a-z, A-Z), số (0-9), gạch dưới (_) và gạch nối (-).",
-      "invalid_length": "Tên phòng phải từ 1 đến 50 ký tự."
-    }
-  }
-}
-cat > ./custom_components/opengrowbox/translations/th.json << 'EOF'
-{
-  "config": {
-    "step": {
-      "user": {
-        "title": "สร้างห้อง",
-        "description": "ป้อนชื่อสำหรับห้อง\n\nตัวอักษรที่อนุญาติ: ตัวอักษร (a-z, A-Z), ตัวเลข (0-9), ขีดล่าง (_) หรือ ขีดกลาง (-)\nความ: 1-50 ตัวอักษร\n\nตัวอย่างชื่อที่ถูกต้อง: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
-      }
-    },
-    "error": {
-      "invalid_room_name": "ชื่อห้องไม่ถูกต้อง อนุญาติ อนุญาติให้ใช้เฉพาะตัวอักษร (a-z, A-Z), ตัวเลข (0-9), ขีดล่าง (_) และ ขีดกลาง (-)",
-      "invalid_length": "ชื่อห้องต้องมีความระหว่าง 1 ถึง 50 ตัวอักษร"
-    }
-  }
-}
-echo "✅ Asian languages updated"

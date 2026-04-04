@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Crear habitación",
-        "description": "Introduzca un nombre para la habitación.\n\nCaracteres permitidos: Letras (a-z, A-Z), números (0-9), guion bajo (_) o guion (-)\nLongitud: 1-50 caracteres\n\nEjemplos de nombres válidos: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Introduzca un nombre para la habitación.",
+        "data": {
+          "room_name": "Nombre de la habitación"
+        },
+        "data_description": {
+          "room_name": "Caracteres permitidos: a-z, A-Z, 0-9, _ o -\nLongitud: 1-50 caracteres\n\nEjemplos: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

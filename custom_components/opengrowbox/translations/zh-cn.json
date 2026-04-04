@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "创建房间",
-        "description": "请输入房间名称。\n\n允许的字符: 字母(a-z, A-Z)、数字(0-9)、下划线(_)或连字符(-)\n长度: 1-50个字符\n\n有效名称示例: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "请输入房间名称。",
+        "data": {
+          "room_name": "房间名称"
+        },
+        "data_description": {
+          "room_name": "允许字符: a-z, A-Z, 0-9, _ 或 -\n长度: 1-50个字符\n\n示例: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

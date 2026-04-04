@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "إنشاء غرفة",
-        "description": "أدخل اسمًا للغرفة.\n\nالأحرف المسموح بها: الأحرف الإنجليزية (a-z, A-Z)، الأرقام (0-9)، الشرطة السفلية (_) أو الشرطة (-)\nالطول: 1-50 حرف\n\nأمثلة على أسماء صالحة: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "أدخل اسمًا للغرفة.",
+        "data": {
+          "room_name": "اسم الغرفة"
+        },
+        "data_description": {
+          "room_name": "الأحرف المسموح بها: a-z, A-Z, 0-9, _ أو -\nالطول: 1-50 حرف\n\nأمثلة: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Skapa rum",
-        "description": "Ange ett namn för rummet.\n\nTillåtna tecken: Bokstäver (a-z, A-Z), siffror (0-9), understreck (_) eller bindestreck (-)\nLängd: 1-50 tecken\n\nExempel på giltiga namn: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Ange ett namn för rummet.",
+        "data": {
+          "room_name": "Rumsnamn"
+        },
+        "data_description": {
+          "room_name": "Tillåtna tecken: a-z, A-Z, 0-9, _ eller -\nLängd: 1-50 tecken\n\nExempel: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

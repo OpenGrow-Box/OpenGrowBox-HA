@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Crea stanza",
-        "description": "Inserisci un nome per la stanza.\n\nCaratteri consentiti: Lettere (a-z, A-Z), numeri (0-9), trattino basso (_) o trattino (-)\nLunghezza: 1-50 caratteri\n\nEsempi di nomi validi: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Inserisci un nome per la stanza.",
+        "data": {
+          "room_name": "Nome stanza"
+        },
+        "data_description": {
+          "room_name": "Caratteri consentiti: a-z, A-Z, 0-9, _ o -\nLunghezza: 1-50 caratteri\n\nEsempi: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

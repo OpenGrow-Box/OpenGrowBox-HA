@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "創建房間",
-        "description": "請輸入房間名稱。\n\n允許的字符: 字母(a-z, A-Z)、數字(0-9)、底線(_)或連字符(-)\n長度: 1-50個字符\n\n有效名稱範例: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "請輸入房間名稱。",
+        "data": {
+          "room_name": "房間名稱"
+        },
+        "data_description": {
+          "room_name": "允許字符: a-z, A-Z, 0-9, _ 或 -\n長度: 1-50個字符\n\n範例: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

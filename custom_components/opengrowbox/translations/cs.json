@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Vytvořit místnost",
-        "description": "Zadejte název místnosti.\n\nPovolené znaky: Písmena (a-z, A-Z), čísla (0-9), podtržítka (_) nebo pomlčka (-)\nDélka: 1-50 znaků\n\nPříklady platných názvů: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Zadejte název místnosti.",
+        "data": {
+          "room_name": "Název místnosti"
+        },
+        "data_description": {
+          "room_name": "Povolené znaky: a-z, A-Z, 0-9, _ nebo -\nDélka: 1-50 znaků\n\nPříklady: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

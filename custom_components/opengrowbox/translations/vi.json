@@ -2,13 +2,19 @@
   "config": {
     "step": {
       "user": {
-        "title": "Create room",
-        "description": "Enter a name for the room.\n\n**Allowed characters:**\n{allowed_chars}\n\n**Length:** {min_length}-{max_length} characters\n\n**Examples for valid names:**\n• GrowRoom1\n• grow_box\n• Grow-Room-1\n• Anbaukasten"
+        "title": "Tạo phòng",
+        "description": "Nhập tên cho phòng.",
+        "data": {
+          "room_name": "Tên phòng"
+        },
+        "data_description": {
+          "room_name": "Ký tự được phép: a-z, A-Z, 0-9, _ hoặc -\nĐộ dài: 1-50 ký tự\n\nVí dụ: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {
-      "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between {min_length} and {max_length} characters long."
+      "invalid_room_name": "Tên phòng không hợp lệ. Chỉ cho phép chữ cái (a-z, A-Z), số (0-9), gạch dưới (_) và gạch nối (-).",
+      "invalid_length": "Tên phòng phải từ 1 đến 50 ký tự."
     }
   }
 }

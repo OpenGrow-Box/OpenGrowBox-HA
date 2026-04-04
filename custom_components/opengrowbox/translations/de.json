@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Raum erstellen",
-        "description": "Geben Sie einen Namen für den Raum an.\n\nErlaubte Zeichen: Buchstaben (a-z, A-Z), Zahlen (0-9), Unterstrich (_) oder Bindestrich (-)\nLänge: 1-50 Zeichen\n\nBeispiele für gültige Namen: GrowRoom1, anbau_kasten, Grow-Room-1, Anbaukasten"
+        "description": "Geben Sie einen Namen für den Raum an.",
+        "data": {
+          "room_name": "Raumname"
+        },
+        "data_description": {
+          "room_name": "Erlaubte Zeichen: a-z, A-Z, 0-9, _ oder -\nLänge: 1–50 Zeichen\n\nBeispiele: GrowRoom1, anbau_kasten, Grow-Room-1"
+        }
       }
     },
     "error": {

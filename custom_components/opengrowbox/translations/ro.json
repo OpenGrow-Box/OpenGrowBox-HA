@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Creează cameră",
-        "description": "Introduceți un nume pentru cameră.\n\nCaractere permise: Litere (a-z, A-Z), cifre (0-9), linie jos (_) sau cratime (-)\nLungime: 1-50 caractere\n\nExemple de nume valide: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Introduceți un nume pentru cameră.",
+        "data": {
+          "room_name": "Numele camerei"
+        },
+        "data_description": {
+          "room_name": "Caractere permise: a-z, A-Z, 0-9, _ sau -\nLungime: 1-50 caractere\n\nExemple: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Oda oluştur",
-        "description": "Oda için bir ad girin.\n\nİzin verilen karakterler: Harfler (a-z, A-Z), rakamlar (0-9), alt çizgi (_) veya tire (-)\nUzunluk: 1-50 karakter\n\nGeçerli ad örnekleri: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Oda için bir ad girin.",
+        "data": {
+          "room_name": "Oda adı"
+        },
+        "data_description": {
+          "room_name": "İzin verilen karakterler: a-z, A-Z, 0-9, _ veya -\nUzunluk: 1-50 karakter\n\nÖrnekler: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

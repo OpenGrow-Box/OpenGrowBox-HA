@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Ruimte maken",
-        "description": "Voer een naam in voor de ruimte.\n\nToegestane tekens: Letters (a-z, A-Z), cijfers (0-9), underscore (_) of koppelteken (-)\nLengte: 1-50 tekens\n\nVoorbeelden van geldige namen: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Voer een naam in voor de ruimte.",
+        "data": {
+          "room_name": "Naam ruimte"
+        },
+        "data_description": {
+          "room_name": "Toegestane tekens: a-z, A-Z, 0-9, _ of -\nLengte: 1-50 tekens\n\nVoorbeelden: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

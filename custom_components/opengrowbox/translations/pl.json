@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Utwórz pokój",
-        "description": "Wprowadź nazwę dla pokoju.\n\nDozwolone znaki: Litery (a-z, A-Z), cyfry (0-9), podkreślenia (_) lub myślniki (-)\nDługość: 1-50 znaków\n\nPrzykłady prawidłowych nazw: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Wprowadź nazwę dla pokoju.",
+        "data": {
+          "room_name": "Nazwa pokoju"
+        },
+        "data_description": {
+          "room_name": "Dozwolone znaki: a-z, A-Z, 0-9, _ lub -\nDługość: 1-50 znaków\n\nPrzykłady: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

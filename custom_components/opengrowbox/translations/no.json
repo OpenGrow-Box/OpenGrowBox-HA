@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Opprett rom",
-        "description": "Skriv inn et navn for rommet.\n\nTillatte tegn: Bokstaver (a-z, A-Z), tall (0-9), understrek (_) eller bindestrek (-)\nLengde: 1-50 tegn\n\nEksempler på gyldige navn: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Skriv inn et navn for rommet.",
+        "data": {
+          "room_name": "Romnavn"
+        },
+        "data_description": {
+          "room_name": "Tillatte tegn: a-z, A-Z, 0-9, _ eller -\nLengde: 1-50 tegn\n\nEksempler: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

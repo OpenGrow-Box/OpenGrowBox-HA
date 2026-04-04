@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Créer une pièce",
-        "description": "Entrez un nom pour la pièce.\n\nCaractères autorisés: Lettres (a-z, A-Z), chiffres (0-9), tiret bas (_) ou trait d'union (-)\nLongueur: 1-50 caractères\n\nExemples de noms valides: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Entrez un nom pour la pièce.",
+        "data": {
+          "room_name": "Nom de la pièce"
+        },
+        "data_description": {
+          "room_name": "Caractères autorisés: a-z, A-Z, 0-9, _ ou -\nLongueur: 1-50 caractères\n\nExemples: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

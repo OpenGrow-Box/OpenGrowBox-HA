@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Szoba létrehozása",
-        "description": "Adjon meg egy nevet a szobának.\n\nEngedélyezett karakterek: Betűk (a-z, A-Z), számok (0-9), aláhúzások (_) vagy kötőjelek (-)\nHossz: 1-50 karakter\n\nPéldák érvényes nevekre: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Adjon meg egy nevet a szobának.",
+        "data": {
+          "room_name": "Szobanév"
+        },
+        "data_description": {
+          "room_name": "Engedélyezett karakterek: a-z, A-Z, 0-9, _ vagy -\nHossz: 1-50 karakter\n\nPéldák: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

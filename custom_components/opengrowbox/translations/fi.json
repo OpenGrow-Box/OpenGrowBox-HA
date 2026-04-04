@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Luo huone",
-        "description": "Anna huoneelle nimi.\n\nSallitut merkit: Kirjaimet (a-z, A-Z), numerot (0-9), alaviivat (_) tai tavuviivat (-)\nPituus: 1-50 merkkiä\n\nEsimerkkejä kelvollisista nimistä: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Anna huoneelle nimi.",
+        "data": {
+          "room_name": "Huoneen nimi"
+        },
+        "data_description": {
+          "room_name": "Sallitut merkit: a-z, A-Z, 0-9, _ tai -\nPituus: 1-50 merkkiä\n\nEsimerkkejä: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

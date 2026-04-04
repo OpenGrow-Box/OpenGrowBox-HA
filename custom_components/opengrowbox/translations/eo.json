@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "Krei ĉambron",
-        "description": "Enigu nomon por la ĉambro.\n\nPermesitaj karakteroj: Literoj (a-z, A-Z), ciferoj (0-9), substrekoj (_) aŭ dividstreko (-)\nLongo: 1-50 signoj\n\nEkzemploj de validaj nomoj: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "Enigu nomon por la ĉambro.",
+        "data": {
+          "room_name": "Ĉambronomo"
+        },
+        "data_description": {
+          "room_name": "Permesitaj karakteroj: a-z, A-Z, 0-9, _ aŭ -\nLongo: 1-50 signoj\n\nEkzemploj: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {

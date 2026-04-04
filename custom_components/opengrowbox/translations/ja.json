@@ -3,7 +3,13 @@
     "step": {
       "user": {
         "title": "部屋を作成",
-        "description": "部屋の名前を入力してください。\n\n許可される文字: 英字(a-z, A-Z)、数字(0-9)、アンダースコア(_)またはハイフン(-)\n長さ: 1-50文字\n\n有効な名前の例: GrowRoom1, grow_box, Grow-Room-1, Anbaukasten"
+        "description": "部屋の名前を入力してください。",
+        "data": {
+          "room_name": "部屋名"
+        },
+        "data_description": {
+          "room_name": "許可文字: a-z, A-Z, 0-9, _ または -\n長さ: 1-50文字\n\n例: GrowRoom1, grow_box, Grow-Room-1"
+        }
       }
     },
     "error": {
