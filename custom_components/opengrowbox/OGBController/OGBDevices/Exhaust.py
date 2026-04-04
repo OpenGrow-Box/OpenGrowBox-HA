@@ -135,11 +135,11 @@ class Exhaust(Device):
                 "LogForClient",
                 {
                     "Name": self.room,
-                    "Action": "AirExchangeColdGuard",
+                    "Action": "EnvironmentGuard",
                     "Device": "canExhaust",
                     "From": "Increase",
                     "To": "Reduce",
-                    "Message": "Direct Increase Exhaust blocked by cold ambient guard",
+                    "Message": "Direct Increase Exhaust blocked by EnvironmentGuard",
                 },
                 haEvent=True,
                 debug_type="WARNING",

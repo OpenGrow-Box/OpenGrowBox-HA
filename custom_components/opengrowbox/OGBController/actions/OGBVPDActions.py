@@ -478,6 +478,34 @@ class OGBVPDActions:
             priority="",
         )
 
+    def _is_humidity_critical(self, tent_data: dict) -> bool:
+        """Check if humidity is at critical level requiring emergency override.
+        
+        Critical means:
+        - humidity >= maxHumidity (too wet - mold risk)
+        - humidity <= minHumidity (too dry)
+        """
+        current_hum = tent_data.get("humidity")
+        max_hum = tent_data.get("maxHumidity")
+        min_hum = tent_data.get("minHumidity")
+
+        if current_hum is None:
+            return False
+
+        current_hum_float = float(current_hum)
+
+        is_critical_over_max = (
+            max_hum is not None
+            and current_hum_float >= float(max_hum)
+        )
+
+        is_critical_under_min = (
+            min_hum is not None
+            and current_hum_float <= float(min_hum)
+        )
+
+        return is_critical_over_max or is_critical_under_min
+
     def _apply_temperature_safety_overrides(
         self, action_map: list, capabilities: Dict[str, Any], action_message: str
     ) -> list:
@@ -500,6 +528,10 @@ class OGBVPDActions:
         cold_guard = float(min_temp) + cooler_buffer
         hot_guard = float(max_temp) - heater_buffer
 
+        humidity_critical = self._is_humidity_critical(tent_data)
+        current_hum = tent_data.get("humidity")
+        max_hum = tent_data.get("maxHumidity")
+
         actions_by_capability = {}
         for action in action_map:
             capability = getattr(action, "capability", None)
@@ -511,19 +543,27 @@ class OGBVPDActions:
                 actions_by_capability[capability] = self._create_action(
                     capability,
                     action,
-                    f"{action_message} (TempSafety)",
+                    f"{action_message}",
                 )
 
         if float(current_temp) <= cold_guard:
             set_action("canHeat", "Increase")
             set_action("canCool", "Reduce")
-            set_action("canExhaust", "Reduce")
-            set_action("canVentilate", "Reduce")
-            set_action("canIntake", "Reduce")
-            _LOGGER.info(
-                f"{self.ogb.room}: Temp safety active (cold). temp={current_temp}°C, "
-                f"guard={cold_guard}°C -> heat up, cooling/airflow down"
-            )
+
+            if humidity_critical:
+                _LOGGER.warning(
+                    f"{self.ogb.room}: Humidity CRITICAL ({current_hum}%, max={max_hum}%), "
+                    f"allowing air exchange despite cold temp to prevent mold!"
+                )
+            else:
+                set_action("canExhaust", "Reduce")
+                set_action("canVentilate", "Reduce")
+                set_action("canIntake", "Reduce")
+                _LOGGER.info(
+                    f"{self.ogb.room}: Temp safety active (cold). temp={current_temp}°C, "
+                    f"guard={cold_guard}°C -> heat up, cooling/airflow down"
+                )
+
         elif float(current_temp) >= hot_guard:
             set_action("canHeat", "Reduce")
             set_action("canCool", "Increase")

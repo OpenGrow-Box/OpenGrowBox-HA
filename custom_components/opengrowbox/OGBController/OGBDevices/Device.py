@@ -70,17 +70,16 @@ class Device:
 
     def should_block_air_exchange_increase(self, capability: str, context_message: str = "") -> bool:
         """Guard direct air-exchange increase events when ambient conditions are too cold."""
-        # Lazy import avoids startup/module-order issues on some HA installs.
         try:
-            from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
+            from ..actions.OGBEnvironmentGuard import evaluate_environment_guard
         except ModuleNotFoundError:
             _LOGGER.warning(
-                "%s: OGBAirExchangeGuard module missing, skipping direct increase guard",
+                "%s: OGBEnvironmentGuard module missing, skipping direct increase guard",
                 self.deviceName,
             )
             return False
 
-        should_block, metadata = evaluate_air_exchange_cold_guard(
+        should_block, metadata = evaluate_environment_guard(
             self.dataStore,
             self.room,
             capability,
@@ -91,7 +90,7 @@ class Device:
 
         if should_block:
             _LOGGER.info(
-                f"{self.deviceName}: AirExchangeColdGuard blocked direct increase "
+                f"{self.deviceName}: EnvironmentGuard blocked direct increase "
                 f"for {capability} (reason={metadata.get('reason')})"
             )
 

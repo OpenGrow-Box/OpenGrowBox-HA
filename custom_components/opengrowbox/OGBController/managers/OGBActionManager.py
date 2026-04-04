@@ -12,7 +12,7 @@ import dataclasses
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..data.OGBDataClasses.OGBPublications import (OGBActionPublication,
                                               OGBHydroAction, OGBRetrieveAction,
@@ -560,6 +560,53 @@ class OGBActionManager:
             water_action = {"Name": self.room, "Device": dev, "Cycle": cycle, "Action": action, "Message": message}
             await self.event_manager.emit("LogForClient", water_action, haEvent=True, debug_type="INFO")
 
+    def _calculate_weighted_deviations(self, tent_data: Dict[str, Any]) -> Tuple[float, float, float, float, str]:
+        """
+        Calculate weighted temperature and humidity deviations.
+
+        Args:
+            tent_data: Current tent environmental data
+
+        Returns:
+            Tuple of (tempDeviation, humDeviation, tempWeight, humWeight, weightMessage)
+        """
+        # Get control settings
+        ownWeights = self.data_store.getDeep("controlOptions.ownWeights")
+
+        if ownWeights:
+            tempWeight = self.data_store.getDeep("controlOptionData.weights.temp")
+            humWeight = self.data_store.getDeep("controlOptionData.weights.hum")
+        else:
+            plantStage = self.data_store.get("plantStage")
+
+            # Late flower stages need higher humidity priority
+            if plantStage in ["LateFlower", "MidFlower"]:
+                tempWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue") * 1
+                humWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue") * 1.25
+            else:
+                tempWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue")
+                humWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue")
+        
+        tempDeviation = 0
+        humDeviation = 0
+        weightMessage = ""
+        
+        if tent_data["temperature"] > tent_data["maxTemp"]:
+            tempDeviation = round((tent_data["temperature"] - tent_data["maxTemp"]) * tempWeight, 2)
+            weightMessage = f"Temp Too High: Deviation {tempDeviation}"
+        elif tent_data["temperature"] < tent_data["minTemp"]:
+            tempDeviation = round((tent_data["temperature"] - tent_data["minTemp"]) * tempWeight, 2)
+            weightMessage = f"Temp Too Low: Deviation {tempDeviation}"
+            
+        if tent_data["humidity"] > tent_data["maxHumidity"]:
+            humDeviation = round((tent_data["humidity"] - tent_data["maxHumidity"]) * humWeight, 2)
+            weightMessage = f"Humidity Too High: Deviation {humDeviation}"
+        elif tent_data["humidity"] < tent_data["minHumidity"]:
+            humDeviation = round((tent_data["humidity"] - tent_data["minHumidity"]) * humWeight, 2)
+            weightMessage = f"Humidity Too Low: Deviation {humDeviation}"
+        
+        return tempDeviation, humDeviation, tempWeight, humWeight, weightMessage
+
     # =================================================================
     # Closed Environment Action Handlers
     # =================================================================
@@ -728,35 +775,64 @@ class OGBActionManager:
 
     async def checkLimitsAndPublicate(self, actionMap: List):
         """
-        Process actions with basic limit checking (no dampening).
-        
+        Process actions with weighted deviation calculation.
+
         This is the main entry point for basic VPD action processing.
-        Delegates to dampening_actions module if available.
-        
+
         Args:
             actionMap: List of actions to process
         """
         # CRITICAL: Check VPD Night Hold FIRST - if false, don't run actions
         if not await self._check_vpd_night_hold(actionMap):
             return
+
+        # Get tent data and calculate weighted deviations
+        tent_data = self.data_store.get("tentData")
+        tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
+        
+        # Emit WeightPublication LogForClient
+        WeightPublication = OGBWeightPublication(
+            Name=self.room,
+            message=weightMessage,
+            tempDeviation=tempDeviation,
+            humDeviation=humDeviation,
+            tempWeight=tempWeight,
+            humWeight=humWeight
+        )
+        await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
         
         if self.dampening_actions:
-            await self.dampening_actions.process_actions_basic(actionMap)
+            await self.dampening_actions.process_actions_basic(actionMap, tempDeviation, humDeviation)
         else:
             # Fallback: execute actions directly
-            await self.publicationActionHandler(actionMap)
+            final_actions = await self._apply_environment_guard(actionMap)
+            await self.publicationActionHandler(final_actions)
 
     async def checkLimitsAndPublicateTarget(self, actionMap: List):
         """Process VPD Target actions with separated target chain."""
         if not await self._check_vpd_night_hold(actionMap):
             return
 
+        # Get tent data and calculate weighted deviations
+        tent_data = self.data_store.get("tentData")
+        tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
+        
+        # Emit WeightPublication LogForClient
+        WeightPublication = OGBWeightPublication(
+            Name=self.room,
+            message=weightMessage,
+            tempDeviation=tempDeviation,
+            humDeviation=humDeviation,
+            tempWeight=tempWeight,
+            humWeight=humWeight
+        )
+        await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
+        
         if self.dampening_actions:
-            await self.dampening_actions.process_actions_target_basic(actionMap)
+            await self.dampening_actions.process_actions_target_basic(actionMap, tempDeviation, humDeviation)
         else:
-            filtered_actions, _ = self._filterActionsByDampening(actionMap)
-            if filtered_actions:
-                await self.publicationActionHandler(filtered_actions)
+            final_actions = await self._apply_environment_guard(actionMap)
+            await self.publicationActionHandler(final_actions)
 
     async def checkLimitsAndPublicateNoVPD(self, actionMap: List):
         """
@@ -771,6 +847,21 @@ class OGBActionManager:
         if not actionMap:
             return
 
+        # Get tent data and calculate weighted deviations for logging
+        tent_data = self.data_store.get("tentData")
+        tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
+        
+        # Emit WeightPublication LogForClient for Closed Environment
+        WeightPublication = OGBWeightPublication(
+            Name=self.room,
+            message=f"Closed Env: {weightMessage}",
+            tempDeviation=tempDeviation,
+            humDeviation=humDeviation,
+            tempWeight=tempWeight,
+            humWeight=humWeight
+        )
+        await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
+
         final_actions = actionMap
 
         # IMPORTANT: Closed Environment must bypass all VPD-specific processing.
@@ -780,6 +871,7 @@ class OGBActionManager:
         if self.dampening_actions:
             final_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
 
+        final_actions = await self._apply_environment_guard(final_actions)
         await self.publicationActionHandler(final_actions)
 
     async def checkLimitsAndPublicateWithDampening(self, actionMap: List):
@@ -821,7 +913,7 @@ class OGBActionManager:
             _LOGGER.info(f"{self.room}: Actions skipped - tent mode is Disabled")
             return
 
-        actionMap = await self._apply_air_exchange_cold_guard(actionMap)
+        actionMap = await self._apply_environment_guard(actionMap)
         _LOGGER.debug(f"{self.room}: Executing {len(actionMap)} validated actions")
 
         # Store previous actions for analytics - API expects specific format
@@ -947,17 +1039,17 @@ class OGBActionManager:
         if mainControl == "Premium":
             await self.event_manager.emit("DataRelease", True)
 
-    async def _apply_air_exchange_cold_guard(self, action_map: List) -> List:
+    async def _apply_environment_guard(self, action_map: List) -> List:
         """Rewrite unsafe air-exchange increases to reductions under cold ambient risk."""
         if not action_map:
             return action_map
 
         # Lazy import avoids circular import during module initialization.
         try:
-            from ..actions.OGBAirExchangeGuard import evaluate_air_exchange_cold_guard
+            from ..actions.OGBEnvironmentGuard import evaluate_environment_guard
         except ModuleNotFoundError:
             _LOGGER.warning(
-                "%s: OGBAirExchangeGuard module missing, skipping cold guard rewrite",
+                "%s: OGBEnvironmentGuard module missing, skipping environment guard rewrite",
                 self.room,
             )
             return action_map
@@ -972,7 +1064,7 @@ class OGBActionManager:
                 guarded_actions.append(action)
                 continue
 
-            should_block, metadata = evaluate_air_exchange_cold_guard(
+            should_block, metadata = evaluate_environment_guard(
                 self.data_store,
                 self.room,
                 cap,
@@ -983,9 +1075,9 @@ class OGBActionManager:
             )
 
             if should_block:
-                reason = metadata.get("reason", "cold_guard")
+                reason = metadata.get("reason", "environment_guard")
                 old_message = getattr(action, "message", "")
-                new_message = f"{old_message} (AirExchangeColdGuard:{reason})".strip()
+                new_message = f"{old_message} (EnvironmentGuard:{reason})".strip()
                 try:
                     guarded_actions.append(
                         dataclasses.replace(
@@ -1001,31 +1093,66 @@ class OGBActionManager:
                     guarded_actions.append(action)
 
                 _LOGGER.info(
-                    f"{self.room}: AirExchangeColdGuard rewrote {cap} Increase -> Reduce "
-                    f"(reason={reason}, source={metadata.get('source')})"
+                    f"{self.room}: EnvironmentGuard blocked {cap} Increase -> Reduce "
+                    f"(reason={reason}, selectedSource={metadata.get('selectedSource')})"
                 )
                 await self.event_manager.emit(
                     "LogForClient",
                     {
                         "Name": self.room,
-                        "Action": "AirExchangeColdGuard",
+                        "Action": "EnvironmentGuard",
                         "Device": cap,
                         "From": "Increase",
                         "To": "Reduce",
                         "Reason": reason,
                         "Message": (
-                            f"Cold ambient guard active: rewrote {cap} Increase -> Reduce "
-                            f"(reason={reason})"
+                            f"EnvironmentGuard blocked {cap}: {reason} "
+                            f"(indoor={metadata.get('indoorTemp')}°C/{metadata.get('indoorHum')}%, "
+                            f"source={metadata.get('selectedSource')}/{metadata.get('selectedTemp')}°C/{metadata.get('selectedHum')}%)"
                         ),
-                        "ambientTemp": metadata.get("ambientTemp"),
+                        "selectedSource": metadata.get("selectedSource"),
+                        "selectedTemp": metadata.get("selectedTemp"),
+                        "selectedHum": metadata.get("selectedHum"),
                         "indoorTemp": metadata.get("indoorTemp"),
+                        "indoorHum": metadata.get("indoorHum"),
+                        "maxHumidity": metadata.get("maxHumidity"),
+                        "minHumidity": metadata.get("minHumidity"),
                         "blockedCount": metadata.get("blockedCount"),
                         "lockUntil": metadata.get("lockUntil"),
+                        "priority": metadata.get("priority"),
                     },
                     haEvent=True,
                     debug_type="WARNING",
                 )
             else:
+                reason = metadata.get("reason", "allowed")
+                if "humidity" in reason.lower() or "temp" in reason.lower():
+                    await self.event_manager.emit(
+                        "LogForClient",
+                        {
+                            "Name": self.room,
+                            "Action": "EnvironmentGuard",
+                            "Device": cap,
+                            "From": "Increase",
+                            "To": "Increase",
+                            "Reason": reason,
+                            "Message": (
+                                f"EnvironmentGuard allowed {cap}: {reason} "
+                                f"(indoor={metadata.get('indoorTemp')}°C/{metadata.get('indoorHum')}%, "
+                                f"source={metadata.get('selectedSource')}/{metadata.get('selectedTemp')}°C/{metadata.get('selectedHum')}%)"
+                            ),
+                            "selectedSource": metadata.get("selectedSource"),
+                            "selectedTemp": metadata.get("selectedTemp"),
+                            "selectedHum": metadata.get("selectedHum"),
+                            "indoorTemp": metadata.get("indoorTemp"),
+                            "indoorHum": metadata.get("indoorHum"),
+                            "maxHumidity": metadata.get("maxHumidity"),
+                            "minHumidity": metadata.get("minHumidity"),
+                            "priority": metadata.get("priority"),
+                        },
+                        haEvent=True,
+                        debug_type="DEBUG",
+                    )
                 guarded_actions.append(action)
 
         return guarded_actions

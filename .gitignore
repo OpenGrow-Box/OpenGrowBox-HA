@@ -35,6 +35,9 @@ OZW_Log.txt
 home-assistant_v2.db
 home-assistant_v2.db-*
 
-# Ensure tests are tracked
+# Ensure tests are tracked (but not pycache)
 !tests/
 !tests/**
+
+# Re-ignore pycache in tests (override above)
+tests/**/__pycache__/

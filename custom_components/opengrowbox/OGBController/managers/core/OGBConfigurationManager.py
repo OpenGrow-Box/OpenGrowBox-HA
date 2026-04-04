@@ -408,15 +408,20 @@ class OGBConfigurationManager:
 
         if isinstance(data, dict) and "newState" in data:  # OGBInitData
             self.data_store.set("tentMode", value)
+            # Emit event to activate mode - needed for proper initialization
+            # Emit even during init so mode manager can properly set the mode
+            from ...data.OGBDataClasses.OGBPublications import OGBModeRunPublication
+            tent_mode_pub = OGBModeRunPublication(currentMode=value)
+            await self.event_manager.emit("selectActionMode", tent_mode_pub)
+            await self.event_manager.emit("PremiumModeChange", value)
+            _LOGGER.info(f"🔄 {self.room}: Tent mode set to '{value}' during initialization")
         elif hasattr(data, "newState"):  # OGBEventPublication
             if current_mode != value:
                 # Create proper mode publication for mode manager
                 from ...data.OGBDataClasses.OGBPublications import OGBModeRunPublication
                 tent_mode_pub = OGBModeRunPublication(currentMode=value)
                 self.data_store.set("tentMode", value)
-                #await self.event_manager.emit("selectActionMode", tent_mode_pub)
-
-                # Premium mode remapping - handled by premium manager
+                await self.event_manager.emit("selectActionMode", tent_mode_pub)
                 await self.event_manager.emit("PremiumModeChange", value)
         else:
             _LOGGER.error(

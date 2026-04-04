@@ -81,7 +81,7 @@ class OGBSoilPublication:
 class OGBMoisturePublication:
     Name: str
     MoistureValues: list
-    AvgMoisture: float | None = None
+    AvgMoisture: Optional[float] = None
 
 
 @dataclass

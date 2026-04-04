@@ -127,11 +127,11 @@ class Intake(Device):
                 "LogForClient",
                 {
                     "Name": self.room,
-                    "Action": "AirExchangeColdGuard",
+                    "Action": "EnvironmentGuard",
                     "Device": "canIntake",
                     "From": "Increase",
                     "To": "Reduce",
-                    "Message": "Direct Increase Intake blocked by cold ambient guard",
+                    "Message": "Direct Increase Intake blocked by EnvironmentGuard",
                 },
                 haEvent=True,
                 debug_type="WARNING",

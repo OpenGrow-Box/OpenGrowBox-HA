@@ -124,11 +124,11 @@ class Ventilation(Device):
                 "LogForClient",
                 {
                     "Name": self.room,
-                    "Action": "AirExchangeColdGuard",
+                    "Action": "EnvironmentGuard",
                     "Device": "canVentilate",
                     "From": "Increase",
                     "To": "Reduce",
-                    "Message": "Direct Increase Ventilation blocked by cold ambient guard",
+                    "Message": "Direct Increase Ventilation blocked by EnvironmentGuard",
                 },
                 haEvent=True,
                 debug_type="WARNING",

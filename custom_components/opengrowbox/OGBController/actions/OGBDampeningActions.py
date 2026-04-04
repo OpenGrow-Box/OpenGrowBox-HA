@@ -72,9 +72,8 @@ class OGBDampeningActions:
             temp_weight, hum_weight
         )
 
-        # Emit VPD Perfection diagnostics (similar visibility as VPD Target chain)
+        # Emit VPD Perfection diagnostics with weighted deviations
         current_vpd = self.ogb.dataStore.getDeep("vpd.current")
-        # For VPD Perfection, prefer perfection values and fall back to targeted values.
         target_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
         if target_vpd is None:
             target_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
@@ -86,6 +85,9 @@ class OGBDampeningActions:
         target_max = self.ogb.dataStore.getDeep("vpd.perfectMax")
         if target_max is None:
             target_max = self.ogb.dataStore.getDeep("vpd.targetedMax")
+
+        tent_data = self.ogb.dataStore.get("tentData")
+
         await self.ogb.eventManager.emit(
             "LogForClient",
             {
@@ -96,6 +98,17 @@ class OGBDampeningActions:
                 "vpdTargetMin": target_min,
                 "vpdTargetMax": target_max,
                 "incomingActions": len(action_map),
+                "tempDeviation": temp_deviation,
+                "humDeviation": hum_deviation,
+                "tempWeight": temp_weight,
+                "humWeight": hum_weight,
+                "weightMessage": weight_message,
+                "tempCurrent": tent_data.get("temperature"),
+                "humCurrent": tent_data.get("humidity"),
+                "tempMin": tent_data.get("minTemp"),
+                "tempMax": tent_data.get("maxTemp"),
+                "humMin": tent_data.get("minHumidity"),
+                "humMax": tent_data.get("maxHumidity"),
             },
             haEvent=True,
             debug_type="DEBUG",
@@ -107,7 +120,6 @@ class OGBDampeningActions:
         )
 
         # Check for emergency conditions
-        tent_data = self.ogb.dataStore.get("tentData")
         emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
         if emergency_conditions:
             self.action_manager._clearCooldownForEmergency(emergency_conditions)
@@ -203,109 +215,150 @@ class OGBDampeningActions:
 
         return final_actions
 
-    async def process_actions_basic(self, action_map: List) -> List:
+    async def process_actions_basic(self, action_map: List, temp_deviation: float, hum_deviation: float) -> List:
         """
-        Process actions without dampening (basic mode).
+        Process VPD Perfection actions with weighted deviations from ActionManager.
 
         Args:
-            action_map: List of actions to process
+            action_map: Initial list of actions to process
+            temp_deviation: Weighted temperature deviation (calculated by ActionManager)
+            hum_deviation: Weighted humidity deviation (calculated by ActionManager)
 
         Returns:
             Final list of actions to execute
         """
         _LOGGER.debug(
-            f"{self.ogb.room}: Processing {len(action_map)} actions (basic mode)"
+            f"{self.ogb.room}: Processing {len(action_map)} VPD Perfection actions (central weighted deviations)"
         )
 
-        # Get basic control settings
-        vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
-        night_vpd_hold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold")
-        is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON")
-
-        # Check night hold conditions
-        if not is_light_on and not night_vpd_hold:
-            _LOGGER.debug(f"{self.ogb.room}: VPD Night Hold Not Active - Ignoring VPD")
-            await self._night_hold_fallback(action_map)
-            return []
-
-        # Calculate basic deviations (no weights)
         tent_data = self.ogb.dataStore.get("tentData")
-        temp_deviation, hum_deviation = self._calculate_basic_deviations(tent_data)
 
-        # Get capabilities and enhance action map
-        caps = self.ogb.dataStore.get("capabilities")
-        vpd_status = self._determine_vpd_status(
-            temp_deviation, hum_deviation, tent_data
-        )
-        optimal_devices = self._get_optimal_devices(vpd_status)
-
-        enhanced_action_map = self._enhance_action_map(
-            action_map,
-            temp_deviation,
-            hum_deviation,
-            tent_data,
-            caps,
-            vpd_light_control,
-            is_light_on,
-            optimal_devices,
-            vpd_status,  # Add VPD status for context-aware enhancement
-        )
-
-        # Resolve conflicts
-        final_actions = self._resolve_action_conflicts(enhanced_action_map)
-
-        # Execute actions
-        await self._execute_actions(final_actions)
-
-        return final_actions
-
-    async def process_actions_target_basic(self, action_map: List) -> List:
-        """Process VPD Target actions with shared safety but without enhancement injection."""
-        _LOGGER.debug(
-            f"{self.ogb.room}: Processing {len(action_map)} VPD Target actions (separated chain)"
-        )
-
-        # Keep night hold behavior identical to standard VPD chain
-        night_vpd_hold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold")
-        is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON")
-        if not is_light_on and not night_vpd_hold:
-            _LOGGER.debug(f"{self.ogb.room}: VPD Night Hold Not Active - Ignoring VPD")
-            await self._night_hold_fallback(action_map)
+        if not action_map:
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Perfection chain: no actions to process",
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
+                },
+                haEvent=True,
+                debug_type="DEBUG",
+            )
             return []
 
-        tent_data = self.ogb.dataStore.get("tentData") or {}
-        has_env_limits = all(
-            key in tent_data
-            for key in ("temperature", "humidity", "minTemp", "maxTemp", "minHumidity", "maxHumidity")
+        # Apply buffer zones to prevent oscillation
+        buffered_actions = self._apply_buffer_zones(action_map, tent_data)
+
+        # Resolve conflicts between actions
+        resolved_actions = self._resolve_action_conflicts(buffered_actions)
+
+        if not resolved_actions:
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Perfection chain: no actions after buffer/conflict resolution",
+                    "incomingActions": len(action_map),
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
+                },
+                haEvent=True,
+                debug_type="DEBUG",
+            )
+            return []
+
+        # Emergency handling
+        emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
+        if emergency_conditions:
+            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+
+        # Apply dampening (cooldown) filter
+        filtered_actions, _ = self.action_manager._filterActionsByDampening(
+            resolved_actions, temp_deviation, hum_deviation
         )
 
-        # Use targeted VPD bounds from datastore for diagnostics and traceability
-        current_vpd = self.ogb.dataStore.getDeep("vpd.current")
-        targeted_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
-        targeted_min = self.ogb.dataStore.getDeep("vpd.targetedMin")
-        targeted_max = self.ogb.dataStore.getDeep("vpd.targetedMax")
-        _LOGGER.debug(
-            f"{self.ogb.room}: VPD Target dampening context: "
-            f"current={current_vpd}, targeted={targeted_vpd}, "
-            f"min={targeted_min}, max={targeted_max}"
-        )
+        if not filtered_actions:
+            await self._handle_blocked_actions(
+                resolved_actions, emergency_conditions, temp_deviation, hum_deviation
+            )
+            current_vpd = tent_data.get("vpd", 0)
+            target_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Perfection chain: all actions blocked by dampening/cooldown",
+                    "incomingActions": len(action_map),
+                    "resolvedActions": len(resolved_actions),
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
+                    "vpdCurrent": current_vpd,
+                    "vpdTarget": target_vpd,
+                },
+                haEvent=True,
+                debug_type="WARNING",
+            )
+            return []
+
+        current_vpd = tent_data.get("vpd", 0)
+        target_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
         await self.ogb.eventManager.emit(
             "LogForClient",
             {
                 "Name": self.ogb.room,
-                "message": "VPD Target separated chain started",
-                "vpdCurrent": current_vpd,
-                "vpdTarget": targeted_vpd,
-                "vpdTargetMin": targeted_min,
-                "vpdTargetMax": targeted_max,
+                "message": "VPD Perfection chain: executing filtered actions",
                 "incomingActions": len(action_map),
+                "resolvedActions": len(resolved_actions),
+                "filteredActions": len(filtered_actions),
+                "tempDeviation": temp_deviation,
+                "humDeviation": hum_deviation,
+                "vpdCurrent": current_vpd,
+                "vpdTarget": target_vpd,
             },
             haEvent=True,
-            debug_type="DEBUG",
+            debug_type="INFO",
         )
 
-        # Shared basic safety: buffer zones + conflict resolution
+        await self._execute_actions(filtered_actions)
+        return filtered_actions
+
+    async def process_actions_target_basic(self, action_map: List, temp_deviation: float, hum_deviation: float) -> List:
+        """
+        Process VPD Target actions with weighted deviations from ActionManager.
+
+        Args:
+            action_map: Initial list of actions to process
+            temp_deviation: Weighted temperature deviation (calculated by ActionManager)
+            hum_deviation: Weighted humidity deviation (calculated by ActionManager)
+
+        Returns:
+            Final list of actions to execute
+        """
+        _LOGGER.debug(
+            f"{self.ogb.room}: Processing {len(action_map)} VPD Target actions (central weighted deviations)"
+        )
+
+        tent_data = self.ogb.dataStore.get("tentData")
+
+        if not action_map:
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "message": "VPD Target chain: no actions to process",
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
+                },
+                haEvent=True,
+                debug_type="DEBUG",
+            )
+            return []
+
+        # Apply buffer zones to prevent oscillation
         buffered_actions = self._apply_buffer_zones(action_map, tent_data)
+
+        # Resolve conflicts between actions
         resolved_actions = self._resolve_action_conflicts(buffered_actions)
 
         if not resolved_actions:
@@ -315,27 +368,20 @@ class OGBDampeningActions:
                     "Name": self.ogb.room,
                     "message": "VPD Target chain: no actions after buffer/conflict resolution",
                     "incomingActions": len(action_map),
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
                 },
                 haEvent=True,
                 debug_type="DEBUG",
             )
             return []
 
-        if has_env_limits:
-            temp_deviation, hum_deviation = self._calculate_basic_deviations(tent_data)
-        else:
-            temp_deviation, hum_deviation = 0.0, 0.0
-
-        # Keep emergency handling/cooldown clearing behavior
-        emergency_conditions = (
-            self.action_manager._getEmergencyOverride(tent_data)
-            if has_env_limits and "dewpoint" in tent_data
-            else []
-        )
+        # Emergency handling
+        emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
         if emergency_conditions:
             self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
-        # Keep dampening (cooldown) filter behavior
+        # Apply dampening (cooldown) filter
         filtered_actions, _ = self.action_manager._filterActionsByDampening(
             resolved_actions, temp_deviation, hum_deviation
         )
@@ -344,36 +390,39 @@ class OGBDampeningActions:
             await self._handle_blocked_actions(
                 resolved_actions, emergency_conditions, temp_deviation, hum_deviation
             )
+            current_vpd = tent_data.get("vpd", 0)
+            target_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
             await self.ogb.eventManager.emit(
                 "LogForClient",
                 {
                     "Name": self.ogb.room,
                     "message": "VPD Target chain: all actions blocked by dampening/cooldown",
+                    "incomingActions": len(action_map),
                     "resolvedActions": len(resolved_actions),
-                    "emergency": emergency_conditions,
+                    "tempDeviation": temp_deviation,
+                    "humDeviation": hum_deviation,
                     "vpdCurrent": current_vpd,
-                    "vpdTarget": targeted_vpd,
-                    "vpdTargetMin": targeted_min,
-                    "vpdTargetMax": targeted_max,
+                    "vpdTarget": target_vpd,
                 },
                 haEvent=True,
                 debug_type="WARNING",
             )
             return []
 
+        current_vpd = tent_data.get("vpd", 0)
+        target_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
         await self.ogb.eventManager.emit(
             "LogForClient",
             {
                 "Name": self.ogb.room,
                 "message": "VPD Target chain: executing filtered actions",
+                "incomingActions": len(action_map),
                 "resolvedActions": len(resolved_actions),
                 "filteredActions": len(filtered_actions),
                 "tempDeviation": temp_deviation,
                 "humDeviation": hum_deviation,
                 "vpdCurrent": current_vpd,
-                "vpdTarget": targeted_vpd,
-                "vpdTargetMin": targeted_min,
-                "vpdTargetMax": targeted_max,
+                "vpdTarget": target_vpd,
             },
             haEvent=True,
             debug_type="INFO",

@@ -62,7 +62,7 @@ async def test_publication_action_handler_emits_expected_events(monkeypatch):
     async def passthrough(actions):
         return actions
 
-    monkeypatch.setattr(manager, "_apply_air_exchange_cold_guard", passthrough)
+    monkeypatch.setattr(manager, "_apply_environment_guard", passthrough)
 
     actions = [
         OGBActionPublication(
@@ -93,17 +93,17 @@ async def test_publication_action_handler_emits_expected_events(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_apply_air_exchange_cold_guard_rewrites_increase(monkeypatch):
+async def test_apply_environment_guard_rewrites_increase(monkeypatch):
     data_store = FakeDataStore()
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "dev_room")
 
-    import custom_components.opengrowbox.OGBController.actions.OGBAirExchangeGuard as guard
+    import custom_components.opengrowbox.OGBController.actions.OGBEnvironmentGuard as guard
 
     def fake_guard(*_args, **_kwargs):
-        return True, {"reason": "cold_ambient", "source": "test"}
+        return True, {"reason": "temp_risk_cold_source", "source": "test", "selectedSource": "ambient"}
 
-    monkeypatch.setattr(guard, "evaluate_air_exchange_cold_guard", fake_guard)
+    monkeypatch.setattr(guard, "evaluate_environment_guard", fake_guard)
 
     action = OGBActionPublication(
         Name="dev_room",
@@ -112,8 +112,8 @@ async def test_apply_air_exchange_cold_guard_rewrites_increase(monkeypatch):
         action="Increase",
         priority="medium",
     )
-    result = await manager._apply_air_exchange_cold_guard([action])
+    result = await manager._apply_environment_guard([action])
 
     assert result[0].action == "Reduce"
-    assert "AirExchangeColdGuard" in result[0].message
+    assert "EnvironmentGuard" in result[0].message
     assert any(e["event_name"] == "LogForClient" for e in event_manager.emitted)

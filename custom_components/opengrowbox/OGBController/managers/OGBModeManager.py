@@ -103,10 +103,26 @@ class OGBModeManager:
     async def handle_disabled_mode(self):
         """
         Handhabt den Modus 'Disabled'.
+        Stops all active control actions and ensures devices are in safe state.
         """
+        _LOGGER.info(f"🔴 {self.room}: Tent mode set to Disabled - stopping all control actions")
+        
+        # Emit disabled event for other managers to clean up
+        await self.event_manager.emit("TentModeDisabled", {"room": self.room})
+        
+        # Log the disabled state
         await self.event_manager.emit(
             "LogForClient", {"Name": self.room, "Mode": "Disabled"}
         )
+        
+        # Emit MinMaxControlDisabled for all device types to ensure safe state
+        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Light"})
+        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Ventilation"})
+        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Exhaust"})
+        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Intake"})
+        
+        _LOGGER.info(f"🔴 {self.room}: All control actions disabled")
+        
         return None
 
     async def handle_closed_environment(self):

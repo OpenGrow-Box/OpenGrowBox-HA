@@ -83,3 +83,126 @@ def test_temperature_safety_hot_overrides_actions():
     assert ("canVentilate", "Increase") in names
     assert ("canExhaust", "Increase") in names
     assert ("canIntake", "Increase") in names
+
+
+def test_temperature_safety_cold_allows_air_exchange_when_humidity_critical_absolute():
+    store = FakeDataStore(
+        {
+            "tentData": {
+                "temperature": 18.0,
+                "minTemp": 18.0,
+                "maxTemp": 28.0,
+                "humidity": 92.0,
+                "maxHumidity": 80.0,
+            },
+            "controlOptions": {
+                "heaterBuffer": 2.0,
+                "coolerBuffer": 2.0,
+                "environmentGuardHumidityEmergencyThreshold": 90.0,
+                "environmentGuardHumidityCriticalMargin": 10.0,
+            },
+        }
+    )
+    ogb = FakeOGB(store)
+    vpd_actions = OGBVPDActions(ogb)
+
+    capabilities = {
+        "canHeat": {"state": True},
+        "canCool": {"state": True},
+        "canVentilate": {"state": True},
+        "canExhaust": {"state": True},
+        "canIntake": {"state": True},
+    }
+
+    result = vpd_actions._apply_temperature_safety_overrides(
+        _base_action_map(vpd_actions), capabilities, "VPD"
+    )
+    names = action_names(result)
+
+    assert ("canHeat", "Increase") in names
+    assert ("canCool", "Reduce") in names
+    assert ("canVentilate", "Increase") in names
+    assert ("canExhaust", "Increase") in names
+    assert ("canIntake", "Increase") in names
+
+
+def test_temperature_safety_cold_allows_air_exchange_when_humidity_critical_relative():
+    store = FakeDataStore(
+        {
+            "tentData": {
+                "temperature": 18.0,
+                "minTemp": 18.0,
+                "maxTemp": 28.0,
+                "humidity": 92.0,
+                "maxHumidity": 80.0,
+            },
+            "controlOptions": {
+                "heaterBuffer": 2.0,
+                "coolerBuffer": 2.0,
+                "environmentGuardHumidityEmergencyThreshold": 95.0,
+                "environmentGuardHumidityCriticalMargin": 10.0,
+            },
+        }
+    )
+    ogb = FakeOGB(store)
+    vpd_actions = OGBVPDActions(ogb)
+
+    capabilities = {
+        "canHeat": {"state": True},
+        "canCool": {"state": True},
+        "canVentilate": {"state": True},
+        "canExhaust": {"state": True},
+        "canIntake": {"state": True},
+    }
+
+    result = vpd_actions._apply_temperature_safety_overrides(
+        _base_action_map(vpd_actions), capabilities, "VPD"
+    )
+    names = action_names(result)
+
+    assert ("canHeat", "Increase") in names
+    assert ("canCool", "Reduce") in names
+    assert ("canVentilate", "Increase") in names
+    assert ("canExhaust", "Increase") in names
+    assert ("canIntake", "Increase") in names
+
+
+def test_temperature_safety_cold_blocks_air_exchange_when_humidity_normal():
+    store = FakeDataStore(
+        {
+            "tentData": {
+                "temperature": 18.0,
+                "minTemp": 18.0,
+                "maxTemp": 28.0,
+                "humidity": 70.0,
+                "maxHumidity": 80.0,
+            },
+            "controlOptions": {
+                "heaterBuffer": 2.0,
+                "coolerBuffer": 2.0,
+                "environmentGuardHumidityEmergencyThreshold": 90.0,
+                "environmentGuardHumidityCriticalMargin": 10.0,
+            },
+        }
+    )
+    ogb = FakeOGB(store)
+    vpd_actions = OGBVPDActions(ogb)
+
+    capabilities = {
+        "canHeat": {"state": True},
+        "canCool": {"state": True},
+        "canVentilate": {"state": True},
+        "canExhaust": {"state": True},
+        "canIntake": {"state": True},
+    }
+
+    result = vpd_actions._apply_temperature_safety_overrides(
+        _base_action_map(vpd_actions), capabilities, "VPD"
+    )
+    names = action_names(result)
+
+    assert ("canHeat", "Increase") in names
+    assert ("canCool", "Reduce") in names
+    assert ("canVentilate", "Reduce") in names
+    assert ("canExhaust", "Reduce") in names
+    assert ("canIntake", "Reduce") in names
