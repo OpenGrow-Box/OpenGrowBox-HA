@@ -157,9 +157,10 @@ class CustomSelect(SelectEntity, RestoreEntity):
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up select entities."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
+    room_name = config_entry.data.get("room_name", "").lower()
 
-    # Add global Room Selector if not already added
-    if "room_selector" not in hass.data[DOMAIN]:
+    # Add global Room Selector only for ambient room
+    if room_name == "ambient" and "room_selector" not in hass.data[DOMAIN]:
         room_selector = coordinator.create_room_selector()
         hass.data[DOMAIN]["room_selector"] = room_selector
         async_add_entities([room_selector])

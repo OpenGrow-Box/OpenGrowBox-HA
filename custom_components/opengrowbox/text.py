@@ -122,11 +122,13 @@ class CustomText(TextEntity, RestoreEntity):
 async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entities):
     """Set up text entities for OpenGrowBox."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
+    room_name = config_entry.data.get("room_name", "").lower()
 
     if "texts" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["texts"] = []
 
-    if "access_token_entity" not in hass.data[DOMAIN]:
+    # Only create global AccessToken for ambient room
+    if room_name == "ambient" and "access_token_entity" not in hass.data[DOMAIN]:
         access_token_entity = OpenGrowBoxAccessToken(
             name="OGB_AccessToken",
             room_name="Hub",
@@ -136,8 +138,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
         async_add_entities([access_token_entity])
         hass.data[DOMAIN]["texts"].append(access_token_entity)
         hass.data[DOMAIN]["access_token_entity"] = access_token_entity
-        _LOGGER.info("AccessToken entity registered")
-    else:
+        _LOGGER.info("AccessToken entity registered for ambient")
+    elif room_name == "ambient":
         _LOGGER.debug("AccessToken entity already registered")
 
     # Räume-spezifische Texte hinzufügen

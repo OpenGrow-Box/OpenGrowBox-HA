@@ -210,10 +210,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         if ambient_ok:
             hass.data[DOMAIN][_AMBIENT_ENSURE_FLAG] = True
 
-    # CRITICAL: Re-run global device area assignment after ambient is ensured
-    # This ensures global devices (global_hub, room_selector) are assigned to ambient
-    await _ensure_global_devices_in_ambient(hass)
-
     # Service registration happens in sensor.py to access sensor objects directly
     _LOGGER.info(f"✅ Integration setup complete, waiting for sensor platform to register services")
 
