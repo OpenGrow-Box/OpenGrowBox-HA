@@ -258,6 +258,39 @@ class Sensor:
             _LOGGER.info(
                 f"Sensor-Device {self.deviceName} erfolgreich initialisiert mit {len(self._entity_to_config)} Sensoren"
             )
+            
+            # Initial ORP calculation: if both pH and water temp are available
+            # This handles the case where sensors are initialized but never trigger state_changed
+            ph_sensor = self.getSensorByType("ph", context="water")
+            temp_sensor = self.getSensorByType("temperature", context="water")
+            
+            if ph_sensor and temp_sensor:
+                ph_value = ph_sensor.get("last_reading") or ph_sensor.get("state")
+                temp_value = temp_sensor.get("last_reading") or temp_sensor.get("state")
+                
+                if ph_value is not None and temp_value is not None:
+                    try:
+                        ph_numeric = float(ph_value)
+                        temp_numeric = float(temp_value)
+                        orp_value = calculate_orp(ph_numeric, temp_numeric)
+                        
+                        # Store calculated ORP to datastore
+                        self.data_store.setDeep("Hydro.oxi_current", float(orp_value))
+                        self.data_store.setDeep("Hydro.ph_current", float(ph_numeric))
+                        self.data_store.setDeep("Hydro.current_temp", float(temp_numeric))
+                        
+                        # Update the ORP sensor entity
+                        from .Sensor import _update_specific_sensor
+                        await _update_specific_sensor(
+                            "ogb_waterorp_", self.room, orp_value, self.hass
+                        )
+                        
+                        _LOGGER.info(
+                            f"[{self.room}] Initial ORP calculated: {orp_value:.2f} mV "
+                            f"(pH={ph_numeric}, temp={temp_numeric}°C)"
+                        )
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.error(f"[{self.room}] Failed to calculate initial ORP: {e}")
 
         except Exception as e:
             _LOGGER.error(
