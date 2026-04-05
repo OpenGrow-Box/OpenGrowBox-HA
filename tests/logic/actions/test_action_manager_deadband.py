@@ -354,3 +354,41 @@ async def test_mode_manager_emits_events_even_in_deadband():
     # ModeManager should NOT emit event because VPD is in range
     # (not below min or above max)
     assert len(emitted_events) == 0
+
+
+@pytest.mark.asyncio
+async def test_mode_manager_skips_ambient_room():
+    """Test that ModeManager skips ambient room in all VPD modes."""
+    from custom_components.opengrowbox.OGBController.managers.OGBModeManager import OGBModeManager
+
+    data_store = FakeDataStore(
+        {
+            "selectedMode": "VPD Perfection",
+            "vpd": {
+                "current": 1.00,
+                "perfection": 1.10,
+                "perfectMin": 1.00,
+                "perfectMax": 1.20,
+            },
+            "capabilities": {
+                "canExhaust": {"state": True},
+            },
+        }
+    )
+    event_manager = FakeEventManager()
+
+    emitted_events = []
+
+    def capture_event(event_name, _data):
+        emitted_events.append(event_name)
+
+    event_manager.on = lambda name, handler: None
+    event_manager.emit = capture_event
+
+    # Test with "ambient" room name
+    manager = OGBModeManager(None, data_store, event_manager, "ambient")
+
+    await manager.handle_vpd_perfection()
+
+    # No events should be emitted for ambient room
+    assert len(emitted_events) == 0

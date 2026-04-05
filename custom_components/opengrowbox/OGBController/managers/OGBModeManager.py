@@ -130,6 +130,14 @@ class OGBModeManager:
         Handhabt den Modus 'Closed Environment' für sealed grow chambers (stateless).
         Executes one control cycle with ambient-enhanced logic.
         """
+        # Ambient room should never trigger Closed Environment actions - only used as reference
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(
+                f"{self.room}: Ambient room - skipping Closed Environment mode, "
+                f"only used as reference for other rooms"
+            )
+            return
+
         _LOGGER.debug(f"ModeManager: {self.room} executing Closed Environment cycle")
 
         # Execute single control cycle (stateless like VPD Perfection)
@@ -145,6 +153,14 @@ class OGBModeManager:
         """
         Handhabt den Modus 'VPD Perfection' und steuert die Geräte basierend auf dem aktuellen VPD-Wert.
         """
+        # Ambient room should never trigger VPD actions - only used as reference for Closed Environment
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(
+                f"{self.room}: Ambient room - skipping VPD Perfection mode, "
+                f"only used as reference for Closed Environment"
+            )
+            return
+
         # Aktuelle VPD-Werte abrufen
         currentVPD = self.data_store.getDeep("vpd.current")
         perfectionVPD = self.data_store.getDeep("vpd.perfection")
@@ -178,6 +194,14 @@ class OGBModeManager:
         """
         Handhabt den Modus 'Targeted VPD' mit Toleranz.
         """
+        # Ambient room should never trigger VPD actions - only used as reference for Closed Environment
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(
+                f"{self.room}: Ambient room - skipping VPD Target mode, "
+                f"only used as reference for Closed Environment"
+            )
+            return
+
         _LOGGER.info(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
         _LOGGER.debug(
             f"{self.room} VPD Target state: "

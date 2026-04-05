@@ -664,6 +664,21 @@ class Device:
         # Find matching capability for this device type
         for cap, deviceTypes in CAP_MAPPING.items():
             if self.deviceType.lower() in (dt.lower() for dt in deviceTypes):
+                # NEW: Check if switch entities are enabled before registering
+                all_entities_enabled = True
+                for switch in self.switches:
+                    entity_id = switch.get("entity_id")
+                    if entity_id and not self._is_entity_enabled(entity_id):
+                        all_entities_enabled = False
+                        _LOGGER.warning(
+                            f"{self.deviceName}: Entity {entity_id} is DISABLED - "
+                            f"skipping capability registration for {cap}"
+                        )
+                        break
+                
+                if not all_entities_enabled:
+                    continue  # Skip this capability if any entity is disabled
+
                 capPath = f"capabilities.{cap}"
                 currentCap = self.dataStore.getDeep(capPath)
 
@@ -677,7 +692,7 @@ class Device:
                     currentCap["state"] = True
                 currentCap["count"] += 1
                 currentCap["devEntities"].append(self.deviceName)
-                
+
                 # Write updated data back to dataStore
                 self.dataStore.setDeep(capPath, currentCap)
 
@@ -1013,6 +1028,33 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Entity {entity_id} is {state.state}, device considered offline")
                         return False
         return True
+
+    def _is_entity_enabled(self, entity_id: str) -> bool:
+        """
+        Check if an entity is enabled (not disabled) in Home Assistant.
+
+        Args:
+            entity_id: Home Assistant entity ID
+
+        Returns:
+            True if entity is enabled, False if disabled
+        """
+        try:
+            from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+
+            entity_registry = async_get_entity_registry(self.hass)
+            entry = entity_registry.async_get(entity_id)
+
+            if entry and entry.disabled:
+                _LOGGER.debug(
+                    f"{self.deviceName}: Entity {entity_id} is DISABLED by {entry.disabled_by}"
+                )
+                return False
+
+            return True
+        except Exception as e:
+            _LOGGER.warning(f"{self.deviceName}: Error checking entity enabled state: {e}")
+            return True  # Default to enabled if check fails
 
     async def turn_on(self, **kwargs):
         """Schaltet das Gerät ein."""

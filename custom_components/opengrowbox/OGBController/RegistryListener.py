@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 
+from homeassistant.core import callback
 from homeassistant.helpers.area_registry import \
     async_get as async_get_area_registry
 from homeassistant.helpers.device_registry import \
@@ -194,6 +195,15 @@ class OGBRegistryEvenListener:
 
         async def process_entity(entity):
             """Verarbeite eine einzelne Entität mit Retry-Logik."""
+            
+            # NEW: Skip disabled entities
+            if entity.disabled:
+                _LOGGER.debug(
+                    f"Skipping disabled entity: {entity.entity_id} "
+                    f"(disabled by: {entity.disabled_by})"
+                )
+                return None
+            
             is_ogb_room_entity = "ogb_" in entity.entity_id and f"_{room_lower}" in entity.entity_id
             
             if not is_ogb_room_entity and entity.device_id not in devices_in_room:
@@ -364,6 +374,15 @@ class OGBRegistryEvenListener:
 
         async def process_entity(entity):
             """Verarbeite eine einzelne Entität mit Retry-Logik."""
+            
+            # NEW: Skip disabled entities
+            if entity.disabled:
+                _LOGGER.debug(
+                    f"Skipping disabled entity: {entity.entity_id} "
+                    f"(disabled by: {entity.disabled_by})"
+                )
+                return None
+            
             # BESTEHENDE LOGIK: Physische Devices müssen im Raum sein
             if entity.device_id and entity.device_id not in devices_in_room:
                 return None
@@ -557,6 +576,113 @@ class OGBRegistryEvenListener:
                 # Light Shedule Check
                 # await self.event_manager.emit("LightSheduleUpdate",None)
 
+        # Listen to entity registry changes (enable/disable)
+        self._listen_to_entity_registry_changes()
+
         # Registriere den Listener
         self.hass.bus.async_listen("state_changed", registryEventListener)
         _LOGGER.debug(f"State-Change Listener für Raum {room_name} registriert.")
+
+    def _listen_to_entity_registry_changes(self):
+        """Listen for entity enabled/disabled changes."""
+        
+        @callback
+        async def handle_entity_registry_updated(event):
+            """Handle entity registry updates (enable/disable)."""
+            entity_id = event.data.get("entity_id")
+            changes = event.data.get("changes")
+            
+            if not changes or "disabled_by" not in changes:
+                return
+            
+            from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+            from homeassistant.helpers import device_registry as dr
+            from homeassistant.core import callback
+            
+            entity_registry = async_get_entity_registry(self.hass)
+            entry = entity_registry.async_get(entity_id)
+            
+            if not entry:
+                return
+            
+            if entry.disabled:
+                _LOGGER.warning(
+                    f"{self.room_name}: Entity {entity_id} was DISABLED by {entry.disabled_by}"
+                )
+                # Remove from capabilities
+                await self._remove_disabled_entity_from_capabilities(entry)
+            else:
+                _LOGGER.info(
+                    f"{self.room_name}: Entity {entity_id} was ENABLED"
+                )
+                # Re-register in capabilities
+                await self._register_enabled_entity_in_capabilities(entry)
+        
+        # Subscribe to entity registry events
+        self.hass.bus.async_listen(
+            "entity_registry_updated",
+            handle_entity_registry_updated
+        )
+        _LOGGER.debug(f"Entity Registry Listener für Raum {self.room_name} registriert.")
+
+    async def _remove_disabled_entity_from_capabilities(self, entry):
+        """Remove disabled entity from capabilities."""
+        if not entry.device_id:
+            return
+        
+        # Get current capabilities
+        capabilities = self.data_store.get("capabilities", {})
+        
+        # Find which capabilities this device belongs to
+        for cap, cap_data in capabilities.items():
+            if entry.entity_id in cap_data.get("devEntities", []):
+                # Remove device from capability
+                cap_data["devEntities"].remove(entry.entity_id)
+                cap_data["count"] = len(cap_data["devEntities"])
+                
+                # Update state if no devices left
+                if cap_data["count"] == 0:
+                    cap_data["state"] = False
+                
+                # Update capabilities
+                self.data_store.setDeep(f"capabilities.{cap}", cap_data)
+                
+                _LOGGER.info(
+                    f"{self.room_name}: Removed disabled device {entry.entity_id} "
+                    f"from capability {cap}. Remaining: {cap_data['count']}"
+                )
+
+    async def _register_enabled_entity_in_capabilities(self, entry):
+        """Re-register enabled entity in capabilities."""
+        if not entry.device_id:
+            return
+        
+        from ..data.OGBParams.OGBParams import CAP_MAPPING
+        
+        # Find which capabilities this device type belongs to
+        for cap, device_types in CAP_MAPPING.items():
+            # Check if entity matches device type
+            entity_device = entry.device_id.split(".")[1].split("_")[0] if "." in entry.device_id and "_" in entry.device_id else None
+            
+            if not entity_device:
+                continue
+            
+            if entity_device.lower() in (dt.lower() for dt in device_types):
+                cap_path = f"capabilities.{cap}"
+                current_cap = self.data_store.getDeep(cap_path)
+                
+                if not current_cap:
+                    continue
+                
+                # Re-register device
+                if entry.entity_id not in current_cap["devEntities"]:
+                    current_cap["devEntities"].append(entry.entity_id)
+                    current_cap["count"] = len(current_cap["devEntities"])
+                    current_cap["state"] = True
+                    
+                    self.data_store.setDeep(cap_path, current_cap)
+                    
+                    _LOGGER.info(
+                        f"{self.room_name}: Re-enabled device {entry.entity_id} "
+                        f"in capability {cap}. Total: {current_cap['count']}"
+                    )
