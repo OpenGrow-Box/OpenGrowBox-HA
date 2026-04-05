@@ -320,14 +320,14 @@ async def test_check_limits_and_publicate_early_exit_deadband(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mode_manager_emits_events_even_in_deadband():
-    """Test that ModeManager always emits events (no deadband check)."""
+    """Test that ModeManager emits events (at perfection) even when ActionManager is in deadband."""
     from custom_components.opengrowbox.OGBController.managers.OGBModeManager import OGBModeManager
 
     data_store = FakeDataStore(
         {
             "selectedMode": "VPD Perfection",
             "vpd": {
-                "current": 1.08,  # Within deadband of 1.10 ± 0.05
+                "current": 1.10,  # Exactly at perfection - no action needed
                 "perfection": 1.10,
                 "perfectMin": 1.00,
                 "perfectMax": 1.20,
@@ -351,8 +351,7 @@ async def test_mode_manager_emits_events_even_in_deadband():
 
     await manager.handle_vpd_perfection()
 
-    # ModeManager should NOT emit event because VPD is in range
-    # (not below min or above max)
+    # ModeManager should NOT emit event because VPD is at perfection
     assert len(emitted_events) == 0
 
 

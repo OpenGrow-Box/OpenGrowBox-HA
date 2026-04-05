@@ -546,30 +546,32 @@ class Sensor:
                         elif "_ph" in entity_id:
                             self.data_store.setDeep("Hydro.ph_current", numeric_value)
                             updated = True
+
+                            # Recalculate ORP when pH changes (like DLI/PPFD recalculate on input changes)
+                            temp_current = self.data_store.getDeep("Hydro.current_temp")
+                            if temp_current is not None:
+                                newOrp = calculate_orp(numeric_value, temp_current)
+                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
+                                await _update_specific_sensor(
+                                    "ogb_waterorp_", self.room, newOrp, self.hass
+                                )
                         elif "_oxi" in entity_id:
-                            if numeric_value == 0:
-                                ph_current = self.data_store.getDeep("Hydro.ph_current")
-                                temp_current = self.data_store.getDeep(
-                                    "Hydro.current_temp"
+                            # Store raw oxi value
+                            self.data_store.setDeep("Hydro.oxi_current", numeric_value)
+
+                            # Recalculate ORP if we have pH and temperature (like DLI/PPFD)
+                            ph_current = self.data_store.getDeep("Hydro.ph_current")
+                            temp_current = self.data_store.getDeep("Hydro.current_temp")
+
+                            if ph_current is not None and temp_current is not None:
+                                # Calculate ORP from pH and temperature
+                                newOrp = calculate_orp(ph_current, temp_current)
+                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
+                                await _update_specific_sensor(
+                                    "ogb_waterorp_", self.room, newOrp, self.hass
                                 )
 
-                                if temp_current and ph_current is not None:
-                                    newOrp = calculate_orp(ph_current, temp_current)
-                                    currentOrp = self.data_store.getDepp(
-                                        "Hydro.oxi_current"
-                                    )
-                                    if currentOrp == 0:
-                                        self.data_store.setDeep(
-                                            "Hydro.oxi_current", float(newOrp)
-                                        )
-                                    await _update_specific_sensor(
-                                        "ogb_waterorp_", self.room, newOrp, self.hass
-                                    )
-                            else:
-                                self.data_store.setDeep(
-                                    "Hydro.oxi_current", numeric_value
-                                )
-                                updated = True
+                            updated = True
 
                         elif "_sal" in entity_id:
                             self.data_store.setDeep("Hydro.sal_current", numeric_value)
@@ -577,6 +579,15 @@ class Sensor:
                         elif "_temp" in entity_id:
                             self.data_store.setDeep("Hydro.current_temp", numeric_value)
                             updated = True
+
+                            # Recalculate ORP when temperature changes (like DLI/PPFD)
+                            ph_current = self.data_store.getDeep("Hydro.ph_current")
+                            if ph_current is not None:
+                                newOrp = calculate_orp(ph_current, numeric_value)
+                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
+                                await _update_specific_sensor(
+                                    "ogb_waterorp_", self.room, newOrp, self.hass
+                                )
 
                         newOrp = None
 

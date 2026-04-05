@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 import asyncio
 from ..data.OGBParams.OGBParams import CAP_MAPPING

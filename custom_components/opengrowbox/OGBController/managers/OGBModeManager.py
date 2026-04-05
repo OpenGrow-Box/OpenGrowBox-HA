@@ -186,6 +186,11 @@ class OGBModeManager:
                 f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD."
             )
             await self.event_manager.emit("reduce_vpd", capabilities)
+        elif currentVPD != perfectionVPD:
+            _LOGGER.debug(
+                f"{self.room}: VPD {currentVPD} within range but not at perfection {perfectionVPD}. Fine-tuning."
+            )
+            await self.event_manager.emit("FineTune_vpd", capabilities)
 
         if self.data_store.getDeep("controlOptions.co2Control"):
             await self.event_manager.emit("maintain_co2", capabilities)

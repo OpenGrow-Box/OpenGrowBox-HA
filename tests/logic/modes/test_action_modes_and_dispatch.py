@@ -34,7 +34,17 @@ def test_map_tentmode_to_controller_type_covers_supported_modes():
 
 @pytest.mark.asyncio
 async def test_check_limits_no_vpd_uses_conflict_resolver_when_available():
-    store = FakeDataStore()
+    store = FakeDataStore({
+        "tentData": {
+            "temperature": 25.0,
+            "humidity": 60.0,
+            "minTemp": 20.0,
+            "maxTemp": 30.0,
+            "minHumidity": 40.0,
+            "maxHumidity": 80.0,
+        },
+        "controlOptionData": {"weights": {"defaultValue": 1.0}}
+    })
     events = FakeEventManager()
     manager = OGBActionManager(None, store, events, "dev_room")
 
@@ -86,7 +96,7 @@ async def test_publication_dispatch_for_core_capabilities(capability, action, ex
     async def passthrough(action_map):
         return action_map
 
-    monkeypatch.setattr(manager, "_apply_air_exchange_cold_guard", passthrough)
+    monkeypatch.setattr(manager, "_apply_environment_guard", passthrough)
 
     await manager.publicationActionHandler([_mk_action(capability, action)])
 
@@ -103,7 +113,7 @@ async def test_publication_skips_all_actions_when_mode_disabled(monkeypatch):
     async def passthrough(action_map):
         return action_map
 
-    monkeypatch.setattr(manager, "_apply_air_exchange_cold_guard", passthrough)
+    monkeypatch.setattr(manager, "_apply_environment_guard", passthrough)
 
     await manager.publicationActionHandler([
         _mk_action("canHeat", "Increase"),
