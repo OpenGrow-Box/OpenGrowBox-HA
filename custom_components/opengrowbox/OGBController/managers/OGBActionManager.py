@@ -265,13 +265,16 @@ class OGBActionManager:
         if not self.adaptiveCooldownEnabled:
             return baseCooldown
 
-        # Larger deviation = longer cooldown (more time to take effect)
-        if abs(deviation) > 5:
+        abs_dev = abs(deviation)
+
+        if abs_dev > 5:
             return baseCooldown * 1.5
-        elif abs(deviation) > 3:
+        elif abs_dev > 3:
             return baseCooldown * 1.2
-        elif abs(deviation) < 1:
-            return baseCooldown * 0.8
+        elif abs_dev < 0.5:
+            return baseCooldown * 3.0
+        elif abs_dev < 1:
+            return baseCooldown * 2.0
 
         return baseCooldown
 
@@ -318,6 +321,9 @@ class OGBActionManager:
         Returns:
             Tuple of (filtered_actions, blocked_actions)
         """
+        # Resolve conflicting actions first
+        actionMap = self._remove_conflicting_actions(actionMap)
+
         filteredActions = []
         blockedActions = []
 
@@ -604,8 +610,110 @@ class OGBActionManager:
         elif tent_data["humidity"] < tent_data["minHumidity"]:
             humDeviation = round((tent_data["humidity"] - tent_data["minHumidity"]) * humWeight, 2)
             weightMessage = f"Humidity Too Low: Deviation {humDeviation}"
-        
+
         return tempDeviation, humDeviation, tempWeight, humWeight, weightMessage
+
+    def _is_vpd_in_deadband(self) -> Tuple[bool, str]:
+        """
+        Check if current VPD is within deadband.
+
+        Returns:
+            Tuple of (is_in_deadband, reason_message)
+
+        For VPD modes, checks if VPD is within configured deadband.
+        For Closed Environment, returns False (no VPD deadband).
+        """
+        try:
+            mode = self.data_store.get("selectedMode")
+
+            if mode == "VPD Perfection":
+                current_vpd = self.data_store.getDeep("vpd.current")
+                target_vpd = self.data_store.getDeep("vpd.perfection")
+                deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
+            elif mode == "VPD Target":
+                current_vpd = self.data_store.getDeep("vpd.current")
+                target_vpd = self.data_store.getDeep("vpd.targeted")
+                deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+            else:
+                return False, ""
+
+            if current_vpd is None or target_vpd is None:
+                return False, ""
+
+            deviation = abs(float(current_vpd) - float(target_vpd))
+
+            if deviation <= deadband:
+                return True, f"VPD {current_vpd:.3f} within deadband ±{deadband:.3f} of target {target_vpd:.3f}"
+
+            return False, ""
+        except (TypeError, ValueError) as e:
+            _LOGGER.warning(f"{self.room}: Error checking VPD deadband: {e}")
+            return False, ""
+
+    async def _emit_quiet_zone_idle(self):
+        """
+        Emit idle signal when VPD is in deadband.
+        Logs quiet zone status and ensures devices stay idle.
+        """
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "message": "VPD in deadband - devices paused",
+            "VPDStatus": "InDeadband",
+            "deadbandActive": True
+        }, haEvent=True, debug_type="INFO")
+
+        _LOGGER.info(
+            f"{self.room}: VPD in deadband - entering quiet zone, no device actions"
+        )
+
+    CONFLICTING_PAIRS = [
+        ("canHumidify", "canDehumidify"),
+        ("canHeat", "canCool"),
+        ("canExhaust", "canHumidify"),
+    ]
+
+    def _remove_conflicting_actions(self, actionMap: List) -> List:
+        """
+        Remove actions that directly contradict each other.
+        Keeps the higher-priority action of each conflicting pair.
+
+        Args:
+            actionMap: List of actions to filter
+
+        Returns:
+            Filtered list without conflicting actions
+        """
+        cap_to_action = {}
+        for action in actionMap:
+            cap = getattr(action, 'capability', None)
+            if cap:
+                cap_to_action[cap] = action
+
+        blocked_caps = set()
+        prio_map = {"high": 3, "medium": 2, "low": 1}
+
+        for cap_a, cap_b in self.CONFLICTING_PAIRS:
+            if cap_a in cap_to_action and cap_b in cap_to_action:
+                action_a = cap_to_action[cap_a]
+                action_b = cap_to_action[cap_b]
+
+                prio_a = prio_map.get(getattr(action_a, 'priority', 'medium'), 2)
+                prio_b = prio_map.get(getattr(action_b, 'priority', 'medium'), 2)
+
+                if prio_b > prio_a:
+                    blocked_caps.add(cap_a)
+                    _LOGGER.info(
+                        f"{self.room}: Conflict resolved – {cap_b} (prio={prio_b}) "
+                        f"overrides {cap_a} (prio={prio_a})"
+                    )
+                else:
+                    blocked_caps.add(cap_b)
+                    _LOGGER.info(
+                        f"{self.room}: Conflict resolved – {cap_a} (prio={prio_a}) "
+                        f"overrides {cap_b} (prio={prio_b})"
+                    )
+
+        return [a for a in actionMap if getattr(a, 'capability', None) not in blocked_caps]
 
     # =================================================================
     # Closed Environment Action Handlers
@@ -786,10 +894,16 @@ class OGBActionManager:
         if not await self._check_vpd_night_hold(actionMap):
             return
 
+        # Check deadband - if VPD is in quiet zone, pause all devices
+        in_deadband, reason = self._is_vpd_in_deadband()
+        if in_deadband:
+            await self._emit_quiet_zone_idle()
+            return
+
         # Get tent data and calculate weighted deviations
         tent_data = self.data_store.get("tentData")
         tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
-        
+
         # Emit WeightPublication LogForClient
         WeightPublication = OGBWeightPublication(
             Name=self.room,
@@ -800,7 +914,7 @@ class OGBActionManager:
             humWeight=humWeight
         )
         await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
-        
+
         if self.dampening_actions:
             await self.dampening_actions.process_actions_basic(actionMap, tempDeviation, humDeviation)
         else:
@@ -813,10 +927,16 @@ class OGBActionManager:
         if not await self._check_vpd_night_hold(actionMap):
             return
 
+        # Check deadband - if VPD is in quiet zone, pause all devices
+        in_deadband, reason = self._is_vpd_in_deadband()
+        if in_deadband:
+            await self._emit_quiet_zone_idle()
+            return
+
         # Get tent data and calculate weighted deviations
         tent_data = self.data_store.get("tentData")
         tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
-        
+
         # Emit WeightPublication LogForClient
         WeightPublication = OGBWeightPublication(
             Name=self.room,
@@ -827,7 +947,7 @@ class OGBActionManager:
             humWeight=humWeight
         )
         await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
-        
+
         if self.dampening_actions:
             await self.dampening_actions.process_actions_target_basic(actionMap, tempDeviation, humDeviation)
         else:

@@ -33,7 +33,10 @@ class Heater(Device):
         ## Events Register
         self.event_manager.on("Increase Heater", self.increaseAction)
         self.event_manager.on("Reduce Heater", self.reduceAction)
-
+        
+        if self.isDimmable: 
+            self.steps = 5
+            
         if self.isAcInfinDev:
             self.checkMinMax(False)
             self.dutyCycle = 0

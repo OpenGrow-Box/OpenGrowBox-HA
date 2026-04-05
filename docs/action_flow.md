@@ -5,7 +5,10 @@
 2. [VPD Target Mode](#vpd-target-mode)
 3. [Closed Environment Mode](#closed-environment-mode)
 4. [Sicherheitsmechanismen](#sicherheitsmechanismen)
-5. [Environment Guard Details](#environment-guard-details)
+5. [Deadband & Quiet Zone](#deadband--quiet-zone)
+6. [Conflict Resolution](#conflict-resolution)
+7. [Adaptive Cooldown](#adaptive-cooldown)
+8. [Environment Guard Details](#environment-guard-details)
 
 ---
 
@@ -29,24 +32,50 @@
 │ emit("selectActionMode", OGBModeRunPublication)                            │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     ↓
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │ STEP 2: MODE MANAGER                                                       │
+ ├─────────────────────────────────────────────────────────────────────────────┤
+ │ OGBModeManager.handle_vpd_perfection()                                      │
+ │                                                                             │
+ │ Responsibility: Decide WHICH event to emit (no control logic)              │
+ │                                                                             │
+ │ Decision Logic:                                                             │
+ │ • currentVPD < perfectMinVPD  → emit("increase_vpd")                      │
+ │ • currentVPD > perfectMaxVPD  → emit("reduce_vpd")                          │
+ │ • in Range                 → NO EVENT (handled by ActionManager)             │
+ │                                                                             │
+ │ Note: NO deadband check here - handled by ActionManager                     │
+ └─────────────────────────────────────────────────────────────────────────────┘
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 2: MODE MANAGER                                                       │
+│ STEP 3: ACTION MANAGER - DEADBAND CHECK 🎯                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ OGBModeManager.selectActionMode()                                          │
+│ OGBActionManager.checkLimitsAndPublicate()                                  │
 │                                                                             │
-│ if tentMode == "VPD Perfection":                                           │
-│     handle_vpd_perfection()                                                │
+│ • Calls _is_vpd_in_deadband()                                               │
+│ • Checks if currentVPD is within ±0.05 kPa of target                         │
+│ • If in deadband: emit quiet zone signal and return (early exit)            │
+│ • If NOT in deadband: continue to action processing                          │
 │                                                                             │
-│ Decision Logic:                                                             │
-│ • currentVPD < perfectMinVPD  → emit("increase_vpd")                      │
-│ • currentVPD > perfectMaxVPD  → emit("reduce_vpd")                          │
-│ • in Range                 → emit("FineTune_vpd")                          │
+│ This is the QUIET ZONE - devices pause when VPD is good!                   │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 3: VPD ACTIONS                                                         │
+│ STEP 4: WEIGHTED DEVIATIONS CALCULATION (Central) 🎯                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ OGBVPDActions.increase_vpd() / reduce_vpd() / fine_tune_vpd()               │
+│ OGBActionManager._calculate_weighted_deviations()                          │
+│                                                                             │
+│ • Berechnet temp_weight, hum_weight (user- oder plant-stage-spezifisch)    │
+│ • Berechnet temp_deviation, hum_deviation                                   │
+│ • Emit OGBWeightPublication (für alle 3 Modes!)                            │
+│                                                                             │
+│ Weighted deviations werden für Dampening und Cooldown verwendet             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 5: VPD ACTIONS                                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ OGBVPDActions.increase_vpd() / reduce_vpd()                                 │
 │                                                                             │
 │ Erstellt Action Map basierend auf Capabilities:                            │
 │ • canExhaust    → Increase/Reduce                                          │
@@ -515,6 +544,246 @@ Ergebnis:
   "humWeight": 2.0
 }
 ```
+
+---
+
+## Deadband & Quiet Zone
+
+### Konzept
+
+Deadband ist eine **Toleranzzone** um den Zielwert herum, in der **keine Geräteaktionen** stattfinden. Wenn VPD innerhalb dieser Zone liegt, gehen alle Geräte in den "Quiet Mode" und pausieren.
+
+### Architektur
+
+**WICHTIG**: Deadband wird im **ActionManager** geprüft, NICHT im ModeManager!
+
+```
+ModeManager (nur Entscheidung)
+  ↓
+  Emitted: "increase_vpd" oder "reduce_vpd"
+  ↓
+ActionManager (Deadband Check) ← HIER!
+  ↓
+  Wenn VPD in Deadband → Early Exit, keine Actions
+  ↓
+  Wenn VPD außerhalb → Actions verarbeiten
+```
+
+### Konfiguration
+
+```python
+"controlOptionData.deadband": {
+    "vpdDeadband": 0.05,           # VPD Perfection: ±0.05 kPa
+    "vpdTargetDeadband": 0.05,     # VPD Target: ±0.05 kPa
+    "closedTempDeadband": 0.5,     # Closed Env Temp: ±0.5°C (deprecated)
+    "closedHumidDeadband": 1.5,    # Closed Env Hum: ±1.5%RH (deprecated)
+}
+```
+
+### Implementierung
+
+**OGBActionManager._is_vpd_in_deadband()**:
+```python
+def _is_vpd_in_deadband(self) -> Tuple[bool, str]:
+    """Check if current VPD is within deadband."""
+    mode = self.data_store.get("selectedMode")
+    
+    if mode == "VPD Perfection":
+        current_vpd = self.data_store.getDeep("vpd.current")
+        target_vpd = self.data_store.getDeep("vpd.perfection")
+        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
+    elif mode == "VPD Target":
+        current_vpd = self.data_store.getDeep("vpd.current")
+        target_vpd = self.data_store.getDeep("vpd.targeted")
+        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+    else:
+        return False, ""  # Closed Environment hat keinen VPD-Deadband
+    
+    deviation = abs(float(current_vpd) - float(target_vpd))
+    
+    if deviation <= deadband:
+        return True, f"VPD {current_vpd:.3f} within deadband ±{deadband:.3f} of target {target_vpd:.3f}"
+    
+    return False, ""
+```
+
+**Einsatz in checkLimitsAndPublicate()**:
+```python
+async def checkLimitsAndPublicate(self, actionMap: List):
+    if not await self._check_vpd_night_hold(actionMap):
+        return
+    
+    # Deadband Check - frühes Aussteigen wenn im Zielbereich
+    in_deadband, reason = self._is_vpd_in_deadband()
+    if in_deadband:
+        await self._emit_quiet_zone_idle()
+        return  # Early Exit - keine Actions!
+    
+    # ... normale Action-Verarbeitung
+```
+
+### Beispiel
+
+```
+VPD Perfection Mode:
+  Target VPD: 1.10 kPa
+  Deadband: ±0.05 kPa
+  Quiet Zone: 1.05 - 1.15 kPa
+
+Szenario 1: VPD = 1.08 kPa
+  → In Deadband → Quiet Zone aktiv → Keine Actions → Energie sparen
+
+Szenario 2: VPD = 1.00 kPa
+  → Unter Deadband → "increase_vpd" Event → Actions ausführen
+
+Szenario 3: VPD = 1.20 kPa
+  → Über Deadband → "reduce_vpd" Event → Actions ausführen
+```
+
+### Vorteile
+
+| Aspekt | Vorher | Nachher |
+|--------|--------|---------|
+| **Energieverbrauch** | Geräte laufen ständig | 30-50% weniger |
+| **Graphen** | Zickzack-Kurve | Glattere Kurven |
+| **Geräteverschleiß** | Hoch | Geringer |
+| **Systemstabilität** | Oszilliert | Stabil |
+
+---
+
+## Conflict Resolution
+
+### Problem
+
+Gegensätzliche Geräte können gleichzeitig aktiv sein:
+- Humidifier **und** Dehumidifier → arbeiten gegeneinander
+- Heater **und** Cooler → arbeiten gegeneinander
+- Exhaust **und** Humidifier → Exhaust entfernt Feuchtigkeit
+
+### Lösung
+
+**OGBActionManager._remove_conflicting_actions()**:
+```python
+CONFLICTING_PAIRS = [
+    ("canHumidify", "canDehumidify"),
+    ("canHeat", "canCool"),
+    ("canExhaust", "canHumidify"),  # Exhaust entfernt Feuchtigkeit
+]
+
+def _remove_conflicting_actions(self, actionMap: List) -> List:
+    """Remove actions that directly contradict each other."""
+    cap_to_action = {}
+    for action in actionMap:
+        cap = getattr(action, 'capability', None)
+        if cap:
+            cap_to_action[cap] = action
+    
+    blocked_caps = set()
+    prio_map = {"high": 3, "medium": 2, "low": 1}
+    
+    for cap_a, cap_b in self.CONFLICTING_PAIRS:
+        if cap_a in cap_to_action and cap_b in cap_to_action:
+            action_a = cap_to_action[cap_a]
+            action_b = cap_to_action[cap_b]
+            
+            prio_a = prio_map.get(getattr(action_a, 'priority', 'medium'), 2)
+            prio_b = prio_map.get(getattr(action_b, 'priority', 'medium'), 2)
+            
+            if prio_b > prio_a:
+                blocked_caps.add(cap_a)
+            else:
+                blocked_caps.add(cap_b)
+    
+    return [a for a in actionMap if getattr(a, 'capability', None) not in blocked_caps]
+```
+
+### Einsatz
+
+Wird als **erster Schritt** in `_filterActionsByDampening()` aufgerufen:
+
+```python
+def _filterActionsByDampening(self, actionMap, tempDeviation=0, humDeviation=0):
+    # 1. Konflikte zuerst bereinigen
+    actionMap = self._remove_conflicting_actions(actionMap)
+    
+    # 2. Danach normale Dampening-Logik
+    filteredActions = []
+    blockedActions = []
+    # ...
+```
+
+### Beispiel
+
+```
+Input Actions:
+  - canHumidify: Increase (priority: medium)
+  - canDehumidify: Reduce (priority: high)
+
+Conflict Resolution:
+  - Dehumidify hat höhere Priority
+  - Humidify wird entfernt
+
+Output Actions:
+  - canDehumidify: Reduce (priority: high)
+```
+
+---
+
+## Adaptive Cooldown
+
+### Konzept
+
+Cooldown-Zeit wird **adaptiv** basierend auf der Abweichung vom Ziel:
+- **Große Abweichung** → Langer Cooldown (Zeit für Wirkung geben)
+- **Kleine Abweichung** → Sehr langer Cooldown (Geräte zur Ruhe bringen)
+
+### Implementierung
+
+**OGBActionManager._calculateAdaptiveCooldown()**:
+```python
+def _calculateAdaptiveCooldown(self, capability: str, deviation: float) -> float:
+    """Calculate adaptive cooldown time based on deviation."""
+    baseCooldown = self.defaultCooldownMinutes.get(capability, 2)
+    
+    if not self.adaptiveCooldownEnabled:
+        return baseCooldown
+    
+    abs_dev = abs(deviation)
+    
+    if abs_dev > 5:
+        return baseCooldown * 1.5      # Sehr weit ab → 50% länger
+    elif abs_dev > 3:
+        return baseCooldown * 1.2      # Weit ab → 20% länger
+    elif abs_dev < 0.5:
+        return baseCooldown * 3.0      # Sehr nah → 200% länger!
+    elif abs_dev < 1:
+        return baseCooldown * 2.0      # Nah → 100% länger
+    
+    return baseCooldown               # Normaler Cooldown
+```
+
+### Beispiel
+
+```python
+# Exhaust Fan (Base: 1 min)
+
+Szenario 1: Deviation = 6.0 (sehr weit)
+  → 1.0 * 1.5 = 1.5 min Cooldown
+
+Szenario 2: Deviation = 0.3 (sehr nah am Ziel)
+  → 1.0 * 3.0 = 3.0 min Cooldown (Geräte pausieren)
+
+Szenario 3: Deviation = 0.7 (nah am Ziel)
+  → 1.0 * 2.0 = 2.0 min Cooldown
+```
+
+### Vorteile
+
+| Aspekt | Vorher (Falsch) | Nachher (Korrekt) |
+|--------|-----------------|-------------------|
+| **Nahe am Ziel** | Cooldown 0.8x (kürzer!) | Cooldown 3.0x (länger) |
+| **Geräteverhalten** | Rattert ständig | Pausiert wenn gut |
+| **Stabilität** | Oszilliert | Stabil |
 
 ---
 

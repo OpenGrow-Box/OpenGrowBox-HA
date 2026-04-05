@@ -31,7 +31,10 @@ class Humidifier(Device):
             deviceLabel,
             allLabels,
         )
-        self.steps = 5
+
+        if self.isDimmable: 
+            self.steps = 5
+
         self.realHumidifierClass = False
         self.hasModes = False
         self.humidifierEntityId = None

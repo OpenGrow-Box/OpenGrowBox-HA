@@ -32,6 +32,9 @@ class Cooler(Device):
         ## Events Register
         self.event_manager.on("Increase Cooler", self.increaseAction)
         self.event_manager.on("Reduce Cooler", self.reduceAction)
+        
+        if self.isDimmable: 
+            self.steps = 5
 
         if self.isAcInfinDev:
             self.checkMinMax(False)

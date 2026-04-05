@@ -39,6 +39,10 @@ class Dehumidifier(Device):
         self.event_manager.on("Increase Dehumidifier", self.increaseAction)
         self.event_manager.on("Reduce Dehumidifier", self.reduceAction)
         self.isInitialized = False
+
+        if self.isDimmable: 
+            self.steps = 5
+
         self.init()
 
         
