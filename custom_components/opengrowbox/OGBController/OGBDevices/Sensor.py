@@ -555,24 +555,6 @@ class Sensor:
                                 await _update_specific_sensor(
                                     "ogb_waterorp_", self.room, newOrp, self.hass
                                 )
-                        elif "_oxi" in entity_id:
-                            # Store raw oxi value
-                            self.data_store.setDeep("Hydro.oxi_current", numeric_value)
-
-                            # Recalculate ORP if we have pH and temperature (like DLI/PPFD)
-                            ph_current = self.data_store.getDeep("Hydro.ph_current")
-                            temp_current = self.data_store.getDeep("Hydro.current_temp")
-
-                            if ph_current is not None and temp_current is not None:
-                                # Calculate ORP from pH and temperature
-                                newOrp = calculate_orp(ph_current, temp_current)
-                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
-                                await _update_specific_sensor(
-                                    "ogb_waterorp_", self.room, newOrp, self.hass
-                                )
-
-                            updated = True
-
                         elif "_sal" in entity_id:
                             self.data_store.setDeep("Hydro.sal_current", numeric_value)
                             updated = True
@@ -584,6 +566,25 @@ class Sensor:
                             ph_current = self.data_store.getDeep("Hydro.ph_current")
                             if ph_current is not None:
                                 newOrp = calculate_orp(ph_current, numeric_value)
+                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
+                                await _update_specific_sensor(
+                                    "ogb_waterorp_", self.room, newOrp, self.hass
+                                )
+                        elif "_orp" in entity_id:
+                            # Ignore raw ORP sensor - OGB calculates its own ORP from pH + temp
+                            updated = False
+
+                        # Initial ORP calculation: if both pH and temp exist but oxi is 0
+                        if not updated:
+                            ph_current = self.data_store.getDeep("Hydro.ph_current")
+                            temp_current = self.data_store.getDeep("Hydro.current_temp")
+                            oxi_current = self.data_store.getDeep("Hydro.oxi_current")
+                            if (
+                                ph_current is not None
+                                and temp_current is not None
+                                and (oxi_current is None or oxi_current == 0)
+                            ):
+                                newOrp = calculate_orp(ph_current, temp_current)
                                 self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
                                 await _update_specific_sensor(
                                     "ogb_waterorp_", self.room, newOrp, self.hass
