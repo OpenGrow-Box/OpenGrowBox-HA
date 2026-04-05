@@ -261,12 +261,17 @@ class Sensor:
             
             # Initial ORP calculation: if both pH and water temp are available
             # This handles the case where sensors are initialized but never trigger state_changed
-            ph_sensor = self.getSensorByType("ph", context="water")
-            temp_sensor = self.getSensorByType("temperature", context="water")
+            water_sensors = self.sensorReadings.get("water", {})
             
-            if ph_sensor and temp_sensor:
-                ph_value = ph_sensor.get("last_reading") or ph_sensor.get("state")
-                temp_value = temp_sensor.get("last_reading") or temp_sensor.get("state")
+            ph_sensors = water_sensors.get("ph", [])
+            temp_sensors = water_sensors.get("temperature", [])
+            
+            if ph_sensors and temp_sensors:
+                ph_sensor_config = ph_sensors[0]
+                temp_sensor_config = temp_sensors[0]
+                
+                ph_value = ph_sensor_config.get("last_reading") or ph_sensor_config.get("state")
+                temp_value = temp_sensor_config.get("last_reading") or temp_sensor_config.get("state")
                 
                 if ph_value is not None and temp_value is not None:
                     try:
@@ -280,7 +285,6 @@ class Sensor:
                         self.data_store.setDeep("Hydro.current_temp", float(temp_numeric))
                         
                         # Update the ORP sensor entity
-                        from .Sensor import _update_specific_sensor
                         await _update_specific_sensor(
                             "ogb_waterorp_", self.room, orp_value, self.hass
                         )
