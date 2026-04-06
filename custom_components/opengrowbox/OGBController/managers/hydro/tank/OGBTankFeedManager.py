@@ -135,6 +135,11 @@ class OGBTankFeedManager:
         self.data_store = dataStore
         self.event_manager = eventManager
         self.is_initialized = False
+
+        # AMBIENT ROOM CHECK: Ambient rooms don't use Tank Feed
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(f"{self.room}: Tank Feed Manager disabled - ambient room")
+            return
         
         # EC Unit Configuration
         self.ec_unit = ECUnit.MS_CM

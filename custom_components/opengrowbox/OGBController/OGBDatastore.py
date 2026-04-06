@@ -159,6 +159,36 @@ class DataStore(SimpleEventEmitter):
         else:
             raise AttributeError(f"Cannot set '{last_key}' on '{type(data).__name__}'")
 
+    def delete(self, path):
+        """Löscht einen Wert aus verschachtelten Daten.
+        
+        Args:
+            path: Punkt-getrennter Pfad zum zu löschenden Wert (z.B. "deadband.target_vpd")
+        """
+        keys = path.split(".")
+        data = self.state
+        
+        # Navigiere zum übergeordneten Element
+        for key in keys[:-1]:
+            if isinstance(data, dict):
+                if key not in data:
+                    return  # Schlüssel existiert nicht, nichts zu löschen
+                data = data[key]
+            elif hasattr(data, key):
+                data = getattr(data, key)
+            else:
+                return  # Attribut existiert nicht, nichts zu löschen
+        
+        last_key = keys[-1]
+        if isinstance(data, dict):
+            if last_key in data:
+                del data[last_key]
+                self.emit(f"{path}.deleted", None)
+        elif hasattr(data, last_key):
+            # Bei Objekten können wir nicht wirklich löschen, also setzen wir auf None
+            setattr(data, last_key, None)
+            self.emit(f"{path}.deleted", None)
+
     def _should_exclude_key(self, key: str) -> bool:
         """Check if a key should be excluded from serialization."""
         if key in self.SERIALIZATION_EXCLUDE_KEYS:

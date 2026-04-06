@@ -68,11 +68,12 @@ class OGBDampeningActions:
 
         # Calculate weights and deviations
         temp_weight, hum_weight = self._calculate_weights(own_weights)
-        temp_deviation, hum_deviation, weight_message = self._calculate_deviations(
+        (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+         tempPercentage, humPercentage, weight_message) = self._calculate_deviations(
             temp_weight, hum_weight
         )
 
-        # Emit VPD Perfection diagnostics with weighted deviations
+        # Emit VPD Perfection diagnostics with REAL deviations for display
         current_vpd = self.ogb.dataStore.getDeep("vpd.current")
         target_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
         if target_vpd is None:
@@ -98,8 +99,11 @@ class OGBDampeningActions:
                 "vpdTargetMin": target_min,
                 "vpdTargetMax": target_max,
                 "incomingActions": len(action_map),
-                "tempDeviation": temp_deviation,
-                "humDeviation": hum_deviation,
+                # Use REAL deviations for display
+                "tempDeviation": real_temp_dev,
+                "humDeviation": real_hum_dev,
+                "tempPercentage": tempPercentage,
+                "humPercentage": humPercentage,
                 "tempWeight": temp_weight,
                 "humWeight": hum_weight,
                 "weightMessage": weight_message,
@@ -114,9 +118,10 @@ class OGBDampeningActions:
             debug_type="DEBUG",
         )
 
-        # Publish weight information
+        # Publish weight information with REAL deviations
         await self._publish_weight_info(
-            weight_message, temp_deviation, hum_deviation, temp_weight, hum_weight
+            weight_message, real_temp_dev, real_hum_dev, tempPercentage, humPercentage,
+            temp_weight, hum_weight
         )
 
         # Check for emergency conditions
@@ -126,16 +131,17 @@ class OGBDampeningActions:
 
         # Get capabilities and determine optimal devices
         caps = self.ogb.dataStore.get("capabilities")
+        # Use WEIGHTED deviations for VPD status determination (for action prioritization)
         vpd_status = self._determine_vpd_status(
-            temp_deviation, hum_deviation, tent_data
+            weighted_temp_dev, weighted_hum_dev, tent_data
         )
         optimal_devices = self._get_optimal_devices(vpd_status)
 
         # Enhance action map with additional actions based on conditions
         enhanced_action_map = self._enhance_action_map(
             action_map,
-            temp_deviation,
-            hum_deviation,
+            weighted_temp_dev,
+            weighted_hum_dev,
             tent_data,
             caps,
             vpd_light_control,
@@ -147,7 +153,7 @@ class OGBDampeningActions:
         # Apply dampening filter
         dampened_actions, blocked_actions = (
             self.action_manager._filterActionsByDampening(
-                enhanced_action_map, temp_deviation, hum_deviation
+                enhanced_action_map, weighted_temp_dev, weighted_hum_dev
             )
         )
 
@@ -215,9 +221,158 @@ class OGBDampeningActions:
 
         return final_actions
 
+    async def process_core_vpd_logic(
+        self,
+        action_map: List,
+        temp_deviation: float,
+        hum_deviation: float,
+        tent_data: Dict[str, Any],
+    ) -> List:
+        """
+        Process Core VPD Logic (ALWAYS active).
+
+        This includes:
+        - Buffer Zones (prevent oscillation near limits)
+        - VPD Context enhancements (priorities based on VPD status)
+        - Deviations-based actions (intelligent additional actions)
+        - Conflict resolution (resolve contradictory actions)
+
+        NOTE: Cooldown filtering is NOT included here - that's handled separately
+              in process_dampening_features().
+
+        Args:
+            action_map: Initial list of actions
+            temp_deviation: Weighted temperature deviation
+            hum_deviation: Weighted humidity deviation
+            tent_data: Current tent data
+
+        Returns:
+            Enhanced and resolved actions (without cooldown filter)
+        """
+        _LOGGER.debug(
+            f"{self.ogb.room}: Processing {len(action_map)} actions with Core VPD Logic (buffer zones, VPD context, conflicts)"
+        )
+
+        if not action_map:
+            return []
+
+        # Get control settings
+        own_weights = self.ogb.dataStore.getDeep("controlOptions.ownWeights")
+        vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
+        is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON")
+
+        # Calculate weights and deviations
+        temp_weight, hum_weight = self._calculate_weights(own_weights)
+        (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+         tempPercentage, humPercentage, weight_message) = self._calculate_deviations(
+            temp_weight, hum_weight
+        )
+
+        # Get capabilities and determine VPD status
+        caps = self.ogb.dataStore.get("capabilities")
+        vpd_status = self._determine_vpd_status(
+            weighted_temp_dev, weighted_hum_dev, tent_data
+        )
+        optimal_devices = self._get_optimal_devices(vpd_status)
+
+        # Step 1: Enhance action map with buffer zones and VPD context
+        enhanced_action_map = self._enhance_action_map(
+            action_map,
+            weighted_temp_dev,
+            weighted_hum_dev,
+            tent_data,
+            caps,
+            vpd_light_control,
+            is_light_on,
+            optimal_devices,
+            vpd_status,
+        )
+
+        # Step 2: Resolve conflicts
+        final_actions = self._resolve_action_conflicts(enhanced_action_map)
+
+        _LOGGER.info(
+            f"{self.ogb.room}: Core VPD Logic: {len(action_map)} → {len(enhanced_action_map)} (enhanced) → "
+            f"{len(final_actions)} (resolved)"
+        )
+
+        # Emit log for debugging
+        await self.ogb.eventManager.emit(
+            "LogForClient",
+            {
+                "Name": self.ogb.room,
+                "message": "Core VPD Logic: actions enhanced and conflicts resolved",
+                "incomingActions": len(action_map),
+                "enhancedActions": len(enhanced_action_map),
+                "finalActions": len(final_actions),
+                "vpdStatus": vpd_status,
+                "tempDeviation": real_temp_dev,
+                "humDeviation": real_hum_dev,
+                "tempPercentage": tempPercentage,
+                "humPercentage": humPercentage,
+            },
+            haEvent=True,
+            debug_type="DEBUG",
+        )
+
+        return final_actions
+
+    async def process_dampening_features(
+        self,
+        action_map: List,
+        temp_deviation: float,
+        hum_deviation: float,
+        tent_data: Dict[str, Any],
+    ) -> Tuple[List, List]:
+        """
+        Process Dampening Features (only when vpdDeviceDampening is enabled).
+
+        This includes:
+        - Cooldown filtering (prevent rapid repetition)
+        - Repeat cooldown (prevent immediate same action)
+        - Emergency override (bypass cooldown in critical conditions)
+
+        Args:
+            action_map: List of actions after core VPD logic
+            temp_deviation: Weighted temperature deviation
+            hum_deviation: Weighted humidity deviation
+            tent_data: Current tent data
+
+        Returns:
+            Tuple of (filtered_actions, blocked_actions)
+        """
+        _LOGGER.debug(
+            f"{self.ogb.room}: Processing {len(action_map)} actions with Dampening Features (cooldown, emergency override)"
+        )
+
+        # Check for emergency conditions
+        emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
+        if emergency_conditions:
+            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+
+        # Apply cooldown filtering
+        dampened_actions, blocked_actions = (
+            self.action_manager._filterActionsByDampening(
+                action_map, temp_deviation, hum_deviation
+            )
+        )
+
+        # Resolve conflicts after dampening
+        final_actions = self._resolve_action_conflicts(dampened_actions)
+
+        _LOGGER.info(
+            f"{self.ogb.room}: Dampening Features: {len(action_map)} → {len(dampened_actions)} "
+            f"(filtered, {len(blocked_actions)} blocked) → {len(final_actions)} (resolved)"
+        )
+
+        return final_actions, blocked_actions
+
     async def process_actions_basic(self, action_map: List, temp_deviation: float, hum_deviation: float) -> List:
         """
         Process VPD Perfection actions with weighted deviations from ActionManager.
+
+        NOTE: This method is DEPRECATED. Use process_core_vpd_logic() and
+              process_dampening_features() separately for cleaner separation.
 
         Args:
             action_map: Initial list of actions to process
@@ -227,8 +382,8 @@ class OGBDampeningActions:
         Returns:
             Final list of actions to execute
         """
-        _LOGGER.debug(
-            f"{self.ogb.room}: Processing {len(action_map)} VPD Perfection actions (central weighted deviations)"
+        _LOGGER.warning(
+            f"{self.ogb.room}: process_actions_basic() is deprecated - use process_core_vpd_logic() and process_dampening_features()"
         )
 
         tent_data = self.ogb.dataStore.get("tentData")
@@ -457,47 +612,67 @@ class OGBDampeningActions:
 
     def _calculate_deviations(
         self, temp_weight: float, hum_weight: float
-    ) -> Tuple[float, float, str]:
+    ) -> Tuple[float, float, float, float, float, float, str]:
         """
-        Calculate temperature and humidity deviations with weights.
+        Calculate real and weighted temperature and humidity deviations.
 
         Args:
             temp_weight: Temperature weight factor
             hum_weight: Humidity weight factor
 
         Returns:
-            Tuple of (temp_deviation, hum_deviation, weight_message)
+            Tuple of (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+                     tempPercentage, humPercentage, weight_message)
+            - real_temp_dev: Real absolute deviation (for display)
+            - real_hum_dev: Real absolute deviation (for display)
+            - weighted_temp_dev: Weighted deviation (for action prioritization)
+            - weighted_hum_dev: Weighted deviation (for action prioritization)
+            - tempPercentage: Deviation as percentage of range (0-100%)
+            - humPercentage: Deviation as percentage of range (0-100%)
+            - weightMessage: Description of deviation status
         """
         tent_data = self.ogb.dataStore.get("tentData")
-        temp_deviation = 0
-        hum_deviation = 0
+
+        # 1. Calculate REAL deviations (for display - absolute, not weighted)
+        real_temp_dev = 0.0
+        real_hum_dev = 0.0
         weight_message = ""
 
         # Calculate temperature deviation
         if tent_data["temperature"] > tent_data["maxTemp"]:
-            temp_deviation = round(
-                (tent_data["temperature"] - tent_data["maxTemp"]) * temp_weight, 2
-            )
-            weight_message = f"Temp Too High: Deviation {temp_deviation}"
+            real_temp_dev = round(tent_data["temperature"] - tent_data["maxTemp"], 2)
+            weight_message = f"Temp Too High: +{real_temp_dev}°C"
         elif tent_data["temperature"] < tent_data["minTemp"]:
-            temp_deviation = round(
-                (tent_data["temperature"] - tent_data["minTemp"]) * temp_weight, 2
-            )
-            weight_message = f"Temp Too Low: Deviation {temp_deviation}"
+            real_temp_dev = round(tent_data["temperature"] - tent_data["minTemp"], 2)
+            weight_message = f"Temp Too Low: {real_temp_dev}°C"
 
         # Calculate humidity deviation
         if tent_data["humidity"] > tent_data["maxHumidity"]:
-            hum_deviation = round(
-                (tent_data["humidity"] - tent_data["maxHumidity"]) * hum_weight, 2
-            )
-            weight_message = f"Humidity Too High: Deviation {hum_deviation}"
+            real_hum_dev = round(tent_data["humidity"] - tent_data["maxHumidity"], 2)
+            if weight_message:
+                weight_message += f", Humidity Too High: +{real_hum_dev}%"
+            else:
+                weight_message = f"Humidity Too High: +{real_hum_dev}%"
         elif tent_data["humidity"] < tent_data["minHumidity"]:
-            hum_deviation = round(
-                (tent_data["humidity"] - tent_data["minHumidity"]) * hum_weight, 2
-            )
-            weight_message = f"Humidity Too Low: Deviation {hum_deviation}"
+            real_hum_dev = round(tent_data["humidity"] - tent_data["minHumidity"], 2)
+            if weight_message:
+                weight_message += f", Humidity Too Low: {real_hum_dev}%"
+            else:
+                weight_message = f"Humidity Too Low: {real_hum_dev}%"
 
-        return temp_deviation, hum_deviation, weight_message
+        # 2. Calculate WEIGHTED deviations (for action prioritization)
+        weighted_temp_dev = round(real_temp_dev * temp_weight, 2)
+        weighted_hum_dev = round(real_hum_dev * hum_weight, 2)
+
+        # 3. Calculate percentage of range (for better context)
+        temp_range = max(1.0, abs(tent_data["maxTemp"] - tent_data["minTemp"]))
+        hum_range = max(1.0, abs(tent_data["maxHumidity"] - tent_data["minHumidity"]))
+
+        tempPercentage = round((abs(real_temp_dev) / temp_range) * 100, 1) if real_temp_dev != 0 else 0.0
+        humPercentage = round((abs(real_hum_dev) / hum_range) * 100, 1) if real_hum_dev != 0 else 0.0
+
+        return (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+                tempPercentage, humPercentage, weight_message)
 
     def _calculate_basic_deviations(
         self, tent_data: Dict[str, Any]
@@ -531,6 +706,8 @@ class OGBDampeningActions:
         weight_message: str,
         temp_deviation: float,
         hum_deviation: float,
+        tempPercentage: float,
+        humPercentage: float,
         temp_weight: float,
         hum_weight: float,
     ):
@@ -539,8 +716,10 @@ class OGBDampeningActions:
 
         Args:
             weight_message: Description of weight calculations
-            temp_deviation: Temperature deviation
-            hum_deviation: Humidity deviation
+            temp_deviation: Real temperature deviation (for display)
+            hum_deviation: Real humidity deviation (for display)
+            tempPercentage: Temperature deviation as percentage of range
+            humPercentage: Humidity deviation as percentage of range
             temp_weight: Temperature weight
             hum_weight: Humidity weight
         """
@@ -551,6 +730,8 @@ class OGBDampeningActions:
             message=weight_message,
             tempDeviation=temp_deviation,
             humDeviation=hum_deviation,
+            tempPercentage=tempPercentage,
+            humPercentage=humPercentage,
             tempWeight=temp_weight,
             humWeight=hum_weight,
         )
@@ -562,18 +743,18 @@ class OGBDampeningActions:
         self, temp_deviation: float, hum_deviation: float, tent_data: Dict[str, Any]
     ) -> str:
         """
-        Determine comprehensive VPD status based on environmental conditions.
+        Determine VPD status based on VPD deviation only (not temp/hum).
 
-        This method assesses the overall environmental stress level to determine
-        which devices should be prioritized for VPD control.
+        In VPD Perfection mode, the status should be based on VPD deviation,
+        not on weighted temperature/humidity deviations.
 
         Args:
-            temp_deviation: Temperature deviation from target
-            hum_deviation: Humidity deviation from target
+            temp_deviation: Temperature deviation (not used, kept for compatibility)
+            hum_deviation: Humidity deviation (not used, kept for compatibility)
             tent_data: Current tent environmental data
 
         Returns:
-            VPD status: "low", "medium", "high", or "critical"
+            VPD status: "low", "medium", "high", or "critical" based on VPD deviation
         """
         if not tent_data:
             return "low"
@@ -583,28 +764,20 @@ class OGBDampeningActions:
         target_vpd = tent_data.get("targetVpd", 0)
         vpd_deviation = abs(current_vpd - target_vpd)
 
-        # Calculate environmental stress factors
-        temp_factor = abs(temp_deviation) / max(abs(tent_data.get("maxTemp", 30) - tent_data.get("minTemp", 15)), 1)
-        hum_factor = abs(hum_deviation) / max(abs(tent_data.get("maxHumidity", 80) - tent_data.get("minHumidity", 40)), 1)
-
-        # Combined environmental stress
-        combined_stress = (temp_factor + hum_factor) / 2
-
-        # VPD deviation factor
-        vpd_factor = min(vpd_deviation / 2.0, 1.0)  # Cap at 1.0 for VPD deviations > 2.0
-
-        # Overall stress assessment
-        total_stress = (combined_stress + vpd_factor) / 2
-
-        # Determine status based on stress level
-        if total_stress > 0.4:
-            return "critical"  # Major environmental stress
-        elif total_stress > 0.25:
-            return "high"      # Significant environmental stress
-        elif total_stress > 0.15:
-            return "medium"    # Moderate environmental stress
+        # Determine status based on VPD deviation only
+        # These thresholds are chosen based on typical VPD ranges:
+        # - ±0.1 kPa: Very close to target (low)
+        # - ±0.3 kPa: Acceptable range (medium)
+        # - ±0.5 kPa: Needs correction (high)
+        # - >±0.5 kPa: Significant deviation (critical)
+        if vpd_deviation <= 0.1:
+            return "low"       # ±0.1 kPa - Very close to target
+        elif vpd_deviation <= 0.3:
+            return "medium"    # 0.1-0.3 kPa - Acceptable range
+        elif vpd_deviation <= 0.5:
+            return "high"      # 0.3-0.5 kPa - Needs correction
         else:
-            return "low"       # Minimal environmental stress
+            return "critical"  # >0.5 kPa - Significant deviation
 
     def _get_optimal_devices(self, vpd_status: str) -> List[str]:
         """
@@ -1191,83 +1364,146 @@ class OGBDampeningActions:
         return resolved_actions
 
     async def _execute_actions(self, action_map: List):
-        """
-        Execute the final list of actions.
-
-        Args:
-            action_map: Actions to execute
-        """
+        """Execute the final list of actions."""
         await self.action_manager.publicationActionHandler(action_map)
-        await self.ogb.eventManager.emit("LogForClient", action_map, haEvent=True, debug_type="INFO")
 
     async def _night_hold_fallback(self, action_map: List):
         """
-        Handle night hold fallback for VPD actions.
+        Handle night hold fallback for VPD actions (power-saving night mode).
 
-        When lights are off and night VPD hold is NOT active, this performs
-        energy-saving fallback by:
-        1. Ignoring VPD-increasing actions (heating, cooling, humidity, lighting, CO2)
-        2. Allowing only basic ventilation (exhaust, intake)
-        3. Reducing climate control devices to minimum state
-
+        When lights are off and night VPD hold is NOT active, this performs:
+        1. Climate devices (heating, cooling, humidity, lighting, CO2) reduced to minimum
+        2. Ventilation devices actively controlled to prevent mold:
+           - Exhaust/Ventilation/Window: Increased for air exchange
+           - Intake: Adjusted based on outside conditions
+        
         Args:
             action_map: Actions to process during night hold
         """
-        _LOGGER.debug(f"{self.ogb.room}: VPD Night Hold NOT ACTIVE - Executing energy-saving fallback")
+        _LOGGER.debug(f"{self.ogb.room}: Night Hold Power-Saving Mode - Managing ventilation for mold prevention")
 
-        # Emit event for logging
+        from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
+        
+        # Climate devices that should be minimized at night to save power
+        climate_caps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2", "canLight"}
+        
+        # Ventilation devices that should be actively controlled
+        ventilation_caps = {"canExhaust", "canVentilate", "canIntake", "canWindow"}
+        
+        final_actions = []
+        
+        # 1. Reduce all climate devices to minimum
+        for action in action_map:
+            cap = getattr(action, 'capability', None)
+            if cap in climate_caps:
+                final_actions.append(OGBActionPublication(
+                    capability=cap,
+                    action="Reduce",
+                    Name=self.ogb.room,
+                    message="NightHold: Climate device reduced for power saving",
+                    priority="low"
+                ))
+        
+        # 2. Get capabilities to check what ventilation devices are available
+        caps = self.ogb.dataStore.get("capabilities") or {}
+        
+        # 3. Always increase Exhaust and Ventilation for air exchange (prevent mold)
+        if caps.get("canExhaust", {}).get("state", False):
+            final_actions.append(OGBActionPublication(
+                capability="canExhaust",
+                action="Increase",
+                Name=self.ogb.room,
+                message="NightHold: Exhaust increased for air exchange (mold prevention)",
+                priority="medium"
+            ))
+        
+        if caps.get("canVentilate", {}).get("state", False):
+            final_actions.append(OGBActionPublication(
+                capability="canVentilate",
+                action="Increase",
+                Name=self.ogb.room,
+                message="NightHold: Ventilation increased for air circulation (mold prevention)",
+                priority="medium"
+            ))
+        
+        # 4. Window - treat like ventilation for air exchange
+        if caps.get("canWindow", {}).get("state", False):
+            final_actions.append(OGBActionPublication(
+                capability="canWindow",
+                action="Increase",
+                Name=self.ogb.room,
+                message="NightHold: Window opened for air exchange (mold prevention)",
+                priority="medium"
+            ))
+        
+        # 5. Intake - adjust based on outside temperature
+        if caps.get("canIntake", {}).get("state", False):
+            outside_temp = self.ogb.dataStore.getDeep("tentData.AmbientTemp")
+            min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
+            
+            try:
+                outside_temp = float(outside_temp) if outside_temp is not None else None
+                min_temp = float(min_temp) if min_temp is not None else 18.0
+            except (ValueError, TypeError):
+                outside_temp = None
+                min_temp = 18.0
+            
+            # Logic: Only intake outside air if it's not too cold (would require heating)
+            if outside_temp is not None:
+                # Safe margin: don't intake if outside is more than 3°C below target min
+                if outside_temp >= (min_temp - 3):
+                    # Outside is warm enough - increase intake for fresh air
+                    final_actions.append(OGBActionPublication(
+                        capability="canIntake",
+                        action="Increase",
+                        Name=self.ogb.room,
+                        message=f"NightHold: Intake increased (outside {outside_temp}°C warm enough)",
+                        priority="medium"
+                    ))
+                else:
+                    # Outside is too cold - reduce intake to save heating
+                    final_actions.append(OGBActionPublication(
+                        capability="canIntake",
+                        action="Reduce",
+                        Name=self.ogb.room,
+                        message=f"NightHold: Intake reduced (outside {outside_temp}°C too cold, saving heat)",
+                        priority="low"
+                    ))
+            else:
+                # No outside temp data - default to moderate intake
+                final_actions.append(OGBActionPublication(
+                    capability="canIntake",
+                    action="Increase",
+                    Name=self.ogb.room,
+                    message="NightHold: Intake increased (no outside temp data, default to air exchange)",
+                    priority="low"
+                ))
+        
+        # Emit summary log
+        climate_count = len([a for a in final_actions if getattr(a, 'capability', '') in climate_caps])
+        vent_count = len([a for a in final_actions if getattr(a, 'capability', '') in ventilation_caps])
+        
         await self.ogb.eventManager.emit(
             "LogForClient",
-            {"Name": self.ogb.room, "NightVPDHold": "NotActive Executing-Fallback"},
+            {
+                "Name": self.ogb.room,
+                "NightVPDHold": "NotActive Power-Saving Mode",
+                "message": f"Night hold: {climate_count} climate devices reduced, {vent_count} ventilation devices managed",
+                "climateDevices": climate_count,
+                "ventilationDevices": vent_count
+            },
             haEvent=True,
+            debug_type="INFO"
         )
-
-        # Define device categories for night hold
-        excluded_caps = {
-            "canHeat",      # No heating at night
-            "canCool",      # No cooling at night
-            "canHumidify",  # No humidification at night
-            "canClimate",   # No climate control at night
-            "canDehumidify", # No dehumidification at night
-            "canLight",     # No lighting at night (obviously)
-            "canCO2",       # No CO2 control at night
-        }
-
-        # Devices that get reduced to minimum state at night
-        reduce_caps = {
-            "canHeat",      # Reduce heating
-            "canCool",      # Reduce cooling
-            "canHumidify",  # Reduce humidification
-            "canClimate",   # Reduce climate control
-            "canDehumidify", # Reduce dehumidification
-            "canCO2",       # Reduce CO2
-        }
-
-        # Filter actions to only allow ventilation
-        filtered_actions = [
-            action for action in action_map
-            if action.capability not in excluded_caps
-        ]
-
-        # Create reduction actions for climate control devices
-        reduction_actions = []
-        for action in action_map:
-            if action.capability in reduce_caps:
-                # Create a "Reduce" action for this device
-                reduction_action = self._create_reduced_action(action)
-                reduction_actions.append(reduction_action)
-
-        # Combine allowed actions with reduction actions
-        final_actions = filtered_actions + reduction_actions
 
         if final_actions:
             _LOGGER.info(
-                f"{self.ogb.room}: Night hold fallback - executing {len(final_actions)} actions "
-                f"({len(filtered_actions)} ventilation, {len(reduction_actions)} reductions)"
+                f"{self.ogb.room}: Night Hold executing {len(final_actions)} actions - "
+                f"Climate minimized, Ventilation active for mold prevention"
             )
             await self._execute_actions(final_actions)
         else:
-            _LOGGER.debug(f"{self.ogb.room}: Night hold fallback - no actions to execute")
+            _LOGGER.debug(f"{self.ogb.room}: Night hold - no actions to execute")
 
     def _create_reduced_action(self, original_action):
         """

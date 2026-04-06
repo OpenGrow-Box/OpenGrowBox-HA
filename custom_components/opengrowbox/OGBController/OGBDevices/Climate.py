@@ -268,6 +268,14 @@ class Climate(Device):
 
     async def reduceAction(self, data):
         """Handles Reduce action."""
+        
+        # Smart Deadband Check - Aktion blockieren wenn im Deadband
+        if self._in_smart_deadband:
+            _LOGGER.debug(
+                f"{self.deviceName}: ReduceAction BLOCKED - device is in Smart Deadband (operating at minimum)"
+            )
+            return
+        
         self.log_action("Reduce Action / Turn Off")
         await self.evalAction({"action": "reduce"})
 

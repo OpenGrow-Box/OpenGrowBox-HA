@@ -283,6 +283,12 @@ class OGBConf:
             "minmax": {"minTemp": 0, "maxTemp": 0, "minHum": 0, "maxHum": 0},
             "closedEnvironment": {"ambientInfluenceStrength": 0.3},
             "deadband": {
+                "active": False,
+                "startedAt": "",
+                "target_vpd": 0.0,
+                "deadband_value": 0.05,
+                "hold_remaining": 0,
+                "mode": "",
                 "vpdDeadband": 0.05,
                 "vpdTargetDeadband": 0.05,
                 "closedTempDeadband": 0.5,

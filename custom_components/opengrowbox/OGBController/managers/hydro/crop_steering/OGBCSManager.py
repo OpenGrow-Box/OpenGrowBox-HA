@@ -23,6 +23,11 @@ class OGBCSManager:
         self.event_manager = eventManager
         self.isInitialized = False
 
+        # AMBIENT ROOM CHECK: Ambient rooms don't use Crop Steering
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(f"{self.room}: Crop Steering disabled - ambient room")
+            return
+
         # Advanced sensor processing for TDR/VWC/EC calculations
         self.advanced_sensor = OGBAdvancedSensor()
         self.medium_type = "rockwool"  # Default, will be synced from medium manager
@@ -752,11 +757,11 @@ class OGBCSManager:
         return config
 
     def _get_drippers(self):
-        """Get valid dripper devices from canPump capability.
+        """Get dripper devices from pump capabilities."""
+        # AMBIENT ROOM CHECK: Ambient rooms don't have drippers
+        if self.room.lower() == "ambient":
+            return []
 
-        Filter returns only devices that contain 'dripper' keyword in name.
-        This excludes cloner pumps and other non-irrigation pumps.
-        """
         dripperDevices = self.data_store.getDeep("capabilities.canPump")
         if not dripperDevices:
             _LOGGER.warning(f"{self.room} - _get_drippers: No canPump capability found!")

@@ -120,23 +120,6 @@ class Ventilation(Device):
 
     async def increaseAction(self, data):
         """Erhöht den Duty Cycle."""
-        if self.should_block_air_exchange_increase("canVentilate", "Direct Increase Ventilation event"):
-            await self.event_manager.emit(
-                "LogForClient",
-                {
-                    "Name": self.room,
-                    "Action": "EnvironmentGuard",
-                    "Device": "canVentilate",
-                    "From": "Increase",
-                    "To": "Reduce",
-                    "Message": "Direct Increase Ventilation blocked by EnvironmentGuard",
-                },
-                haEvent=True,
-                debug_type="WARNING",
-            )
-            await self.reduceAction(data)
-            return
-
         if self.isDimmable:
             if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=True)

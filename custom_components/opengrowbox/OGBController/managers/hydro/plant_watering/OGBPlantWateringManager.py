@@ -22,8 +22,18 @@ class OGBPlantWateringManager:
         self._sensor_blocked = False
         self._wet_lock_active = False
 
+        # AMBIENT ROOM CHECK: Ambient rooms don't use Plant Watering
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(f"{self.room}: Plant Watering Manager disabled - ambient room")
+            return
+
     async def start(self, duration: float, pump_devices, cooldown_minutes: Optional[float] = None):
         """Start the plant-watering monitor loop."""
+        # AMBIENT ROOM CHECK
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(f"{self.room}: Plant Watering skipped - ambient room")
+            return None
+
         cooldown = self._resolve_cooldown_minutes(cooldown_minutes)
         active_pumps = self._get_active_pumps(pump_devices)
 

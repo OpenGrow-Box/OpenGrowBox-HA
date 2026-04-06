@@ -123,6 +123,8 @@ class OGBWeightPublication:
     message: str
     tempDeviation: float
     humDeviation: float
+    tempPercentage: float
+    humPercentage: float
     tempWeight: float
     humWeight: float
 

@@ -14,8 +14,10 @@ from tests.logic.helpers import FakeDataStore, FakeEventManager
 async def test_check_limits_and_publicate_blocks_when_night_hold_disabled(monkeypatch):
     data_store = FakeDataStore(
         {
+            "tentMode": "VPD Perfection",
             "controlOptions": {"nightVPDHold": False},
             "isPlantDay": {"islightON": False},
+            "capabilities": {"canVentilate": {"state": True}},
         }
     )
     event_manager = FakeEventManager()
@@ -94,7 +96,9 @@ async def test_publication_action_handler_emits_expected_events(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_apply_environment_guard_rewrites_increase(monkeypatch):
-    data_store = FakeDataStore()
+    data_store = FakeDataStore({
+        "controlOptions": {"ambientControl": True}  # Required for EnvironmentGuard to be active
+    })
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "dev_room")
 
@@ -105,10 +109,11 @@ async def test_apply_environment_guard_rewrites_increase(monkeypatch):
 
     monkeypatch.setattr(guard, "evaluate_environment_guard", fake_guard)
 
+    # Changed from canVentilate to canExhaust (Ventilation is no longer in Environment Guard)
     action = OGBActionPublication(
         Name="dev_room",
         message="increase airflow",
-        capability="canVentilate",
+        capability="canExhaust",
         action="Increase",
         priority="medium",
     )

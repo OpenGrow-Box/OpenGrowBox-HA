@@ -425,7 +425,7 @@ class OGBMainController:
         if self.room.lower() == "ambient":
             return
 
-        _LOGGER.warning(f"📥 {self.room} Received AmbientData: Temp={event.data.get('AvgTemp')}, Hum={event.data.get('AvgHum')}")
+        _LOGGER.debug(f"📥 {self.room} Received AmbientData: Temp={event.data.get('AvgTemp')}, Hum={event.data.get('AvgHum')}")
 
         payload = event.data
         temp = payload.get("AvgTemp")
@@ -434,8 +434,16 @@ class OGBMainController:
         self.data_store.setDeep("tentData.AmbientTemp", temp)
         self.data_store.setDeep("tentData.AmbientHum", hum)
 
-        # Update sensors - this will be in sensor manager
+        # Update sensors
         from ...utils.sensorUpdater import _update_specific_sensor
+        await _update_specific_sensor("ogb_ambienttemperature_", self.room, temp, self.hass)
+        await _update_specific_sensor("ogb_ambienthumidity_", self.room, hum, self.hass)
+        
+        # Calculate and update dewpoint
+        from ...utils.calcs import calculate_dew_point
+        if temp is not None and hum is not None:
+            dew = calculate_dew_point(temp, hum)
+            await _update_specific_sensor("ogb_ambientdewpoint_", self.room, dew, self.hass)
 
     def _set_default_data_store_values(self):
         """Set critical default values in data store for proper operation."""
@@ -451,7 +459,7 @@ class OGBMainController:
         if self.room.lower() == "ambient":
             return
 
-        _LOGGER.warning(f"🌍 {self.room} Received OutsiteData: Temp={event.data.get('temperature')}°C, Hum={event.data.get('humidity')}%")
+        _LOGGER.debug(f"🌍 {self.room} Received OutsiteData: Temp={event.data.get('temperature')}°C, Hum={event.data.get('humidity')}%")
 
         payload = event.data
         temp = payload.get("temperature")
@@ -460,13 +468,19 @@ class OGBMainController:
         self.data_store.setDeep("tentData.OutsiteTemp", temp)
         self.data_store.setDeep("tentData.OutsiteHum", hum)
 
-        # Update sensors - this will be in sensor manager
+        # Update sensors
         from ...utils.sensorUpdater import _update_specific_sensor
 
         await _update_specific_sensor(
             "ogb_outsitetemperature_", self.room, temp, self.hass
         )
         await _update_specific_sensor("ogb_outsitehumidity_", self.room, hum, self.hass)
+        
+        # Calculate and update dewpoint
+        from ...utils.calcs import calculate_dew_point
+        if temp is not None and hum is not None:
+            dew = calculate_dew_point(temp, hum)
+            await _update_specific_sensor("ogb_ambientdewpoint_", self.room, dew, self.hass)
 
     async def _auto_update_plant_stages(self, data):
         """Automatically update plant stages periodically."""

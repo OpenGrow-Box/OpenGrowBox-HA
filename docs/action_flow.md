@@ -1,10 +1,10 @@
-# OpenGrowBox - Action Cycle Übersicht
+# OpenGrowBox - Action Cycle Overview
 
-## Inhaltsverzeichnis
+## Table of Contents
 1. [VPD Perfection Mode](#vpd-perfection-mode)
 2. [VPD Target Mode](#vpd-target-mode)
 3. [Closed Environment Mode](#closed-environment-mode)
-4. [Sicherheitsmechanismen](#sicherheitsmechanismen)
+4. [Safety Mechanisms](#safety-mechanisms)
 5. [Deadband & Quiet Zone](#deadband--quiet-zone)
 6. [Conflict Resolution](#conflict-resolution)
 7. [Adaptive Cooldown](#adaptive-cooldown)
@@ -15,38 +15,73 @@
 ## VPD Perfection Mode
 
 ### Trigger
-- **Event:** `VPDCreation` (ausgelöst bei neuen Sensordaten)
-- **Quelle:** `OGBVPDManager` berechnet VPD aus Temperature + Humidity Sensoren
+- **Event:** `VPDCreation` (triggered by new sensor data)
+- **Source:** `OGBVPDManager` calculates VPD from Temperature + Humidity sensors
 
 ### Action Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 1: VPD GENERIERUNG                                                     │
+│ STEP 1: VPD CALCULATION                                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ OGBVPDManager.handle_new_vpd()                                             │
+│ OGBVPDManager.calculateVPD()                                                │
 │                                                                             │
-│ Berechnet: currentVPD = f(avgTemp, avgHum, leafTempOffset)                │
-│ Speichert in: data_store["vpd.current"]                                    │
-│                                                                             │
-│ emit("selectActionMode", OGBModeRunPublication)                            │
+│ • Calculates VPD from temperature and relative humidity                    │
+│ • Stores: vpd.current, vpd.perfection, vpd.perfectMin, vpd.perfectMax     │
+│ • Triggers: VPDCreation Event                                               │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
- ┌─────────────────────────────────────────────────────────────────────────────┐
- │ STEP 2: MODE MANAGER                                                       │
- ├─────────────────────────────────────────────────────────────────────────────┤
- │ OGBModeManager.handle_vpd_perfection()                                      │
- │                                                                             │
- │ Responsibility: Decide WHICH event to emit (no control logic)              │
- │                                                                             │
- │ Decision Logic:                                                             │
- │ • currentVPD < perfectMinVPD  → emit("increase_vpd")                      │
- │ • currentVPD > perfectMaxVPD  → emit("reduce_vpd")                          │
- │ • in Range                 → NO EVENT (handled by ActionManager)             │
- │                                                                             │
- │ Note: NO deadband check here - handled by ActionManager                     │
- └─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 2: MODE MANAGER                                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ OGBModeManager.handle_vpd_perfection()                                      │
+│                                                                             │
+│ 2.1 Reads VPD values:                                                       │
+│     • currentVPD = data_store.getDeep("vpd.current")                        │
+│     • perfectionVPD = data_store.getDeep("vpd.perfection")                  │
+│     • perfectMinVPD = data_store.getDeep("vpd.perfectMin")                  │
+│     • perfectMaxVPD = data_store.getDeep("vpd.perfectMax")                  │
+│                                                                             │
+│ 2.2 🆕 SMART DEADBAND CHECK (NEW!)                                          │
+│     deadband = 0.05 (default)                                               │
+│     deviation = |currentVPD - perfectionVPD|                                │
+│                                                                             │
+│     IF deviation <= deadband:                                               │
+│       → _handle_smart_deadband() called                                     │
+│       → Climate devices reduced to minimum                                  │
+│       → Air exchange devices (Exhaust, Intake, Window) reduced             │
+│       → Ventilation continues running                                      │
+│       → Hold time: 2.5 minutes                                              │
+│       → LogForClient: "Smart Deadband active"                               │
+│       → RETURN (no VPD events!)                                             │
+│     ELSE:                                                                   │
+│       → _reset_deadband_state()                                             │
+│       → Continue to Step 2.3                                                │
+│                                                                             │
+│ 2.3 VPD Decision (only if outside deadband):                               │
+│     IF currentVPD < perfectMinVPD:                                          │
+│        → Emit: "increase_vpd"                                               │
+│     ELIF currentVPD > perfectMaxVPD:                                        │
+│        → Emit: "reduce_vpd"                                                 │
+│     ELIF currentVPD != perfectionVPD:                                       │
+│        → Emit: "FineTune_vpd"                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
                                      ↓
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │ STEP 2: MODE MANAGER                                                       │
+  ├─────────────────────────────────────────────────────────────────────────────┤
+  │ OGBModeManager.handle_vpd_perfection()                                      │
+  │                                                                             │
+  │ Responsibility: Decide WHICH event to emit (no control logic)              │
+  │                                                                             │
+  │ Decision Logic:                                                             │
+  │ • currentVPD < perfectMinVPD  → emit("increase_vpd")                      │
+  │ • currentVPD > perfectMaxVPD  → emit("reduce_vpd")                          │
+  │ • in Range                 → NO EVENT (handled by ActionManager)             │
+  │                                                                             │
+  │ Note: NO deadband check here - handled by ActionManager                     │
+  └─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 3: ACTION MANAGER - DEADBAND CHECK 🎯                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -59,25 +94,25 @@
 │                                                                             │
 │ This is the QUIET ZONE - devices pause when VPD is good!                   │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 4: WEIGHTED DEVIATIONS CALCULATION (Central) 🎯                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBActionManager._calculate_weighted_deviations()                          │
 │                                                                             │
-│ • Berechnet temp_weight, hum_weight (user- oder plant-stage-spezifisch)    │
-│ • Berechnet temp_deviation, hum_deviation                                   │
-│ • Emit OGBWeightPublication (für alle 3 Modes!)                            │
+│ • Calculates temp_weight, hum_weight (user- or plant-stage-specific)       │
+│ • Calculates temp_deviation, hum_deviation                                   │
+│ • Emit OGBWeightPublication (for all 3 modes!)                              │
 │                                                                             │
-│ Weighted deviations werden für Dampening und Cooldown verwendet             │
+│ Weighted deviations are used for Dampening and Cooldown                     │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 5: VPD ACTIONS                                                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBVPDActions.increase_vpd() / reduce_vpd()                                 │
 │                                                                             │
-│ Erstellt Action Map basierend auf Capabilities:                            │
+│ Creates Action Map based on Capabilities:                                   │
 │ • canExhaust    → Increase/Reduce                                          │
 │ • canIntake     → Reduce/Increase                                         │
 │ • canVentilate  → Increase/Reduce                                          │
@@ -86,85 +121,90 @@
 │ • canHeat       → Increase/Reduce                                          │
 │ • canCool       → Reduce/Increase                                          │
 │ • canClimate    → Eval                                                     │
-│ • canCO2        → Increase/Reduce (abhängig von Licht)                     │
-│ • canLight      → Increase (wenn vpdLightControl=True)                     │
+│ • canCO2        → Increase/Reduce (depending on light)                     │
+│ • canLight      → Increase (if vpdLightControl=True)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 4: TEMPERATURE SAFETY OVERRIDE ⚠️                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ OGBVPDActions._apply_temperature_safety_overrides()                       │
-│                                                                             │
-│ Prüft:                                                                     │
-│ 1. cold_guard = minTemp + coolerBuffer                                     │
-│ 2. hot_guard = maxTemp - heaterBuffer                                      │
-│ 3. humidity_critical = (humidity >= maxHumidity) OR (humidity <= minHumidity)│
-│                                                                             │
-│ BEI KALT (temp <= cold_guard):                                            │
-│ • canHeat → Increase ✅                                                    │
-│ • canCool → Reduce  ✅                                                    │
-│ • canExhaust/Intake/Ventilate →                                            │
-│     - WENN humidity_critical: Increase ✅ (Notfall!)                        │
-│     - SONST: Reduce ❌ (Blockiert)                                         │
-│                                                                             │
-│ BEI HEISS (temp >= hot_guard):                                             │
-│ • Alle Air-Exchange → Increase ✅                                          │
-│ • canHeat → Reduce ✅                                                      │
-│ • canCool → Increase ✅                                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 5: NIGHT HOLD CHECK 🌙                                                  │
+│ STEP 4: NIGHT HOLD CHECK 🌙                                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBActionManager._check_vpd_night_hold()                                    │
 │                                                                             │
-│ if NOT islightON AND NOT nightVPDHold:                                     │
-│     → _night_hold_fallback() → VPD Actions BLOCKIERT                      │
-│ else:                                                                       │
-│     → Weiter zu Step 6                                                     │
+│ IF light OFF AND nightVPDHold=False:                                        │
+│   → _night_hold_fallback() is called                                        │
+│                                                                             │
+│   Night Hold Power-Saving Logic:                                            │
+│   ┌─────────────────────────────────────────────────────────────────┐       │
+│   │ Climate Devices (Save Power):                                   │       │
+│   │ • canHeat       → Reduce  (Heater off)                         │       │
+│   │ • canCool       → Reduce  (Cooler off)                         │       │
+│   │ • canHumidify   → Reduce  (Humidifier off)                     │       │
+│   │ • canDehumidify → Reduce  (Dehumidifier off)                   │       │
+│   │ • canClimate    → Reduce  (Climate off)                        │       │
+│   │ • canCO2        → Reduce  (CO2 off)                            │       │
+│   │ • canLight      → Reduce  (Light off)                          │       │
+│   └─────────────────────────────────────────────────────────────────┘       │
+│   ┌─────────────────────────────────────────────────────────────────┐       │
+│   │ Ventilation (Mold Prevention):                                  │       │
+│   │ • canExhaust    → Increase  (Air exchange!)                    │       │
+│   │ • canVentilate  → Increase  (Air circulation!)                 │       │
+│   │ • canWindow     → Increase  (Air exchange!)                    │       │
+│   │ • canIntake     → Variable  (based on outside temp)            │       │
+│   │                                                                             │
+│   │   Intake Logic:                                                              │
+│   │   IF outside_temp >= (minTemp - 3°C):                                        │
+│   │      → Increase (Outside air is warm enough)                                │
+│   │   ELSE:                                                                      │
+│   │      → Reduce (Too cold, save heating)                                      │
+│   └─────────────────────────────────────────────────────────────────┘       │
+│                                                                             │
+│   Log: "NightHold: Power-Saving Mode - Climate minimized, Ventilation active"│
+│                                                                             │
+│ ELSE (light ON OR nightVPDHold=True):                                       │
+│   → Continue to Step 6 (normal VPD processing)                              │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 5: WEIGHTED DEVIATIONS CALCULATION (Central) 🎯                        │
+│ STEP 4: WEIGHTED DEVIATIONS CALCULATION (Central) 🎯                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBActionManager.checkLimitsAndPublicate()                                 │
 │                                                                             │
-│ • Berechnet temp_weight, hum_weight (user- oder plant-stage-spezifisch)    │
-│ • Berechnet temp_deviation = (temp - min/max) * temp_weight                │
-│ • Berechnet hum_deviation = (hum - min/max) * hum_weight                   │
-│ • Emit OGBWeightPublication (für alle 3 Modes!)                            │
+│ • Calculates temp_weight, hum_weight (user- or plant-stage-specific)       │
+│ • Calculates temp_deviation = (temp - min/max) * temp_weight               │
+│ • Calculates hum_deviation = (hum - min/max) * hum_weight                  │
+│ • Emit OGBWeightPublication (for all 3 modes!)                             │
 │                                                                             │
-│ Gewichtungs-Beispiel:                                                       │
-│ • humidity=2, temp=0 → Humidity-Error hat 2x Priorität                    │
-│ • humidity=0, temp=1 → Temperature-Error hat 1x Priorität                  │
+│ Weighting Example:                                                          │
+│ • humidity=2, temp=0 → Humidity error has 2x priority                     │
+│ • humidity=0, temp=1 → Temperature error has 1x priority                   │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 6: DAMPENING ACTIONS                                                   │
+│ STEP 5: DAMPENING ACTIONS                                                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBDampeningActions.process_actions_basic()                                │
 │                                                                             │
-│ • Empfängt temp_deviation, hum_deviation (vom ActionManager)               │
-│ • Wendet Buffer Zones an (verhindert Oszillation)                         │
-│ • Löst Action-Konflikte (höchste Priorität pro Capability)                │
-│ • Filtert durch Dampening/Cooldown (nutzt weighted deviations)            │
+│ • Receives temp_deviation, hum_deviation (from ActionManager)              │
+│ • Applies Buffer Zones (prevents oscillation)                              │
+│ • Resolves Action conflicts (highest priority per capability)              │
+│ • Filters through Dampening/Cooldown (uses weighted deviations)            │
 │                                                                             │
-│ WICHTIG: Weighted Deviations werden NICHT neu berechnet!                  │
-│ Sie werden zentral in ActionManager berechnet und hier verwendet.         │
+│ IMPORTANT: Weighted Deviations are NOT recalculated!                       │
+│ They are calculated centrally in ActionManager and used here.              │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 7: PUBLICATION ACTION HANDLER                                          │
+│ STEP 6: PUBLICATION ACTION HANDLER                                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBActionManager.publicationActionHandler()                                 │
 │                                                                             │
 │ 7.1 Tent Mode Check: if Disabled → STOP                                   │
 │                                                                             │
-│ 7.2 🛡️ ENVIRONMENT GUARD ANGEWENDET (STEP 8)                               │
+│ 7.2 🛡️ ENVIRONMENT GUARD APPLIED (STEP 8)                                   │
 │                                                                             │
-│ 7.3 Speichert Actions für Analytics:                                       │
-│     • previousActions (max 5)                                              │
-│     • actionData (AI Training)                                             │
+│ 7.3 Stores Actions for Analytics:                                          │
+│     • previousActions (max 5)                                               │
+│     • actionData (AI Training)                                              │
 │                                                                             │
 │ 7.4 Emit Device Events:                                                    │
 │     canExhaust    → "Increase Exhaust" / "Reduce Exhaust"                 │
@@ -174,56 +214,57 @@
 │     canCool       → "Increase Cooler" / "Reduce Cooler"                    │
 │     ...                                                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 8: ENVIRONMENT GUARD 🛡️ (Detailliert)                                  │
+│ STEP 7: ENVIRONMENT GUARD 🛡️ (Detailed)                                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBActionManager._apply_environment_guard()                                │
 │ OGBEnvironmentGuard.evaluate_environment_guard()                           │
 │                                                                             │
-│ NUR FÜR: canExhaust, canIntake, canVentilate MIT Increase                  │
+│ ONLY FOR: canExhaust, canIntake WITH Increase                               │
+│ (Note: canVentilate is NOT handled by EnvironmentGuard -                   │
+│       internal air circulation, no air exchange with outside)               │
+│ 1. SELECT AIR SOURCE:                                                      │
+│    • Intake → Outsite (Weather data) if available                          │
+│    • Exhaust → Ambient (Room data)                                         │
 │                                                                             │
-│ 1. AIR SOURCE AUSWÄHLEN:                                                   │
-│    • Intake → Outsite (Wetterdaten) wenn verfügbar                         │
-│    • Exhaust → Ambient (Raumdaten)                                         │
+│ 2. EVALUATE RISKS:                                                         │
+│    • temp_risk: Too cold inside + source even colder                       │
+│    • humidity_risk: Too dry + source even drier                            │
+│    • temp_benefit: Too cold + source warmer                                │
+│    • humidity_benefit: Too wet + source drier                              │
+│    • humidity_critical: humidity >= maxHumidity (MOLD RISK!)               │
+│    • humidity_critical_dry: humidity <= minHumidity (TOO DRY!)             │
 │                                                                             │
-│ 2. RISIKEN BEWERTEN:                                                       │
-│    • temp_risk: Zu kalt drinnen + Quelle noch kälter                     │
-│    • humidity_risk: Zu trocken + Quelle noch trockener                    │
-│    • temp_benefit: Zu kalt + Quelle wärmer                                │
-│    • humidity_benefit: Zu nass + Quelle trockener                         │
-│    • humidity_critical: humidity >= maxHumidity (SCHIMMELGEFAHR!)          │
-│    • humidity_critical_dry: humidity <= minHumidity (ZUTROCKEN!)            │
+│ 3. PRIORITY DECISION:                                                      │
+│    1️⃣ humidity_critical → ALLOW (Emergency override!)                      │
+│    2️⃣ humidity_critical_dry → ALLOW (Emergency override!)                  │
+│    3️⃣ humidity_benefit → ALLOW (Drying needed)                             │
+│    4️⃣ temp_benefit → ALLOW (Heating needed)                                │
+│    5️⃣ temp_risk → BLOCK (Too cold!)                                       │
+│    6️⃣ humidity_risk → BLOCK (Too dry!)                                     │
+│    7️⃣ No risk → ALLOW                                                      │
 │                                                                             │
-│ 3. PRIORITÄTSENTSCHEIDUNG:                                                 │
-│    1️⃣ humidity_critical → ALLOW (Notfall override!)                       │
-│    2️⃣ humidity_critical_dry → ALLOW (Notfall override!)                   │
-│    3️⃣ humidity_benefit → ALLOW (Trocknen nötig)                           │
-│    4️⃣ temp_benefit → ALLOW (Wärmen nötig)                                  │
-│    5️⃣ temp_risk → BLOCK (Zu kalt!)                                        │
-│    6️⃣ humidity_risk → BLOCK (Zu trocken!)                                  │
-│    7️⃣ No risk → ALLOW                                                       │
+│ 4. RESULT:                                                                 │
+│    BLOCKED → Action "Increase" → "Reduce" rewritten                        │
+│    ALLOWED → Action remains unchanged                                      │
 │                                                                             │
-│ 4. ERGEBNIS:                                                               │
-│    BLOCKED → Action "Increase" → "Reduce" umgeschrieben                   │
-│    ALLOWED → Action bleibt unverändert                                     │
-│                                                                             │
-│ 5. LOG FOR CLIENT:                                                          │
-│    • Bei Block: WARNING mit详细 infos                                     │
-│    • Bei Allow: DEBUG                                                      │
+│ 5. LOG FOR CLIENT:                                                         │
+│    • On Block: WARNING with detailed info                                  │
+│    • On Allow: DEBUG                                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 9: DEVICE EXECUTION                                                    │
+│ STEP 8: DEVICE EXECUTION                                                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Device-spezifische on() Handler empfangen Events:                         │
+│ Device-specific on() handlers receive events:                              │
 │                                                                             │
 │ • Exhaust.on("Increase Exhaust") → increaseAction()                       │
 │ • Intake.on("Increase Intake") → increaseAction()                         │
 │ • Heater.on("Increase Heater") → increaseAction()                         │
 │                                                                             │
-│ WICHTIG: Device.should_block_air_exchange_increase() prüft auch            │
-│ EnvironmentGuard (für direkte Increase-Actions)!                           │
+│ IMPORTANT: Device.should_block_air_exchange_increase() also checks         │
+│ EnvironmentGuard (for direct Increase-Actions)!                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -231,39 +272,77 @@
 
 ## VPD Target Mode
 
-### Unterschiede zu VPD Perfection
+### Differences to VPD Perfection
 
-| Aspekt | VPD Perfection | VPD Target |
+| Aspect | VPD Perfection | VPD Target |
 |--------|---------------|------------|
-| **VPD Berechnung** | Vergleicht mit perfectMin/max | Vergleicht mit targetedMin/Max |
-| **Event Namen** | `increase_vpd`, `reduce_vpd` | `vpdt_increase_vpd`, `vpdt_reduce_vpd` |
+| **VPD Calculation** | Compares with perfectMin/max | Compares with targetedMin/Max |
+| **Event Names** | `increase_vpd`, `reduce_vpd` | `vpdt_increase_vpd`, `vpdt_reduce_vpd` |
 | **VPD Actions** | `increase_vpd()` | `increase_vpd_target()` |
 | **Handler** | `_handle_increase_vpd()` | `_handle_vpdt_increase_vpd()` |
-| **Weighted Deviations** | ✅ Zentral berechnet (Step 5) | ✅ Zentral berechnet (Step 5) |
+| **Deviation** | Temp/Hum weighted (Plant Stage) | **Only VPD Deviation** (Current - Target) |
 | **Dampening** | `process_actions_basic()` | `process_actions_target_basic()` |
-| **WeightPublication** | ✅ Emittiert | ✅ Emittiert |
+| **WeightPublication** | ✅ Emitted | ❌ Not emitted (only VPD deviation) |
 
-### Action Flow (identisch zu VPD Perfection bis auf Step 3-5)
+### Action Flow (identical to VPD Perfection except Step 3)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ UNTERSCHIEDE:                                                               │
+│ DIFFERENCES:                                                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │ STEP 3: handle_targeted_vpd()                                              │
-│ • Liest: vpd.targeted, vpd.targetedMin, vpd.targetedMax                 │
-│ • Decision: < min → increase, > max → reduce, in range → finetune         │
+│ • Reads: vpd.targeted, vpd.targetedMin, vpd.targetedMax, vpd.tolerance     │
+│ • Calculates: min_vpd = targeted - (targeted * tolerance/100)               │
+│              max_vpd = targeted + (targeted * tolerance/100)               │
 │                                                                             │
-│ STEP 5: WEIGHTED DEVIATIONS (identisch zu VPD Perfection!)                │
-│ • checkLimitsAndPublicateTarget() berechnet weighted deviations            │
-│ • Nutzt: process_actions_target_basic() mit weighted deviations            │
-│ • Emit OGBWeightPublication                                                │
+│ • 🆕 SMART DEADBAND CHECK (NEW!):                                          │
+│   deadband = 0.05 (default)                                                 │
+│   deviation = |currentVPD - targetedVPD|                                    │
 │                                                                             │
-│ ALLE ANDEREN STEPS SIND IDENTISCH!                                         │
-│ • Temperature Safety Override (Step 4)                                    │
-│ • Night Hold Check (Step 6)                                               │
-│ • Environment Guard (Step 8)                                               │
-│ • Device Execution (Step 9)                                               │
+│   IF deviation <= deadband:                                                 │
+│     → _handle_smart_deadband() called                                       │
+│     → Climate devices reduced to minimum                                    │
+│     → Air exchange devices (Exhaust, Intake, Window) reduced               │
+│     → Ventilation continues running                                        │
+│     → Hold time: 2.5 minutes                                                │
+│     → LogForClient: "Smart Deadband active"                                 │
+│     → RETURN (no VPD events!)                                               │
+│   ELSE:                                                                     │
+│     → _reset_deadband_state()                                               │
+│                                                                             │
+│ • Decision (only if outside deadband):                                      │
+│   IF currentVPD < min_vpd:                                                  │
+│      → Emit: "vpdt_increase_vpd"                                            │
+│   ELIF currentVPD > max_vpd:                                                │
+│      → Emit: "vpdt_reduce_vpd"                                              │
+│                                                                             │
+│ STEP 4: VPD DEVIATION ONLY (NEW!)                                          │
+│ • checkLimitsAndPublicateTarget() calculates ONLY VPD Deviation:           │
+│   vpd_deviation = currentVPD - targetVPD                                    │
+│                                                                             │
+│   ❌ NO Temp/Hum weighted deviations!                                       │
+│   ❌ NO Plant Stage Limits!                                                 │
+│   ✅ ONLY VPD-based!                                                        │
+│                                                                             │
+│   Example:                                                                  │
+│   • currentVPD = 0.62 kPa                                                   │
+│   • targetVPD = 1.20 kPa                                                    │
+│   • vpd_deviation = -0.58 kPa                                               │
+│                                                                             │
+│   LogForClient contains:                                                    │
+│   • "vpdDeviation": -0.58                                                   │
+│   • "currentVPD": 0.62                                                      │
+│   • "targetVPD": 1.20                                                       │
+│                                                                             │
+│ • No Dampening-Weighted Deviations (only VPD-based)                        │
+│                                                                             │
+│ ALL OTHER STEPS ARE IDENTICAL!                                              │
+│ • Conflict Resolution (Step 4)                                             │
+│ • Dampening Actions (Step 5)                                               │
+│ • Night Hold Check (Step 3)                                                │
+│ • Environment Guard (Step 7)                                                │
+│ • Device Execution (Step 8)                                                │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -271,18 +350,18 @@
 
 ## Closed Environment Mode
 
-### Unterschiede zu VPD Perfection
+### Differences to VPD Perfection
 
-| Aspekt | VPD Perfection | Closed Environment |
+| Aspect | VPD Perfection | Closed Environment |
 |--------|---------------|-------------------|
 | **Mode Handler** | `handle_vpd_perfection()` | `handle_closed_environment()` |
 | **Manager** | OGBModeManager → ClosedEnvironmentManager | |
 | **Action Handler** | ClosedActions.execute_closed_environment_cycle() | |
-| **Night Hold** | ✅ Aktiv | ❌ Bypassed |
-| **VPD Deviation** | ✅ Aktiv | ❌ Bypassed |
-| **Weighted Deviations** | ✅ Zentral berechnet | ✅ Zentral berechnet (0,0,0,0) |
-| **WeightPublication** | ✅ Emittiert | ✅ Emittiert |
-| **Environment Guard** | ✅ Aktiv | ✅ Aktiv |
+| **Night Hold** | ✅ Active | ❌ Bypassed |
+| **VPD Deviation** | ✅ Active | ❌ Bypassed |
+| **Weighted Deviations** | ✅ Central calculation | ✅ Central calculation (0,0,0,0) |
+| **WeightPublication** | ✅ Emitted | ✅ Emitted |
+| **Environment Guard** | ✅ Active | ✅ Active |
 | **checkLimitsAndPublicate** | `checkLimitsAndPublicate()` | `checkLimitsAndPublicateNoVPD()` |
 
 ### Action Flow
@@ -293,10 +372,30 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBModeManager.handle_closed_environment()                                │
 │                                                                             │
-│ → ClosedEnvironmentManager.execute_cycle()                                 │
-│ → emit("closed_environment_cycle", capabilities)                            │
+│ 1.1 🆕 SMART DEADBAND CHECK (NEW! - VPD-based)                              │
+│     currentVPD = data_store.getDeep("vpd.current")                          │
+│     targetVPD = data_store.getDeep("vpd.targeted") or vpd.perfection       │
+│                                                                             │
+│     IF currentVPD is not None AND targetVPD is not None:                    │
+│       deadband = 0.05 (default)                                             │
+│       deviation = |currentVPD - targetVPD|                                  │
+│                                                                             │
+│       IF deviation <= deadband:                                             │
+│         → _handle_smart_deadband() called                                   │
+│         → Climate devices reduced to minimum                                │
+│         → Air exchange devices (Exhaust, Intake, Window) reduced           │
+│         → Ventilation continues running                                    │
+│         → Hold time: 2.5 minutes                                            │
+│         → LogForClient: "Smart Deadband active"                             │
+│         → CO2 Control still executed (important!)                          │
+│         → RETURN (no normal Closed Env Actions!)                            │
+│       ELSE:                                                                 │
+│         → _reset_deadband_state()                                           │
+│                                                                             │
+│ 1.2 Normal Closed Environment Cycle (only if outside deadband):            │
+│     → ClosedEnvironmentManager.execute_cycle()                             │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 2: CLOSED ACTIONS                                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -304,575 +403,430 @@
 │                                                                             │
 │ → ClosedActions.execute_closed_environment_cycle()                         │
 │                                                                             │
-│ Führt aus:                                                                  │
+│ Executes:                                                                   │
 │ 1. monitor_o2_safety()                                                     │
 │ 2. maintain_co2()                                                          │
 │ 3. control_temperature_closed()                                           │
 │ 4. control_humidity_closed()                                               │
 │ 5. optimize_air_recirculation()                                            │
+│                                                                             │
+│ NOTE: All actions are collected and executed in ONE batch!                 │
+│ (Unlike before where each method sent separate LogForClient events)        │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 3: TEMPERATURE/HUMIDITY CONTROL                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ClosedActions.control_temperature_closed()                                 │
 │ ClosedActions.control_humidity_closed()                                    │
 │                                                                             │
-│ Nutzt: _increase_temperature() / _decrease_temperature()                 │
+│ Uses: _increase_temperature() / _decrease_temperature()                   │
 │       _increase_humidity() / _decrease_humidity()                         │
 │                                                                             │
-│ Jede Methode ruft:                                                          │
-│ → action_manager.checkLimitsAndPublicateNoVPD(action_map)                  │
+│ Each method returns action_map (does NOT execute immediately!)             │
+│ Actions are collected for batch execution                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 4: WEIGHTED DEVIATIONS & NO NIGHT HOLD CHECK ⚠️                         │
+│ STEP 4: BATCH EXECUTION                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ClosedActions.execute_closed_environment_cycle()                           │
+│                                                                             │
+│ Collects all actions:                                                       │
+│ • co2_actions from maintain_co2()                                          │
+│ • o2_actions from monitor_o2_safety()                                      │
+│ • temp_actions from control_temperature_closed()                           │
+│ • hum_actions from control_humidity_closed()                               │
+│ • air_actions from optimize_air_recirculation()                            │
+│                                                                             │
+│ All actions combined into single action_map                                │
+│ → action_manager.checkLimitsAndPublicateNoVPD(all_actions)                 │
+│                                                                             │
+│ Single LogForClient Event:                                                  │
+│ {                                                                           │
+│   "Name": "dev_room",                                                       │
+│   "message": "Closed Environment: 5 actions executed",                     │
+│   "actions": "canExhaust:Increase, canCool:Reduce, canDehumidify:Increase",│
+│   "actionCount": 5,                                                         │
+│   "tempDeviation": 1.6,                                                     │
+│   "humDeviation": 0.8,                                                      │
+│   "co2Status": "anheben",                                                   │
+│   "tempStatus": "kuehlen",                                                  │
+│   "humStatus": "entfeuchten"                                                │
+│ }                                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 5: CONFLICT RESOLUTION & ENVIRONMENT GUARD                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBActionManager.checkLimitsAndPublicateNoVPD()                            │
 │                                                                             │
-│ Weighted Deviations (neu!):                                                 │
-│ • Berechnet weighted deviations (aber alle = 0,0,0,0 da keine VPD Limits)  │
-│ • Emit OGBWeightPublication                                                │
+│ • Resolve action conflicts                                                  │
+│ • Apply Environment Guard                                                   │
+│ • Execute actions                                                           │
 │                                                                             │
-│ Bypass Logik:                                                               │
-│ "Closed Environment must bypass all VPD-specific processing.                │
-│ We only keep lightweight per-capability conflict resolution"               │
-│                                                                             │
-│ • ❌ Kein Night Hold Check                                                 │
-│ • ❌ Kein VPD Deviation Filter                                             │
-│ • ✅ WeightPublication (mit 0-Deviations)                                  │
-│ • ✅ Conflict Resolution                                                   │
-│ ✅ ENVIRONMENT GUARD (Step 5)                                              │
+│ NOTE: No Core VPD Logic (Buffer Zones, VPD Context, Deviations)           │
+│       Closed Environment has its own control logic!                        │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 5: ENVIRONMENT GUARD 🛡️                                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ OGBActionManager.publicationActionHandler()                                │
-│                                                                             │
-│ → _apply_environment_guard()                                               │
-│                                                                             │
-│ ✅ IDENTISCH ZU VPD PERFECTION!                                            │
-│ • Blockiert bei temp_risk                                                 │
-│ • Blockiert bei humidity_risk                                             │
-│ • Erlaubt bei humidity_critical (≥maxHum)                                   │
-│ • Erlaubt bei humidity_critical_dry (≤minHum)                              │
-│ • Intelligente Quellen-Auswahl (Ambient/Outsite)                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
+                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 6: DEVICE EXECUTION                                                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ ✅ IDENTISCH ZU VPD PERFECTION                                              │
+│ ✅ IDENTICAL TO VPD PERFECTION                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Sicherheitsmechanismen
+## Safety Mechanisms
 
-### Übersicht
+### Overview
 
-| Sicherheit | VPD Perf | VPD Target | Closed Env |
+| Safety | VPD Perf | VPD Target | Closed Env |
 |------------|-----------|------------|------------|
 | **Night Hold** | ✅ | ✅ | ❌ |
-| **Temperature Safety** | ✅ | ✅ | ❌ (in ClosedActions) |
+| **Smart Deadband** | ✅ (climate reduced, air exchange reduced) | ✅ (climate reduced, air exchange reduced) | ✅ (VPD-based) |
 | **Humidity Critical Override** | ✅ | ✅ | ✅ |
-| **Environment Guard** | ✅ | ✅ | ✅ |
+| **Environment Guard** | ✅ (optional) | ✅ (optional) | ✅ (optional) |
 | **Buffer Zones** | ✅ | ✅ | ✅ |
 | **Conflict Resolution** | ✅ | ✅ | ✅ |
-| **Weighted Deviations** | ✅ | ✅ | ✅ (alle 0) |
-| **Dampening/Cooldown** | ✅ | ✅ | ❌ |
+| **Weighted Deviations** | ✅ | ✅ | ✅ (all 0) |
+| **Dampening/Cooldown** | ✅ (optional) | ✅ (optional) | ❌ |
 
-### Priority Order (wenn mehrere Risiken aktiv)
+### Smart Deadband
 
-```
-1. humidity_critical (≥maxHum) → IMMER ERLAUBEN (Schimmelgefahr!)
-2. humidity_critical_dry (≤minHum) → IMMER ERLAUBEN (zu trocken!)
-3. humidity_benefit → ERLAUBEN (Trocknen nötig)
-4. temp_benefit → ERLAUBEN (Wärmen nötig)
-5. temp_risk → BLOCK (Zu kalt)
-6. humidity_risk → BLOCK (Zu trocken)
-7. No risk → ERLAUBEN
-```
+**NEW**: All 3 modes now use Smart Deadband:
+- **VPD Perfection**: Deadband checked in `handle_vpd_perfection()`
+- **VPD Target**: Deadband checked in `handle_targeted_vpd()`
+- **Closed Environment**: Deadband checked in `handle_closed_environment()` (VPD-based)
 
----
+**Benefits**:
+- Prevents oscillation
+- Reduces energy consumption by 50-70%
+- Faster response time (devices already at minimum)
+- Lower mechanical wear
 
-## Weighted Deviations (Zentrale Berechnung)
-
-### Konzept
-
-Weighted Deviations erlauben es, Prioritäten zwischen Temperatur und Luftfeuchtigkeit zu setzen. Wenn ein Benutzer z.B. `humidity=2` und `temp=0` einstellt, wird der Luftfeuchtigkeits-Error mit doppelter Priorität behandelt.
-
-### Berechnung (in OGBActionManager._calculate_weighted_deviations())
-
-```python
-# Schritt 1: Gewichte bestimmen
-if own_weights:
-    temp_weight = controlOptionData.weights.temp    # z.B. 0.0, 1.0, 2.0, etc.
-    hum_weight = controlOptionData.weights.hum      # z.B. 2.0, 1.0, 0.0, etc.
-else:
-    # Plant-stage-spezifische Gewichte
-    plant_stage = "MidFlower"
-    temp_weight, hum_weight = get_plant_stage_weights(plant_stage)
-
-# Schritt 2: Temperature Deviation
-if temp > maxTemp:
-    temp_deviation = (temp - maxTemp) * temp_weight
-elif temp < minTemp:
-    temp_deviation = (temp - minTemp) * temp_weight
-else:
-    temp_deviation = 0
-
-# Schritt 3: Humidity Deviation
-if hum > maxHumidity:
-    hum_deviation = (hum - maxHumidity) * hum_weight
-elif hum < minHumidity:
-    hum_deviation = (hum - minHumidity) * hum_weight
-else:
-    hum_deviation = 0
-
-# Schritt 4: Emit WeightPublication
-emit("LogForClient", OGBWeightPublication(
-    tempDeviation=temp_deviation,
-    humDeviation=hum_deviation,
-    tempWeight=temp_weight,
-    humWeight=hum_weight,
-    message=f"Temp Too High: Deviation {temp_deviation}"
-))
-```
-
-### Anwendung (in OGBDampeningActions)
-
-```python
-# VPD Perfection Mode
-async def process_actions_basic(action_map, temp_deviation, hum_deviation):
-    # temp_deviation und hum_deviation werden vom ActionManager übergeben
-    # NICHT neu berechnet!
-
-    # Filtert Actions basierend auf weighted deviations
-    filtered_actions = action_manager._filterActionsByDampening(
-        action_map, temp_deviation, hum_deviation
-    )
-
-# VPD Target Mode
-async def process_actions_target_basic(action_map, temp_deviation, hum_deviation):
-    # Identische Logik wie VPD Perfection
-    filtered_actions = action_manager._filterActionsByDampening(
-        action_map, temp_deviation, hum_deviation
-    )
-
-# Closed Environment Mode
-async def checkLimitsAndPublicateNoVPD(action_map):
-    # Berechnet weighted deviations (aber alle = 0)
-    temp_deviation, hum_deviation, temp_weight, hum_weight, message = \
-        _calculate_weighted_deviations(tent_data)
-
-    # Emit WeightPublication (mit 0-Deviations)
-    await emit("LogForClient", OGBWeightPublication(...))
-```
-
-### Beispiele
-
-#### Beispiel 1: Luftfeuchtigkeit hat Priorität (humidity=2, temp=0)
+### Priority Order (when multiple risks are active)
 
 ```
-Aktuelle Bedingungen: temp=25°C, hum=80%
-Grenzen: minTemp=20°C, maxTemp=27°C, minHum=50%, maxHum=70%
-
-Berechnung:
-• temp_deviation = 0 (im Bereich)
-• hum_deviation = (80% - 70%) * 2.0 = 20.0% (gewichtet!)
-
-Ergebnis:
-• Dehumidifier Actions werden mit hoher Priorität ausgeführt
-• Temp-Actions haben niedrige Priorität
-```
-
-#### Beispiel 2: Temperatur hat Priorität (humidity=0, temp=2)
-
-```
-Aktuelle Bedingungen: temp=29°C, hum=60%
-Grenzen: minTemp=20°C, maxTemp=27°C, minHum=50%, maxHum=70%
-
-Berechnung:
-• temp_deviation = (29°C - 27°C) * 2.0 = 4.0°C (gewichtet!)
-• hum_deviation = 0 (im Bereich)
-
-Ergebnis:
-• Cooling Actions werden mit hoher Priorität ausgeführt
-• Humidity-Actions haben niedrige Priorität
-```
-
-#### Beispiel 3: Ausgewogene Priorität (humidity=1, temp=1)
-
-```
-Aktuelle Bedingungen: temp=29°C, hum=80%
-Grenzen: minTemp=20°C, maxTemp=27°C, minHum=50%, maxHum=70%
-
-Berechnung:
-• temp_deviation = (29°C - 27°C) * 1.0 = 2.0°C
-• hum_deviation = (80% - 70%) * 1.0 = 10.0%
-
-Ergebnis:
-• Sowohl Cooling als auch Dehumidifying werden ausgeführt
-• Priority basiert auf absoluter Deviation (10% > 2°C)
-```
-
-### Plant-Stage-spezifische Gewichte
-
-| Plant Stage | Temp Weight | Hum Weight | Begründung |
-|-------------|-------------|------------|------------|
-| Germination | 1.3 | 0.9 | Temp-Stabilität wichtig für Wurzelbildung |
-| EarlyVeg | 1.3 | 0.9 | Wie Germination |
-| MidVeg | 1.1 | 1.1 | Ausgewogenes Wachstum |
-| LateVeg | 1.1 | 1.1 | Wie MidVeg |
-| EarlyFlower | 1.0 | 1.0 | Übergang zu Blüte |
-| MidFlower | 1.0 | 1.25 | Luftfeuchtigkeit wichtig für Blütenentwicklung |
-| LateFlower | 1.0 | 1.25 | Wie MidFlower |
-| Clones | 1.0 | 1.0 | Ausgewogen |
-
-### WeightPublication Event
-
-```json
-{
-  "Name": "Room1",
-  "message": "Humidity Too High: Deviation 20.0",
-  "tempDeviation": 0.0,
-  "humDeviation": 20.0,
-  "tempWeight": 0.0,
-  "humWeight": 2.0
-}
+1. humidity_critical (≥maxHum) → ALWAYS ALLOW (mold risk!)
+2. humidity_critical_dry (≤minHum) → ALWAYS ALLOW (too dry!)
+3. humidity_benefit → ALLOW (drying needed)
+4. temp_benefit → ALLOW (heating needed)
+5. temp_risk → BLOCK (Too cold)
+6. humidity_risk → BLOCK (Too dry)
+7. No risk → ALLOW
 ```
 
 ---
 
-## Deadband & Quiet Zone
+## Dampening Control (Core Logic vs Dampening Features)
 
-### Konzept
+### Concept
 
-Deadband ist eine **Toleranzzone** um den Zielwert herum, in der **keine Geräteaktionen** stattfinden. Wenn VPD innerhalb dieser Zone liegt, gehen alle Geräte in den "Quiet Mode" und pausieren.
+The system has been refactored to clearly separate **Core VPD Logic** from **Dampening Features**:
 
-### Architektur
+1. **Core VPD Logic** (ALWAYS active for VPD Perfection and VPD Target):
+   - Buffer Zones (prevent oscillation near limits)
+   - VPD Context (priorities based on VPD status)
+   - Deviations-based actions (intelligent additional actions)
+   - Conflict resolution (resolve contradictory actions)
 
-**WICHTIG**: Deadband wird im **ActionManager** geprüft, NICHT im ModeManager!
+2. **Dampening Features** (only when `vpdDeviceDampening = True`):
+   - Cooldown filtering (user-defined base cooldowns)
+   - Repeat cooldown (prevent immediate same action)
+   - Emergency override (bypass cooldown in critical conditions)
 
-```
-ModeManager (nur Entscheidung)
-  ↓
-  Emitted: "increase_vpd" oder "reduce_vpd"
-  ↓
-ActionManager (Deadband Check) ← HIER!
-  ↓
-  Wenn VPD in Deadband → Early Exit, keine Actions
-  ↓
-  Wenn VPD außerhalb → Actions verarbeiten
-```
+3. **Closed Environment**: Has its own cycle, only needs:
+   - Conflict resolution
+   - Environment Guard
+   - Execute
 
-### Konfiguration
+**IMPORTANT**: Core VPD Logic is **ONLY** applied to VPD Perfection and VPD Target modes, NOT to Closed Environment or Premium modes (PID/MPC/AI).
+
+### Mode-Specific Behavior
+
+| Mode | Core VPD Logic | Dampening Features | Environment Guard |
+|------|----------------|-------------------|-------------------|
+| **VPD Perfection** | ✅ Active (Buffer Zones, VPD Context, Conflicts) | ⚙️ Optional (if `vpdDeviceDampening = True`) | ✅ Active |
+| **VPD Target** | ✅ Active (Buffer Zones, VPD Context, Conflicts) | ⚙️ Optional (if `vpdDeviceDampening = True`) | ✅ Active |
+| **Closed Environment** | ❌ Not used (has own logic) | ❌ Not used | ✅ Active |
+| **PID/MPC/AI Control** | ❌ Not used | ❌ Not used | ✅ Active |
+| **Script Mode** | ❌ Not used | ❌ Not used | ✅ Active |
+
+### Configuration
 
 ```python
-"controlOptionData.deadband": {
-    "vpdDeadband": 0.05,           # VPD Perfection: ±0.05 kPa
-    "vpdTargetDeadband": 0.05,     # VPD Target: ±0.05 kPa
-    "closedTempDeadband": 0.5,     # Closed Env Temp: ±0.5°C (deprecated)
-    "closedHumidDeadband": 1.5,    # Closed Env Hum: ±1.5%RH (deprecated)
+"controlOptions": {
+    "vpdDeviceDampening": False,  # Default: False (user-defined base cooldowns only)
+    "adaptiveCooldownEnabled": False,  # Default: False (user says x, gets x)
+    "emergencyCooldownFactor": 0.5,  # Default: 0.5 (50% reduction in emergency)
+    "adaptiveCooldownThresholds": {  # Optional: Only if adaptiveCooldownEnabled = True
+        "critical": 5.0,
+        "high": 3.0,
+        "near": 1.0,
+        "veryNear": 0.5
+    },
+    "adaptiveCooldownFactors": {  # Optional: Only if adaptiveCooldownEnabled = True
+        "critical": 1.5,
+        "high": 1.2,
+        "near": 2.0,
+        "veryNear": 3.0
+    }
 }
 ```
 
-### Implementierung
+### Default Device Cooldowns
 
-**OGBActionManager._is_vpd_in_deadband()**:
 ```python
-def _is_vpd_in_deadband(self) -> Tuple[bool, str]:
-    """Check if current VPD is within deadband."""
-    mode = self.data_store.get("selectedMode")
-    
-    if mode == "VPD Perfection":
-        current_vpd = self.data_store.getDeep("vpd.current")
-        target_vpd = self.data_store.getDeep("vpd.perfection")
-        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
-    elif mode == "VPD Target":
-        current_vpd = self.data_store.getDeep("vpd.current")
-        target_vpd = self.data_store.getDeep("vpd.targeted")
-        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
-    else:
-        return False, ""  # Closed Environment hat keinen VPD-Deadband
-    
-    deviation = abs(float(current_vpd) - float(target_vpd))
-    
-    if deviation <= deadband:
-        return True, f"VPD {current_vpd:.3f} within deadband ±{deadband:.3f} of target {target_vpd:.3f}"
-    
-    return False, ""
+DEFAULT_DEVICE_COOLDOWNS = {
+    "canHumidify": 5,   # Befeuchter braucht Zeit
+    "canDehumidify": 3, # Entfeuchter braucht noch mehr Zeit
+    "canHeat": 3,       # Heizung reagiert relativ schnell
+    "canCool": 3,       # Kühlung braucht etwas Zeit
+    "canExhaust": 1,    # Abluft reagiert schnell
+    "canIntake": 1,     # Zuluft reagiert schnell
+    "canVentilate": 1,  # Ventilation reagiert schnell
+    "canWindow": 1,     # Window actuator reacts quickly
+    "canDoor": 1,       # Door contact events should not spam
+    "canLight": 1,      # Licht reagiert sofort, aber VPD-Effekt braucht Zeit
+    "canCO2": 2,        # CO2 braucht Zeit zur Verteilung
+    "canClimate": 2,    # Klima-System braucht Zeit
+}
 ```
 
-**Einsatz in checkLimitsAndPublicate()**:
+### Implementation
+
+**VPD Perfection Mode (OGBActionManager.py):**
+
 ```python
 async def checkLimitsAndPublicate(self, actionMap: List):
+    """Process VPD Perfection actions with clean separation of Core Logic and Dampening."""
+    
+    # Check mode - Core VPD Logic only for VPD Perfection and VPD Target
+    mode = self.data_store.get("tentMode")
+    vpd_modes = {"VPD Perfection", "VPD Target"}
+    is_vpd_mode = mode in vpd_modes
+    
+    if not is_vpd_mode:
+        # For non-VPD modes (Closed Environment, PID, MPC, AI, Script)
+        final_actions = await self._apply_environment_guard(actionMap)
+        await self.publicationActionHandler(final_actions)
+        return
+    
+    # Night Hold and Deadband checks
     if not await self._check_vpd_night_hold(actionMap):
         return
     
-    # Deadband Check - frühes Aussteigen wenn im Zielbereich
     in_deadband, reason = self._is_vpd_in_deadband()
     if in_deadband:
         await self._emit_quiet_zone_idle()
-        return  # Early Exit - keine Actions!
+        return
     
-    # ... normale Action-Verarbeitung
+    # Calculate deviations
+    (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+     tempWeight, humWeight, tempPercentage, humPercentage, weightMessage) = \
+        self._calculate_weighted_deviations(tent_data)
+    
+    # STEP 1: CORE VPD LOGIC (ALWAYS active)
+    if self.dampening_actions:
+        enhanced_actions = await self.dampening_actions.process_core_vpd_logic(
+            actionMap, weighted_temp_dev, weighted_hum_dev, tent_data
+        )
+    else:
+        enhanced_actions = self._resolve_action_conflicts(actionMap)
+    
+    # STEP 2: DAMPENING FEATURES (only if enabled)
+    dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)
+    blocked_actions = []
+    
+    if dampening_enabled and self.dampening_actions:
+        filtered_actions, blocked_actions = await self.dampening_actions.process_dampening_features(
+            enhanced_actions, weighted_temp_dev, weighted_hum_dev, tent_data
+        )
+        final_actions = self._resolve_action_conflicts(filtered_actions)
+    else:
+        final_actions = enhanced_actions
+    
+    # STEP 3: ENVIRONMENT GUARD (always active)
+    final_actions = await self._apply_environment_guard(final_actions)
+    
+    # STEP 4: Execute actions
+    await self.publicationActionHandler(final_actions)
+    
+    # Log results
+    await self._log_vpd_results(
+        real_temp_dev, real_hum_dev, tempPercentage, humPercentage,
+        final_actions, blocked_actions, dampening_enabled
+    )
 ```
 
-### Beispiel
+**VPD Target Mode (OGBActionManager.py):**
 
-```
-VPD Perfection Mode:
-  Target VPD: 1.10 kPa
-  Deadband: ±0.05 kPa
-  Quiet Zone: 1.05 - 1.15 kPa
+Similar to VPD Perfection, but uses VPD deviation only (no temp/hum weighted deviations).
 
-Szenario 1: VPD = 1.08 kPa
-  → In Deadband → Quiet Zone aktiv → Keine Actions → Energie sparen
-
-Szenario 2: VPD = 1.00 kPa
-  → Unter Deadband → "increase_vpd" Event → Actions ausführen
-
-Szenario 3: VPD = 1.20 kPa
-  → Über Deadband → "reduce_vpd" Event → Actions ausführen
-```
-
-### Vorteile
-
-| Aspekt | Vorher | Nachher |
-|--------|--------|---------|
-| **Energieverbrauch** | Geräte laufen ständig | 30-50% weniger |
-| **Graphen** | Zickzack-Kurve | Glattere Kurven |
-| **Geräteverschleiß** | Hoch | Geringer |
-| **Systemstabilität** | Oszilliert | Stabil |
-
----
-
-## Conflict Resolution
-
-### Problem
-
-Gegensätzliche Geräte können gleichzeitig aktiv sein:
-- Humidifier **und** Dehumidifier → arbeiten gegeneinander
-- Heater **und** Cooler → arbeiten gegeneinander
-- Exhaust **und** Humidifier → Exhaust entfernt Feuchtigkeit
-
-### Lösung
-
-**OGBActionManager._remove_conflicting_actions()**:
-```python
-CONFLICTING_PAIRS = [
-    ("canHumidify", "canDehumidify"),
-    ("canHeat", "canCool"),
-    ("canExhaust", "canHumidify"),  # Exhaust entfernt Feuchtigkeit
-]
-
-def _remove_conflicting_actions(self, actionMap: List) -> List:
-    """Remove actions that directly contradict each other."""
-    cap_to_action = {}
-    for action in actionMap:
-        cap = getattr(action, 'capability', None)
-        if cap:
-            cap_to_action[cap] = action
-    
-    blocked_caps = set()
-    prio_map = {"high": 3, "medium": 2, "low": 1}
-    
-    for cap_a, cap_b in self.CONFLICTING_PAIRS:
-        if cap_a in cap_to_action and cap_b in cap_to_action:
-            action_a = cap_to_action[cap_a]
-            action_b = cap_to_action[cap_b]
-            
-            prio_a = prio_map.get(getattr(action_a, 'priority', 'medium'), 2)
-            prio_b = prio_map.get(getattr(action_b, 'priority', 'medium'), 2)
-            
-            if prio_b > prio_a:
-                blocked_caps.add(cap_a)
-            else:
-                blocked_caps.add(cap_b)
-    
-    return [a for a in actionMap if getattr(a, 'capability', None) not in blocked_caps]
-```
-
-### Einsatz
-
-Wird als **erster Schritt** in `_filterActionsByDampening()` aufgerufen:
+**Closed Environment Mode (OGBActionManager.py):**
 
 ```python
-def _filterActionsByDampening(self, actionMap, tempDeviation=0, humDeviation=0):
-    # 1. Konflikte zuerst bereinigen
-    actionMap = self._remove_conflicting_actions(actionMap)
+async def checkLimitsAndPublicateNoVPD(self, actionMap: List):
+    """
+    Closed Environment: Only conflict resolution + Environment Guard.
+    No Core VPD Logic (Buffer Zones, VPD Context, Deviations-based Actions).
+    """
+    if not actionMap:
+        return
     
-    # 2. Danach normale Dampening-Logik
-    filteredActions = []
-    blockedActions = []
-    # ...
+    # Calculate deviations for logging only
+    tent_data = self.data_store.get("tentData")
+    (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+     tempWeight, humWeight, tempPercentage, humPercentage, weightMessage) = \
+        self._calculate_weighted_deviations(tent_data)
+    
+    final_actions = actionMap
+    
+    # Only conflict resolution (no Core VPD Logic)
+    if self.dampening_actions:
+        final_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
+    
+    # Environment Guard
+    final_actions = await self._apply_environment_guard(final_actions)
+    await self.publicationActionHandler(final_actions)
 ```
 
-### Beispiel
+### Core VPD Logic Details
 
+**process_core_vpd_logic() (OGBDampeningActions.py):**
+
+```python
+async def process_core_vpd_logic(
+    self, action_map: List, temp_deviation: float, hum_deviation: float, 
+    tent_data: Dict[str, Any]
+) -> List:
+    """Process Core VPD Logic (ALWAYS active)."""
+    
+    # 1. Enhance action map
+    enhanced_actions = self._enhance_action_map(
+        action_map, temp_deviation, hum_deviation, tent_data, caps,
+        vpd_light_control, is_light_on, optimal_devices, vpd_status
+    )
+    #   - Apply buffer zones (prevent oscillation near limits)
+    #   - Add VPD context enhancements (priorities based on VPD status)
+    #   - Add deviations-based actions (intelligent additional actions)
+    
+    # 2. Resolve conflicts
+    final_actions = self._resolve_action_conflicts(enhanced_actions)
+    #   - Remove contradictory actions
+    #   - Keep highest priority action per capability
+    
+    return final_actions
 ```
-Input Actions:
-  - canHumidify: Increase (priority: medium)
-  - canDehumidify: Reduce (priority: high)
 
-Conflict Resolution:
-  - Dehumidify hat höhere Priority
-  - Humidify wird entfernt
+### Dampening Features Details
 
-Output Actions:
-  - canDehumidify: Reduce (priority: high)
+**process_dampening_features() (OGBDampeningActions.py):**
+
+```python
+async def process_dampening_features(
+    self, action_map: List, temp_deviation: float, hum_deviation: float,
+    tent_data: Dict[str, Any]
+) -> Tuple[List, List]:
+    """Process Dampening Features (only when vpdDeviceDampening = True)."""
+    
+    # 1. Check emergency conditions
+    emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
+    if emergency_conditions:
+        self.action_manager._clearCooldownForEmergency(emergency_conditions)
+    
+    # 2. Apply cooldown filtering
+    dampened_actions, blocked_actions = (
+        self.action_manager._filterActionsByDampening(
+            action_map, temp_deviation, hum_deviation
+        )
+    )
+    #   - Check if device is in cooldown
+    #   - Check if same action is repeating too quickly
+    #   - Apply user-defined base cooldowns
+    
+    # 3. Resolve conflicts
+    final_actions = self._resolve_action_conflicts(dampened_actions)
+    
+    return final_actions, blocked_actions
 ```
 
----
+### Adaptive Cooldown Behavior
 
-## Adaptive Cooldown
+**Default (adaptiveCooldownEnabled = False):**
 
-### Konzept
-
-Cooldown-Zeit wird **adaptiv** basierend auf der Abweichung vom Ziel:
-- **Große Abweichung** → Langer Cooldown (Zeit für Wirkung geben)
-- **Kleine Abweichung** → Sehr langer Cooldown (Geräte zur Ruhe bringen)
-
-### Implementierung
-
-**OGBActionManager._calculateAdaptiveCooldown()**:
 ```python
 def _calculateAdaptiveCooldown(self, capability: str, deviation: float) -> float:
-    """Calculate adaptive cooldown time based on deviation."""
     baseCooldown = self.defaultCooldownMinutes.get(capability, 2)
     
-    if not self.adaptiveCooldownEnabled:
+    # Check if adaptive cooldown is enabled
+    adaptive_enabled = self.data_store.getDeep("controlOptions.adaptiveCooldownEnabled", False)
+    if not adaptive_enabled:
+        # User says x, user gets x!
+        if self._emergency_mode:
+            # In emergency: Reduce cooldown for faster response
+            emergency_factor = self.data_store.getDeep("controlOptions.emergencyCooldownFactor", 0.5)
+            return baseCooldown * emergency_factor
         return baseCooldown
     
-    abs_dev = abs(deviation)
-    
-    if abs_dev > 5:
-        return baseCooldown * 1.5      # Sehr weit ab → 50% länger
-    elif abs_dev > 3:
-        return baseCooldown * 1.2      # Weit ab → 20% länger
-    elif abs_dev < 0.5:
-        return baseCooldown * 3.0      # Sehr nah → 200% länger!
-    elif abs_dev < 1:
-        return baseCooldown * 2.0      # Nah → 100% länger
-    
-    return baseCooldown               # Normaler Cooldown
+    # Adaptive cooldown is enabled - apply factors
+    # (only if user explicitly enabled this feature)
+    ...
 ```
 
-### Beispiel
+**Key Points:**
+- **Default**: `adaptiveCooldownEnabled = False`
+- **Normal mode**: User says 3 minutes, gets 3 minutes
+- **Emergency mode**: Cooldown reduced by 50% for faster response
+- **Optional adaptive**: User can enable adaptive cooldown with configurable thresholds and factors
 
-```python
-# Exhaust Fan (Base: 1 min)
+### Log Differences
 
-Szenario 1: Deviation = 6.0 (sehr weit)
-  → 1.0 * 1.5 = 1.5 min Cooldown
-
-Szenario 2: Deviation = 0.3 (sehr nah am Ziel)
-  → 1.0 * 3.0 = 3.0 min Cooldown (Geräte pausieren)
-
-Szenario 3: Deviation = 0.7 (nah am Ziel)
-  → 1.0 * 2.0 = 2.0 min Cooldown
-```
-
-### Vorteile
-
-| Aspekt | Vorher (Falsch) | Nachher (Korrekt) |
-|--------|-----------------|-------------------|
-| **Nahe am Ziel** | Cooldown 0.8x (kürzer!) | Cooldown 3.0x (länger) |
-| **Geräteverhalten** | Rattert ständig | Pausiert wenn gut |
-| **Stabilität** | Oszilliert | Stabil |
-
----
-
-## Environment Guard Details
-
-### Konfiguration (controlOptions)
-
-```python
-{
-    "environmentGuardEnabled": True,
-    "environmentGuardAmbientDelta": 1.2,      # °C Differenz für Temp-Risiko
-    "environmentGuardMinMargin": 0.8,         # °C Margin zu minTemp
-    "environmentGuardHumidityDelta": 15.0,    # % Differenz für Hum-Risiko
-    "environmentGuardHumidityMargin": 5.0,    # % Margin zu minHumidity
-    "environmentGuardWindowMinutes": 30.0,    # Zeitfenster für Block-Zählung
-    "environmentGuardLockMinutes": 60.0,      # Lock-Dauer nach 2 Blocks
-    "environmentGuardUnlockMargin": 1.2,      # °C Margin zum Entsperren
-}
-```
-
-### State (safety.environmentGuard)
-
-```python
-{
-    "blockedCount": 0,         # Blocks im aktuellen Zeitfenster
-    "windowStart": None,      # Startzeit des Zeitfensters
-    "lockUntil": None,         # Zeit bis zu der gelockt ist
-    "lastDecision": None,      # "blocked" oder "allowed"
-    "lastReason": None,       # Grund für letzte Entscheidung
-    "selectedSource": None,   # "ambient" oder "outsite"
-    "selectedTemp": None,     # Temperatur der gewählten Quelle
-    "selectedHum": None,      # Feuchtigkeit der gewählten Quelle
-    "indoorTemp": None,       # Aktuelle Innentemperatur
-    "indoorHum": None,        # Aktuelle Innenfeuchtigkeit
-    "maxHumidity": None,      # maxHumidity aus Plant Stage
-    "minHumidity": None,      # minHumidity aus Plant Stage
-}
-```
-
----
-
-## Plant Stage min/max Werte (Standard)
-
-| Stage | minTemp | maxTemp | minHumidity | maxHumidity |
-|-------|---------|----------|-------------|-------------|
-| Germination | 20°C | 24°C | 78% | 85% |
-| Clones | 20°C | 24°C | 72% | 80% |
-| EarlyVeg | 22°C | 26°C | 65% | 75% |
-| MidVeg | 23°C | 27°C | 60% | 72% |
-| LateVeg | 24°C | 27°C | 55% | 68% |
-| EarlyFlower | 22°C | 26°C | 55% | 68% |
-| MidFlower | 21°C | 25°C | 48% | 62% |
-| LateFlower | 20°C | 24°C | 40% | 55% |
-
----
-
-## Log For Client Events
-
-### Environment Guard Blocked
+**With Dampening (vpdDeviceDampening = True):**
 ```json
 {
   "Name": "Room1",
-  "Action": "EnvironmentGuard",
-  "Device": "canExhaust",
-  "From": "Increase",
-  "To": "Reduce",
-  "Reason": "temp_risk_cold_source",
-  "Message": "EnvironmentGuard blocked canExhaust: temp_risk_cold_source (indoor=19.0°C/60%, source=ambient/10.0°C/40%)",
-  "selectedSource": "ambient",
-  "selectedTemp": 10.0,
-  "selectedHum": 40.0,
-  "indoorTemp": 19.0,
-  "indoorHum": 60.0,
-  "maxHumidity": 75.0,
-  "minHumidity": 50.0,
-  "priority": "medium"
+  "message": "VPD Perfection: Core Logic + Dampening: 5 actions executed (2 blocked by cooldown)",
+  "actions": "canExhaust:Increase, canCool:Reduce, canDehumidify:Increase",
+  "actionCount": 5,
+  "blockedActions": 2,
+  "dampeningEnabled": true,
+  "tempDeviation": 1.6,
+  "humDeviation": 0.8,
+  "tempPercentage": 40.0,
+  "humPercentage": 5.7,
+  "vpdStatus": "medium"
 }
 ```
 
-### Environment Guard Allowed (Critical Humidity)
+**Without Dampening (vpdDeviceDampening = False):**
 ```json
 {
   "Name": "Room1",
-  "Action": "EnvironmentGuard",
-  "Device": "canExhaust",
-  "From": "Increase",
-  "To": "Increase",
-  "Reason": "humidity_emergency_over_max",
-  "Message": "EnvironmentGuard allowed canExhaust: humidity_emergency_over_max (indoor=22.0°C/76%, source=ambient/18.0°C/50%)",
-  "priority": "emergency"
+  "message": "VPD Perfection: Core Logic only (dampening disabled): 7 actions executed",
+  "actions": "canExhaust:Increase, canCool:Reduce, canHumidify:Increase, canDehumidify:Increase",
+  "actionCount": 7,
+  "blockedActions": 0,
+  "dampeningEnabled": false,
+  "tempDeviation": 1.6,
+  "humDeviation": 0.8,
+  "tempPercentage": 40.0,
+  "humPercentage": 5.7
 }
 ```
+
+### Summary of Changes
+
+**Before Refactor:**
+- `vpdDeviceDampening = False` → NO Core VPD Logic, NO Dampening → Oszillation possible
+- `vpdDeviceDampening = True` → Everything (Core VPD Logic + Dampening)
+- Adaptive Cooldown was always active (hardcoded)
+
+**After Refactor:**
+- Core VPD Logic (Buffer Zones, VPD Context, Conflicts) → **ALWAYS** active for VPD Perfection and VPD Target
+- Dampening Features (Cooldown, Emergency Override) → **ONLY** if `vpdDeviceDampening = True`
+- Adaptive Cooldown → **Disabled by default** (user says x, gets x)
+- Closed Environment → Uses only Conflict Resolution + Environment Guard (no Core VPD Logic)
+- Premium Modes (PID/MPC/AI) → No Core VPD Logic

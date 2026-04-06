@@ -48,6 +48,13 @@ class Device:
         self.eventManager.on("WorkModeChange", self.WorkMode)
         self.eventManager.on("MinMaxControlDisabled", self.on_minmax_control_disabled)
         self.eventManager.on("MinMaxControlEnabled", self.on_minmax_control_enabled)
+        
+        # Smart Deadband Events (Climate-Geräte)
+        self.eventManager.on("SmartDeadbandEntered", self.on_smart_deadband_entered)
+        self.eventManager.on("SmartDeadbandExited", self.on_smart_deadband_exited)
+        
+        # Smart Deadband State
+        self._in_smart_deadband = False
 
         self.deviceInit(deviceData)
 
@@ -70,7 +77,16 @@ class Device:
         return iter(self.__dict__.items())
 
     def should_block_air_exchange_increase(self, capability: str, context_message: str = "") -> bool:
-        """Guard direct air-exchange increase events when ambient conditions are too cold."""
+        """Guard direct air-exchange increase events when ambient conditions are too cold.
+        
+        Only active when ambientControl is enabled in controlOptions.
+        """
+        # Check if ambientControl is enabled
+        ambient_control = self.dataStore.getDeep("controlOptions.ambientControl", False)
+        if not ambient_control:
+            _LOGGER.debug(f"{self.deviceName}: EnvironmentGuard check skipped - ambientControl not enabled")
+            return False
+        
         try:
             from ..actions.OGBEnvironmentGuard import evaluate_environment_guard
         except ModuleNotFoundError:
@@ -996,7 +1012,7 @@ class Device:
         """Set default control values ONLY when no actual control values were found."""
         if self.deviceType == "Light":
             if self.voltage is None:
-                self.voltage = 60.0  # Default light voltage (midpoint of 20-100% range)
+                self.voltage = 20.0  # Default light voltage (sunrise starts at 20%)
                 _LOGGER.info(f"{self.deviceName}: No control value found - using default voltage: {self.voltage}%")
             else:
                 _LOGGER.debug(f"{self.deviceName}: Using existing voltage: {self.voltage}%")
@@ -2318,7 +2334,7 @@ class Device:
                         self.voltage = self.clamp_voltage(old_voltage)
                         await self.turn_on(brightness_pct=self.voltage)
                     except (ValueError, TypeError):
-                        self.voltage = 60.0
+                        self.voltage = 20.0
                         await self.turn_on(brightness_pct=self.voltage)
             else:
                 try:
@@ -2508,3 +2524,89 @@ class Device:
 
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
         _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
+
+    async def setToMinimum(self):
+        """
+        Reduziert das Gerät auf das Minimum für Smart Deadband.
+        
+        Dimmbare Geräte: Auf 10% (oder minDuty wenn höher)
+        Nicht-dimmbare Geräte: Ausschalten
+        
+        Diese Methode wird vom Smart Deadband aufgerufen, um Geräte
+        in einen "Low-Power" Zustand zu versetzen ohne die normale
+        reduce/increase Logik zu beeinträchtigen.
+        """
+        if self.isDimmable:
+            # Dimmbares Gerät: Auf Minimum reduzieren (10% oder minDuty)
+            min_value = max(self.minDuty or 0, 10)  # Minimum 10% oder minDuty wenn höher
+            clamped = self.clamp_duty_cycle(min_value)
+            self.dutyCycle = clamped
+            
+            # Setze auf den geklammpten Wert (turn_on akzeptiert percentage oder brightness_pct)
+            if self.isSpecialDevice:
+                await self.turn_on(brightness_pct=clamped)
+            else:
+                await self.turn_on(percentage=clamped)
+            
+            _LOGGER.info(
+                f"{self.deviceName}: Set to minimum for deadband: {clamped}% "
+                f"(dimmable device)"
+            )
+        else:
+            # Nicht-dimmbares Gerät: Ausschalten
+            if self.isRunning:
+                _LOGGER.info(
+                    f"{self.deviceName}: Turned off for deadband (non-dimmable device)"
+                )
+                await self.turn_off()
+            else:
+                _LOGGER.debug(
+                    f"{self.deviceName}: Already off (non-dimmable device in deadband)"
+                )
+
+    async def on_smart_deadband_entered(self, data) -> None:
+        """Wird aufgerufen wenn VPD in Smart Deadband eintritt."""
+        if not self.isInitialized:
+            _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandEntered – not yet initialized")
+            return
+
+        deadband_device_types = {"Heater", "Cooler", "Humidifier", "Dehumidifier", "Climate", "Exhaust", "Intake", "Window"}
+        if self.deviceType not in deadband_device_types:
+            return
+
+        # Device-Filter wie bei MinMax
+        if isinstance(data, dict):
+            event_device_type = data.get("deviceType", "")
+            if event_device_type and event_device_type.lower() != self.deviceType.lower():
+                return
+
+        if not self._in_smart_deadband:
+            # WICHTIG: Zuerst auf Minimum reduzieren, dann Flag setzen!
+            await self.setToMinimum()
+
+            self._in_smart_deadband = True
+            _LOGGER.info(
+                f"{self.deviceName}: Smart Deadband ENTERED - device reduced to minimum (dimmable: 10%, non-dimmable: off)"
+            )
+
+    async def on_smart_deadband_exited(self, data) -> None:
+        """Wird aufgerufen wenn VPD Smart Deadband verlässt."""
+        if not self.isInitialized:
+            _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandExited – not yet initialized")
+            return
+        
+        deadband_device_types = {"Heater", "Cooler", "Humidifier", "Dehumidifier", "Climate", "Exhaust", "Intake", "Window"}
+        if self.deviceType not in deadband_device_types:
+            return
+        
+        # Device-Filter wie bei MinMax
+        if isinstance(data, dict):
+            event_device_type = data.get("deviceType", "")
+            if event_device_type and event_device_type.lower() != self.deviceType.lower():
+                return
+        
+        if self._in_smart_deadband:
+            self._in_smart_deadband = False
+            _LOGGER.info(
+                f"{self.deviceName}: Smart Deadband EXITED - device will resume normal operation"
+            )

@@ -60,10 +60,10 @@ class OGBActionManager:
         
         # Load cooldowns from datastore or use defaults
         self.defaultCooldownMinutes = self._load_cooldowns_from_datastore()
-        
+
         # Lock for thread-safe action history updates
         self._action_history_lock = asyncio.Lock()
-        self.adaptiveCooldownEnabled = True
+        self.adaptiveCooldownEnabled = False  # Disabled by default - user sets exact cooldowns
         self._emergency_mode = False
 
         # Initialize specialized action modules
@@ -251,7 +251,7 @@ class OGBActionManager:
 
     def _calculateAdaptiveCooldown(self, capability: str, deviation: float) -> float:
         """
-        Calculate adaptive cooldown time based on deviation.
+        Calculate cooldown time.
 
         Args:
             capability: Device capability
@@ -260,21 +260,39 @@ class OGBActionManager:
         Returns:
             Cooldown time in minutes
         """
+        # Get base cooldown (user-defined)
         baseCooldown = self.defaultCooldownMinutes.get(capability, 2)
 
-        if not self.adaptiveCooldownEnabled:
+        # Check if adaptive cooldown is enabled (default: False)
+        adaptive_enabled = self.data_store.getDeep("controlOptions.adaptiveCooldownEnabled", False)
+        if not adaptive_enabled:
+            # User says x, user gets x!
+            # Unless in emergency mode
+            if self._emergency_mode:
+                # In emergency: Reduce cooldown for faster response
+                emergency_factor = self.data_store.getDeep("controlOptions.emergencyCooldownFactor", 0.5)
+                return baseCooldown * emergency_factor
             return baseCooldown
+
+        # Adaptive cooldown is enabled - load user-configurable thresholds and factors
+        thresholds = self.data_store.getDeep("controlOptions.adaptiveCooldownThresholds", {
+            "critical": 5.0, "high": 3.0, "near": 1.0, "veryNear": 0.5
+        })
+        factors = self.data_store.getDeep("controlOptions.adaptiveCooldownFactors", {
+            "critical": 1.5, "high": 1.2, "near": 2.0, "veryNear": 3.0
+        })
 
         abs_dev = abs(deviation)
 
-        if abs_dev > 5:
-            return baseCooldown * 1.5
-        elif abs_dev > 3:
-            return baseCooldown * 1.2
-        elif abs_dev < 0.5:
-            return baseCooldown * 3.0
-        elif abs_dev < 1:
-            return baseCooldown * 2.0
+        # Apply adaptive factors if user explicitly enabled this feature
+        if abs_dev > thresholds["critical"]:
+            return baseCooldown * factors["critical"]
+        elif abs_dev > thresholds["high"]:
+            return baseCooldown * factors["high"]
+        elif abs_dev < thresholds["veryNear"]:
+            return baseCooldown * factors["veryNear"]
+        elif abs_dev < thresholds["near"]:
+            return baseCooldown * factors["near"]
 
         return baseCooldown
 
@@ -566,15 +584,25 @@ class OGBActionManager:
             water_action = {"Name": self.room, "Device": dev, "Cycle": cycle, "Action": action, "Message": message}
             await self.event_manager.emit("LogForClient", water_action, haEvent=True, debug_type="INFO")
 
-    def _calculate_weighted_deviations(self, tent_data: Dict[str, Any]) -> Tuple[float, float, float, float, str]:
+    def _calculate_weighted_deviations(self, tent_data: Dict[str, Any]) -> Tuple[float, float, float, float, float, float, float, float, str]:
         """
-        Calculate weighted temperature and humidity deviations.
+        Calculate real and weighted temperature and humidity deviations.
 
         Args:
             tent_data: Current tent environmental data
 
         Returns:
-            Tuple of (tempDeviation, humDeviation, tempWeight, humWeight, weightMessage)
+            Tuple of (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+                     tempWeight, humWeight, tempPercentage, humPercentage, weightMessage)
+            - real_temp_dev: Real absolute deviation from min/max (for display)
+            - real_hum_dev: Real absolute deviation from min/max (for display)
+            - weighted_temp_dev: Weighted deviation (for action prioritization)
+            - weighted_hum_dev: Weighted deviation (for action prioritization)
+            - tempWeight: Temperature weight factor
+            - humWeight: Humidity weight factor
+            - tempPercentage: Deviation as percentage of range (0-100%)
+            - humPercentage: Deviation as percentage of range (0-100%)
+            - weightMessage: Description of deviation status
         """
         # Get control settings
         ownWeights = self.data_store.getDeep("controlOptions.ownWeights")
@@ -592,26 +620,45 @@ class OGBActionManager:
             else:
                 tempWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue")
                 humWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue")
-        
-        tempDeviation = 0
-        humDeviation = 0
-        weightMessage = ""
-        
-        if tent_data["temperature"] > tent_data["maxTemp"]:
-            tempDeviation = round((tent_data["temperature"] - tent_data["maxTemp"]) * tempWeight, 2)
-            weightMessage = f"Temp Too High: Deviation {tempDeviation}"
-        elif tent_data["temperature"] < tent_data["minTemp"]:
-            tempDeviation = round((tent_data["temperature"] - tent_data["minTemp"]) * tempWeight, 2)
-            weightMessage = f"Temp Too Low: Deviation {tempDeviation}"
-            
-        if tent_data["humidity"] > tent_data["maxHumidity"]:
-            humDeviation = round((tent_data["humidity"] - tent_data["maxHumidity"]) * humWeight, 2)
-            weightMessage = f"Humidity Too High: Deviation {humDeviation}"
-        elif tent_data["humidity"] < tent_data["minHumidity"]:
-            humDeviation = round((tent_data["humidity"] - tent_data["minHumidity"]) * humWeight, 2)
-            weightMessage = f"Humidity Too Low: Deviation {humDeviation}"
 
-        return tempDeviation, humDeviation, tempWeight, humWeight, weightMessage
+        # 1. Calculate REAL deviations (for display - absolute, not weighted)
+        real_temp_dev = 0.0
+        real_hum_dev = 0.0
+        weightMessage = ""
+
+        if tent_data["temperature"] > tent_data["maxTemp"]:
+            real_temp_dev = round(tent_data["temperature"] - tent_data["maxTemp"], 2)
+            weightMessage = f"Temp Too High: +{real_temp_dev}°C"
+        elif tent_data["temperature"] < tent_data["minTemp"]:
+            real_temp_dev = round(tent_data["temperature"] - tent_data["minTemp"], 2)
+            weightMessage = f"Temp Too Low: {real_temp_dev}°C"
+
+        if tent_data["humidity"] > tent_data["maxHumidity"]:
+            real_hum_dev = round(tent_data["humidity"] - tent_data["maxHumidity"], 2)
+            if weightMessage:
+                weightMessage += f", Humidity Too High: +{real_hum_dev}%"
+            else:
+                weightMessage = f"Humidity Too High: +{real_hum_dev}%"
+        elif tent_data["humidity"] < tent_data["minHumidity"]:
+            real_hum_dev = round(tent_data["humidity"] - tent_data["minHumidity"], 2)
+            if weightMessage:
+                weightMessage += f", Humidity Too Low: {real_hum_dev}%"
+            else:
+                weightMessage = f"Humidity Too Low: {real_hum_dev}%"
+
+        # 2. Calculate WEIGHTED deviations (for action prioritization)
+        weighted_temp_dev = round(real_temp_dev * tempWeight, 2)
+        weighted_hum_dev = round(real_hum_dev * humWeight, 2)
+
+        # 3. Calculate percentage of range (for better context)
+        temp_range = max(1.0, abs(tent_data["maxTemp"] - tent_data["minTemp"]))
+        hum_range = max(1.0, abs(tent_data["maxHumidity"] - tent_data["minHumidity"]))
+
+        tempPercentage = round((abs(real_temp_dev) / temp_range) * 100, 1) if real_temp_dev != 0 else 0.0
+        humPercentage = round((abs(real_hum_dev) / hum_range) * 100, 1) if real_hum_dev != 0 else 0.0
+
+        return (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+                tempWeight, humWeight, tempPercentage, humPercentage, weightMessage)
 
     def _is_vpd_in_deadband(self) -> Tuple[bool, str]:
         """
@@ -624,7 +671,7 @@ class OGBActionManager:
         For Closed Environment, returns False (no VPD deadband).
         """
         try:
-            mode = self.data_store.get("selectedMode")
+            mode = self.data_store.get("tentMode")
 
             if mode == "VPD Perfection":
                 current_vpd = self.data_store.getDeep("vpd.current")
@@ -846,50 +893,259 @@ class OGBActionManager:
 
     async def _night_hold_fallback(self, actionMap: List):
         """
-        Handle actions when VPD Night Hold is not active.
-        Reduces climate-affecting devices to safe levels during night.
+        Handle actions when VPD Night Hold is not active (power-saving night mode).
+        
+        Logic:
+        - Climate devices (Heating, Cooling, Humidifier, Dehumidifier, Climate, CO2, Light) 
+          are reduced to minimum to save power
+        - Ventilation devices (Exhaust, Ventilation, Intake, Window) are actively controlled
+          to prevent mold by ensuring air circulation
+        - Exhaust/Ventilation: Increase to maintain air exchange
+        - Intake: Adjust based on outside conditions (increase if outside temp allows, reduce if too cold)
+        - Window: Controlled like ventilation for air exchange
         """
-        _LOGGER.debug(f"{self.room}: VPD Night Hold NOT ACTIVE - Running fallback")
+        _LOGGER.debug(f"{self.room}: Night Hold Power-Saving Mode - Managing ventilation for mold prevention")
+        
+        from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
+        
+        # Climate devices that should be minimized at night to save power
+        climateCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2", "canLight"}
+        
+        # Ventilation devices that should be actively controlled
+        ventilationCaps = {"canExhaust", "canVentilate", "canIntake", "canWindow"}
+        
+        finalActions = []
+        
+        # 1. Reduce all climate devices to minimum
+        for action in actionMap:
+            cap = getattr(action, 'capability', None)
+            if cap in climateCaps:
+                finalActions.append(OGBActionPublication(
+                    capability=cap,
+                    action="Reduce",
+                    Name=self.room,
+                    message="NightHold: Climate device reduced for power saving",
+                    priority="low"
+                ))
+        
+        # 2. Get capabilities to check what ventilation devices are available
+        caps = self.data_store.get("capabilities") or {}
+        
+        # 3. Always increase Exhaust and Ventilation for air exchange (prevent mold)
+        if caps.get("canExhaust", {}).get("state", False):
+            finalActions.append(OGBActionPublication(
+                capability="canExhaust",
+                action="Increase",
+                Name=self.room,
+                message="NightHold: Exhaust increased for air exchange (mold prevention)",
+                priority="medium"
+            ))
+        
+        if caps.get("canVentilate", {}).get("state", False):
+            finalActions.append(OGBActionPublication(
+                capability="canVentilate",
+                action="Increase",
+                Name=self.room,
+                message="NightHold: Ventilation increased for air circulation (mold prevention)",
+                priority="medium"
+            ))
+        
+        # 4. Window - treat like ventilation for air exchange
+        if caps.get("canWindow", {}).get("state", False):
+            finalActions.append(OGBActionPublication(
+                capability="canWindow",
+                action="Increase",
+                Name=self.room,
+                message="NightHold: Window opened for air exchange (mold prevention)",
+                priority="medium"
+            ))
+        
+        # 5. Intake - adjust based on outside temperature
+        if caps.get("canIntake", {}).get("state", False):
+            outside_temp = self.data_store.getDeep("tentData.AmbientTemp")
+            inside_temp = self.data_store.getDeep("tentData.temperature")
+            min_temp = self.data_store.getDeep("tentData.minTemp")
+            
+            try:
+                outside_temp = float(outside_temp) if outside_temp is not None else None
+                inside_temp = float(inside_temp) if inside_temp is not None else None
+                min_temp = float(min_temp) if min_temp is not None else 18.0
+            except (ValueError, TypeError):
+                outside_temp = None
+                inside_temp = None
+                min_temp = 18.0
+            
+            # Logic: Only intake outside air if it's not too cold (would require heating)
+            # If outside is warm enough, increase intake for fresh air
+            # If outside is too cold, reduce intake to save heating power
+            if outside_temp is not None and inside_temp is not None:
+                # Safe margin: don't intake if outside is more than 3°C below target min
+                if outside_temp >= (min_temp - 3):
+                    # Outside is warm enough - increase intake for fresh air
+                    finalActions.append(OGBActionPublication(
+                        capability="canIntake",
+                        action="Increase",
+                        Name=self.room,
+                        message=f"NightHold: Intake increased (outside {outside_temp}°C warm enough)",
+                        priority="medium"
+                    ))
+                else:
+                    # Outside is too cold - reduce intake to save heating
+                    finalActions.append(OGBActionPublication(
+                        capability="canIntake",
+                        action="Reduce",
+                        Name=self.room,
+                        message=f"NightHold: Intake reduced (outside {outside_temp}°C too cold, saving heat)",
+                        priority="low"
+                    ))
+            else:
+                # No outside temp data - default to moderate intake
+                finalActions.append(OGBActionPublication(
+                    capability="canIntake",
+                    action="Increase",
+                    Name=self.room,
+                    message="NightHold: Intake increased (no outside temp data, default to air exchange)",
+                    priority="low"
+                ))
+        
+        # Emit summary log
+        climate_count = len([a for a in finalActions if getattr(a, 'capability', '') in climateCaps])
+        vent_count = len([a for a in finalActions if getattr(a, 'capability', '') in ventilationCaps])
+        
         await self.event_manager.emit("LogForClient", {
             "Name": self.room,
-            "NightVPDHold": "NotActive Ignoring-VPD"
+            "NightVPDHold": "NotActive Power-Saving Mode",
+            "message": f"Night hold: {climate_count} climate devices reduced, {vent_count} ventilation devices managed",
+            "climateDevices": climate_count,
+            "ventilationDevices": vent_count
         }, haEvent=True, debug_type="INFO")
         
-        # Devices to exclude from normal actions during night
-        excludeCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canLight", "canCO2"}
-        # Devices to reduce during night
-        modCaps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2"}
-        fallBackAction = "Reduce"
-        
-        # Filter out excluded actions
-        filteredActions = [action for action in actionMap if getattr(action, 'capability', None) not in excludeCaps]
-        
-        # Create reduce actions for climate devices
-        from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
-        reducedActions = [
-            OGBActionPublication(
-                capability=getattr(action, 'capability', ''),
-                action=fallBackAction,
-                Name=self.room,
-                message="VPD-NightHold Device Reduction",
-                priority="low"
+        # Execute all night hold actions
+        if finalActions:
+            _LOGGER.info(
+                f"{self.room}: Night Hold executing {len(finalActions)} actions - "
+                f"Climate minimized, Ventilation active for mold prevention"
             )
-            for action in actionMap if getattr(action, 'capability', None) in modCaps
-        ]
-        
-        # Execute fallback actions if any
-        if filteredActions or reducedActions:
-            await self.publicationActionHandler(filteredActions + reducedActions)
+            await self.publicationActionHandler(finalActions)
+
+    async def _log_vpd_results(
+        self,
+        real_temp_dev: float,
+        real_hum_dev: float,
+        tempPercentage: float,
+        humPercentage: float,
+        final_actions: List,
+        blocked_actions: List,
+        dampening_enabled: bool,
+    ):
+        """
+        Log VPD processing results.
+
+        Args:
+            real_temp_dev: Real temperature deviation
+            real_hum_dev: Real humidity deviation
+            tempPercentage: Temperature deviation percentage
+            humPercentage: Humidity deviation percentage
+            final_actions: Final list of actions to execute
+            blocked_actions: Actions blocked by dampening
+            dampening_enabled: Whether dampening is enabled
+        """
+        # Determine VPD status
+        current_vpd = self.data_store.getDeep("vpd.current")
+        target_vpd = self.data_store.getDeep("vpd.perfection")
+        if target_vpd is None:
+            target_vpd = self.data_store.getDeep("vpd.targeted")
+
+        vpd_deviation = 0.0
+        vpd_status = "unknown"
+        if current_vpd is not None and target_vpd is not None:
+            vpd_deviation = abs(float(current_vpd) - float(target_vpd))
+            if vpd_deviation <= 0.1:
+                vpd_status = "low"
+            elif vpd_deviation <= 0.3:
+                vpd_status = "medium"
+            elif vpd_deviation <= 0.5:
+                vpd_status = "high"
+            else:
+                vpd_status = "critical"
+
+        # Create action summary
+        action_summary = ", ".join([f"{a.capability}:{a.action}" for a in final_actions])
+
+        # Build log message
+        if dampening_enabled and blocked_actions:
+            message = (
+                f"VPD Perfection: Core Logic + Dampening: {len(final_actions)} actions executed "
+                f"({len(blocked_actions)} blocked by cooldown)"
+            )
+        elif dampening_enabled:
+            message = (
+                f"VPD Perfection: Core Logic + Dampening: {len(final_actions)} actions executed"
+            )
+        else:
+            message = (
+                f"VPD Perfection: Core Logic only (dampening disabled): {len(final_actions)} actions executed"
+            )
+
+        # Emit log
+        await self.event_manager.emit(
+            "LogForClient",
+            {
+                "Name": self.room,
+                "message": message,
+                "actions": action_summary,
+                "actionCount": len(final_actions),
+                "blockedActions": len(blocked_actions),
+                "dampeningEnabled": dampening_enabled,
+                "tempDeviation": real_temp_dev,
+                "humDeviation": real_hum_dev,
+                "tempPercentage": tempPercentage,
+                "humPercentage": humPercentage,
+                "vpdCurrent": current_vpd,
+                "vpdTarget": target_vpd,
+                "vpdDeviation": round(vpd_deviation, 2),
+                "vpdStatus": vpd_status,
+            },
+            haEvent=True,
+            debug_type="INFO",
+        )
 
     async def checkLimitsAndPublicate(self, actionMap: List):
         """
-        Process actions with weighted deviation calculation.
+        Process VPD Perfection actions with clean separation of Core Logic and Dampening.
 
-        This is the main entry point for basic VPD action processing.
+        Flow:
+        1. Mode Check (only VPD modes: Perfection, Target, Closed Environment)
+        2. Night Hold Check (always)
+        3. Deadband Check (always)
+        4. Calculate Deviations (always)
+        5. Core VPD Logic (always): Buffer zones, VPD context, conflicts
+        6. Dampening Features (if enabled): Cooldown, emergency override
+        7. Environment Guard (always)
+        8. Execute actions (always)
+
+        NOTE: Core VPD Logic is only applied to VPD Perfection and VPD Target modes,
+              NOT to Closed Environment or Premium modes (PID/MPC/AI).
 
         Args:
             actionMap: List of actions to process
         """
+        # Check if this is a VPD mode (not Premium PID/MPC/AI or Closed Environment)
+        mode = self.data_store.get("tentMode")
+        # Core VPD Logic only for VPD Perfection and VPD Target, NOT for Closed Environment
+        vpd_modes = {"VPD Perfection", "VPD Target"}
+        is_vpd_mode = mode in vpd_modes
+
+        if not is_vpd_mode:
+            _LOGGER.warning(
+                f"{self.room}: Core VPD Logic skipped - mode '{mode}' is not a VPD mode. "
+                f"Actions will be executed directly without Core VPD Logic."
+            )
+            # For non-VPD modes, just apply Environment Guard and execute
+            final_actions = await self._apply_environment_guard(actionMap)
+            await self.publicationActionHandler(final_actions)
+            return
+
         # CRITICAL: Check VPD Night Hold FIRST - if false, don't run actions
         if not await self._check_vpd_night_hold(actionMap):
             return
@@ -902,28 +1158,72 @@ class OGBActionManager:
 
         # Get tent data and calculate weighted deviations
         tent_data = self.data_store.get("tentData")
-        tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
+        (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+         tempWeight, humWeight, tempPercentage, humPercentage, weightMessage) = self._calculate_weighted_deviations(tent_data)
 
-        # Emit WeightPublication LogForClient
-        WeightPublication = OGBWeightPublication(
-            Name=self.room,
-            message=weightMessage,
-            tempDeviation=tempDeviation,
-            humDeviation=humDeviation,
-            tempWeight=tempWeight,
-            humWeight=humWeight
-        )
-        await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
-
+        # STEP 1: CORE VPD LOGIC (ALWAYS active)
+        # - Buffer Zones (prevent oscillation)
+        # - VPD Context (priorities based on VPD status)
+        # - Deviations-based actions (intelligent additional actions)
+        # - Conflict resolution (resolve contradictory actions)
         if self.dampening_actions:
-            await self.dampening_actions.process_actions_basic(actionMap, tempDeviation, humDeviation)
+            enhanced_actions = await self.dampening_actions.process_core_vpd_logic(
+                actionMap, weighted_temp_dev, weighted_hum_dev, tent_data
+            )
         else:
-            # Fallback: execute actions directly
-            final_actions = await self._apply_environment_guard(actionMap)
-            await self.publicationActionHandler(final_actions)
+            # Fallback: Only resolve conflicts
+            enhanced_actions = self._resolve_action_conflicts(actionMap)
+
+        # STEP 2: DAMPENING FEATURES (only if enabled)
+        # - Cooldown filtering (user-defined base cooldowns)
+        # - Repeat cooldown (prevent immediate same action)
+        # - Emergency override (bypass cooldown in critical conditions)
+        dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)
+        blocked_actions = []
+
+        if dampening_enabled and self.dampening_actions:
+            filtered_actions, blocked_actions = await self.dampening_actions.process_dampening_features(
+                enhanced_actions, weighted_temp_dev, weighted_hum_dev, tent_data
+            )
+            final_actions = self._resolve_action_conflicts(filtered_actions)
+        else:
+            # No dampening - use enhanced actions directly
+            final_actions = enhanced_actions
+
+        # STEP 3: ENVIRONMENT GUARD (always active)
+        final_actions = await self._apply_environment_guard(final_actions)
+
+        # STEP 4: Execute actions
+        await self.publicationActionHandler(final_actions)
+
+        # Log results
+        await self._log_vpd_results(
+            real_temp_dev, real_hum_dev, tempPercentage, humPercentage,
+            final_actions, blocked_actions, dampening_enabled
+        )
 
     async def checkLimitsAndPublicateTarget(self, actionMap: List):
-        """Process VPD Target actions with separated target chain."""
+        """
+        Process VPD Target actions with VPD-based deviation only (no temp/hum weights).
+
+        NOTE: Core VPD Logic is only applied to VPD Perfection and VPD Target modes,
+              NOT to Closed Environment or Premium modes (PID/MPC/AI).
+        """
+        # Check if this is a VPD mode (not Premium PID/MPC/AI or Closed Environment)
+        mode = self.data_store.get("tentMode")
+        # Core VPD Logic only for VPD Perfection and VPD Target, NOT for Closed Environment
+        vpd_modes = {"VPD Perfection", "VPD Target"}
+        is_vpd_mode = mode in vpd_modes
+
+        if not is_vpd_mode:
+            _LOGGER.warning(
+                f"{self.room}: Core VPD Logic skipped - mode '{mode}' is not a VPD mode. "
+                f"Actions will be executed directly without Core VPD Logic."
+            )
+            final_actions = await self._apply_environment_guard(actionMap)
+            await self.publicationActionHandler(final_actions)
+            return
+
         if not await self._check_vpd_night_hold(actionMap):
             return
 
@@ -933,34 +1233,86 @@ class OGBActionManager:
             await self._emit_quiet_zone_idle()
             return
 
-        # Get tent data and calculate weighted deviations
-        tent_data = self.data_store.get("tentData")
-        tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
+        # For VPD Target: Calculate VPD deviation only (not temp/hum weighted deviations)
+        # VPD Target is based on VPD value only, not plant stage temp/hum limits
+        current_vpd = self.data_store.getDeep("vpd.current")
+        target_vpd = self.data_store.getDeep("vpd.targeted")
 
-        # Emit WeightPublication LogForClient
-        WeightPublication = OGBWeightPublication(
-            Name=self.room,
-            message=weightMessage,
-            tempDeviation=tempDeviation,
-            humDeviation=humDeviation,
-            tempWeight=tempWeight,
-            humWeight=humWeight
-        )
-        await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
-
-        if self.dampening_actions:
-            await self.dampening_actions.process_actions_target_basic(actionMap, tempDeviation, humDeviation)
+        if current_vpd is not None and target_vpd is not None:
+            vpd_deviation = round(float(current_vpd) - float(target_vpd), 2)
+            vpd_message = f"VPD Deviation: {vpd_deviation} kPa (Current: {current_vpd}, Target: {target_vpd})"
         else:
-            final_actions = await self._apply_environment_guard(actionMap)
-            await self.publicationActionHandler(final_actions)
+            vpd_deviation = 0
+            vpd_message = "VPD values not available"
+
+        # Use 0 for temp/hum deviations in VPD Target mode (not applicable)
+        weighted_temp_dev = 0
+        weighted_hum_dev = 0
+
+        # Get tent data for Core VPD Logic
+        tent_data = self.data_store.get("tentData")
+
+        # STEP 1: CORE VPD LOGIC (ALWAYS active for VPD modes)
+        if self.dampening_actions:
+            enhanced_actions = await self.dampening_actions.process_core_vpd_logic(
+                actionMap, weighted_temp_dev, weighted_hum_dev, tent_data
+            )
+        else:
+            enhanced_actions = self._resolve_action_conflicts(actionMap)
+
+        # STEP 2: DAMPENING FEATURES (only if enabled)
+        dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)
+        blocked_actions = []
+
+        if dampening_enabled and self.dampening_actions:
+            filtered_actions, blocked_actions = await self.dampening_actions.process_dampening_features(
+                enhanced_actions, weighted_temp_dev, weighted_hum_dev, tent_data
+            )
+            final_actions = self._resolve_action_conflicts(filtered_actions)
+        else:
+            final_actions = enhanced_actions
+
+        # STEP 3: ENVIRONMENT GUARD (always active)
+        final_actions = await self._apply_environment_guard(final_actions)
+
+        # STEP 4: Execute actions
+        await self.publicationActionHandler(final_actions)
+
+        # Log results
+        current_vpd_for_log = self.data_store.getDeep("vpd.current")
+        target_vpd_for_log = self.data_store.getDeep("vpd.targeted")
+        await self.event_manager.emit(
+            "LogForClient",
+            {
+                "Name": self.room,
+                "message": f"VPD Target: {len(final_actions)} actions executed ({len(blocked_actions)} blocked by cooldown)",
+                "actions": ", ".join([f"{a.capability}:{a.action}" for a in final_actions]),
+                "actionCount": len(final_actions),
+                "blockedActions": len(blocked_actions),
+                "dampeningEnabled": dampening_enabled,
+                "vpdDeviation": vpd_deviation,
+                "vpdCurrent": current_vpd_for_log,
+                "vpdTarget": target_vpd_for_log,
+            },
+             haEvent=True,
+             debug_type="INFO",
+         )
 
     async def checkLimitsAndPublicateNoVPD(self, actionMap: List):
         """
         Process actions WITHOUT VPD Night Hold check.
-        
+
         Used by Closed Environment mode where CO2/safety actions should
         bypass the VPD Night Hold logic.
-        
+
+        NOTE: Closed Environment has its own logic, so it only needs:
+        - Conflict resolution
+        - Environment Guard
+        - Execute
+
+        It does NOT need Core VPD Logic (Buffer Zones, VPD Context, Deviations-based Actions)
+        because Closed Environment creates actions based on its own control logic.
+
         Args:
             actionMap: List of actions to process
         """
@@ -969,18 +1321,8 @@ class OGBActionManager:
 
         # Get tent data and calculate weighted deviations for logging
         tent_data = self.data_store.get("tentData")
-        tempDeviation, humDeviation, tempWeight, humWeight, weightMessage = self._calculate_weighted_deviations(tent_data)
-        
-        # Emit WeightPublication LogForClient for Closed Environment
-        WeightPublication = OGBWeightPublication(
-            Name=self.room,
-            message=f"Closed Env: {weightMessage}",
-            tempDeviation=tempDeviation,
-            humDeviation=humDeviation,
-            tempWeight=tempWeight,
-            humWeight=humWeight
-        )
-        await self.event_manager.emit("LogForClient", WeightPublication, haEvent=True)
+        (real_temp_dev, real_hum_dev, weighted_temp_dev, weighted_hum_dev,
+         tempWeight, humWeight, tempPercentage, humPercentage, weightMessage) = self._calculate_weighted_deviations(tent_data)
 
         final_actions = actionMap
 
@@ -1008,13 +1350,31 @@ class OGBActionManager:
         if not await self._check_vpd_night_hold(actionMap):
             return
         
-        if self.dampening_actions:
+        # Check if device dampening is enabled in control options
+        dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)
+        if self.dampening_actions and dampening_enabled:
             await self.dampening_actions.process_actions_with_dampening(actionMap)
         else:
-            # Fallback: execute actions directly with basic dampening
-            filtered_actions, _ = self._filterActionsByDampening(actionMap)
-            if filtered_actions:
-                await self.publicationActionHandler(filtered_actions)
+            # Fallback: execute actions directly without dampening
+            _LOGGER.info(f"{self.room}: VPD mode with dampening (dampening disabled) - executing {len(actionMap)} actions directly")
+            
+            # Log actions before environment guard
+            action_summary = ", ".join([f"{getattr(a, 'capability', 'unknown')}:{getattr(a, 'action', 'unknown')}" for a in actionMap])
+            await self.event_manager.emit(
+                "LogForClient",
+                {
+                    "Name": self.room,
+                    "message": f"VPD dampening mode: executing {len(actionMap)} actions",
+                    "actions": action_summary,
+                    "actionCount": len(actionMap),
+                    "dampeningEnabled": False,
+                },
+                haEvent=True,
+                debug_type="INFO",
+            )
+            
+            final_actions = await self._apply_environment_guard(actionMap)
+            await self.publicationActionHandler(final_actions)
 
     async def publicationActionHandler(self, actionMap: List):
         """
@@ -1036,9 +1396,10 @@ class OGBActionManager:
         actionMap = await self._apply_environment_guard(actionMap)
         _LOGGER.debug(f"{self.room}: Executing {len(actionMap)} validated actions")
 
-        # Store previous actions for analytics - API expects specific format
-        # Format: [{actions: [{device, action, priority, reason, timestamp, controllerType}, ...]}, ...]
-        # See: ogb-grow-api/AGENTS.md lines 495-503 and CompactDataSchema.js
+        # CRITICAL: Send LogForClient as bundle (original format expected by UI)
+        if actionMap:
+            await self.event_manager.emit("LogForClient", actionMap, haEvent=True, debug_type="INFO")
+
         
         # Build action set with all actions from this execution cycle
         # API expects: {device: "exhaust", action: "Increase", priority: "high", reason: "...", controllerType: "VPD-P"}
@@ -1160,8 +1521,18 @@ class OGBActionManager:
             await self.event_manager.emit("DataRelease", True)
 
     async def _apply_environment_guard(self, action_map: List) -> List:
-        """Rewrite unsafe air-exchange increases to reductions under cold ambient risk."""
+        """Rewrite unsafe air-exchange increases to reductions under cold ambient risk.
+        
+        Only active when ambientControl is enabled in controlOptions.
+        """
         if not action_map:
+            return action_map
+
+        # Check if ambientControl is enabled - EnvironmentGuard only makes sense
+        # when the user wants to control outside air exchange
+        ambient_control = self.data_store.getDeep("controlOptions.ambientControl", False)
+        if not ambient_control:
+            _LOGGER.debug(f"{self.room}: EnvironmentGuard skipped - ambientControl not enabled")
             return action_map
 
         # Lazy import avoids circular import during module initialization.

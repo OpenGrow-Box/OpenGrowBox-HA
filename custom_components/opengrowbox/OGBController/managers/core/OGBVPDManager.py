@@ -151,7 +151,7 @@ class OGBVPDManager:
                 tentMode = OGBModeRunPublication(currentMode=currentMode)
 
                 if self.room.lower() == "ambient":
-                    _LOGGER.warning(f"📡 {self.room} AmbientData emitted: VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
+                    _LOGGER.debug(f"📡 {self.room} AmbientData emitted: VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
                     await self.event_manager.emit("AmbientData",vpdPub,haEvent=True)
                     # Also emit selectActionMode for ambient rooms so mode manager processes VPD changes
                     await self.event_manager.emit("selectActionMode",tentMode)
@@ -315,7 +315,7 @@ class OGBVPDManager:
         if self._weather_last_fetch and self._weather_cache:
             elapsed = now - self._weather_last_fetch
             if elapsed < self._weather_min_interval:
-                _LOGGER.warning(f"🌤️ {self.room} Using cached weather data (age: {int(elapsed)}s)")
+                _LOGGER.debug(f"🌤️ {self.room} Using cached weather data (age: {int(elapsed)}s)")
                 await self.event_manager.emit(
                     "OutsiteData",
                     self._weather_cache,
@@ -358,7 +358,7 @@ class OGBVPDManager:
                         self._weather_cache = weather_data
                         self._weather_last_fetch = now
 
-                        _LOGGER.warning(
+                        _LOGGER.debug(
                             f"🌤️ {self.room} Open-Meteo: {temperature}°C, {humidity}% (cached)"
                         )
                         await self.event_manager.emit(

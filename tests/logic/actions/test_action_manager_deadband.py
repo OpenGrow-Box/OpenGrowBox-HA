@@ -15,7 +15,7 @@ async def test_vpd_in_deadband_returns_true_perfection_mode():
     """Test that VPD within deadband is detected correctly."""
     data_store = FakeDataStore(
         {
-            "selectedMode": "VPD Perfection",
+            "tentMode": "VPD Perfection",
             "vpd": {
                 "current": 1.08,
                 "perfection": 1.10,
@@ -68,7 +68,7 @@ async def test_vpd_target_deadband():
     """Test that VPD Target mode deadband works correctly."""
     data_store = FakeDataStore(
         {
-            "selectedMode": "VPD Target",
+            "tentMode": "VPD Target",
             "vpd": {
                 "current": 1.12,
                 "targeted": 1.10,
@@ -228,9 +228,71 @@ async def test_no_conflict_with_different_capabilities():
 
 
 @pytest.mark.asyncio
-async def test_adaptive_cooldown_long_when_close():
-    """Test that cooldown is extended when very close to target."""
-    data_store = FakeDataStore({})
+async def test_adaptive_cooldown_disabled_by_default():
+    """Test that adaptive cooldown is disabled by default - user gets what they set."""
+    data_store = FakeDataStore({
+        "controlOptions": {
+            "adaptiveCooldownEnabled": False  # Default behavior
+        }
+    })
+    event_manager = FakeEventManager()
+    manager = OGBActionManager(None, data_store, event_manager, "test_room")
+
+    base_cooldown = manager.defaultCooldownMinutes.get("canExhaust", 1.0)
+
+    # With adaptive disabled, user gets exactly what they set
+    cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)  # Very close
+    assert cooldown == base_cooldown  # User says 1, gets 1
+
+    cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.7)  # Close
+    assert cooldown == base_cooldown  # User says 1, gets 1
+
+    cooldown = manager._calculateAdaptiveCooldown("canExhaust", 4.0)  # Far
+    assert cooldown == base_cooldown  # User says 1, gets 1
+
+    cooldown = manager._calculateAdaptiveCooldown("canExhaust", 6.0)  # Very far
+    assert cooldown == base_cooldown  # User says 1, gets 1
+
+
+@pytest.mark.asyncio
+async def test_adaptive_cooldown_emergency_override():
+    """Test that cooldown is reduced in emergency mode when adaptive is disabled."""
+    data_store = FakeDataStore({
+        "controlOptions": {
+            "adaptiveCooldownEnabled": False,
+            "emergencyCooldownFactor": 0.5
+        }
+    })
+    event_manager = FakeEventManager()
+    manager = OGBActionManager(None, data_store, event_manager, "test_room")
+
+    base_cooldown = manager.defaultCooldownMinutes.get("canExhaust", 1.0)
+
+    # Normal mode: user gets what they set
+    manager._emergency_mode = False
+    cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
+    assert cooldown == base_cooldown  # 1.0
+
+    # Emergency mode: cooldown is reduced
+    manager._emergency_mode = True
+    cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
+    assert cooldown == base_cooldown * 0.5  # 0.5 (50% reduction)
+
+
+@pytest.mark.asyncio
+async def test_adaptive_cooldown_enabled_by_user():
+    """Test that adaptive cooldown works when user explicitly enables it."""
+    data_store = FakeDataStore({
+        "controlOptions": {
+            "adaptiveCooldownEnabled": True,
+            "adaptiveCooldownThresholds": {
+                "critical": 5.0, "high": 3.0, "near": 1.0, "veryNear": 0.5
+            },
+            "adaptiveCooldownFactors": {
+                "critical": 1.5, "high": 1.2, "near": 2.0, "veryNear": 3.0
+            }
+        }
+    })
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
 
@@ -243,16 +305,6 @@ async def test_adaptive_cooldown_long_when_close():
     # Close to target
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.7)
     assert cooldown == base_cooldown * 2.0  # 2.0x for deviation < 1.0
-
-
-@pytest.mark.asyncio
-async def test_adaptive_cooldown_extended_when_far():
-    """Test that cooldown is moderately extended when far from target."""
-    data_store = FakeDataStore({})
-    event_manager = FakeEventManager()
-    manager = OGBActionManager(None, data_store, event_manager, "test_room")
-
-    base_cooldown = manager.defaultCooldownMinutes.get("canExhaust", 1.0)
 
     # Far from target
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 4.0)
@@ -268,11 +320,12 @@ async def test_check_limits_and_publicate_early_exit_deadband(monkeypatch):
     """Test that checkLimitsAndPublicate exits early when VPD in deadband."""
     data_store = FakeDataStore(
         {
-            "selectedMode": "VPD Perfection",
+            "tentMode": "VPD Perfection",
             "vpd": {
-                "current": 1.08,
+                "current": 1.10,  # Within deadband of perfection
                 "perfection": 1.10,
             },
+            "capabilities": {"canVentilate": {"state": True}},
             "controlOptions": {"nightVPDHold": False},
             "isPlantDay": {"islightON": True},
             "tentData": {
@@ -319,21 +372,25 @@ async def test_check_limits_and_publicate_early_exit_deadband(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mode_manager_emits_events_even_in_deadband():
-    """Test that ModeManager emits events (at perfection) even when ActionManager is in deadband."""
+async def test_mode_manager_emits_smart_deadband_events():
+    """Test that ModeManager emits Smart Deadband events when VPD is in deadband."""
     from custom_components.opengrowbox.OGBController.managers.OGBModeManager import OGBModeManager
 
     data_store = FakeDataStore(
         {
-            "selectedMode": "VPD Perfection",
+            "tentMode": "VPD Perfection",
             "vpd": {
-                "current": 1.10,  # Exactly at perfection - no action needed
+                "current": 1.10,  # Exactly at perfection - triggers smart deadband
                 "perfection": 1.10,
                 "perfectMin": 1.00,
                 "perfectMax": 1.20,
             },
             "capabilities": {
-                "canExhaust": {"state": True},
+                "canExhaust": {"state": True, "isDimmable": False},
+                "canHeat": {"state": True, "isDimmable": True},
+            },
+            "controlOptionData": {
+                "deadband": {"vpdDeadband": 0.05},
             },
         }
     )
@@ -341,7 +398,7 @@ async def test_mode_manager_emits_events_even_in_deadband():
 
     emitted_events = []
 
-    def capture_event(event_name, _data):
+    async def capture_event(event_name, _data, **kwargs):
         emitted_events.append(event_name)
 
     event_manager.on = lambda name, handler: None  # Simplified for test
@@ -351,8 +408,10 @@ async def test_mode_manager_emits_events_even_in_deadband():
 
     await manager.handle_vpd_perfection()
 
-    # ModeManager should NOT emit event because VPD is at perfection
-    assert len(emitted_events) == 0
+    # ModeManager should emit LogForClient for Smart Deadband
+    assert "LogForClient" in emitted_events
+    # Should emit SmartDeadbandEntered events for climate devices
+    assert "SmartDeadbandEntered" in emitted_events
 
 
 @pytest.mark.asyncio

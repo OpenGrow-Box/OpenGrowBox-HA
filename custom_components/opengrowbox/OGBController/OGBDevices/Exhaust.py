@@ -163,6 +163,14 @@ class Exhaust(Device):
 
     async def reduceAction(self, data):
         """Reduziert den Duty Cycle."""
+        
+        # Smart Deadband Check - Aktion blockieren wenn im Deadband
+        if self._in_smart_deadband:
+            _LOGGER.debug(
+                f"{self.deviceName}: ReduceAction BLOCKED - device is in Smart Deadband (operating at minimum)"
+            )
+            return
+        
         if self.isDimmable:
             if self.isSpecialDevice:
                 newDuty = self.change_duty_cycle(increase=False)

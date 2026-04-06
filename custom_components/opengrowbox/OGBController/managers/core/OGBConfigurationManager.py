@@ -144,7 +144,7 @@ class OGBConfigurationManager:
             f"ogb_feed_nutrient_y_{self.room.lower()}": self._update_feed_nutrient_y_ml,
             f"ogb_feed_nutrient_ph_{self.room.lower()}": self._update_feed_nutrient_ph_ml,
             # Ambient/Outdoor Features
-            #f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
+            f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
             # Devices
             f"ogb_light_minmax_{self.room.lower()}": self._device_self_min_max,
             f"ogb_light_volt_min_{self.room.lower()}": self._device_min_max_setter,
@@ -734,6 +734,17 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update CO2 max value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.maxPPM", float(value))
+
+    async def _update_ambient_control(self, data):
+        """
+        Update own weights control
+        """
+        value = data.newState[0]
+        current_value = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.ambientControl")
+        )
+        if current_value != value:
+            self.data_store.setDeep("controlOptions.ambientControl", self._string_to_bool(value))
 
     async def _update_own_weights_control(self, data):
         """

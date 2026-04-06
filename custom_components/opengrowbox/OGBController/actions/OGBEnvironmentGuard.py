@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional, Tuple
 
-AIR_EXCHANGE_CAPABILITIES = {"canExhaust", "canIntake", "canVentilate"}
+AIR_EXCHANGE_CAPABILITIES = {"canExhaust", "canIntake"}
 
 
 def _to_float(value: Any) -> Optional[float]:

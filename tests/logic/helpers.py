@@ -29,6 +29,17 @@ class FakeDataStore:
             cur = cur[part]
         cur[parts[-1]] = value
 
+    def delete(self, path):
+        """Delete a value at a nested path."""
+        parts = path.split(".")
+        cur = self.data
+        for part in parts[:-1]:
+            if not isinstance(cur, dict) or part not in cur:
+                return  # Path doesn't exist, nothing to delete
+            cur = cur[part]
+        if isinstance(cur, dict) and parts[-1] in cur:
+            del cur[parts[-1]]
+
 
 class FakeEventManager:
     def __init__(self):

@@ -518,12 +518,12 @@ def test_closed_environment_temperature_control_uses_environment_guard():
                 "AmbientHum": 40.0,
             },
             "controlOptions": {"environmentGuardAmbientDelta": 5.0},
-            "capabilities": {"canVentilate": {"state": True}},
+            "capabilities": {"canExhaust": {"state": True}},
         }
     )
 
     should_block, metadata = evaluate_environment_guard(
-        data_store, "test_room", "canVentilate", "Increase", source="closed_environment"
+        data_store, "test_room", "canExhaust", "Increase", source="closed_environment"
     )
 
     assert should_block is True
@@ -545,12 +545,12 @@ def test_closed_environment_humidity_control_uses_environment_guard():
                 "AmbientHum": 40.0,
             },
             "controlOptions": {},
-            "capabilities": {"canVentilate": {"state": True}},
+            "capabilities": {"canExhaust": {"state": True}},
         }
     )
 
     should_block, metadata = evaluate_environment_guard(
-        data_store, "test_room", "canVentilate", "Increase", source="closed_environment"
+        data_store, "test_room", "canExhaust", "Increase", source="closed_environment"
     )
 
     assert should_block is False
@@ -574,12 +574,12 @@ def test_closed_environment_bypasses_night_hold():
             },
             "controlOptions": {"nightVPDHold": False},
             "isPlantDay": {"islightON": False},
-            "capabilities": {"canVentilate": {"state": True}},
+            "capabilities": {"canExhaust": {"state": True}},
         }
     )
 
     should_block, metadata = evaluate_environment_guard(
-        data_store, "test_room", "canVentilate", "Increase", source="closed_environment"
+        data_store, "test_room", "canExhaust", "Increase", source="closed_environment"
     )
 
     assert should_block is False

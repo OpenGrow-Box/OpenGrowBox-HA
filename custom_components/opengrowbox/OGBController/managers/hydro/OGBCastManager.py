@@ -21,6 +21,11 @@ class OGBCastManager:
         self.event_manager = eventManager
         self.isInitialized = False
 
+        # AMBIENT ROOM CHECK: Ambient rooms don't use Cast Manager
+        if self.room.lower() == "ambient":
+            _LOGGER.debug(f"{self.room}: Cast Manager disabled - ambient room")
+            return
+
         # Use shared medium_manager if provided, otherwise create new one
         self.mediumManager = medium_manager if medium_manager else OGBMediumManager(hass, dataStore, eventManager, room)
         self.CropSteeringManager = OGBCSManager(hass, dataStore, eventManager, room)

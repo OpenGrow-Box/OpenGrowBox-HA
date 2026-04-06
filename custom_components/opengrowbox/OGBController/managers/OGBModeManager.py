@@ -49,12 +49,237 @@ class OGBModeManager:
         self._retrive_task: asyncio.Task | None = None
         self._crop_steering_task: asyncio.Task | None = None
         self._plant_watering_task: asyncio.Task | None = None
+        
+        # Deadband hold tracking for smart deadband (2-3 minutes hold time)
+        self._deadband_hold_start: float | None = None
+        self._deadband_hold_duration: float = 150  # 2.5 minutes (150 seconds)
+        self._deadband_active_devices: set = set()  # Track which devices are in deadband hold
+        self._is_in_deadband: bool = False
+        
+        # Device categories for deadband handling
+        self._deadband_devices = {
+            # Climate-Geräte
+            "canHumidify", "canDehumidify", "canHeat", "canCool", "canClimate",
+            # Ventilations-Geräte die Außenluft bringen (beeinflussen VPD!)
+            "canExhaust", "canIntake", "canWindow"
+        }
+        # Ventilation (Umluft) wird vom Deadband ignoriert (regelt Mikroklima)
+        self._ventilation_devices = {"canVentilate"}
 
         ## Events
         self.event_manager.on("selectActionMode", self.selectActionMode)
 
         # Prem
         self.event_manager.on("PremiumCheck", self.handle_premium_modes)
+
+    async def _handle_smart_deadband(self, current_vpd: float, target_vpd: float, deadband: float, mode_name: str):
+        """
+        Smart Deadband Handler - Mischung aus Soft Minimum und Hold & Fade.
+        
+        Wenn VPD im Deadband ist:
+        1. Sofort: Climate-Geräte auf Minimum (dimmbar) oder Aus (nicht dimmbar)
+        2. Hold-Phase: 2-3 Minuten auf Minimum halten
+        3. Ventilation läuft weiter
+        4. Licht bleibt unberührt
+        
+        WICHTIG: Wenn VPD den Deadband während der Hold-Zeit verlässt,
+        wird der Deadband SOFORT beendet und die Geräte auf Normalzustand zurückgesetzt.
+        
+        Args:
+            current_vpd: Aktueller VPD Wert
+            target_vpd: Ziel VPD Wert
+            deadband: Deadband Toleranz
+            mode_name: Name des Modus (für Logging)
+        """
+        import time
+        from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
+        
+        now = time.time()
+        deviation = abs(current_vpd - target_vpd)
+        
+        # KRITISCH: Prüfe ob VPD immer noch im Deadband ist
+        # Wenn nicht, sofort beenden und normalen Betrieb ermöglichen
+        if deviation > deadband:
+            if self._is_in_deadband:
+                _LOGGER.info(
+                    f"{self.room}: VPD {current_vpd} left deadband (target: {target_vpd}, "
+                    f"deviation: {deviation:.3f} > deadband: {deadband:.3f}) - "
+                    f"exiting deadband immediately"
+                )
+                self._reset_deadband_state()
+            return
+        
+        # Prüfen ob wir bereits im Deadband sind
+        if not self._is_in_deadband:
+            # Erster Eintritt in Deadband
+            self._is_in_deadband = True
+            self._deadband_hold_start = now
+            self._deadband_active_devices.clear()
+            
+            # WICHTIG: Speichere Deadband State im DataStore für andere Komponenten
+            self.data_store.setDeep("controlOptionData.deadband.active", True)
+            self.data_store.setDeep("controlOptionData.deadband.target_vpd", target_vpd)
+            self.data_store.setDeep("controlOptionData.deadband.deadband_value", deadband)
+            self.data_store.setDeep("controlOptionData.deadband.entered_at", now)
+            self.data_store.setDeep("controlOptionData.deadband.mode", mode_name)
+            
+            _LOGGER.info(
+                f"{self.room}: VPD {current_vpd} entered deadband ±{deadband} of target {target_vpd} - "
+                f"starting smart deadband (hold: {self._deadband_hold_duration}s)"
+            )
+            
+            # Emit SmartDeadbandEntered Events für alle Deadband-Geräte
+            deadband_device_types = {
+                "Heater", "Cooler", "Humidifier", "Dehumidifier", "Climate",
+                "Exhaust", "Intake", "Window"
+            }
+            for device_type in deadband_device_types:
+                await self.event_manager.emit("SmartDeadbandEntered", {"deviceType": device_type})
+        
+        # Berechne verbleibende Hold-Zeit
+        hold_elapsed = now - (self._deadband_hold_start or now)
+        hold_remaining = max(0, self._deadband_hold_duration - hold_elapsed)
+        
+        # Aktualisiere DataStore mit verbleibender Zeit
+        self.data_store.setDeep("controlOptionData.deadband.hold_remaining", hold_remaining)
+        
+        # Hole verfügbare Capabilities
+        caps = self.data_store.get("capabilities") or {}
+        
+        # Baue Actions für Smart Deadband
+        deadband_actions = []
+        devices_dimmed = []
+        devices_turned_off = []
+        
+        # 1. Deadband-Geräte: Minimum (wenn dimmbar) oder Aus (wenn nicht dimmbar)
+        # Inkl. Climate-Geräte + Luftaustausch-Geräte (Exhaust, Intake, Window)
+        for cap in self._deadband_devices:
+            if caps.get(cap, {}).get("state", False):
+                # Prüfe ob Gerät dimmbar ist
+                is_dimmable = caps.get(cap, {}).get("isDimmable", False)
+                
+                if is_dimmable:
+                    # Dimmbar → auf Minimum (10%)
+                    action = OGBActionPublication(
+                        capability=cap,
+                        action="Reduce",  # Reduce to minimum
+                        Name=self.room,
+                        message=f"Deadband: {cap} dimmed to minimum (dimmable device)",
+                        priority="low"
+                    )
+                    devices_dimmed.append(cap)
+                else:
+                    # Nicht dimmbar → Aus
+                    action = OGBActionPublication(
+                        capability=cap,
+                        action="Reduce",  # Turn off
+                        Name=self.room,
+                        message=f"Deadband: {cap} turned off (non-dimmable device)",
+                        priority="low"
+                    )
+                    devices_turned_off.append(cap)
+                
+                deadband_actions.append(action)
+                self._deadband_active_devices.add(cap)
+        
+        # 2. Ventilation (Umluft): Weiterlaufen (nur canVentilate, nicht mehr Exhaust/Intake/Window - diese sind jetzt in Deadband!)
+        ventilation_running = []
+        for cap in self._ventilation_devices:
+            if caps.get(cap, {}).get("state", False):
+                ventilation_running.append(cap)
+        
+        # 3. Licht: Unberührt (keine Actions)
+        light_status = "unchanged"
+        if caps.get("canLight", {}).get("state", False):
+            light_status = "running (unchanged)"
+        
+        # Sende LogForClient mit Deadband Status
+        await self.event_manager.emit("LogForClient", {
+            "Name": self.room,
+            "message": f"Smart Deadband active - Devices reduced, hold: {hold_remaining:.0f}s remaining",
+            "VPDStatus": "InDeadband",
+            "currentVPD": current_vpd,
+            "targetVPD": target_vpd,
+            "deadband": deadband,
+            "deviation": deviation,
+            "holdTimeRemaining": hold_remaining,
+            "holdDuration": self._deadband_hold_duration,
+            "mode": mode_name,
+            "devicesDimmed": devices_dimmed,
+            "devicesTurnedOff": devices_turned_off,
+            "ventilationRunning": ventilation_running,
+            "lightStatus": light_status,
+            "deadbandActive": True
+        }, haEvent=True, debug_type="INFO")
+        
+        # Führe Deadband Actions aus (Alle Geräte reduzieren)
+        if deadband_actions:
+            _LOGGER.info(
+                f"{self.room}: Smart Deadband executing {len(deadband_actions)} device actions"
+            )
+            
+            # Mapping von Capability zu korrektem Device-Name für Events
+            capability_to_device = {
+                'canHeat': 'Heater',
+                'canCool': 'Cooler', 
+                'canHumidify': 'Humidifier',
+                'canDehumidify': 'Dehumidifier',
+                'canClimate': 'Climate',
+                'canExhaust': 'Exhaust',
+                'canIntake': 'Intake',
+                'canWindow': 'Window',
+            }
+            
+            # Wir müssen die actions über den event_manager emittieren
+            for action in deadband_actions:
+                cap = getattr(action, 'capability', None)
+                action_type = getattr(action, 'action', None)
+                if cap and action_type:
+                    # Emit device-specific reduce events with CORRECT device names
+                    device_name = capability_to_device.get(cap, cap.replace('can', ''))
+                    await self.event_manager.emit(f"Reduce {device_name}", action_type)
+        
+        # Prüfe ob Hold-Zeit abgelaufen ist und VPD immer noch im Deadband
+        if hold_remaining <= 0:
+            _LOGGER.info(
+                f"{self.room}: Deadband hold time elapsed ({self._deadband_hold_duration}s) - "
+                f"checking if still in deadband"
+            )
+            # Hold-Zeit abgelaufen, prüfe ob VPD immer noch im Deadband
+            if deviation <= deadband:
+                # Verlängere Hold-Zeit um weitere 2.5 Minuten
+                self._deadband_hold_start = now
+                _LOGGER.info(
+                    f"{self.room}: Still in deadband - extending hold time"
+                )
+    
+    def _reset_deadband_state(self):
+        """Reset deadband state when leaving deadband."""
+        if self._is_in_deadband:
+            _LOGGER.info(f"{self.room}: Leaving deadband - resetting state and restoring devices")
+            self._is_in_deadband = False
+            self._deadband_hold_start = None
+            self._deadband_active_devices.clear()
+            
+            # WICHTIG: Lösche Deadband State aus DataStore
+            self.data_store.setDeep("controlOptionData.deadband.active", False)
+            self.data_store.delete("controlOptionData.deadband.target_vpd")
+            self.data_store.delete("controlOptionData.deadband.deadband_value")
+            self.data_store.delete("controlOptionData.deadband.entered_at")
+            self.data_store.delete("controlOptionData.deadband.hold_remaining")
+            self.data_store.delete("controlOptionData.deadband.mode")
+            
+            # Emit SmartDeadbandExited Events für alle Deadband-Geräte
+            deadband_device_types = {
+                "Heater", "Cooler", "Humidifier", "Dehumidifier", "Climate",
+                "Exhaust", "Intake", "Window"
+            }
+            for device_type in deadband_device_types:
+                asyncio.create_task(self.event_manager.emit("SmartDeadbandExited", {"deviceType": device_type}))
+            
+            # WICHTIG: Emit ein Event damit die Geräte wissen, dass sie aus dem Deadband sind
+            # Die Geräte werden dann beim nächsten VPD Control Zyklus normal gesteuert
+            _LOGGER.debug(f"{self.room}: Deadband state reset complete - devices will resume normal operation")
 
     async def selectActionMode(self, Publication):
         """
@@ -140,6 +365,26 @@ class OGBModeManager:
 
         _LOGGER.debug(f"ModeManager: {self.room} executing Closed Environment cycle")
 
+        # SMART DEADBAND CHECK für Closed Environment (VPD-basiert)
+        currentVPD = self.data_store.getDeep("vpd.current")
+        targetVPD = self.data_store.getDeep("vpd.targeted") or self.data_store.getDeep("vpd.perfection")
+        
+        if currentVPD is not None and targetVPD is not None:
+            deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+            deviation = abs(float(currentVPD) - float(targetVPD))
+            
+            if deviation <= deadband:
+                # Im Deadband - Smart Deadband Handler aufrufen
+                await self._handle_smart_deadband(float(currentVPD), float(targetVPD), deadband, "Closed Environment")
+                # Trotzdem CO2 Control ausführen (wichtig für Closed Environment)
+                if self.data_store.getDeep("controlOptions.co2Control"):
+                    capabilities = self.data_store.get("capabilities") or {}
+                    await self.event_manager.emit("maintain_co2", capabilities)
+                return  # Keine normalen Closed Environment Actions ausführen
+            else:
+                # Außerhalb Deadband - Reset Deadband State
+                self._reset_deadband_state()
+
         # Execute single control cycle (stateless like VPD Perfection)
         await self.closedEnvironmentManager.execute_cycle()
 
@@ -175,6 +420,18 @@ class OGBModeManager:
             return
 
         capabilities = self.data_store.get("capabilities")
+
+        # SMART DEADBAND CHECK für VPD Perfection
+        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
+        deviation = abs(float(currentVPD) - float(perfectionVPD))
+        
+        if deviation <= deadband:
+            # Im Deadband - Smart Deadband Handler aufrufen
+            await self._handle_smart_deadband(float(currentVPD), float(perfectionVPD), deadband, "VPD Perfection")
+            return  # Keine normalen VPD Actions ausführen
+        else:
+            # Außerhalb Deadband - Reset Deadband State
+            self._reset_deadband_state()
 
         if currentVPD < perfectionMinVPD:
             _LOGGER.debug(
@@ -262,7 +519,19 @@ class OGBModeManager:
                 )
                 return
 
-            # VPD steuern basierend auf der Toleranz
+            # SMART DEADBAND CHECK - Wenn VPD im Deadband ist
+            deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+            deviation = abs(currentVPD - targetedVPD)
+            
+            if deviation <= deadband:
+                # Im Deadband - Smart Deadband Handler aufrufen
+                await self._handle_smart_deadband(currentVPD, targetedVPD, deadband, "VPD Target")
+                return  # Keine normalen VPD Actions ausführen
+            else:
+                # Außerhalb Deadband - Reset Deadband State
+                self._reset_deadband_state()
+
+            # VPD steuern basierend auf der Toleranz (nur außerhalb Deadband)
             if currentVPD < min_vpd:
                 _LOGGER.debug(
                     f"{self.room}: Current VPD ({currentVPD}) is below minimum ({min_vpd}). Increasing VPD."

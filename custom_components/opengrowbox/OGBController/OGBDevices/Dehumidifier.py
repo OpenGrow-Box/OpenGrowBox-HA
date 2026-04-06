@@ -208,6 +208,14 @@ class Dehumidifier(Device):
 
     async def reduceAction(self, data):
         """Schaltet Entfeuchter aus oder reduziert Modus"""
+        
+        # Smart Deadband Check - Aktion blockieren wenn im Deadband
+        if self._in_smart_deadband:
+            _LOGGER.debug(
+                f"{self.deviceName}: ReduceAction BLOCKED - device is in Smart Deadband (operating at minimum)"
+            )
+            return
+        
         if self.isDimmable:
             newDuty = self.change_duty_cycle(increase=False)
             self.log_action("ReduceAction")
