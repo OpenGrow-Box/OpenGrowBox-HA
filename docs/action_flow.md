@@ -493,30 +493,204 @@
 | **Weighted Deviations** | ✅ | ✅ | ✅ (all 0) |
 | **Dampening/Cooldown** | ✅ (optional) | ✅ (optional) | ❌ |
 
-### Smart Deadband
+### Smart Deadband (Advanced)
 
-**NEW**: All 3 modes now use Smart Deadband:
-- **VPD Perfection**: Deadband checked in `handle_vpd_perfection()`
-- **VPD Target**: Deadband checked in `handle_targeted_vpd()`
-- **Closed Environment**: Deadband checked in `handle_closed_environment()` (VPD-based)
+The Smart Deadband has been enhanced with **dynamic behavior**, **predictive logic**, and **energy-saving features**.
 
-**Benefits**:
-- Prevents oscillation
-- Reduces energy consumption by 50-70%
-- Faster response time (devices already at minimum)
-- Lower mechanical wear
+#### Dynamic Deadband Based on Plant Stage (VPD Perfection only)
 
-### Priority Order (when multiple risks are active)
-
+```python
+# Plant stage specific deadband values:
+stage_deadbands = {
+    "Germination": 0.03,  # Very sensitive phase
+    "Clones": 0.03,       # Very sensitive phase
+    "EarlyVeg": 0.05,     # Normal
+    "MidVeg": 0.05,       # Normal
+    "LateVeg": 0.04,      # More precise (transition to flower)
+    "EarlyFlower": 0.04,  # More precise
+    "MidFlower": 0.05,    # Normal
+    "LateFlower": 0.05,   # Normal
+}
 ```
-1. humidity_critical (≥maxHum) → ALWAYS ALLOW (mold risk!)
-2. humidity_critical_dry (≤minHum) → ALWAYS ALLOW (too dry!)
-3. humidity_benefit → ALLOW (drying needed)
-4. temp_benefit → ALLOW (heating needed)
-5. temp_risk → BLOCK (Too cold)
-6. humidity_risk → BLOCK (Too dry)
-7. No risk → ALLOW
+
+**Why different deadbands?**
+- **Sensitive phases** (Germination/Clones): Tighter control (±0.03 kPa)
+- **Transition phases** (LateVeg/EarlyFlower): More precise (±0.04 kPa)
+- **Stable phases** (MidVeg/MidFlower/LateFlower): Standard control (±0.05 kPa)
+
+#### 3-Stage Gradual Reduction
+
+Instead of immediately reducing all devices to minimum, the Smart Deadband now uses **gradual reduction** based on VPD stability:
+
+| Stage | VPD Deviation | Climate Devices | Air-Exchange Devices | Description |
+|-------|---------------|-----------------|---------------------|-------------|
+| **Stage 1 (Soft)** | 0.02-0.04 kPa | 50% | 75% | Slight reduction, VPD close to target |
+| **Stage 2 (Medium)** | 0.04-0.05 kPa | 25% | 50% | Moderate reduction, VPD in deadband |
+| **Stage 3 (Full)** | Stable 2+ min | 10% | 25% | Maximum reduction, VPD stable |
+
+**Benefits:**
+- ✅ Faster response when VPD changes (not everything at minimum)
+- ✅ Less oscillation (gradual changes)
+- ✅ Better energy saving (only reduce what's needed)
+
+#### Predictive Behavior with Trend Analysis
+
+The Smart Deadband analyzes the **last 3 VPD values** to predict future behavior:
+
+```python
+def _calculate_trend(current_vpd: float) -> str:
+    # Returns: 'towards_target', 'away_from_target', or 'stable'
+    
+    if current_deviation < previous_deviation * 0.9:
+        return "towards_target"  # Getting better
+    elif current_deviation > previous_deviation * 1.1:
+        return "away_from_target"  # Getting worse
+    else:
+        return "stable"  # No significant change
 ```
+
+**Trend-based Adjustments:**
+
+| Trend | Stage 1 Threshold | Stage 2 Threshold | Behavior |
+|-------|-------------------|-------------------|----------|
+| **Towards Target** | 60% of deadband | 80% of deadband | More aggressive, enter earlier |
+| **Stable** | 80% of deadband | 90% of deadband | Normal thresholds |
+| **Away from Target** | 90% of deadband | 95% of deadband | Conservative, enter later |
+
+**Example:**
+- VPD deviation: 0.03 kPa
+- Deadband: 0.05 kPa
+- Trend: towards_target
+- Result: Enter Stage 1 at 0.03 kPa (60% threshold) instead of 0.04 kPa (80% threshold)
+
+#### Night Mode Behavior
+
+The Smart Deadband only activates during night when `nightVPDHold` is enabled:
+
+```python
+is_night = not is_light_on
+night_vpd_hold = controlOptions.nightVPDHold
+
+if is_night and not night_vpd_hold:
+    # Night mode without VPD hold - no deadband
+    # Use power-saving mode instead
+    return
+```
+
+**Why?**
+- Night with VPD hold: Devices need to control VPD → Deadband active
+- Night without VPD hold: Power-saving mode → No deadband needed
+
+#### Maximum Deadband Time with Periodic Checks
+
+```python
+# Configuration
+max_deadband_time = 600 seconds  # 10 minutes
+deadband_check_interval = 30 seconds  # Check every 30 seconds
+deadband_hold_duration = 300 seconds  # 5 minutes hold time
+```
+
+**Behavior:**
+1. **Max Time (10 min)**: After 10 minutes in deadband, automatically exit
+2. **Periodic Checks (30 sec)**: Every 30 seconds, check if VPD still stable
+3. **Auto-Extension**: If VPD stable and trending towards target, extend for another 5 minutes
+4. **Early Exit**: If VPD leaves deadband at any time, exit immediately
+
+#### Implementation Details
+
+**_calculate_dynamic_deadband() (OGBModeManager.py):**
+
+```python
+def _calculate_dynamic_deadband(self, mode_name: str) -> float:
+    """Calculate dynamic deadband based on plant stage and mode."""
+    
+    if mode_name == "VPD Perfection":
+        plant_stage = self.data_store.get("plantStage") or "MidVeg"
+        stage_deadbands = {
+            "Germination": 0.03,
+            "Clones": 0.03,
+            "EarlyVeg": 0.05,
+            "MidVeg": 0.05,
+            "LateVeg": 0.04,
+            "EarlyFlower": 0.04,
+            "MidFlower": 0.05,
+            "LateFlower": 0.05,
+        }
+        return stage_deadbands.get(plant_stage, 0.05)
+        
+    elif mode_name == "VPD Target":
+        # Use tolerance from settings
+        tolerance = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband")
+        return float(tolerance) if tolerance else 0.05
+        
+    elif mode_name == "Closed Environment":
+        return 0.05  # Fixed deadband
+```
+
+**_determine_deadband_stage() (OGBModeManager.py):**
+
+```python
+def _determine_deadband_stage(self, deviation: float, deadband: float, trend: str) -> int:
+    """Determine reduction stage based on deviation and trend."""
+    
+    relative_deviation = deviation / deadband
+    
+    # Trend-based thresholds
+    if trend == "towards_target":
+        stage_1_threshold = 0.60  # 60%
+        stage_2_threshold = 0.80  # 80%
+    elif trend == "away_from_target":
+        stage_1_threshold = 0.90  # 90%
+        stage_2_threshold = 0.95  # 95%
+    else:
+        stage_1_threshold = 0.80  # 80%
+        stage_2_threshold = 0.90  # 90%
+    
+    # Determine stage
+    if relative_deviation < stage_1_threshold:
+        return 1  # Soft
+    elif relative_deviation < stage_2_threshold:
+        return 2  # Medium
+    elif stability_duration >= 120:  # 2 minutes stable
+        return 3  # Full
+    else:
+        return 2  # Stay at medium
+```
+
+#### Log Output Example
+
+```json
+{
+  "Name": "Room1",
+  "message": "Smart Deadband Stage 2 active - hold: 245s, trend: towards_target",
+  "VPDStatus": "InDeadband",
+  "currentVPD": 1.23,
+  "targetVPD": 1.20,
+  "deadband": 0.05,
+  "deviation": 0.03,
+  "holdTimeRemaining": 245,
+  "holdDuration": 300,
+  "stage": 2,
+  "trend": "towards_target",
+  "mode": "VPD Perfection",
+  "devicesDimmed": ["canCool:25%", "canExhaust:50%"],
+  "devicesReduced": [],
+  "ventilationRunning": ["canVentilate"],
+  "lightStatus": "running (unchanged)",
+  "deadbandActive": true
+}
+```
+
+### Summary of Smart Deadband Features
+
+| Feature | Before | After |
+|---------|--------|-------|
+| **Deadband Size** | Fixed 0.05 kPa | Dynamic based on plant stage |
+| **Reduction** | Immediate to 10% | 3-stage gradual (50% → 25% → 10%) |
+| **Trend Analysis** | None | Last 3 VPD values analyzed |
+| **Night Mode** | Always active | Only with nightVPDHold |
+| **Max Time** | 2.5 minutes | 10 minutes with 30s checks |
+| **Extension** | Automatic | Only if stable/towards_target |
 
 ---
 

@@ -50,11 +50,19 @@ class OGBModeManager:
         self._crop_steering_task: asyncio.Task | None = None
         self._plant_watering_task: asyncio.Task | None = None
         
-        # Deadband hold tracking for smart deadband (2-3 minutes hold time)
+        # Deadband hold tracking for smart deadband (5 minutes hold time)
         self._deadband_hold_start: float | None = None
-        self._deadband_hold_duration: float = 150  # 2.5 minutes (150 seconds)
+        self._deadband_hold_duration: float = 300  # 5 minutes (300 seconds)
         self._deadband_active_devices: set = set()  # Track which devices are in deadband hold
         self._is_in_deadband: bool = False
+        
+        # NEW: Advanced deadband tracking
+        self._deadband_stability_start: float | None = None  # When VPD became stable
+        self._deadband_stability_duration: float = 120  # 2 minutes for full reduction
+        self._vpd_history: list = []  # Last 3 VPD values for trend analysis
+        self._deadband_check_interval: float = 30  # Check every 30 seconds during deadband
+        self._last_deadband_check: float = 0
+        self._current_deadband_stage: int = 0  # 0=none, 1=soft, 2=medium, 3=full
         
         # Device categories for deadband handling
         self._deadband_devices = {
@@ -72,23 +80,169 @@ class OGBModeManager:
         # Prem
         self.event_manager.on("PremiumCheck", self.handle_premium_modes)
 
+    def _calculate_dynamic_deadband(self, mode_name: str) -> float:
+        """
+        Calculate dynamic deadband based on plant stage and mode.
+        
+        VPD Perfection: Uses plant stage specific deadbands
+        VPD Target: Uses tolerance-based deadband
+        Closed Environment: Uses fixed deadband
+        
+        Returns:
+            Dynamic deadband value in kPa
+        """
+        # Base deadband from settings
+        base_deadband = 0.05
+        
+        if mode_name == "VPD Perfection":
+            # Get current plant stage
+            plant_stage = self.data_store.get("plantStage") or "MidVeg"
+            
+            # Plant stage specific deadbands
+            stage_deadbands = {
+                "Germination": 0.03,  # Very sensitive phase
+                "Clones": 0.03,       # Very sensitive phase
+                "EarlyVeg": 0.05,     # Normal
+                "MidVeg": 0.05,       # Normal
+                "LateVeg": 0.04,      # More precise (transition to flower)
+                "EarlyFlower": 0.04,  # More precise
+                "MidFlower": 0.05,    # Normal
+                "LateFlower": 0.05,   # Normal
+            }
+            
+            return stage_deadbands.get(plant_stage, base_deadband)
+            
+        elif mode_name == "VPD Target":
+            # Use tolerance from settings
+            tolerance = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband")
+            if tolerance:
+                return float(tolerance)
+            return base_deadband
+            
+        elif mode_name == "Closed Environment":
+            # Use fixed deadband for closed environment
+            return base_deadband
+            
+        return base_deadband
+    
+    def _calculate_trend(self, current_vpd: float) -> str:
+        """
+        Calculate VPD trend based on last 3 values.
+        
+        Returns:
+            'towards_target', 'away_from_target', or 'stable'
+        """
+        import time
+        
+        now = time.time()
+        
+        # Add current value to history
+        self._vpd_history.append({"vpd": current_vpd, "time": now})
+        
+        # Keep only last 3 values
+        if len(self._vpd_history) > 3:
+            self._vpd_history = self._vpd_history[-3:]
+        
+        # Need at least 2 values for trend
+        if len(self._vpd_history) < 2:
+            return "stable"
+        
+        # Calculate trend
+        vpd_values = [entry["vpd"] for entry in self._vpd_history]
+        target_vpd = self.data_store.getDeep("vpd.target") or self.data_store.getDeep("vpd.perfection") or 1.2
+        
+        # Check if getting closer to target
+        current_deviation = abs(vpd_values[-1] - target_vpd)
+        previous_deviation = abs(vpd_values[0] - target_vpd)
+        
+        if current_deviation < previous_deviation * 0.9:  # At least 10% improvement
+            return "towards_target"
+        elif current_deviation > previous_deviation * 1.1:  # At least 10% worse
+            return "away_from_target"
+        else:
+            return "stable"
+    
+    def _determine_deadband_stage(self, deviation: float, deadband: float, trend: str) -> int:
+        """
+        Determine deadband reduction stage based on deviation and trend.
+        
+        Stage 1 (Soft):   Slight reduction (50% for climate, 75% for air-exchange)
+        Stage 2 (Medium): Moderate reduction (25% for climate, 50% for air-exchange)
+        Stage 3 (Full):   Maximum reduction (10% for climate, 25% for air-exchange)
+        
+        Args:
+            deviation: Current VPD deviation from target
+            deadband: Current deadband value
+            trend: VPD trend ('towards_target', 'away_from_target', 'stable')
+            
+        Returns:
+            Stage (1, 2, or 3)
+        """
+        import time
+        
+        # Calculate relative deviation (0.0 to 1.0 where 1.0 is at deadband limit)
+        relative_deviation = deviation / deadband if deadband > 0 else 0
+        
+        # Trend-based adjustments
+        if trend == "towards_target":
+            # If trending towards target, be more aggressive with reduction
+            # Enter stage 1 earlier (at 60% of deadband instead of 80%)
+            stage_1_threshold = 0.60
+            stage_2_threshold = 0.80
+        elif trend == "away_from_target":
+            # If trending away, be conservative
+            # Only enter deadband at higher thresholds
+            stage_1_threshold = 0.90
+            stage_2_threshold = 0.95
+        else:
+            # Stable trend - normal thresholds
+            stage_1_threshold = 0.80
+            stage_2_threshold = 0.90
+        
+        # Check stability duration for stage 3
+        now = time.time()
+        stability_duration = 0
+        if self._deadband_stability_start:
+            stability_duration = now - self._deadband_stability_start
+        
+        # Determine stage
+        if relative_deviation < stage_1_threshold:
+            # Very close to target - soft reduction
+            if self._current_deadband_stage != 1:
+                _LOGGER.debug(f"{self.room}: Entering deadband stage 1 (soft) - deviation: {deviation:.3f}, trend: {trend}")
+            self._current_deadband_stage = 1
+            return 1
+        elif relative_deviation < stage_2_threshold:
+            # Medium distance - medium reduction
+            if self._current_deadband_stage != 2:
+                _LOGGER.debug(f"{self.room}: Entering deadband stage 2 (medium) - deviation: {deviation:.3f}, trend: {trend}")
+            self._current_deadband_stage = 2
+            return 2
+        elif stability_duration >= self._deadband_stability_duration:
+            # Stable for long time - full reduction
+            if self._current_deadband_stage != 3:
+                _LOGGER.info(f"{self.room}: Entering deadband stage 3 (full) - stable for {stability_duration:.0f}s")
+            self._current_deadband_stage = 3
+            return 3
+        else:
+            # Not stable long enough - stay at stage 2
+            return 2
+    
     async def _handle_smart_deadband(self, current_vpd: float, target_vpd: float, deadband: float, mode_name: str):
         """
-        Smart Deadband Handler - Mischung aus Soft Minimum und Hold & Fade.
+        Smart Deadband Handler - Advanced version with dynamic stages and predictive logic.
         
-        Wenn VPD im Deadband ist:
-        1. Sofort: Climate-Geräte auf Minimum (dimmbar) oder Aus (nicht dimmbar)
-        2. Hold-Phase: 2-3 Minuten auf Minimum halten
-        3. Ventilation läuft weiter
-        4. Licht bleibt unberührt
-        
-        WICHTIG: Wenn VPD den Deadband während der Hold-Zeit verlässt,
-        wird der Deadband SOFORT beendet und die Geräte auf Normalzustand zurückgesetzt.
+        Features:
+        - Dynamic deadband based on plant stage (VPD Perfection only)
+        - 3-stage gradual reduction (soft, medium, full)
+        - Trend analysis for predictive behavior
+        - Night mode only when nightVPDHold is enabled
+        - Max 10 minute deadband with 30-second checks
         
         Args:
             current_vpd: Aktueller VPD Wert
             target_vpd: Ziel VPD Wert
-            deadband: Deadband Toleranz
+            deadband: Deadband Toleranz (may be overridden by dynamic calculation)
             mode_name: Name des Modus (für Logging)
         """
         import time
@@ -143,60 +297,138 @@ class OGBModeManager:
         # Aktualisiere DataStore mit verbleibender Zeit
         self.data_store.setDeep("controlOptionData.deadband.hold_remaining", hold_remaining)
         
-        # Hole verfügbare Capabilities
+        # Calculate dynamic deadband based on plant stage (VPD Perfection only)
+        dynamic_deadband = self._calculate_dynamic_deadband(mode_name)
+        if dynamic_deadband != deadband:
+            _LOGGER.debug(f"{self.room}: Using dynamic deadband {dynamic_deadband} instead of {deadband} for {mode_name}")
+            deadband = dynamic_deadband
+        
+        # Check if night mode and nightVPDHold is disabled
+        is_night = not self.data_store.getDeep("isPlantDay.islightON", True)
+        night_vpd_hold = self.data_store.getDeep("controlOptions.nightVPDHold", True)
+        
+        if is_night and not night_vpd_hold:
+            # Night mode without VPD hold - no deadband, use power-saving mode instead
+            if self._is_in_deadband:
+                _LOGGER.info(f"{self.room}: Night mode without VPD hold - exiting deadband for power-saving")
+                self._reset_deadband_state()
+            return
+        
+        # Calculate trend for predictive behavior
+        trend = self._calculate_trend(current_vpd)
+        
+        # Check max deadband time (10 minutes)
+        max_deadband_time = 600  # 10 minutes
+        if self._deadband_hold_start and (now - self._deadband_hold_start) > max_deadband_time:
+            _LOGGER.info(f"{self.room}: Max deadband time ({max_deadband_time}s) reached - exiting")
+            self._reset_deadband_state()
+            return
+        
+        # Periodic check every 30 seconds during deadband
+        if self._last_deadband_check and (now - self._last_deadband_check) < self._deadband_check_interval:
+            # Skip this cycle, just update hold time
+            self.data_store.setDeep("controlOptionData.deadband.hold_remaining", hold_remaining)
+            return
+        
+        self._last_deadband_check = now
+        
+        # Determine deadband stage based on deviation and trend
+        stage = self._determine_deadband_stage(deviation, deadband, trend)
+        
+        # Update stability tracking
+        if stage >= 2 and not self._deadband_stability_start:
+            self._deadband_stability_start = now
+        elif stage < 2:
+            self._deadband_stability_start = None
+        
+        # Get capabilities
         caps = self.data_store.get("capabilities") or {}
         
-        # Baue Actions für Smart Deadband
+        # Build deadband actions based on stage
         deadband_actions = []
         devices_dimmed = []
-        devices_turned_off = []
+        devices_reduced = []
         
-        # 1. Deadband-Geräte: Minimum (wenn dimmbar) oder Aus (wenn nicht dimmbar)
-        # Inkl. Climate-Geräte + Luftaustausch-Geräte (Exhaust, Intake, Window)
-        for cap in self._deadband_devices:
+        # Stage-based reduction levels
+        reduction_levels = {
+            1: {"climate": 50, "air_exchange": 75},  # Soft: Climate 50%, Air-Exchange 75%
+            2: {"climate": 25, "air_exchange": 50},  # Medium: Climate 25%, Air-Exchange 50%
+            3: {"climate": 10, "air_exchange": 25},  # Full: Climate 10%, Air-Exchange 25%
+        }
+        
+        level = reduction_levels.get(stage, {"climate": 50, "air_exchange": 75})
+        
+        # Climate devices (affect VPD directly)
+        climate_devices = ["canHumidify", "canDehumidify", "canHeat", "canCool", "canClimate"]
+        for cap in climate_devices:
             if caps.get(cap, {}).get("state", False):
-                # Prüfe ob Gerät dimmbar ist
                 is_dimmable = caps.get(cap, {}).get("isDimmable", False)
                 
                 if is_dimmable:
-                    # Dimmbar → auf Minimum (10%)
                     action = OGBActionPublication(
                         capability=cap,
-                        action="Reduce",  # Reduce to minimum
+                        action="Reduce",
                         Name=self.room,
-                        message=f"Deadband: {cap} dimmed to minimum (dimmable device)",
+                        message=f"Deadband Stage {stage}: {cap} reduced to {level['climate']}%",
                         priority="low"
                     )
-                    devices_dimmed.append(cap)
+                    devices_dimmed.append(f"{cap}:{level['climate']}%")
                 else:
-                    # Nicht dimmbar → Aus
                     action = OGBActionPublication(
                         capability=cap,
-                        action="Reduce",  # Turn off
+                        action="Reduce",
                         Name=self.room,
-                        message=f"Deadband: {cap} turned off (non-dimmable device)",
+                        message=f"Deadband Stage {stage}: {cap} turned off",
                         priority="low"
                     )
-                    devices_turned_off.append(cap)
+                    devices_reduced.append(cap)
                 
                 deadband_actions.append(action)
                 self._deadband_active_devices.add(cap)
         
-        # 2. Ventilation (Umluft): Weiterlaufen (nur canVentilate, nicht mehr Exhaust/Intake/Window - diese sind jetzt in Deadband!)
+        # Air exchange devices (affect VPD through air exchange)
+        air_exchange_devices = ["canExhaust", "canIntake", "canWindow"]
+        for cap in air_exchange_devices:
+            if caps.get(cap, {}).get("state", False):
+                is_dimmable = caps.get(cap, {}).get("isDimmable", False)
+                
+                if is_dimmable:
+                    action = OGBActionPublication(
+                        capability=cap,
+                        action="Reduce",
+                        Name=self.room,
+                        message=f"Deadband Stage {stage}: {cap} reduced to {level['air_exchange']}%",
+                        priority="low"
+                    )
+                    devices_dimmed.append(f"{cap}:{level['air_exchange']}%")
+                else:
+                    action = OGBActionPublication(
+                        capability=cap,
+                        action="Reduce",
+                        Name=self.room,
+                        message=f"Deadband Stage {stage}: {cap} turned off",
+                        priority="low"
+                    )
+                    devices_reduced.append(cap)
+                
+                deadband_actions.append(action)
+                self._deadband_active_devices.add(cap)
+        
+        # Ventilation (internal circulation) - always runs at 100%
         ventilation_running = []
         for cap in self._ventilation_devices:
             if caps.get(cap, {}).get("state", False):
                 ventilation_running.append(cap)
         
-        # 3. Licht: Unberührt (keine Actions)
+        # Light - unchanged
         light_status = "unchanged"
         if caps.get("canLight", {}).get("state", False):
             light_status = "running (unchanged)"
         
-        # Sende LogForClient mit Deadband Status
+        # Emit LogForClient with detailed status
         await self.event_manager.emit("LogForClient", {
             "Name": self.room,
-            "message": f"Smart Deadband active - Devices reduced, hold: {hold_remaining:.0f}s remaining",
+            "message": f"Smart Deadband Stage {stage} active - hold: {hold_remaining:.0f}s, trend: {trend}",
             "VPDStatus": "InDeadband",
             "currentVPD": current_vpd,
             "targetVPD": target_vpd,
@@ -204,21 +436,22 @@ class OGBModeManager:
             "deviation": deviation,
             "holdTimeRemaining": hold_remaining,
             "holdDuration": self._deadband_hold_duration,
+            "stage": stage,
+            "trend": trend,
             "mode": mode_name,
             "devicesDimmed": devices_dimmed,
-            "devicesTurnedOff": devices_turned_off,
+            "devicesReduced": devices_reduced,
             "ventilationRunning": ventilation_running,
             "lightStatus": light_status,
             "deadbandActive": True
         }, haEvent=True, debug_type="INFO")
         
-        # Führe Deadband Actions aus (Alle Geräte reduzieren)
+        # Execute deadband actions
         if deadband_actions:
             _LOGGER.info(
-                f"{self.room}: Smart Deadband executing {len(deadband_actions)} device actions"
+                f"{self.room}: Smart Deadband Stage {stage} executing {len(deadband_actions)} actions"
             )
             
-            # Mapping von Capability zu korrektem Device-Name für Events
             capability_to_device = {
                 'canHeat': 'Heater',
                 'canCool': 'Cooler', 
@@ -230,21 +463,25 @@ class OGBModeManager:
                 'canWindow': 'Window',
             }
             
-            # Wir müssen die actions über den event_manager emittieren
             for action in deadband_actions:
                 cap = getattr(action, 'capability', None)
                 action_type = getattr(action, 'action', None)
                 if cap and action_type:
-                    # Emit device-specific reduce events with CORRECT device names
                     device_name = capability_to_device.get(cap, cap.replace('can', ''))
                     await self.event_manager.emit(f"Reduce {device_name}", action_type)
         
-        # Prüfe ob Hold-Zeit abgelaufen ist und VPD immer noch im Deadband
+        # Check if hold time elapsed
         if hold_remaining <= 0:
             _LOGGER.info(
-                f"{self.room}: Deadband hold time elapsed ({self._deadband_hold_duration}s) - "
-                f"checking if still in deadband"
+                f"{self.room}: Deadband hold time ({self._deadband_hold_duration}s) elapsed - extending"
             )
+            # Extend hold time if VPD is still stable
+            if trend == "stable" or trend == "towards_target":
+                self._deadband_hold_start = now
+                _LOGGER.info(f"{self.room}: Extending deadband - VPD stable")
+            else:
+                _LOGGER.info(f"{self.room}: Not extending - trend {trend}")
+                self._reset_deadband_state()
             # Hold-Zeit abgelaufen, prüfe ob VPD immer noch im Deadband
             if deviation <= deadband:
                 # Verlängere Hold-Zeit um weitere 2.5 Minuten
@@ -260,6 +497,12 @@ class OGBModeManager:
             self._is_in_deadband = False
             self._deadband_hold_start = None
             self._deadband_active_devices.clear()
+            
+            # NEW: Reset advanced tracking
+            self._deadband_stability_start = None
+            self._vpd_history.clear()
+            self._last_deadband_check = 0
+            self._current_deadband_stage = 0
             
             # WICHTIG: Lösche Deadband State aus DataStore
             self.data_store.setDeep("controlOptionData.deadband.active", False)
@@ -277,8 +520,6 @@ class OGBModeManager:
             for device_type in deadband_device_types:
                 asyncio.create_task(self.event_manager.emit("SmartDeadbandExited", {"deviceType": device_type}))
             
-            # WICHTIG: Emit ein Event damit die Geräte wissen, dass sie aus dem Deadband sind
-            # Die Geräte werden dann beim nächsten VPD Control Zyklus normal gesteuert
             _LOGGER.debug(f"{self.room}: Deadband state reset complete - devices will resume normal operation")
 
     async def selectActionMode(self, Publication):
