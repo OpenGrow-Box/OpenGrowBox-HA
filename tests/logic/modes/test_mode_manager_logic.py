@@ -16,6 +16,23 @@ def _make_mode_manager(store, events):
     manager.room = "dev_room"
     manager.data_store = store
     manager.event_manager = events
+    # Initialize deadband state attributes that are normally set in __init__
+    manager._is_in_deadband = False
+    manager._deadband_hold_start = None
+    manager._deadband_hold_duration = 300  # 5 minutes (300 seconds)
+    manager._deadband_active_devices = set()
+    manager._deadband_stability_start = None
+    manager._deadband_stability_duration = 120  # 2 minutes for full reduction
+    manager._vpd_history = []
+    manager._deadband_check_interval = 30  # Check every 30 seconds during deadband
+    manager._last_deadband_check = 0
+    manager._current_deadband_stage = 0
+    # Device category sets for deadband handling
+    manager._deadband_devices = {
+        "canHumidify", "canDehumidify", "canHeat", "canCool", "canClimate",
+        "canExhaust", "canIntake", "canWindow"
+    }
+    manager._ventilation_devices = {"canVentilate"}
     return manager
 
 

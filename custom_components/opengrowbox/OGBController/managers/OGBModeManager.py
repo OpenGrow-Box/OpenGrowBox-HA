@@ -669,6 +669,8 @@ class OGBModeManager:
         if deviation <= deadband:
             # Im Deadband - Smart Deadband Handler aufrufen
             await self._handle_smart_deadband(float(currentVPD), float(perfectionVPD), deadband, "VPD Perfection")
+            # Emit FineTune_vpd to maintain devices in rest while in target zone
+            await self.event_manager.emit("FineTune_vpd", capabilities)
             return  # Keine normalen VPD Actions ausführen
         else:
             # Außerhalb Deadband - Reset Deadband State
