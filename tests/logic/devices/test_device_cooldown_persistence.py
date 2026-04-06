@@ -268,17 +268,17 @@ class TestCooldownIntegrationWithDampening:
         assert manager.defaultCooldownMinutes["canDehumidify"] == 10, \
             f"Expected 10, got {manager.defaultCooldownMinutes['canDehumidify']}"
         
-        # Register action with deviation 5.0 (triggers adaptive cooldown: 10 * 1.2 = 12 min)
+        # Register action with deviation 5.0
+        # NOTE: adaptiveCooldownEnabled is False by default, so no adaptive scaling
         manager._registerAction("canDehumidify", "Increase", 5.0)
         
-        # Check that cooldown uses custom value with adaptive scaling
-        # Deviation 5.0 > 3 triggers 1.2x multiplier: 10 * 1.2 = 12 min
+        # Check that cooldown uses custom value (10 min, no adaptive scaling)
         cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
-        expected_cooldown = datetime.now() + timedelta(minutes=12)
+        expected_cooldown = datetime.now() + timedelta(minutes=10)
         
         # Allow some tolerance for timing
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
-        assert time_diff < 1.0, f"Should use 12 min cooldown (10 * 1.2 adaptive), got {time_diff}s difference (actual cooldown: {(cooldown_until - datetime.now()).total_seconds()/60:.1f} min)"
+        assert time_diff < 1.0, f"Should use 10 min cooldown (user-defined, no adaptive), got {time_diff}s difference (actual cooldown: {(cooldown_until - datetime.now()).total_seconds()/60:.1f} min)"
     
     def test_multiple_adjustments_persist_correctly(self):
         """Test that multiple cooldown adjustments persist correctly."""

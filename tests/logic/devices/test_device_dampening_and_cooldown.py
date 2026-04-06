@@ -159,9 +159,12 @@ class TestUserDefinedCooldowns:
         assert cooldown == 15.0, f"Expected 15.0, got {cooldown}"
     
     def test_calculate_adaptive_cooldown_scaling(self):
-        """Test that adaptive cooldown scales with deviation.
+        """Test that adaptive cooldown scales with deviation when enabled.
         
-        Implementation:
+        Default behavior (adaptiveCooldownEnabled=False):
+        - Cooldown is always the base value, regardless of deviation
+        
+        When adaptiveCooldownEnabled=True:
         - abs_dev < 0.5: base * 3.0 (close to target = longer for stability)
         - abs_dev < 1: base * 2.0
         - abs_dev > 3: base * 1.2
@@ -175,16 +178,53 @@ class TestUserDefinedCooldowns:
         # Set base cooldown
         manager.defaultCooldownMinutes["canHeat"] = 5
         
-        # Test different deviation levels
-        cooldown_small = manager._calculateAdaptiveCooldown("canHeat", 0.5)  # → 15
-        cooldown_normal = manager._calculateAdaptiveCooldown("canHeat", 2.0)   # → 5 (falls through)
-        cooldown_medium = manager._calculateAdaptiveCooldown("canHeat", 4.0)   # → 6
-        cooldown_large = manager._calculateAdaptiveCooldown("canHeat", 6.0)    # → 7.5
+        # Test different deviation levels - default behavior: no adaptive scaling
+        cooldown_small = manager._calculateAdaptiveCooldown("canHeat", 0.5)   # → 5 (base)
+        cooldown_normal = manager._calculateAdaptiveCooldown("canHeat", 2.0)  # → 5 (base)
+        cooldown_medium = manager._calculateAdaptiveCooldown("canHeat", 4.0)  # → 5 (base)
+        cooldown_large = manager._calculateAdaptiveCooldown("canHeat", 6.0)   # → 5 (base)
         
-        # Verify: close to target (small) = longer cooldown
-        assert cooldown_small > cooldown_large, "Small deviation should have longer cooldown than large"
-        assert cooldown_small > cooldown_medium, "Small deviation should have longer cooldown"
-        assert cooldown_small > cooldown_normal, "Small deviation should have longest cooldown"
+        # Verify: all cooldowns are the same (base value) when adaptive is disabled
+        assert cooldown_small == 5.0, f"Expected 5.0, got {cooldown_small}"
+        assert cooldown_normal == 5.0, f"Expected 5.0, got {cooldown_normal}"
+        assert cooldown_medium == 5.0, f"Expected 5.0, got {cooldown_medium}"
+        assert cooldown_large == 5.0, f"Expected 5.0, got {cooldown_large}"
+        
+        # All should be equal (no scaling)
+        assert cooldown_small == cooldown_large, "Cooldown should be constant when adaptive is disabled"
+        assert cooldown_small == cooldown_medium, "Cooldown should be constant when adaptive is disabled"
+        assert cooldown_small == cooldown_normal, "Cooldown should be constant when adaptive is disabled"
+    
+    def test_calculate_adaptive_cooldown_when_enabled(self):
+        """Test adaptive cooldown scaling when explicitly enabled."""
+        manager, data_store, _ = _make_action_manager()
+        
+        # Enable adaptive cooldown
+        data_store.setDeep("controlOptions.adaptiveCooldownEnabled", True)
+        
+        # Set base cooldown
+        manager.defaultCooldownMinutes["canHeat"] = 5
+        
+        # Test different deviation levels with adaptive enabled
+        # Note: thresholds are veryNear=0.5, near=1.0, high=3.0, critical=5.0
+        # Factors: veryNear=3.0, near=2.0, high=1.2, critical=1.5
+        cooldown_very_near = manager._calculateAdaptiveCooldown("canHeat", 0.3)  # < 0.5 → 5 * 3.0 = 15
+        cooldown_near = manager._calculateAdaptiveCooldown("canHeat", 0.5)       # < 1.0 → 5 * 2.0 = 10
+        cooldown_normal = manager._calculateAdaptiveCooldown("canHeat", 2.0)     # else → 5
+        cooldown_high = manager._calculateAdaptiveCooldown("canHeat", 4.0)       # > 3.0 → 5 * 1.2 = 6
+        cooldown_critical = manager._calculateAdaptiveCooldown("canHeat", 6.0)   # > 5.0 → 5 * 1.5 = 7.5
+        
+        # Verify values
+        assert cooldown_very_near == 15.0, f"Expected 15.0 for very near deviation, got {cooldown_very_near}"
+        assert cooldown_near == 10.0, f"Expected 10.0 for near deviation, got {cooldown_near}"
+        assert cooldown_normal == 5.0, f"Expected 5.0 for normal deviation, got {cooldown_normal}"
+        assert cooldown_high == 6.0, f"Expected 6.0 for high deviation, got {cooldown_high}"
+        assert cooldown_critical == 7.5, f"Expected 7.5 for critical deviation, got {cooldown_critical}"
+        
+        # Verify: very near to target = longest cooldown
+        assert cooldown_very_near > cooldown_critical, "Very near deviation should have longer cooldown than critical"
+        assert cooldown_very_near > cooldown_high, "Very near deviation should have longer cooldown than high"
+        assert cooldown_very_near > cooldown_normal, "Very near deviation should have longest cooldown"
     
     def test_filter_actions_respects_cooldown(self):
         """Test that action filtering respects cooldowns.
@@ -295,23 +335,49 @@ class TestCooldownWithRealDevices:
     """Test cooldown behavior with actual device actions."""
     
     def test_device_uses_correct_cooldown_value(self):
-        """Test that devices use the correct cooldown value from manager."""
+        """Test that devices use the correct cooldown value from manager.
+        
+        Default behavior (adaptiveCooldownEnabled=False):
+        - Cooldown is always the user-defined base value, regardless of deviation
+        """
         manager, _, _ = _make_action_manager()
         
         # Set custom cooldown for canDehumidify
         manager.defaultCooldownMinutes["canDehumidify"] = 8
         
-        # Register action with deviation 5.0 (triggers adaptive cooldown: 8 * 1.2 = 9.6 min)
+        # Register action with deviation 5.0
+        # With adaptive disabled (default), cooldown should be base value (8 min)
         manager._registerAction("canDehumidify", "Increase", 5.0)
         
-        # Check that cooldown uses custom value with adaptive scaling
-        # Deviation 5.0 > 3 triggers 1.2x multiplier: 8 * 1.2 = 9.6 min
+        # Check that cooldown uses custom value (no adaptive scaling when disabled)
         cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
-        expected_cooldown = datetime.now() + timedelta(minutes=9.6)
+        expected_cooldown = datetime.now() + timedelta(minutes=8)
         
         # Allow some tolerance for timing
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
-        assert time_diff < 1.0, f"Cooldown should be ~9.6 minutes (8 * 1.2 adaptive), got {time_diff} seconds difference"
+        assert time_diff < 1.0, f"Cooldown should be ~8 minutes (base value, adaptive disabled), got {time_diff} seconds difference"
+    
+    def test_device_uses_adaptive_cooldown_when_enabled(self):
+        """Test that devices use adaptive cooldown when explicitly enabled."""
+        manager, data_store, _ = _make_action_manager()
+        
+        # Enable adaptive cooldown
+        data_store.setDeep("controlOptions.adaptiveCooldownEnabled", True)
+        
+        # Set custom cooldown for canDehumidify
+        manager.defaultCooldownMinutes["canDehumidify"] = 8
+        
+        # Register action with deviation 5.0 (triggers adaptive cooldown: 8 * 1.5 = 12 min)
+        # Deviation 5.0 > critical threshold (5.0) triggers 1.5x multiplier
+        manager._registerAction("canDehumidify", "Increase", 6.0)
+        
+        # Check that cooldown uses custom value with adaptive scaling
+        cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
+        expected_cooldown = datetime.now() + timedelta(minutes=12)  # 8 * 1.5 = 12
+        
+        # Allow some tolerance for timing
+        time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
+        assert time_diff < 1.0, f"Cooldown should be ~12 minutes (8 * 1.5 adaptive), got {time_diff} seconds difference"
     
     def test_multiple_devices_same_capability_share_cooldown(self):
         """Test that multiple devices with same capability share cooldown."""
