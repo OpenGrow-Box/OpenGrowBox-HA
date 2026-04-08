@@ -5,9 +5,14 @@ import shutil
 from glob import glob
 from typing import Any
 
-import yaml
+import yaml as yaml_lib
 
 import voluptuous as vol
+
+try:
+    from yaml.constructor import ConstructorError as YAMLConstructorError
+except ImportError:
+    YAMLConstructorError = Exception
 
 from homeassistant.components.frontend import (add_extra_js_url,
                                                async_remove_panel)
@@ -26,6 +31,7 @@ PLATFORMS = ["sensor", "number", "select", "time", "switch", "date", "text"]
 _CONFIG_CHECK_FLAG = "__config_checked__"
 _CLEANUP_DONE_FLAG = "__cleanup_done__"
 _AMBIENT_ENSURE_FLAG = "__ambient_ensure_done__"
+
 _REQUIRED_LOGGER_DEFAULT = "info"
 _REQUIRED_LOGGER_LEVEL = "debug"
 _REQUIRED_LOGGER_OVERRIDES = {
@@ -46,8 +52,8 @@ def _load_configuration_yaml(path: str) -> dict[str, Any]:
         content = file.read()
 
     try:
-        loaded = yaml.safe_load(content)
-    except yaml.constructor.ConstructorError as err:
+        loaded = yaml_lib.safe_load(content)
+    except YAMLConstructorError as err:
         err_msg = str(err)
         if "!include" in err_msg or "tag:yaml.org,2002:python/object" in err_msg:
             return _parse_yaml_with_ha_includes(content)
@@ -61,11 +67,12 @@ def _load_configuration_yaml(path: str) -> dict[str, Any]:
 def _parse_yaml_with_ha_includes(content: str) -> dict[str, Any]:
     """Parse YAML handling Home Assistant !include tags by extracting logger config only."""
     result = {}
+    found_logger = False
     for line in content.split("\n"):
         stripped = line.strip()
-        if stripped.startswith("logger:"):
+        if stripped.startswith("logger:") and not found_logger:
             result["logger"] = _extract_logger_block(content)
-            break
+            found_logger = True
         if stripped.startswith("default_config:"):
             result["default_config"] = {}
     return result
@@ -136,6 +143,28 @@ async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
                 for name, required_level in _REQUIRED_LOGGER_OVERRIDES.items()
             )
 
+    if not has_default_config_key:
+        try:
+            await hass.async_add_executor_job(_add_default_config_to_yaml, config_path)
+            _LOGGER.info("Added default_config to configuration.yaml")
+        except Exception as err:
+            _LOGGER.warning("Could not add default_config to configuration.yaml: %s", err)
+
+    # Add logger config if missing or incomplete
+    if not (logger_default_ok and logger_overrides_ok):
+        try:
+            await hass.async_add_executor_job(_add_logger_to_yaml, config_path)
+            _LOGGER.info("Added logger config to configuration.yaml")
+        except Exception as err:
+            _LOGGER.warning("Could not add logger config to configuration.yaml: %s", err)
+
+    # Add extra_module_url for custom icons
+    icon_url = "/local/opengrowbox/ogb_icons.js"
+    try:
+        await hass.async_add_executor_job(_add_extra_module_url_to_yaml, config_path, icon_url)
+    except Exception as err:
+        _LOGGER.warning("Could not add extra_module_url to configuration.yaml: %s", err)
+
     if has_default_config_key and logger_default_ok and logger_overrides_ok:
         return
 
@@ -154,6 +183,147 @@ async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
         ", ".join(missing_reasons),
     )
     _apply_minimal_log_fallback()
+
+
+def _add_required_config_to_yaml(config_path: str) -> None:
+    """Add default_config, logger, and frontend extra_module_url to configuration.yaml if missing."""
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    needs_default_config = "default_config:" not in content
+    needs_logger = not ("logger:" in content and "default:" in content and "logs:" in content)
+    needs_frontend = not ("extra_module_url:" in content and "/local/opengrowbox/ogb_icons.js" in content)
+
+    if not (needs_default_config or needs_logger or needs_frontend):
+        _LOGGER.debug("All required config already present in configuration.yaml")
+        return
+
+    backup_path = config_path + ".ogb_config_bak"
+    shutil.copy(config_path, backup_path)
+
+    config_lines = []
+
+    if needs_default_config:
+        config_lines.append("default_config:\n")
+
+    if needs_logger:
+        config_lines.append("""logger:
+  default: info
+  logs:
+    homeassistant.config_entries: debug
+    homeassistant.setup: debug
+    homeassistant.loader: debug
+    custom_components.opengrowbox: debug
+    custom_components.ogb-dev-env: debug
+""")
+
+    if needs_frontend:
+        config_lines.append("""frontend:
+  extra_module_url:
+    - /local/opengrowbox/ogb_icons.js
+""")
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(config_lines) + "\n" + content)
+
+    _LOGGER.info("Added default_config, logger, and frontend to configuration.yaml (backup at %s)", backup_path)
+
+
+def _add_default_config_to_yaml(config_path: str) -> None:
+    """Add default_config to configuration.yaml if missing."""
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if "default_config:" in content:
+        return
+
+    backup_path = config_path + ".default_config_bak"
+    shutil.copy(config_path, backup_path)
+
+    new_content = "default_config:\n\n" + content
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    _LOGGER.debug("Added default_config to configuration.yaml (backup at %s)", backup_path)
+
+
+def _add_logger_to_yaml(config_path: str) -> None:
+    """Add logger config to configuration.yaml if missing or incomplete."""
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if "logger:" in content and "default:" in content and "logs:" in content:
+        return
+
+    backup_path = config_path + ".logger_bak"
+    shutil.copy(config_path, backup_path)
+
+    logger_block = f"""logger:
+  default: info
+  logs:
+    homeassistant.config_entries: debug
+    homeassistant.setup: debug
+    homeassistant.loader: debug
+    custom_components.opengrowbox: debug
+    custom_components.ogb-dev-env: debug
+
+"""
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(logger_block + content)
+
+    _LOGGER.debug("Added logger config to configuration.yaml (backup at %s)", backup_path)
+
+
+def _add_extra_module_url_to_yaml(config_path: str, icon_url: str) -> None:
+    """Add extra_module_url to configuration.yaml if not present."""
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        original_content = f.read()
+
+    try:
+        config = yaml_lib.safe_load(original_content) or {}
+    except Exception:
+        config = {}
+
+    needs_update = False
+
+    if "frontend" not in config:
+        config["frontend"] = {"extra_module_url": [icon_url]}
+        _LOGGER.info("Added frontend section with icon URL to configuration.yaml")
+        needs_update = True
+    elif "extra_module_url" not in config["frontend"]:
+        config["frontend"]["extra_module_url"] = [icon_url]
+        _LOGGER.info("Added extra_module_url to existing frontend section")
+        needs_update = True
+    elif icon_url not in config["frontend"]["extra_module_url"]:
+        config["frontend"]["extra_module_url"].append(icon_url)
+        _LOGGER.info("Appended icon URL to existing extra_module_url")
+        needs_update = True
+    else:
+        _LOGGER.debug("Icon URL already present in configuration.yaml")
+        return
+
+    if needs_update:
+        backup_path = config_path + ".ogb_frontend_bak"
+        shutil.copy(config_path, backup_path)
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml_lib.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+        _LOGGER.debug("Added extra_module_url to configuration.yaml (backup at %s)", backup_path)
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -244,7 +414,9 @@ async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
         
         # Define retired entity patterns to remove (version-specific)
         retired_patterns = [
-            "text.ogb_strainname_",  # Removed in 1.4.2 - strain now via medium
+            "text.ogb_strainname_",     # Removed in 1.4.2 - strain now via medium
+            "OGB_Feed_Nutrient_",       # Removed in 3.2 - concentration-based dosing
+            "OGB_Feed_Tolerance_",      # Removed in 3.2 - concentration-based dosing
         ]
         
         # Check each entity and remove if orphaned or retired
