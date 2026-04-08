@@ -33,6 +33,11 @@ def _make_mode_manager(store, events):
         "canExhaust", "canIntake", "canWindow"
     }
     manager._ventilation_devices = {"canVentilate"}
+    # Deadband hysteresis parameters
+    manager._deadband_hysteresis_factor = 3.11  # 211% hysteresis for exit (prevents oscillation)
+    manager._deadband_min_hold_after_exit = 120  # 2 minutes min hold after exit
+    manager._deadband_last_exit_time = None
+    manager._deadband_exit_threshold = 0.1555  # 0.05 * 3.11
     return manager
 
 
@@ -168,7 +173,7 @@ async def test_handle_vpd_perfection_reduce_and_finetune_paths():
     await manager_reduce.handle_vpd_perfection()
     assert any(e["event_name"] == "reduce_vpd" for e in events_reduce.emitted)
 
-    # Fine-tune path
+    # VPD within range but not at perfection (FineTune removed - no action expected)
     store_tune = FakeDataStore(
         {
             "vpd": {
@@ -184,7 +189,11 @@ async def test_handle_vpd_perfection_reduce_and_finetune_paths():
     events_tune = FakeEventManager()
     manager_tune = _make_mode_manager(store_tune, events_tune)
     await manager_tune.handle_vpd_perfection()
-    assert any(e["event_name"] == "FineTune_vpd" for e in events_tune.emitted)
+    # FineTune removed - should NOT emit FineTune_vpd
+    assert not any(e["event_name"] == "FineTune_vpd" for e in events_tune.emitted), "Should NOT emit FineTune_vpd (FineTune removed)"
+    # Should NOT emit increase_vpd or reduce_vpd (VPD within range)
+    assert not any(e["event_name"] == "increase_vpd" for e in events_tune.emitted), "Should NOT emit increase_vpd (VPD within range)"
+    assert not any(e["event_name"] == "reduce_vpd" for e in events_tune.emitted), "Should NOT emit reduce_vpd (VPD within range)"
 
 
 @pytest.mark.asyncio

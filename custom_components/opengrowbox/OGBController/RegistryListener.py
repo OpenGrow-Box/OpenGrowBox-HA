@@ -631,7 +631,7 @@ class OGBRegistryEvenListener:
             return
         
         # Get current capabilities
-        capabilities = self.data_store.get("capabilities", {})
+        capabilities = self.data_store.get("capabilities") or {}
         
         # Find which capabilities this device belongs to
         for cap, cap_data in capabilities.items():

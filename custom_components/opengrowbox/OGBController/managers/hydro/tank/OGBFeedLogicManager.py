@@ -13,6 +13,7 @@ Responsibilities:
 """
 
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -54,7 +55,8 @@ class OGBFeedLogicManager:
         self.feed_check_interval = 900  # 15 minutes between checks
         self.emergency_feed_threshold = 0.25  # 25% deviation triggers emergency (was 15%)
         self.max_daily_feeds = 6  # Maximum feeds per day (reduced from 12)
-        self.min_feed_interval = 3600  # 60 minutes between feeds (increased from 30 min)
+        self.min_feed_interval = 14400  # 4 hours between feeds (was 60 min)
+        self.ph_adjustment_delay = 900  # 15 minutes (900 seconds) delay before pH adjustment after nutrients
 
         # Feed state tracking
         self.last_feed_time = None
@@ -386,14 +388,56 @@ class OGBFeedLogicManager:
     async def _perform_proportional_feeding(self, ec_adjustment: Dict[str, Any], ph_adjustment: Dict[str, Any]) -> bool:
         """
         Perform the actual proportional feeding based on calculated adjustments.
+        pH adjustment is delayed by 15 minutes after nutrient dosing to allow sensors to settle.
         """
         try:
             # Feed nutrients if needed
+            nutrients_dosed = False
             if ec_adjustment.get('nutrients_needed', False):
                 nutrient_dose = ec_adjustment['nutrient_dose_ml']
                 await self.event_manager.emit("DoseNutrients", {'dose_ml': nutrient_dose})
                 _LOGGER.debug(f"{self.room} - Dosed {nutrient_dose:.2f}ml nutrients")
+                nutrients_dosed = True
 
+            # Schedule pH adjustment with delay if needed
+            ph_down_needed = ph_adjustment.get('ph_down_needed', False)
+            ph_up_needed = ph_adjustment.get('ph_up_needed', False)
+            
+            if ph_down_needed or ph_up_needed:
+                if nutrients_dosed:
+                    # Delay pH adjustment by 15 minutes after nutrient dosing
+                    _LOGGER.info(f"{self.room} - Scheduling pH adjustment in {self.ph_adjustment_delay}s (15 minutes)")
+                    await self.event_manager.emit(
+                        "LogForClient",
+                        {
+                            "Name": self.room,
+                            "Type": "HYDROLOG",
+                            "Message": f"pH adjustment scheduled in 15 minutes (waiting for sensor settling)",
+                        },
+                    )
+                    # Use asyncio.create_task to schedule delayed pH adjustment
+                    asyncio.create_task(self._delayed_ph_adjustment(ph_adjustment))
+                else:
+                    # No nutrients were dosed, do pH adjustment immediately
+                    await self._apply_ph_adjustment(ph_adjustment)
+
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"{self.room} - Error performing proportional feeding: {e}")
+            return False
+
+    async def _delayed_ph_adjustment(self, ph_adjustment: Dict[str, Any]):
+        """Apply pH adjustment after delay."""
+        try:
+            await asyncio.sleep(self.ph_adjustment_delay)
+            await self._apply_ph_adjustment(ph_adjustment)
+        except Exception as e:
+            _LOGGER.error(f"{self.room} - Error in delayed pH adjustment: {e}")
+
+    async def _apply_ph_adjustment(self, ph_adjustment: Dict[str, Any]):
+        """Apply pH adjustment immediately."""
+        try:
             # Adjust pH if needed
             if ph_adjustment.get('ph_down_needed', False):
                 ph_down_dose = ph_adjustment['ph_down_dose_ml']
@@ -405,11 +449,8 @@ class OGBFeedLogicManager:
                 await self.event_manager.emit("DosePHUp", {'dose_ml': ph_up_dose})
                 _LOGGER.debug(f"{self.room} - Dosed {ph_up_dose:.2f}ml pH up")
 
-            return True
-
         except Exception as e:
-            _LOGGER.error(f"{self.room} - Error performing proportional feeding: {e}")
-            return False
+            _LOGGER.error(f"{self.room} - Error applying pH adjustment: {e}")
 
     def _check_ec_needs_adjustment(
         self, current_ec: Optional[float], target_ec: float

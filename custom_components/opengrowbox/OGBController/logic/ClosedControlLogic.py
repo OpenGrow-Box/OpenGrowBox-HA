@@ -39,10 +39,15 @@ class ClosedControlLogic:
 
     def get_control_limits(self) -> Dict[str, Any]:
         """
-        Get the actual min/max control limits for closed environment.
-        Returns the broad safety limits (not perfection range).
-        This is used like VPD: control when outside min/max bounds.
-        
+        Get the control limits for closed environment from tentData.
+
+        tentData is ALWAYS filled with either:
+        - plantstage-specific min/max values (from plantStages config)
+        - OR user-defined min/max values (from UI)
+
+        These are the control limits - Closed Environment maintains temperature
+        and humidity within these bounds.
+
         Returns:
             Dict with minTemp, maxTemp, minHumidity, maxHumidity or None values
         """
@@ -52,58 +57,41 @@ class ClosedControlLogic:
             "minHumidity": None,
             "maxHumidity": None,
         }
-        
-        limits["minTemp"] = self._get_limit_value("tentData.minTemp", "minTemp")
-        limits["maxTemp"] = self._get_limit_value("tentData.maxTemp", "maxTemp")
-        limits["minHumidity"] = self._get_limit_value("tentData.minHumidity", "minHumidity")
-        limits["maxHumidity"] = self._get_limit_value("tentData.maxHumidity", "maxHumidity")
-        
+
+        # Get limits directly from tentData (always filled)
+        limits["minTemp"] = self.data_store.getDeep("tentData.minTemp")
+        limits["maxTemp"] = self.data_store.getDeep("tentData.maxTemp")
+        limits["minHumidity"] = self.data_store.getDeep("tentData.minHumidity")
+        limits["maxHumidity"] = self.data_store.getDeep("tentData.maxHumidity")
+
         _LOGGER.debug(
             f"{self.room}: Closed limits - "
             f"Temp: {limits.get('minTemp')} / {limits.get('maxTemp')}°C, "
             f"Humidity: {limits.get('minHumidity')} / {limits.get('maxHumidity')}%"
         )
-        
+
         return limits
-    
-    def _get_limit_value(self, tent_key: str, stage_key: str) -> Optional[float]:
-        """Get a limit value from tentData or plantStages."""
-        value = self.data_store.getDeep(tent_key)
-        
-        if value is None:
-            plant_stage = self._get_current_plant_stage()
-            if plant_stage:
-                stage_data = self._get_plant_stage_data(plant_stage)
-                if stage_data:
-                    value = stage_data.get(stage_key)
-        
-        if value is not None:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
-        
-        return None
 
     def calculate_temperature_deviation(self) -> Dict[str, Any]:
         """
-        Calculate temperature deviation from limits (like VPD).
-        Returns the deviation and direction for control decisions.
-        
+        Calculate temperature deviation from limits.
+
+        Returns deviation and direction for control decisions.
+
         Returns:
             Dict with current, min, max, deviation, status
         """
         limits = self.get_control_limits()
         current = self.data_store.getDeep("tentData.temperature")
-        
+
         if current is None or limits.get("minTemp") is None or limits.get("maxTemp") is None:
             return {"current": None, "min": limits.get("minTemp"), "max": limits.get("maxTemp"), "deviation": 0, "status": "no_data"}
-        
+
         try:
             current = float(current)
             min_temp = float(limits["minTemp"])
             max_temp = float(limits["maxTemp"])
-            
+
             if current < min_temp:
                 deviation = current - min_temp
                 status = "too_low"
@@ -113,7 +101,7 @@ class ClosedControlLogic:
             else:
                 deviation = 0
                 status = "in_range"
-            
+
             return {
                 "current": current,
                 "min": min_temp,
@@ -123,26 +111,27 @@ class ClosedControlLogic:
             }
         except (TypeError, ValueError):
             return {"current": None, "min": limits.get("minTemp"), "max": limits.get("maxTemp"), "deviation": 0, "status": "invalid"}
-    
+
     def calculate_humidity_deviation(self) -> Dict[str, Any]:
         """
-        Calculate humidity deviation from limits (like VPD).
-        Returns the deviation and direction for control decisions.
-        
+        Calculate humidity deviation from limits.
+
+        Returns deviation and direction for control decisions.
+
         Returns:
             Dict with current, min, max, deviation, status
         """
         limits = self.get_control_limits()
         current = self.data_store.getDeep("tentData.humidity")
-        
+
         if current is None or limits.get("minHumidity") is None or limits.get("maxHumidity") is None:
             return {"current": None, "min": limits.get("minHumidity"), "max": limits.get("maxHumidity"), "deviation": 0, "status": "no_data"}
-        
+
         try:
             current = float(current)
             min_hum = float(limits["minHumidity"])
             max_hum = float(limits["maxHumidity"])
-            
+
             if current < min_hum:
                 deviation = current - min_hum
                 status = "too_low"
@@ -152,7 +141,7 @@ class ClosedControlLogic:
             else:
                 deviation = 0
                 status = "in_range"
-            
+
             return {
                 "current": current,
                 "min": min_hum,
@@ -162,99 +151,25 @@ class ClosedControlLogic:
             }
         except (TypeError, ValueError):
             return {"current": None, "min": limits.get("minHumidity"), "max": limits.get("maxHumidity"), "deviation": 0, "status": "invalid"}
-    
-    async def calculate_optimal_temperature_target(self) -> Optional[float]:
-        """Legacy method - returns midpoint for compatibility."""
-        limits = self.get_control_limits()
-        if limits.get("minTemp") and limits.get("maxTemp"):
-            return (limits["minTemp"] + limits["maxTemp"]) / 2
-        return None
-    
-    async def calculate_optimal_humidity_target(self) -> Optional[float]:
-        """Legacy method - returns midpoint for compatibility."""
-        limits = self.get_control_limits()
-        if limits.get("minHumidity") and limits.get("maxHumidity"):
-            return (limits["minHumidity"] + limits["maxHumidity"]) / 2
-        return None
 
-    def _calculate_ambient_temperature_factor(self) -> float:
+    def get_ambient_temperature(self) -> Optional[float]:
         """
-        Calculate ambient temperature influence factor.
+        Get ambient temperature for decision making.
 
         Returns:
-            Temperature adjustment factor in Celsius
+            Ambient temperature from tentData.AmbientTemp or None
         """
-        ambient_temp = self.data_store.getDeep("tentData.AmbientTemp")
-        internal_temp = self.data_store.getDeep("tentData.temperature")
+        return self.data_store.getDeep("tentData.AmbientTemp")
 
-        if ambient_temp is None or internal_temp is None:
-            return 0.0
 
-        # Calculate temperature gradient
-        gradient = internal_temp - ambient_temp
-
-        # Ambient influence logic for energy optimization
-        if ambient_temp > 25 and gradient > self.ambient_buffer_zone:
-            # Warm ambient, reduce internal heating needs
-            return -1.5
-        elif ambient_temp < 15 and gradient < -self.ambient_buffer_zone:
-            # Cold ambient, increase internal heating buffer
-            return 2.0
-        elif ambient_temp > 30:
-            # Very hot ambient, significant cooling buffer
-            return -2.5
-        elif ambient_temp < 5:
-            # Very cold ambient, significant heating buffer
-            return 3.0
-        else:
-            # Ambient within comfortable range, minimal influence
-            return gradient * 0.1  # Small gradient-based adjustment
-
-    def _calculate_ambient_humidity_factor(self) -> float:
+    def get_ambient_temperature(self) -> Optional[float]:
         """
-        Calculate ambient humidity influence factor.
+        Get ambient temperature for decision making.
 
         Returns:
-            Humidity adjustment factor as percentage
+            Ambient temperature from tentData.AmbientTemp or None
         """
-        ambient_humidity = self.data_store.getDeep("tentData.AmbientHum")
-        internal_humidity = self.data_store.getDeep("tentData.humidity")
-
-        if ambient_humidity is None or internal_humidity is None:
-            return 0.0
-
-        # Calculate humidity gradient
-        gradient = internal_humidity - ambient_humidity
-
-        # Ambient influence logic for dehumidifier optimization
-        if ambient_humidity < 30 and internal_humidity > 50:
-            # Dry ambient, can allow higher internal humidity
-            return 5.0  # Increase target by 5%
-        elif ambient_humidity > 80 and internal_humidity < 60:
-            # Humid ambient, be more aggressive with dehumidification
-            return -8.0  # Decrease target by 8%
-        elif ambient_humidity < 20:
-            # Very dry ambient, significant optimization opportunity
-            return 8.0
-        elif ambient_humidity > 90:
-            # Very humid ambient, significant dehumidification need
-            return -10.0
-        else:
-            # Ambient humidity in normal range
-            return gradient * 0.2  # Small gradient-based adjustment
-
-    def _get_current_plant_stage(self) -> Optional[str]:
-        """
-        Get the current plant stage.
-
-        Returns:
-            Current plant stage name, or None
-        """
-        plant_stage = self.data_store.get("plantStage")
-        if plant_stage:
-            # Normalize plant stage names
-            return plant_stage.replace(" ", "").replace("-", "")
-        return None
+        return self.data_store.getDeep("tentData.AmbientTemp")
 
     def _get_plant_stage_data(self, plant_stage: str) -> Optional[dict]:
         """

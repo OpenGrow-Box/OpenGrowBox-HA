@@ -212,6 +212,90 @@ Optional tunables (stored in `controlOptions`):
 Runtime state is stored in `safety.airExchangeColdGuard` and includes block count,
 lock timeout, and last decision metadata for troubleshooting.
 
+### Hydroponic Tank Feed System (Optional)
+
+The OpenGrowBox Tank Feed Manager provides automated nutrient dosing with precision control and automatic pump calibration.
+
+#### Required Configuration
+
+**Pump Flow Rates (ml/min):**
+- `OGB_Pump_FlowRate_A` - Nutrient A pump flow rate (default: 50.0 ml/min)
+- `OGB_Pump_FlowRate_B` - Nutrient B pump flow rate (default: 50.0 ml/min)
+- `OGB_Pump_FlowRate_C` - Nutrient C pump flow rate (default: 50.0 ml/min)
+- `OGB_Pump_FlowRate_W` - Water pump flow rate (default: 100.0 ml/min)
+- `OGB_Pump_FlowRate_X` - Custom X pump flow rate (default: 50.0 ml/min)
+- `OGB_Pump_FlowRate_Y` - Custom Y pump flow rate (default: 50.0 ml/min)
+- `OGB_Pump_FlowRate_PH_Down` - pH- down pump flow rate (default: 10.0 ml/min)
+- `OGB_Pump_FlowRate_PH_Up` - pH+ up pump flow rate (default: 10.0 ml/min)
+
+**Nutrient Concentrations (ml/L):**
+- `OGB_Nutrient_Concentration_A` - Nutrient A concentration (default: 2.0 ml/L)
+- `OGB_Nutrient_Concentration_B` - Nutrient B concentration (default: 2.0 ml/L)
+- `OGB_Nutrient_Concentration_C` - Nutrient C concentration (default: 1.0 ml/L)
+- `OGB_Nutrient_Concentration_X` - Custom X nutrient concentration (default: 0.0 ml/L, set > 0 to enable)
+- `OGB_Nutrient_Concentration_Y` - Custom Y nutrient concentration (default: 0.0 ml/L, set > 0 to enable)
+- `OGB_Nutrient_Concentration_PH_Down` - pH- down concentration (default: 0.5 ml/L)
+
+**Reservoir Configuration:**
+- `OGB_Reservoir_Volume_L` - Tank volume in liters (default: 50L)
+
+#### How It Works
+
+1. **Concentration-Based Dosing:**
+    - System calculates exact nutrient amounts: `ml = Tank Volume (L) × Concentration (ml/L)`
+    - Example: 100L tank × 2.0 ml/L = 200ml Nutrient A
+    - Pump time: `200ml ÷ 50 ml/min = 4 minutes`
+    - **X and Y Pumps:** Automatically included in dosing sequence when concentration > 0
+    - Dosing order: A → B → C → X → Y (if enabled)
+    - Pumps with concentration = 0 are automatically skipped
+
+2. **Automatic Calibration:**
+    - System measures EC before and after each feed
+    - Calculates pump accuracy: `(actual EC change) ÷ (expected EC change)`
+    - Automatically adjusts calibration factors (0.5x to 2.0x range)
+    - **X and Y Pumps:** Calibrated automatically when they were dosed
+    - Notifies user if accuracy < 70% or > 130%
+
+3. **Rate Limiting:**
+    - Minimum 4 hours between feeds
+    - Maximum 6 feeds per day
+    - 90 seconds between nutrients (A → B → C → X → Y)
+    - 15 minutes delay before pH adjustment
+
+4. **Reservoir Monitoring:**
+    - Low level alert: < 25%
+    - High level alert: > 85%
+    - Water level stored in `Hydro.ReservoirLevel` (percentage)
+    - Auto-fill system (optional, requires Feedpump_W)
+
+5. **Custom Nutrients (X and Y Pumps):**
+    - Use X and Y pumps for additional additives (boosters, enzymes, etc.)
+    - Set concentration > 0 to include in automatic dosing
+    - Automatically scaled based on tank volume
+    - Same safety and calibration features as main nutrients
+
+#### Calibration Process
+
+**Automatic (Recommended):**
+- Runs automatically after each feed
+- Adjusts pump calibration factors based on EC accuracy
+- **Includes all dosed pumps:** A, B, C, X, and Y (if they were dosed)
+- No manual intervention required
+
+**Manual Calibration:**
+1. Send `CalibrateNutrientPump` event with pump type (A, B, C, X, or Y)
+2. System pumps 10ml into reservoir
+3. Wait 5 minutes for EC to stabilize
+4. Calculate accuracy and update calibration factor
+
+#### Safety Features
+
+- **Rate Limiting:** Prevents over-feeding
+- **Sensor Validation:** Checks for invalid/unavailable sensor readings
+- **Pump Timeout:** Maximum pump duration limits
+- **Critical Alerts:** Notifications for severe pump inaccuracy (< 50% or > 150%)
+- **Data Persistence:** Calibration data saved to DataStore
+
 ### Analytics (Premium)
 - Growth tracking and reporting
 - Environmental history

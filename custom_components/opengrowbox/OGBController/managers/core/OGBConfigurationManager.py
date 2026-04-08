@@ -167,6 +167,23 @@ class OGBConfigurationManager:
             f"ogb_strainname_{self.room.lower()}": self._update_strain_name,
             # Area
             f"ogb_grow_area_m2_{self.room.lower()}": self._update_grow_area,
+            f"ogb_reservoir_volume_l_{self.room.lower()}": self._update_reservoir_volume,
+            # Pump Flow Rates
+            f"ogb_pump_flowrate_a_{self.room.lower()}": self._update_pump_flowrate_a,
+            f"ogb_pump_flowrate_b_{self.room.lower()}": self._update_pump_flowrate_b,
+            f"ogb_pump_flowrate_c_{self.room.lower()}": self._update_pump_flowrate_c,
+            f"ogb_pump_flowrate_w_{self.room.lower()}": self._update_pump_flowrate_w,
+            f"ogb_pump_flowrate_ph_down_{self.room.lower()}": self._update_pump_flowrate_ph_down,
+            f"ogb_pump_flowrate_ph_up_{self.room.lower()}": self._update_pump_flowrate_ph_up,
+            f"ogb_pump_flowrate_x_{self.room.lower()}": self._update_pump_flowrate_x,
+            f"ogb_pump_flowrate_y_{self.room.lower()}": self._update_pump_flowrate_y,
+            # Nutrient Concentrations
+            f"ogb_nutrient_concentration_a_{self.room.lower()}": self._update_nutrient_concentration_a,
+            f"ogb_nutrient_concentration_b_{self.room.lower()}": self._update_nutrient_concentration_b,
+            f"ogb_nutrient_concentration_c_{self.room.lower()}": self._update_nutrient_concentration_c,
+            f"ogb_nutrient_concentration_ph_down_{self.room.lower()}": self._update_nutrient_concentration_ph_down,
+            f"ogb_nutrient_concentration_x_{self.room.lower()}": self._update_nutrient_concentration_x,
+            f"ogb_nutrient_concentration_y_{self.room.lower()}": self._update_nutrient_concentration_y,
             # Medium
             f"ogb_mediumtype_{self.room.lower()}": self._update_medium_type,
             f"ogb_multi_mediumctrl_{self.room.lower()}": self._update_multi_medium_control,
@@ -1224,9 +1241,204 @@ class OGBConfigurationManager:
         pass
 
     async def _update_grow_area(self, data):
-        """Update grow area."""
-        # Implementation would go here
-        pass
+        """Update grow area in m²."""
+        new_value = self._coerce_float(data.newState[0], context="grow_area_m2")
+        if new_value is None:
+            _LOGGER.info(f"{self.room}: Skipping invalid grow area state")
+            return
+
+        current_value = self.data_store.get("growAreaM2")
+
+        if current_value != new_value:
+            self.data_store.set("growAreaM2", new_value)
+            _LOGGER.info(f"{self.room}: Grow area updated to {new_value} m²")
+
+    async def _update_reservoir_volume(self, data):
+        """Update reservoir volume in liters."""
+        new_value = self._coerce_float(data.newState[0], context="reservoir_volume_l")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid reservoir volume state (must be > 0)")
+            return
+
+        current_value = self.data_store.getDeep("Hydro.ReservoirVolume")
+
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.ReservoirVolume", new_value)
+            _LOGGER.info(f"{self.room}: Reservoir volume updated to {new_value} L")
+
+    async def _update_pump_flowrate_a(self, data):
+        """Update pump A flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_a")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump A flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_A")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_A", new_value)
+            _LOGGER.info(f"{self.room}: Pump A flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_b(self, data):
+        """Update pump B flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_b")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump B flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_B")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_B", new_value)
+            _LOGGER.info(f"{self.room}: Pump B flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_c(self, data):
+        """Update pump C flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_c")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump C flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_C")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_C", new_value)
+            _LOGGER.info(f"{self.room}: Pump C flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_w(self, data):
+        """Update pump W flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_w")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump W flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_W")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_W", new_value)
+            _LOGGER.info(f"{self.room}: Pump W flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_ph_down(self, data):
+        """Update pump PH-Down flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_ph_down")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump PH-Down flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Down")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_PH_Down", new_value)
+            _LOGGER.info(f"{self.room}: Pump PH-Down flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_ph_up(self, data):
+        """Update pump PH+ flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_ph_up")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump PH+ flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Up")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_PH_Up", new_value)
+            _LOGGER.info(f"{self.room}: Pump PH+ flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_x(self, data):
+        """Update pump X flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_x")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump X flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_X")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_X", new_value)
+            _LOGGER.info(f"{self.room}: Pump X flow rate updated to {new_value} ml/min")
+
+    async def _update_pump_flowrate_y(self, data):
+        """Update pump Y flow rate (ml/min)"""
+        new_value = self._coerce_float(data.newState[0], context="pump_flowrate_y")
+        if new_value is None or new_value <= 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid pump Y flow rate")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_Y")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Pump_FlowRate_Y", new_value)
+            _LOGGER.info(f"{self.room}: Pump Y flow rate updated to {new_value} ml/min")
+
+    async def _update_nutrient_concentration_a(self, data):
+        """Update nutrient A concentration (ml/L)"""
+        new_value = self._coerce_float(data.newState[0], context="nutrient_concentration_a")
+        if new_value is None or new_value < 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid nutrient A concentration")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Nutrient_Concentration_A")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Nutrient_Concentration_A", new_value)
+            await self.event_manager.emit("FeedModeValueChange", {"type": "concentration_a", "value": new_value})
+            _LOGGER.info(f"{self.room}: Nutrient A concentration updated to {new_value} ml/L")
+
+    async def _update_nutrient_concentration_b(self, data):
+        """Update nutrient B concentration (ml/L)"""
+        new_value = self._coerce_float(data.newState[0], context="nutrient_concentration_b")
+        if new_value is None or new_value < 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid nutrient B concentration")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Nutrient_Concentration_B")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Nutrient_Concentration_B", new_value)
+            await self.event_manager.emit("FeedModeValueChange", {"type": "concentration_b", "value": new_value})
+            _LOGGER.info(f"{self.room}: Nutrient B concentration updated to {new_value} ml/L")
+
+    async def _update_nutrient_concentration_c(self, data):
+        """Update nutrient C concentration (ml/L)"""
+        new_value = self._coerce_float(data.newState[0], context="nutrient_concentration_c")
+        if new_value is None or new_value < 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid nutrient C concentration")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Nutrient_Concentration_C")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Nutrient_Concentration_C", new_value)
+            await self.event_manager.emit("FeedModeValueChange", {"type": "concentration_c", "value": new_value})
+            _LOGGER.info(f"{self.room}: Nutrient C concentration updated to {new_value} ml/L")
+
+    async def _update_nutrient_concentration_ph_down(self, data):
+        """Update PH- concentration (ml/L)"""
+        new_value = self._coerce_float(data.newState[0], context="nutrient_concentration_ph_down")
+        if new_value is None or new_value < 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid PH- concentration")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Nutrient_Concentration_PH_Down")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Nutrient_Concentration_PH_Down", new_value)
+            await self.event_manager.emit("FeedModeValueChange", {"type": "concentration_ph_down", "value": new_value})
+            _LOGGER.info(f"{self.room}: PH- concentration updated to {new_value} ml/L")
+
+    async def _update_nutrient_concentration_x(self, data):
+        """Update nutrient X concentration (ml/L)"""
+        new_value = self._coerce_float(data.newState[0], context="nutrient_concentration_x")
+        if new_value is None or new_value < 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid nutrient X concentration")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Nutrient_Concentration_X")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Nutrient_Concentration_X", new_value)
+            await self.event_manager.emit("FeedModeValueChange", {"type": "concentration_x", "value": new_value})
+            _LOGGER.info(f"{self.room}: Nutrient X concentration updated to {new_value} ml/L")
+
+    async def _update_nutrient_concentration_y(self, data):
+        """Update nutrient Y concentration (ml/L)"""
+        new_value = self._coerce_float(data.newState[0], context="nutrient_concentration_y")
+        if new_value is None or new_value < 0:
+            _LOGGER.info(f"{self.room}: Skipping invalid nutrient Y concentration")
+            return
+        
+        current_value = self.data_store.getDeep("Hydro.Nutrient_Concentration_Y")
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.Nutrient_Concentration_Y", new_value)
+            await self.event_manager.emit("FeedModeValueChange", {"type": "concentration_y", "value": new_value})
+            _LOGGER.info(f"{self.room}: Nutrient Y concentration updated to {new_value} ml/L")
 
     async def _update_medium_type(self, data):
         """Update medium type - emits MediumChange event to create/update mediums.

@@ -134,7 +134,9 @@ CANNABIS_PROFILE = {
         "nutrients_ml_per_liter": {
             "A": 0.4,  # Nitrogen-rich vegetative
             "B": 0.3,  # Phosphorus/potassium bloom
-            "C": 0.2   # Micro nutrients
+            "C": 0.2,  # Micro nutrients
+            "X": 0.0,  # Optional additives (set > 0 to enable)
+            "Y": 0.0   # Optional additives (set > 0 to enable)
         }
     },
     "veg": {
@@ -143,7 +145,9 @@ CANNABIS_PROFILE = {
         "nutrients_ml_per_liter": {
             "A": 2.0,  # High nitrogen for growth
             "B": 1.0,  # Moderate P/K
-            "C": 0.8   # Micro nutrients
+            "C": 0.8,  # Micro nutrients
+            "X": 0.0,  # Optional additives (set > 0 to enable)
+            "Y": 0.0   # Optional additives (set > 0 to enable)
         }
     },
     "flower": {
@@ -152,11 +156,17 @@ CANNABIS_PROFILE = {
         "nutrients_ml_per_liter": {
             "A": 1.2,  # Reduced nitrogen
             "B": 3.0,  # High P/K for flowering
-            "C": 1.5   # Enhanced micros
+            "C": 1.5,  # Enhanced micros
+            "X": 0.5,  # Bloom booster example
+            "Y": 0.3   # Enzyme additive example
         }
     }
 }
 ```
+
+**X and Y Pump Examples**:
+- **X Pump**: Bloom boosters, flowering enhancers, PK boosters (e.g., 0.5-1.0 ml/L during flowering)
+- **Y Pump**: Enzymes, beneficial bacteria, root stimulants (e.g., 0.2-0.5 ml/L throughout growth)
 
 #### Tomato Nutrient Profile
 ```python
@@ -453,10 +463,18 @@ class PumpCalibration:
 - `switch.feedpump_b` - Nutrient B (Flower)
 - `switch.feedpump_c` - Nutrient C (Micro)
 - `switch.feedpump_w` - Water
-- `switch.feedpump_x` - Custom X
-- `switch.feedpump_y` - Custom Y
+- `switch.feedpump_x` - Custom X (additives, boosters, enzymes)
+- `switch.feedpump_y` - Custom Y (additives, boosters, enzymes)
 - `switch.feedpump_pp` - pH Down (pH-)
 - `switch.feedpump_pm` - pH Up (pH+)
+
+**X and Y Pump Integration**:
+- **Automatic Inclusion**: X and Y pumps are automatically included in the dosing sequence when their concentration is set > 0
+- **Concentration-Based Dosing**: Like main nutrients (A, B, C), X and Y pumps use concentration-based dosing (ml/L)
+- **Dosing Order**: A → B → C → X → Y (if enabled, with 90-second intervals between each)
+- **Auto-Calibration**: X and Y pumps are automatically calibrated when they are dosed
+- **Use Cases**: Additional additives, bloom boosters, enzymes, supplements, or custom nutrient blends
+- **Configuration**: Set `OGB_Nutrient_Concentration_X` or `OGB_Nutrient_Concentration_Y` to > 0 to enable
 
 #### Automatic Calibration Management
 ```python
@@ -660,6 +678,23 @@ hydroponic_config = {
             "ml_per_second": 0.8,
             "calibration_factor": 0.95
         },
+        "nutrient_c": {
+            "entity_id": "switch.pump_nutrient_c",
+            "ml_per_second": 0.7,
+            "calibration_factor": 1.0
+        },
+        "nutrient_x": {
+            "entity_id": "switch.pump_nutrient_x",
+            "ml_per_second": 0.6,
+            "calibration_factor": 1.1,
+            "concentration_ml_per_l": 0.5  # Bloom booster
+        },
+        "nutrient_y": {
+            "entity_id": "switch.pump_nutrient_y",
+            "ml_per_second": 0.6,
+            "calibration_factor": 1.05,
+            "concentration_ml_per_l": 0.3  # Enzyme additive
+        },
         "ph_down": {
             "entity_id": "switch.pump_ph_down",
             "ml_per_second": 0.5,
@@ -721,13 +756,18 @@ async def calibrate_pump(self, pump_id: str):
 - Dosing time is calculated as: `time_seconds = desired_volume_ml / flow_rate_ml_per_s`
 - A higher calibration_factor means a faster pump (shorter dosing time)
 - All 8 pump types (A, B, C, W, X, Y, pH-, pH+) are calibrated independently
+- **X and Y pumps** are automatically included in dosing when their concentration > 0
+- **Concentration-based dosing**: `ml_dose = tank_volume_L × concentration_ml_per_L`
+- **Dosing sequence**: A → B → C → X → Y (90-second intervals between each)
 
 ---
 
 ## New Proportional Features Summary
 
 ### ✅ Implemented Features
+- **Concentration-Based Dosing**: Precise dosing based on nutrient concentration (ml/L) and tank volume
 - **Proportional Dosing**: Dose amounts scale with deviation severity
+- **X and Y Pump Support**: Custom pumps automatically included when concentration > 0
 - **Dead Zone Logic**: Prevents unnecessary micro-adjustments (< 8% EC, < 0.2 pH)
 - **Conservative Dosing**: 60-minute minimum intervals, maximum 6 doses/day
 - **Advanced Calibration**: Auto-recalibration with accuracy scoring for all 8 pump types
@@ -750,9 +790,12 @@ async def calibrate_pump(self, pump_id: str):
 - **Dead Zones**: 8% EC tolerance, 0.2 pH tolerance
 - **Pump Calibration**: 8 pump types (A, B, C, W, X, Y, pH-, pH+), 30-day validity, 80% accuracy threshold
 - **Calibration Factor**: Flow rate in ml/s (default: 0.5 ml/s), used for time calculation
+- **Concentration-Based Dosing**: Automatic scaling based on tank volume (ml = volume_L × concentration_ml_per_L)
+- **X and Y Pumps**: Automatically included when concentration > 0, dosed in sequence A → B → C → X → Y
+- **Inter-Nutrient Delay**: 90 seconds between each nutrient to prevent mixing issues
 
 ---
 
-**Last Updated**: March 5, 2026
-**Version**: 3.1 (Conservative Nutrient Management)
+**Last Updated**: April 7, 2026
+**Version**: 3.2 (Concentration-Based Dosing with X/Y Pump Support)
 **Status**: Production Ready with Conservative Settings

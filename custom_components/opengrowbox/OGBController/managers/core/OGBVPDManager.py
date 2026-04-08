@@ -40,6 +40,14 @@ class OGBVPDManager:
         self._weather_last_fetch = None
         self._weather_cache = None
         self._weather_min_interval = 600  # 10 minutes in seconds
+        
+        # 429 Rate limiting backoff
+        self._weather_429_backoff_until = 0
+        self._weather_429_backoff_seconds = 60  # Start with 60s backoff
+        
+        # 502 retry tracking
+        self._weather_502_retry_count = 0
+        self._weather_max_502_retries = 3
 
         # Register event handlers
         self.event_manager.on("VPDCreation", self.handle_new_vpd)
@@ -306,30 +314,34 @@ class OGBVPDManager:
         return vpdPub
 
     async def get_weather_data(self):
-        """Fetch weather data from Open-Meteo API with rate limiting (10 min cache)."""
+        """Fetch weather data from Open-Meteo API with rate limiting and retry logic."""
         import time
         
         now = time.time()
+        
+        # Check if we're in 429 backoff period
+        if now < self._weather_429_backoff_until:
+            wait_time = int(self._weather_429_backoff_until - now)
+            _LOGGER.warning(f"🌤️ {self.room} In 429 backoff period, skipping weather fetch (wait {wait_time}s)")
+            if self._weather_cache:
+                await self.event_manager.emit("OutsiteData", self._weather_cache, haEvent=True)
+            return
         
         # Check if we can use cached data (within cooldown period)
         if self._weather_last_fetch and self._weather_cache:
             elapsed = now - self._weather_last_fetch
             if elapsed < self._weather_min_interval:
                 _LOGGER.debug(f"🌤️ {self.room} Using cached weather data (age: {int(elapsed)}s)")
-                await self.event_manager.emit(
-                    "OutsiteData",
-                    self._weather_cache,
-                    haEvent=True,
-                )
+                await self.event_manager.emit("OutsiteData", self._weather_cache, haEvent=True)
                 return
         
         # Check if we need to fetch (allow one fetch even without cache)
         can_fetch = True
         if self._weather_last_fetch and not self._weather_cache:
             elapsed = now - self._weather_last_fetch
-            if elapsed < 60:  # Minimum 60 seconds between failed attempts
+            if elapsed < 120:  # Increased to 120 seconds between failed attempts
                 can_fetch = False
-                _LOGGER.warning(f"🌤️ {self.room} Skipping weather fetch - too soon after failed attempt")
+                _LOGGER.warning(f"🌤️ {self.room} Skipping weather fetch - too soon after failed attempt (wait {int(120 - elapsed)}s)")
         
         if not can_fetch:
             return
@@ -357,22 +369,62 @@ class OGBVPDManager:
                         # Cache the successful result
                         self._weather_cache = weather_data
                         self._weather_last_fetch = now
+                        # Reset backoff on success
+                        self._weather_429_backoff_seconds = 60
+                        self._weather_429_backoff_until = 0
+                        self._weather_502_retry_count = 0
 
-                        _LOGGER.debug(
-                            f"🌤️ {self.room} Open-Meteo: {temperature}°C, {humidity}% (cached)"
+                        _LOGGER.debug(f"🌤️ {self.room} Open-Meteo: {temperature}°C, {humidity}% (cached)")
+                        await self.event_manager.emit("OutsiteData", weather_data, haEvent=True)
+                    
+                    elif response.status == 429:
+                        # Rate limited - implement exponential backoff
+                        self._weather_last_fetch = now
+                        self._weather_429_backoff_until = now + self._weather_429_backoff_seconds
+                        _LOGGER.error(
+                            f"🌤️ {self.room} Open-Meteo Rate Limited (429). "
+                            f"Backing off for {self._weather_429_backoff_seconds}s"
                         )
-                        await self.event_manager.emit(
-                            "OutsiteData",
-                            weather_data,
-                            haEvent=True,
-                        )
+                        # Double the backoff time for next attempt (max 480s = 8 min)
+                        self._weather_429_backoff_seconds = min(self._weather_429_backoff_seconds * 2, 480)
+                        # Use cached data if available
+                        if self._weather_cache:
+                            await self.event_manager.emit("OutsiteData", self._weather_cache, haEvent=True)
+                    
+                    elif response.status == 502:
+                        # Server error - retry with exponential backoff
+                        self._weather_last_fetch = now
+                        self._weather_502_retry_count += 1
+                        
+                        if self._weather_502_retry_count <= self._weather_max_502_retries:
+                            wait_time = 2 ** self._weather_502_retry_count  # 2s, 4s, 8s
+                            _LOGGER.warning(
+                                f"🌤️ {self.room} Open-Meteo Server Error (502). "
+                                f"Retry {self._weather_502_retry_count}/{self._weather_max_502_retries} in {wait_time}s"
+                            )
+                            await asyncio.sleep(wait_time)
+                            # Retry recursively (will increment retry count)
+                            await self.get_weather_data()
+                        else:
+                            _LOGGER.error(
+                                f"🌤️ {self.room} Open-Meteo Server Error (502). "
+                                f"Max retries ({self._weather_max_502_retries}) exceeded"
+                            )
+                            self._weather_502_retry_count = 0
+                            # Use cached data if available
+                            if self._weather_cache:
+                                await self.event_manager.emit("OutsiteData", self._weather_cache, haEvent=True)
+                    
                     else:
-                        _LOGGER.error(f"Open-Meteo API Error: {response.status}")
+                        _LOGGER.error(f"🌤️ {self.room} Open-Meteo API Error: {response.status}")
+                        self._weather_last_fetch = now
 
         except asyncio.TimeoutError:
-            _LOGGER.error("Timeout Open-Meteo")
+            _LOGGER.error(f"🌤️ {self.room} Timeout fetching Open-Meteo data")
+            self._weather_last_fetch = now
         except Exception as e:
-            _LOGGER.error(f"Fetch Error Open-Meteo: {e}")
+            _LOGGER.error(f"🌤️ {self.room} Fetch Error Open-Meteo: {e}")
+            self._weather_last_fetch = now
 
     def update_vpd_determination(self, value):
         """Update VPD determination mode."""

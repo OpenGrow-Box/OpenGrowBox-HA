@@ -52,9 +52,11 @@ class Device:
         # Smart Deadband Events (Climate-Geräte)
         self.eventManager.on("SmartDeadbandEntered", self.on_smart_deadband_entered)
         self.eventManager.on("SmartDeadbandExited", self.on_smart_deadband_exited)
-        
+
         # Smart Deadband State
         self._in_smart_deadband = False
+        self._pre_deadband_duty_cycle = None  # Save state before entering deadband
+        self._pre_deadband_is_running = None  # Save running state for non-dimmable devices
 
         self.deviceInit(deviceData)
 
@@ -2564,6 +2566,52 @@ class Device:
                     f"{self.deviceName}: Already off (non-dimmable device in deadband)"
                 )
 
+    async def restoreFromMinimum(self):
+        """
+        Stellt das Gerät auf den vorherigen Zustand vor dem Eintritt in den Smart Deadband zurück.
+
+        Dimmbare Geräte: Wiederherstellen auf vorherigen duty cycle
+        Nicht-dimmbare Geräte: Wiederherstellen auf vorherigen running state
+        """
+        if self.isDimmable:
+            # Dimmbares Gerät: Wiederherstellen auf vorherigen duty cycle
+            if self._pre_deadband_duty_cycle is not None:
+                clamped = self.clamp_duty_cycle(self._pre_deadband_duty_cycle)
+                self.dutyCycle = clamped
+
+                if self.isSpecialDevice:
+                    await self.turn_on(brightness_pct=clamped)
+                else:
+                    await self.turn_on(percentage=clamped)
+
+                _LOGGER.info(
+                    f"{self.deviceName}: Restored from deadband: {clamped}% "
+                    f"(previous duty cycle)"
+                )
+            else:
+                _LOGGER.warning(
+                    f"{self.deviceName}: No previous duty cycle saved, cannot restore from deadband"
+                )
+        else:
+            # Nicht-dimmbares Gerät: Wiederherstellen auf vorherigen running state
+            if self._pre_deadband_is_running is not None:
+                if self._pre_deadband_is_running:
+                    if not self.isRunning:
+                        _LOGGER.info(
+                            f"{self.deviceName}: Restored from deadband: turning on (was running before)"
+                        )
+                        await self.turn_on()
+                else:
+                    if self.isRunning:
+                        _LOGGER.info(
+                            f"{self.deviceName}: Restored from deadband: turning off (was off before)"
+                        )
+                        await self.turn_off()
+            else:
+                _LOGGER.warning(
+                    f"{self.deviceName}: No previous running state saved, cannot restore from deadband"
+                )
+
     async def on_smart_deadband_entered(self, data) -> None:
         """Wird aufgerufen wenn VPD in Smart Deadband eintritt."""
         if not self.isInitialized:
@@ -2581,12 +2629,19 @@ class Device:
                 return
 
         if not self._in_smart_deadband:
-            # WICHTIG: Zuerst auf Minimum reduzieren, dann Flag setzen!
+            # WICHTIG: Zuerst aktuellen Status speichern, dann auf Minimum reduzieren!
+            # Save current state before entering deadband
+            if self.isDimmable:
+                self._pre_deadband_duty_cycle = self.dutyCycle
+            else:
+                self._pre_deadband_is_running = self.isRunning
+
             await self.setToMinimum()
 
             self._in_smart_deadband = True
             _LOGGER.info(
-                f"{self.deviceName}: Smart Deadband ENTERED - device reduced to minimum (dimmable: 10%, non-dimmable: off)"
+                f"{self.deviceName}: Smart Deadband ENTERED - device reduced to minimum (dimmable: 10%, non-dimmable: off), "
+                f"saved previous state (duty: {self._pre_deadband_duty_cycle}, running: {self._pre_deadband_is_running})"
             )
 
     async def on_smart_deadband_exited(self, data) -> None:
@@ -2594,19 +2649,23 @@ class Device:
         if not self.isInitialized:
             _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandExited – not yet initialized")
             return
-        
+
         deadband_device_types = {"Heater", "Cooler", "Humidifier", "Dehumidifier", "Climate", "Exhaust", "Intake", "Window"}
         if self.deviceType not in deadband_device_types:
             return
-        
+
         # Device-Filter wie bei MinMax
         if isinstance(data, dict):
             event_device_type = data.get("deviceType", "")
             if event_device_type and event_device_type.lower() != self.deviceType.lower():
                 return
-        
+
         if self._in_smart_deadband:
             self._in_smart_deadband = False
+
+            # Restore previous state
+            await self.restoreFromMinimum()
+
             _LOGGER.info(
-                f"{self.deviceName}: Smart Deadband EXITED - device will resume normal operation"
+                f"{self.deviceName}: Smart Deadband EXITED - device restored to previous state"
             )

@@ -27,13 +27,16 @@ RELEVANT_KEYWORDS = (
     "_illuminance",
     "_intensity",
     "_moisture",
+    "_reservoir",
+    "_ultrasonic",
     "_ec",
     "_ph",
     "_conductivity",
     "_camera",
     "soil",
     "water",
-    "medium,",
+    "wasser",
+    "medium",
 )
 RELEVANT_TYPES = {
     "temperature": "Temperature entity found",
@@ -62,6 +65,9 @@ DEVICE_TYPE_MAPPING = {
         "govee",
         "ens160",
         "tasmota",
+        "watertester",
+        "wasstertester",
+        "reservoir",
     ],
     "Exhaust": ["exhaust", "abluft"],
     "Intake": ["intake", "zuluft"],
@@ -129,7 +135,7 @@ SENSOR_CONTEXTS = {
         "name": "Water/Hydro",
         "description": "Wasserbasierte Sensoren (Hydroponik, Reservoir)",
         "icon": "mdi:water",
-        "suffixes": ["water", "hydro", "reservoir", "wasser", "tank"],
+        "suffixes": ["water", "hydro", "reservoir", "wasser", "tank", 'ph', 'ultrasonic', 'watertester', 'wasstertester'],
     },
     "soil": {
         "name": "Soil/Substrate",
@@ -380,6 +386,13 @@ def extract_context_from_entity(entity_id, sensor_type=None):
         sensor.growbox_soil_ec -> soil
         sensor.growbox_temperature -> air (default)
     """
+    entity_lower = entity_id.lower()
+    
+    # WICHTIG: Prüfe zuerst auf Device-Namen (watertester, wasstertester)
+    # Diese haben Vorrang vor Sensor-Typ-spezifischen Kontexten
+    if "watertester" in entity_lower or "wasstertester" in entity_lower:
+        return "water"
+    
     # Priorisierung: Manche Sensor-Typen haben IMMER einen festen Kontext
     FIXED_CONTEXT_SENSORS = {
         "light": "air",
@@ -404,8 +417,6 @@ def extract_context_from_entity(entity_id, sensor_type=None):
     # Falls Sensor-Typ bekannt und in Fixed-Liste: verwende den
     if sensor_type and sensor_type in FIXED_CONTEXT_SENSORS:
         return FIXED_CONTEXT_SENSORS[sensor_type]
-
-    entity_lower = entity_id.lower()
 
     # Prüfe alle Kontext-Suffixe
     for context, config in SENSOR_CONTEXTS.items():

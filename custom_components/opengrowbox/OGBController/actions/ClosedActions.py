@@ -572,10 +572,22 @@ class ClosedActions:
             f"{self.ogb.room}: ClosedActions cycle start - using VPD-style control"
         )
 
-        # 1. Check Smart Deadband (VPD-based - primary trigger)
-        smart_deadband_active = self.ogb.dataStore.getDeep("controlOptionData.deadband.active") or False
-        
-        # 2. Check Closed Environment specific deadbands (Temp and Humidity)
+        # 0. NIGHT MODE CHECK - IMPORTANT: Handle night mode before any other logic
+        is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON", True)
+        night_vpd_hold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold", True)
+
+        if not is_light_on and not night_vpd_hold:
+            # Night mode without VPD hold - use power-saving mode
+            _LOGGER.info(
+                f"{self.ogb.room}: Night mode without VPD hold - using power-saving mode"
+            )
+            await self._handle_night_mode_power_saving(capabilities)
+            return
+
+        # NOTE: Smart Deadband (VPD-based) ist DEAKTIVIERT für Closed Environment
+        # Closed Environment nutzt NUR die Closed-spezifischen Deadbands für Temp und Humidity
+
+        # Check Closed Environment specific deadbands (Temp and Humidity only)
         closed_db_status = await self._check_closed_deadbands()
         temp_in_db = closed_db_status["temp_in_deadband"]
         hum_in_db = closed_db_status["hum_in_deadband"]
@@ -595,36 +607,30 @@ class ClosedActions:
         co2_actions = await self.maintain_co2(capabilities)
         all_actions.extend(co2_actions)
         
-        # Temperature Control (only if NOT in temp deadband AND smart deadband not active)
+        # Temperature Control (only if NOT in temp deadband)
         temp_status = "stabil"
-        if not temp_in_db and not smart_deadband_active:
+        if not temp_in_db:
             temp_actions, temp_status = await self.control_temperature_closed(capabilities)
             all_actions.extend(temp_actions)
-        elif temp_in_db:
+        else:
             temp_status = f"stabil (deadband ±{temp_dev:.1f}°C)"
             _LOGGER.debug(f"{self.ogb.room}: Temperature in deadband ({temp_dev:.1f}°C deviation) - skipping temp actions")
-        elif smart_deadband_active:
-            temp_status = "paused (VPD deadband)"
-            _LOGGER.debug(f"{self.ogb.room}: Smart Deadband active - skipping temp actions")
         
-        # Humidity Control (only if NOT in humidity deadband AND smart deadband not active)
+        # Humidity Control (only if NOT in humidity deadband)
         hum_status = "stabil"
-        if not hum_in_db and not smart_deadband_active:
+        if not hum_in_db:
             hum_actions, hum_status = await self.control_humidity_closed(capabilities)
             all_actions.extend(hum_actions)
-        elif hum_in_db:
+        else:
             hum_status = f"stabil (deadband ±{hum_dev:.1f}%)"
             _LOGGER.debug(f"{self.ogb.room}: Humidity in deadband ({hum_dev:.1f}% deviation) - skipping humidity actions")
-        elif smart_deadband_active:
-            hum_status = "paused (VPD deadband)"
-            _LOGGER.debug(f"{self.ogb.room}: Smart Deadband active - skipping humidity actions")
         
-        # Air Recirculation (only if neither temp nor humidity in deadband AND smart deadband not active)
-        if not temp_in_db and not hum_in_db and not smart_deadband_active:
+        # Air Recirculation (only if neither temp nor humidity in deadband)
+        if not temp_in_db and not hum_in_db:
             air_actions = await self.optimize_air_recirculation(capabilities)
             all_actions.extend(air_actions)
         else:
-            _LOGGER.debug(f"{self.ogb.room}: Skipping air recirculation (deadband active or smart deadband)")
+            _LOGGER.debug(f"{self.ogb.room}: Skipping air recirculation (deadband active)")
 
         # Execute all collected actions at once
         if all_actions:
@@ -632,9 +638,10 @@ class ClosedActions:
             await self.action_manager.checkLimitsAndPublicateNoVPD(all_actions)
 
         # Emit consolidated log event (like VPD Perfection)
+        # smart_deadband_active always False for Closed Environment now
         await self._emit_closed_environment_log(
             capabilities, all_actions, temp_status, hum_status, 
-            temp_dev, hum_dev, temp_target, hum_target, smart_deadband_active
+            temp_dev, hum_dev, temp_target, hum_target, False
         )
 
     # =================================================================
@@ -743,17 +750,62 @@ class ClosedActions:
         return current_co2 < min_co2 or current_co2 > max_co2
 
     async def _get_reference_temperature_target(self) -> Optional[float]:
-        """Return the best available closed-mode temperature target."""
-        return await self.control_logic.calculate_optimal_temperature_target()
+        """
+        Get reference temperature target for Closed Environment.
+
+        Returns the midpoint of min/max limits (for display/logging only).
+        Control decisions use min/max limits directly, NOT this target.
+        """
+        limits = self.ogb.dataStore.getDeep("controlOptionData.temperature")
+        if limits is None:
+            # Try tentData as fallback
+            min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
+            max_temp = self.ogb.dataStore.getDeep("tentData.maxTemp")
+        else:
+            min_temp = limits.get("min")
+            max_temp = limits.get("max")
+
+        if min_temp is None or max_temp is None:
+            return None
+
+        try:
+            return (float(min_temp) + float(max_temp)) / 2
+        except (TypeError, ValueError):
+            return None
 
     async def _get_reference_humidity_target(self) -> Optional[float]:
-        """Return the best available closed-mode humidity target."""
-        return await self.control_logic.calculate_optimal_humidity_target()
+        """
+        Get reference humidity target for Closed Environment.
+
+        Returns the midpoint of min/max limits (for display/logging only).
+        Control decisions use min/max limits directly, NOT this target.
+        """
+        limits = self.ogb.dataStore.getDeep("controlOptionData.humidity")
+        if limits is None:
+            # Try tentData as fallback
+            min_hum = self.ogb.dataStore.getDeep("tentData.minHumidity")
+            max_hum = self.ogb.dataStore.getDeep("tentData.maxHumidity")
+        else:
+            min_hum = limits.get("min")
+            max_hum = limits.get("max")
+
+        if min_hum is None or max_hum is None:
+            return None
+
+        try:
+            return (float(min_hum) + float(max_hum)) / 2
+        except (TypeError, ValueError):
+            return None
 
     def _get_cached_reference_temperature_target(self) -> Optional[float]:
-        """Return best-effort temperature target from active room limits."""
+        """
+        Get reference temperature target from tentData (for display/logging only).
+
+        Returns the midpoint of min/max limits (NOT for control, only for display).
+        """
         min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
         max_temp = self.ogb.dataStore.getDeep("tentData.maxTemp")
+
         if min_temp is None or max_temp is None:
             return None
 
@@ -763,9 +815,14 @@ class ClosedActions:
             return None
 
     def _get_cached_reference_humidity_target(self) -> Optional[float]:
-        """Return best-effort humidity target from active room limits."""
+        """
+        Get reference humidity target from tentData (for display/logging only).
+
+        Returns the midpoint of min/max limits (NOT for control, only for display).
+        """
         min_humidity = self.ogb.dataStore.getDeep("tentData.minHumidity")
         max_humidity = self.ogb.dataStore.getDeep("tentData.maxHumidity")
+
         if min_humidity is None or max_humidity is None:
             return None
 
@@ -839,7 +896,11 @@ class ClosedActions:
         else:
             message = f"Closed Environment: {len(all_actions)} actions executed"
 
-        # Emit consolidated LogForClient event (like VPD Perfection)
+        # Get VPD data for informational purposes only (NOT for control!)
+        # Closed Environment uses its own temp/hum targets, VPD is only for Smart Deadband
+        current_vpd = self.ogb.dataStore.getDeep("vpd.current")
+
+        # Emit consolidated LogForClient event (consistent with VPD Perfection/Target format)
         await self.ogb.eventManager.emit(
             "LogForClient",
             {
@@ -847,20 +908,26 @@ class ClosedActions:
                 "message": message,
                 "actions": actions_str,
                 "actionCount": len(all_actions),
+                "blockedActions": 0,  # Closed Environment doesn't use dampening/cooldown blocking
+                "dampeningEnabled": False,  # Closed Environment doesn't use dampening
+                # Deviations (like VPD Perfection)
                 "tempDeviation": abs(temp_deviation),
                 "humDeviation": abs(hum_deviation),
-                "co2Status": co2_status,
-                "tempStatus": temp_status,
-                "humStatus": hum_status,
-                "smartDeadbandActive": smart_deadband_active,
-                # Additional context fields
+                # Temperature and Humidity (Closed Environment's own targets, not VPD-based!)
                 "tempCurrent": temp_now,
                 "tempTarget": temp_target,
                 "humCurrent": humidity_now,
                 "humTarget": hum_target,
+                # CO2 (important for Closed Environment)
+                "co2Status": co2_status,
                 "co2Current": co2_now,
                 "co2TargetMin": co2_min,
                 "co2TargetMax": co2_max,
+                # VPD for informational purposes only (NOT for control in Closed Environment)
+                "vpdCurrent": current_vpd,
+                # Smart Deadband status
+                "smartDeadbandActive": smart_deadband_active,
+                "deadbandActive": smart_deadband_active,  # For consistency with VPD modes
             },
             haEvent=True,
             debug_type="INFO",
@@ -978,6 +1045,112 @@ class ClosedActions:
         if current_value < self.o2_warning_low:
             return "O2: Warnung"
         return "O2: stabil"
+
+    async def _handle_night_mode_power_saving(self, capabilities: Dict[str, Any]):
+        """
+        Handle night mode power-saving for Closed Environment.
+
+        Logic:
+        - Climate devices (Heating, Cooling, Humidifier, Dehumidifier, Climate, CO2, Light)
+          are reduced to minimum to save power
+        - Ventilation devices (Exhaust, Ventilation, Intake, Window) are actively controlled
+          to prevent mold by ensuring air circulation
+
+        Args:
+            capabilities: Device capabilities and states
+        """
+        action_message = "Night Mode Power-Saving"
+
+        # Get current sensor data for logging
+        temp_now = self.ogb.dataStore.getDeep("tentData.temperature")
+        humidity_now = self.ogb.dataStore.getDeep("tentData.humidity")
+        co2_now = self.ogb.dataStore.getDeep("tentData.co2Level")
+
+        # Get temperature and humidity targets for logging
+        temp_target = await self._get_reference_temperature_target()
+        hum_target = await self._get_reference_humidity_target()
+
+        # Get VPD for informational purposes only (NOT for control!)
+        current_vpd = self.ogb.dataStore.getDeep("vpd.current")
+
+        # Collect actions
+        all_actions = []
+
+        # Climate devices that should be minimized at night to save power
+        climate_caps = ["canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2", "canLight"]
+
+        for cap in climate_caps:
+            if capabilities.get(cap, {}).get("state", False):
+                all_actions.append(self._create_action(cap, "Reduce", action_message))
+
+        # Ventilation devices that should be actively controlled
+        ventilation_caps = ["canExhaust", "canVentilate", "Intake"]
+
+        # Always increase Exhaust and Ventilation for air exchange (prevent mold)
+        if capabilities.get("canExhaust", {}).get("state", False):
+            all_actions.append(self._create_action("canExhaust", "Increase", action_message))
+
+        if capabilities.get("canVentilate", {}).get("state", False):
+            all_actions.append(self._create_action("canVentilate", "Increase", action_message))
+
+        if capabilities.get("canWindow", {}).get("state", False):
+            all_actions.append(self._create_action("canWindow", "Increase", action_message))
+
+        # Intake: Adjust based on outside conditions
+        if capabilities.get("canIntake", {}).get("state", False):
+            # Get outside/ambient temperature if available
+            outside_temp = self.control_logic.get_ambient_temperature()
+            min_temp_target = self.ogb.dataStore.getDeep("controlOptionData.temperature.min")
+
+            if outside_temp is not None and min_temp_target is not None:
+                if float(outside_temp) >= float(min_temp_target) - 3.0:
+                    # Outside air is warm enough - use it
+                    all_actions.append(self._create_action("canIntake", "Increase", action_message))
+                else:
+                    # Too cold outside - minimize intake to save heating
+                    all_actions.append(self._create_action("canIntake", "Reduce", action_message))
+            else:
+                # No outside temp data - default to moderate intake
+                all_actions.append(self._create_action("canIntake", "Increase", action_message))
+
+        # Execute all actions
+        if all_actions:
+            _LOGGER.info(
+                f"{self.ogb.room}: Night Mode Power-Saving - {len(all_actions)} actions"
+            )
+            await self.action_manager.checkLimitsAndPublicateNoVPD(all_actions)
+
+        # Build actions string
+        actions_str = self._build_actions_string(all_actions)
+
+        # Emit log event (consistent with VPD Perfection/Target format)
+        await self.ogb.eventManager.emit(
+            "LogForClient",
+            {
+                "Name": self.ogb.room,
+                "message": f"Night Mode Power-Saving: Climate minimized, Ventilation active - {len(all_actions)} actions",
+                "actions": actions_str,
+                "actionCount": len(all_actions),
+                "blockedActions": 0,
+                "dampeningEnabled": False,
+                # Temperature and Humidity (Closed Environment's own targets)
+                "tempCurrent": temp_now,
+                "tempTarget": temp_target,
+                "humCurrent": humidity_now,
+                "humTarget": hum_target,
+                # CO2
+                "co2Current": co2_now,
+                "co2TargetMin": co2_min if 'co2_min' in locals() else None,
+                "co2TargetMax": co2_max if 'co2_max' in locals() else None,
+                # VPD for informational purposes only (NOT for control in Closed Environment)
+                "vpdCurrent": current_vpd,
+                # Night mode flags
+                "isNightMode": True,
+                "nightVPDHold": False,
+            },
+            haEvent=True,
+            debug_type="INFO",
+        )
 
     def _format_value(self, value, unit: str) -> str:
         """Format a value with unit for display."""

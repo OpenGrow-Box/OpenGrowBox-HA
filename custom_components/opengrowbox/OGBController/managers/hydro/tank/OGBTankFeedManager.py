@@ -9,6 +9,8 @@ import json
 _LOGGER = logging.getLogger(__name__)
 
 from ....data.OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPublication, OGBHydroAction
+from ....managers.OGBNotifyManager import OGBNotificator
+from custom_components.opengrowbox.OGBController.managers.hydro.tank.OGBReservoirManager import OGBReservoirManager
 
 class ECUnit(Enum):
     """Unterstützte EC-Einheiten"""
@@ -255,6 +257,13 @@ class OGBTankFeedManager:
         self.ec_before_dose: float = 0.0
         self.ec_after_dose: float = 0.0
         
+        # EC Tracking für Feed-Zyklen (nicht Kalibrierung)
+        self.feed_ec_before: float = 0.0
+        self.feed_ec_after: float = 0.0
+        self.feed_ec_added: float = 0.0
+        self.feed_ec_consumed: float = 0.0
+        self.feed_history: list = []  # Liste der letzten Feed-Zyklen
+        
         # Rate limiting and sensor settling
         self.last_action_time: Optional[datetime] = None
         self.sensor_settle_time: timedelta = timedelta(seconds=120)
@@ -265,6 +274,9 @@ class OGBTankFeedManager:
         # Calibration tracking
         self.calibration_mode: bool = False
         self.calibration_in_progress: str = ""  # Pump type being calibrated
+        
+        # Notification manager for critical alerts
+        self.notificator: Optional[OGBNotificator] = None
         
         # Register event handlers
         self.event_manager.on("LogValidation", self._handleLogForClient)
@@ -283,9 +295,13 @@ class OGBTankFeedManager:
         # Initialize specialized managers
         from .OGBFeedLogicManager import OGBFeedLogicManager
         from .OGBFeedParameterManager import OGBFeedParameterManager
+        from .OGBReservoirManager import OGBReservoirManager
 
         self.feed_logic_manager = OGBFeedLogicManager(self.room, self.data_store, self.event_manager)
         self.feed_parameter_manager = OGBFeedParameterManager(self.room, self.data_store, self.event_manager)
+        
+        # Reservoir manager for actual volume calculation
+        self.reservoir_manager: Optional[OGBReservoirManager] = None
 
         asyncio.create_task(self.init())
 
@@ -293,11 +309,28 @@ class OGBTankFeedManager:
         """Initialize the feed manager with validation"""
         self.is_initialized = True
         
+        # Initialize notification manager
+        self.notificator = OGBNotificator(self.hass, self.room)
+        
+        # Initialize reservoir manager
+        self.reservoir_manager = OGBReservoirManager(
+            self.hass,
+            self.data_store,
+            self.event_manager,
+            self.room,
+            self.notificator
+        )
+        await self.reservoir_manager.init()
+        
         # Load current plant stage
         self.current_plant_stage = self.data_store.get("plantStage")
         
-        # Load reservoir volume
-        self.reservoir_volume_liters = self.data_store.getDeep("Hydro.ReservoirVolume") or 100.0
+        # Load reservoir volume from dataStore (or use default 50L)
+        reservoir_volume = self.data_store.getDeep("Hydro.ReservoirVolume")
+        if reservoir_volume is None or reservoir_volume == 0:
+            self.reservoir_volume_liters = 50.0  # Default 50L if not configured
+        else:
+            self.reservoir_volume_liters = float(reservoir_volume)
         
         # Load EC Unit
         stored_unit = self.data_store.getDeep("Hydro.EC_Unit")
@@ -309,6 +342,15 @@ class OGBTankFeedManager:
         
         # Load calibration data
         await self._load_calibration_data()
+        
+        # Load feed history
+        await self._load_feed_history()
+        
+        # Load pump flow rates (ml/min)
+        self._load_pump_flow_rates()
+        
+        # Load nutrient concentrations (ml/L)
+        self._load_nutrient_concentrations()
         
         _LOGGER.info(f"[{self.room}] OGB Feed Manager initialized - Reservoir: {self.reservoir_volume_liters}L, EC Unit: {self.ec_unit.value}")
 
@@ -342,8 +384,67 @@ class OGBTankFeedManager:
         # ec_raw <= 100 → bereits normalisiert
         return ec_raw
 
+    async def _load_feed_history(self):
+        """Load feed history from dataStore"""
+        try:
+            history_json = self.data_store.getDeep("Hydro.FeedHistory")
+            if history_json:
+                self.feed_history = json.loads(history_json)
+                _LOGGER.info(f"[{self.room}] Loaded {len(self.feed_history)} feed history entries")
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error loading feed history: {e}")
+            self.feed_history = []
+
+    async def _send_notification(self, level: str, message: str, title: str = None):
+        """Send notification via notificator"""
+        if not self.notificator:
+            return
+        
+        if title is None:
+            title = f"OGB TankFeed - {self.room}"
+        
+        try:
+            if level == "critical":
+                await self.notificator.critical(message=message, title=title)
+            elif level == "warning":
+                await self.notificator.warning(message=message, title=title)
+            else:
+                await self.notificator.info(message=message, title=title)
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error sending notification: {e}")
+
+    def _log_to_client(self, message: str, log_type: str = "INFO", extra_data: dict = None):
+        """Send clean log message to client via LogForClient"""
+        try:
+            log_data = {
+                "Name": self.room,
+                "Type": "HYDROLOG",
+                "Message": message,
+            }
+            if extra_data:
+                log_data.update(extra_data)
+            
+            # Use asyncio.create_task to not block
+            asyncio.create_task(
+                self.event_manager.emit("LogForClient", log_data, haEvent=True, debug_type=log_type)
+            )
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error logging to client: {e}")
+
     async def _load_calibration_data(self):
         """Kalibrierungsdaten aus DataStore laden"""
+        try:
+            calib_json = self.data_store.getDeep("Hydro.PumpCalibrations")
+            if calib_json:
+                calib_data = json.loads(calib_json)
+                for pump_type, data in calib_data.items():
+                    if pump_type in self.pump_calibrations:
+                        cal = self.pump_calibrations[pump_type]
+                        cal.calibration_factor = data.get("calibration_factor", 1.0)
+                        cal.calibration_count = data.get("calibration_count", 0)
+                        _LOGGER.info(f"[{self.room}] Loaded calibration for {pump_type}: factor={cal.calibration_factor:.2f}")
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error loading calibration data: {e}")
         try:
             calib_json = self.data_store.getDeep("Hydro.PumpCalibrations")
             if calib_json:
@@ -420,9 +521,14 @@ class OGBTankFeedManager:
             if actual_ec_change > 0 and cal is not None:
                 # For calibration, we use a configurable concentration factor
                 # Default assumes 1ml of nutrient concentrate gives ~0.1 EC change in reservoir
+                
+                # Get actual water volume based on current reservoir level
+                reservoir_level_percent = self.data_store.getDeep("Hydro.ReservoirLevel", 100.0)
+                actual_water_volume = self.reservoir_volume_liters * (reservoir_level_percent / 100.0)
+                
                 concentration_factor = self.data_store.getDeep("Hydro.CalibrationConcentrationFactor", 10.0)
 
-                expected_ec_change = (target_dose_ml / self.reservoir_volume_liters) * concentration_factor
+                expected_ec_change = (target_dose_ml / actual_water_volume) * concentration_factor
 
                 cal.actual_ec_change = actual_ec_change
                 cal.expected_ec_change = expected_ec_change
@@ -472,8 +578,31 @@ class OGBTankFeedManager:
         return ml_amount / self.pump_config.ml_per_second
 
     def _calculate_nutrient_dose(self, nutrient_ml_per_liter: float) -> float:
-        """Calculate actual ml dose based on reservoir volume"""
-        return nutrient_ml_per_liter * self.reservoir_volume_liters
+        """Calculate actual ml dose based on current reservoir volume (from reservoir level)"""
+        try:
+            # Get current reservoir level percentage from dataStore
+            reservoir_level_percent = self.data_store.getDeep("Hydro.ReservoirLevel", 100.0)
+            
+            # Calculate actual water volume in reservoir
+            # If reservoir is 50% full, we have 50% of the max volume
+            actual_water_volume = self.reservoir_volume_liters * (reservoir_level_percent / 100.0)
+            
+            # Calculate dose based on actual volume
+            dose_ml = nutrient_ml_per_liter * actual_water_volume
+            
+            _LOGGER.debug(
+                f"[{self.room}] Nutrient dose calculation: "
+                f"reservoir={reservoir_level_percent:.1f}%, "
+                f"actual_volume={actual_water_volume:.1f}L, "
+                f"dose={dose_ml:.1f}ml (nutrient={nutrient_ml_per_liter}ml/L)"
+            )
+            
+            return dose_ml
+            
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error calculating nutrient dose: {e}")
+            # Fallback to max volume
+            return nutrient_ml_per_liter * self.reservoir_volume_liters
 
     async def _plant_stage_change(self, new_stage):
         """Handle plant stage changes.
@@ -622,12 +751,13 @@ class OGBTankFeedManager:
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down: {e}")
-            await self.event_manager.emit("LogForClient", {
-                "Name": self.room,
-                "Type": "HYDROLOG",
-                "Message": "Automatic pH down dosing failed",
-                "error": str(e)
-            }, haEvent=True, debug_type="ERROR")
+            # Send notification for critical pump error
+            await self._send_notification(
+                "critical",
+                f"pH down dosing failed: {str(e)}. Check pump and solution levels.",
+                f"OGB {self.room}: Pump Error"
+            )
+            self._log_to_client(f"pH down dosing failed: {str(e)}", "ERROR", {"pump": "ph_down"})
         return False
 
     async def _dose_ph_up(self) -> bool:
@@ -673,8 +803,8 @@ class OGBTankFeedManager:
                     
                     if run_time > 0:
                         if await self._activate_pump(pump_enum.value, run_time, total_ml):
-                            # Wait between nutrients
-                            await asyncio.sleep(30)
+                            # Wait between nutrients (90 seconds for sensor settling)
+                            await asyncio.sleep(90)
                             
             return True
                     
@@ -689,19 +819,76 @@ class OGBTankFeedManager:
         return False
 
     async def _dose_nutrients_proportional(self, data: Dict[str, Any]):
-        """Handle proportional nutrient dosing requests."""
+        """Handle proportional nutrient dosing requests with EC tracking using concentration-based dosing."""
         try:
-            dose_ml = data.get('dose_ml', 0.0)
-            if dose_ml <= 0:
+            # EC Tracking: Save EC before dosing
+            self.feed_ec_before = self.current_ec
+            _LOGGER.info(f"[{self.room}] Starting concentration-based nutrient dosing (EC before: {self.feed_ec_before:.2f})")
+
+            # Calculate doses based on concentration (ml/L) and current tank volume
+            nutrient_doses = {}
+            nutrients_to_dose = []
+            
+            # Calculate doses for all nutrients with concentration > 0
+            for nutrient_type in ["A", "B", "C", "X", "Y"]:
+                concentration = self.nutrient_concentrations.get(nutrient_type, 0.0)
+                if concentration > 0 and nutrient_type in self.nutrients and self.nutrients[nutrient_type] > 0:
+                    dose = self._calculate_dose_from_concentration(nutrient_type)
+                    if dose > 0:
+                        nutrient_doses[nutrient_type] = dose
+                        nutrients_to_dose.append(nutrient_type)
+            
+            if not nutrients_to_dose:
+                _LOGGER.warning(f"[{self.room}] No nutrients with concentration > 0 found to dose")
                 return
 
-            _LOGGER.info(f"[{self.room}] Starting proportional nutrient dosing: {dose_ml:.2f}ml per nutrient")
-
-            # Dose each nutrient proportionally
-            await self._dose_nutrients_with_amount(dose_ml)
+            # Dose each nutrient based on calculated concentration-based doses
+            success = await self._dose_nutrients_with_concentration(nutrient_doses)
+            
+            if success:
+                # Wait for sensors to settle (90 seconds after last nutrient)
+                await asyncio.sleep(90)
+                
+                # EC Tracking: Save EC after dosing
+                self.feed_ec_after = self.current_ec
+                self.feed_ec_added = self.feed_ec_after - self.feed_ec_before
+                
+                # Calculate total dose
+                total_dose = sum(nutrient_doses.values())
+                
+                # Store feed cycle data
+                feed_cycle = {
+                    'timestamp': datetime.now().isoformat(),
+                    'ec_before': self.feed_ec_before,
+                    'ec_after': self.feed_ec_after,
+                    'ec_added': self.feed_ec_added,
+                    'dose_ml': total_dose,
+                    'nutrients_dosed': nutrients_to_dose,
+                    'nutrient_doses': nutrient_doses,
+                }
+                self.feed_history.append(feed_cycle)
+                
+                # Keep only last 100 entries
+                if len(self.feed_history) > 100:
+                    self.feed_history = self.feed_history[-100:]
+                
+                # Save to dataStore
+                self.data_store.setDeep("Hydro.FeedHistory", json.dumps(self.feed_history))
+                
+                # Automatic calibration: Check if dosing was accurate
+                await self._auto_calibrate_pumps(total_dose, nutrients_to_dose)
+                
+                _LOGGER.info(f"[{self.room}] Concentration-based dosing completed - EC: {self.feed_ec_before:.2f} → {self.feed_ec_after:.2f} (added: {self.feed_ec_added:.2f}), Total dose: {total_dose:.1f}ml")
+                
+                # Log to client
+                self._log_to_client(
+                    f"Nutrients dosed - EC: {self.feed_ec_before:.2f}→{self.feed_ec_after:.2f} (+{self.feed_ec_added:.2f}), Total: {total_dose:.1f}ml",
+                    "INFO",
+                    {"ec_before": self.feed_ec_before, "ec_after": self.feed_ec_after, "total_dose_ml": total_dose, "nutrients_dosed": nutrients_to_dose}
+                )
 
         except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error in proportional nutrient dosing: {e}")
+            _LOGGER.error(f"[{self.room}] Error in concentration-based nutrient dosing: {e}")
 
     async def _dose_ph_down_proportional(self, data: Dict[str, Any]):
         """Handle proportional pH down dosing requests."""
@@ -751,8 +938,8 @@ class OGBTankFeedManager:
 
                     if run_time > 0:
                         if await self._activate_pump(pump_enum.value, run_time, dose_ml):
-                            # Wait between nutrients to prevent mixing issues
-                            await asyncio.sleep(30)
+                            # Wait between nutrients to prevent mixing issues (90 seconds for sensor settling)
+                            await asyncio.sleep(90)
                         else:
                             _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
 
@@ -760,6 +947,52 @@ class OGBTankFeedManager:
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing nutrients with amount: {e}")
+            return False
+
+    async def _dose_nutrients_with_concentration(self, nutrient_doses: Dict[str, float]) -> bool:
+        """Dose nutrients with concentration-based doses (ml per nutrient)."""
+        try:
+            # Dose in order: A, B, C, X, Y with delays between
+            # Only dose nutrients that have a dose > 0
+            nutrients_to_dose = sorted(nutrient_doses.keys(), key=lambda x: {"A": 0, "B": 1, "C": 2, "X": 3, "Y": 4}.get(x, 99))
+
+            for nutrient in nutrients_to_dose:
+                dose_ml = nutrient_doses[nutrient]
+                if dose_ml <= 0:
+                    continue
+                
+                if nutrient in self.nutrients and self.nutrients[nutrient] > 0:
+                    # Get pump enum for this nutrient
+                    nutrient_to_pump = {
+                        "A": PumpType.NUTRIENT_A,
+                        "B": PumpType.NUTRIENT_B,
+                        "C": PumpType.NUTRIENT_C,
+                        "X": PumpType.CUSTOM_X,
+                        "Y": PumpType.CUSTOM_Y,
+                    }
+                    pump_enum = nutrient_to_pump.get(nutrient)
+                    if not pump_enum:
+                        _LOGGER.warning(f"[{self.room}] No pump mapping for nutrient {nutrient}")
+                        continue
+                    
+                    cal = self.pump_calibrations.get(pump_enum.value)
+                    calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+                    
+                    # Calculate run time: ml / (ml/s) = seconds
+                    run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+
+                    if run_time > 0:
+                        _LOGGER.debug(f"[{self.room}] Dosing {nutrient}: {dose_ml:.1f}ml for {run_time:.1f}s")
+                        if await self._activate_pump(pump_enum.value, run_time, dose_ml):
+                            # Wait between nutrients to prevent mixing issues (90 seconds for sensor settling)
+                            await asyncio.sleep(90)
+                        else:
+                            _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
+
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error dosing nutrients with concentration: {e}")
             return False
 
     async def _dose_ph_down_with_amount(self, dose_ml: float) -> bool:
@@ -911,13 +1144,195 @@ class OGBTankFeedManager:
             self.nutrients = payload.get("nutrients", self.nutrients)
 
             _LOGGER.info(f"[{self.room}] New targets: pH={self.target_ph:.2f}, "
-                        f"EC={self.target_ec:.2f}")
-
+                         f"EC={self.target_ec:.2f}")
+ 
             if self.is_initialized:
                 await self._apply_feeding()
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error processing feed update: {e}")
+
+    def _load_pump_flow_rates(self):
+        """Load pump flow rates from DataStore (ml/min -> ml/s)"""
+        pump_flow_rates = {
+            "A": self.data_store.getDeep("Hydro.Pump_FlowRate_A", 50.0) / 60.0,
+            "B": self.data_store.getDeep("Hydro.Pump_FlowRate_B", 50.0) / 60.0,
+            "C": self.data_store.getDeep("Hydro.Pump_FlowRate_C", 50.0) / 60.0,
+            "W": self.data_store.getDeep("Hydro.Pump_FlowRate_W", 100.0) / 60.0,
+            "X": self.data_store.getDeep("Hydro.Pump_FlowRate_X", 50.0) / 60.0,
+            "Y": self.data_store.getDeep("Hydro.Pump_FlowRate_Y", 50.0) / 60.0,
+            "PH_DOWN": self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Down", 10.0) / 60.0,
+            "PH_UP": self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Up", 10.0) / 60.0,
+        }
+        
+        # Update pump_config with default flow rate (will be overridden per-pump)
+        for pump_type, ml_per_second in pump_flow_rates.items():
+            if ml_per_second > 0:
+                self.pump_config.ml_per_second = ml_per_second
+                _LOGGER.debug(f"[{self.room}] Loaded {pump_type} flow rate: {ml_per_second * 60:.1f} ml/min")
+    
+    def _load_nutrient_concentrations(self):
+        """Load nutrient concentrations from DataStore (ml/L)"""
+        self.nutrient_concentrations = {
+            "A": self.data_store.getDeep("Hydro.Nutrient_Concentration_A", 2.0),
+            "B": self.data_store.getDeep("Hydro.Nutrient_Concentration_B", 2.0),
+            "C": self.data_store.getDeep("Hydro.Nutrient_Concentration_C", 1.0),
+            "X": self.data_store.getDeep("Hydro.Nutrient_Concentration_X", 0.0),
+            "Y": self.data_store.getDeep("Hydro.Nutrient_Concentration_Y", 0.0),
+            "PH_DOWN": self.data_store.getDeep("Hydro.Nutrient_Concentration_PH_Down", 0.5),
+        }
+        
+        _LOGGER.debug(f"[{self.room}] Loaded nutrient concentrations: {self.nutrient_concentrations}")
+
+    def _calculate_dose_from_concentration(self, nutrient_type: str) -> float:
+        """Calculate ml dose based on nutrient concentration (ml/L) and current tank volume"""
+        try:
+            concentration_ml_per_l = self.nutrient_concentrations.get(nutrient_type, 0.0)
+            if concentration_ml_per_l <= 0:
+                return 0.0
+            
+            reservoir_level_percent = self.data_store.getDeep("Hydro.ReservoirLevel", 100.0)
+            actual_water_volume = self.reservoir_volume_liters * (reservoir_level_percent / 100.0)
+            dose_ml = concentration_ml_per_l * actual_water_volume
+            
+            _LOGGER.debug(
+                f"[{self.room}] Concentration dose calculation: "
+                f"nutrient={nutrient_type}, "
+                f"concentration={concentration_ml_per_l:.2f}ml/L, "
+                f"tank_volume={actual_water_volume:.1f}L, "
+                f"dose={dose_ml:.1f}ml"
+            )
+            
+            return dose_ml
+            
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error calculating concentration dose: {e}")
+            return 0.0
+
+    def _get_pump_flow_rate(self, pump_type: str) -> float:
+        """Get flow rate (ml/s) for specific pump type"""
+        pump_type_map = {
+            "A": self.data_store.getDeep("Hydro.Pump_FlowRate_A", 50.0) / 60.0,
+            "B": self.data_store.getDeep("Hydro.Pump_FlowRate_B", 50.0) / 60.0,
+            "C": self.data_store.getDeep("Hydro.Pump_FlowRate_C", 50.0) / 60.0,
+            "W": self.data_store.getDeep("Hydro.Pump_FlowRate_W", 100.0) / 60.0,
+            "X": self.data_store.getDeep("Hydro.Pump_FlowRate_X", 50.0) / 60.0,
+            "Y": self.data_store.getDeep("Hydro.Pump_FlowRate_Y", 50.0) / 60.0,
+            "PH_DOWN": self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Down", 10.0) / 60.0,
+            "PH_UP": self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Up", 10.0) / 60.0,
+        }
+        return pump_type_map.get(pump_type, self.pump_config.ml_per_second)
+
+    def _calculate_dose_time(self, ml_amount: float, pump_type: str = "A") -> float:
+        """Calculate pump run time in seconds for desired ml amount using specific pump flow rate"""
+        if ml_amount < self.pump_config.min_dose_ml:
+            return 0.0
+        
+        ml_amount = min(ml_amount, self.pump_config.max_dose_ml)
+        flow_rate_ml_per_sec = self._get_pump_flow_rate(pump_type)
+        
+        if flow_rate_ml_per_sec <= 0:
+            _LOGGER.error(f"[{self.room}] Invalid flow rate for pump {pump_type}: {flow_rate_ml_per_sec}")
+            return 0.0
+        
+        return ml_amount / flow_rate_ml_per_sec
+
+    async def _auto_calibrate_pumps(self, target_dose_ml: float, nutrients_dosed: list = None):
+        """Automatically calibrate pump accuracy based on EC change"""
+        try:
+            # Skip calibration if EC data is invalid
+            if self.feed_ec_before <= 0 or self.feed_ec_after <= 0:
+                return
+            
+            # Calculate EC change
+            ec_change = self.feed_ec_after - self.feed_ec_before
+            
+            # Expected EC change based on standard concentration
+            expected_ec_change_per_ml = 0.002  # 0.002 EC change per ml (for 100L tank)
+            reservoir_volume_l = self.reservoir_volume_liters * (self.data_store.getDeep("Hydro.ReservoirLevel", 100.0) / 100.0)
+            # target_dose_ml is already the total dose across all nutrients
+            expected_total_ec_change = target_dose_ml * expected_ec_change_per_ml
+            
+            # Calculate accuracy score (how close was actual to expected)
+            if expected_total_ec_change > 0:
+                accuracy_ratio = ec_change / expected_total_ec_change
+                accuracy_score = min(100.0, max(0.0, (1.0 / accuracy_ratio) * 100.0))
+            else:
+                accuracy_score = 100.0
+            
+            # Check if pump is inaccurate (accuracy < 70% or > 130%)
+            if accuracy_score < 70.0 or accuracy_score > 130.0:
+                # Update calibration factors for all dosed pumps
+                pumps_to_calibrate = nutrients_dosed if nutrients_dosed else ["A", "B", "C"]
+                
+                # Mapping from nutrient type to PumpType enum
+                nutrient_to_pump = {
+                    "A": PumpType.NUTRIENT_A,
+                    "B": PumpType.NUTRIENT_B,
+                    "C": PumpType.NUTRIENT_C,
+                    "X": PumpType.CUSTOM_X,
+                    "Y": PumpType.CUSTOM_Y,
+                }
+                
+                for pump_type in pumps_to_calibrate:
+                    pump_enum = nutrient_to_pump.get(pump_type)
+                    if not pump_enum:
+                        _LOGGER.warning(f"[{self.room}] No pump mapping for nutrient {pump_type}")
+                        continue
+                    
+                    if pump_enum.value in self.pump_calibrations:
+                        cal = self.pump_calibrations[pump_enum.value]
+                        
+                        # Adjust calibration factor based on accuracy
+                        if accuracy_score < 100.0:
+                            # Pump delivered less than expected - increase dose next time
+                            adjustment = 1.0 / (accuracy_score / 100.0)
+                            adjustment = min(adjustment, 1.5)
+                        else:
+                            # Pump delivered more than expected - decrease dose next time
+                            adjustment = 1.0 / (accuracy_score / 100.0)
+                            adjustment = max(adjustment, 0.67)
+                        
+                        cal.calibration_factor *= adjustment
+                        cal.calibration_factor = max(0.5, min(2.0, cal.calibration_factor))
+                        cal.calibration_count += 1
+                        cal.last_calibration = datetime.now()
+                        
+                        # Notify user about pump inaccuracy
+                        self._log_to_client(
+                            f"Pump {pump_type} recalibrated (accuracy: {accuracy_score:.1f}%) - "
+                            f"New calibration factor: {cal.calibration_factor:.2f}x",
+                            "WARNING",
+                            {
+                                "pump": pump_type,
+                                "accuracy": accuracy_score,
+                                "new_calibration": cal.calibration_factor,
+                                "ec_before": self.feed_ec_before,
+                                "ec_after": self.feed_ec_after,
+                                "ec_change": ec_change
+                            }
+                        )
+                        
+                        # Send notification for critical inaccuracy
+                        if accuracy_score < 50.0 or accuracy_score > 150.0:
+                            await self._send_notification(
+                                "critical",
+                                f"Pump {pump_type} severely inaccurate ({accuracy_score:.1f}% accuracy). "
+                                f"Check pump and calibration. EC: {self.feed_ec_before:.2f}→{self.feed_ec_after:.2f} (expected: {self.feed_ec_before + expected_total_ec_change:.2f})",
+                                f"OGB {self.room}: Pump Calibration Alert"
+                            )
+                
+                # Save calibration data
+                await self._save_calibration_data()
+                
+                _LOGGER.info(
+                    f"[{self.room}] Auto-calibration completed - "
+                    f"EC change: {ec_change:.2f}, expected: {expected_total_ec_change:.2f}, "
+                    f"accuracy: {accuracy_score:.1f}%"
+                )
+        
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error in auto-calibration: {e}")
 
     async def _apply_feeding(self):
         """Apply feeding logic - delegate to feed logic manager"""

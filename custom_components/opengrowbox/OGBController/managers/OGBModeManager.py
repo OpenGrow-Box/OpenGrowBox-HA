@@ -64,6 +64,12 @@ class OGBModeManager:
         self._last_deadband_check: float = 0
         self._current_deadband_stage: int = 0  # 0=none, 1=soft, 2=medium, 3=full
         
+        # Hysteres for deadband stability (211% above deadband to exit - prevents oscillation)
+        self._deadband_hysteresis_factor: float = 3.11  # Exit at 311% of deadband
+        self._deadband_exit_threshold: float = 0.0  # Calculated dynamically
+        self._deadband_last_exit_time: float | None = None  # Timestamp of last exit
+        self._deadband_min_hold_after_exit: float = 120  # Max 2 minutes hold after exit (in seconds)
+        
         # Device categories for deadband handling
         self._deadband_devices = {
             # Climate-Geräte
@@ -124,6 +130,21 @@ class OGBModeManager:
             return base_deadband
             
         return base_deadband
+    
+    def _update_deadband_thresholds(self, deadband: float):
+        """
+        Update deadband exit threshold with hysteresis.
+        
+        Args:
+            deadband: Current deadband value in kPa
+        """
+        self._deadband_exit_threshold = deadband * self._deadband_hysteresis_factor
+        self.data_store.setDeep("controlOptionData.deadband.exit_threshold", self._deadband_exit_threshold)
+        self.data_store.setDeep("controlOptionData.deadband.hysteresis_factor", self._deadband_hysteresis_factor)
+        _LOGGER.debug(
+            f"{self.room}: Deadband hysteresis updated - enter: ±{deadband:.3f}, "
+            f"exit: >{self._deadband_exit_threshold:.3f} (factor: {self._deadband_hysteresis_factor})"
+        )
     
     def _calculate_trend(self, current_vpd: float) -> str:
         """
@@ -228,22 +249,25 @@ class OGBModeManager:
             # Not stable long enough - stay at stage 2
             return 2
     
-    async def _handle_smart_deadband(self, current_vpd: float, target_vpd: float, deadband: float, mode_name: str):
+    async def _handle_smart_deadband(self, current_vpd: float, target_vpd: float, deadband: float, mode_name: str) -> bool:
         """
         Smart Deadband Handler - Advanced version with dynamic stages and predictive logic.
-        
+
         Features:
         - Dynamic deadband based on plant stage (VPD Perfection only)
         - 3-stage gradual reduction (soft, medium, full)
         - Trend analysis for predictive behavior
         - Night mode only when nightVPDHold is enabled
         - Max 10 minute deadband with 30-second checks
-        
+
         Args:
             current_vpd: Aktueller VPD Wert
             target_vpd: Ziel VPD Wert
             deadband: Deadband Toleranz (may be overridden by dynamic calculation)
             mode_name: Name des Modus (für Logging)
+
+        Returns:
+            bool: True if deadband is active, False if deadband is blocked (e.g., night mode without nightVPDHold)
         """
         import time
         from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
@@ -251,20 +275,36 @@ class OGBModeManager:
         now = time.time()
         deviation = abs(current_vpd - target_vpd)
         
-        # KRITISCH: Prüfe ob VPD immer noch im Deadband ist
-        # Wenn nicht, sofort beenden und normalen Betrieb ermöglichen
-        if deviation > deadband:
+        # First: Set exit threshold (even if we exit, it helps for logging)
+        self._update_deadband_thresholds(deadband)
+        
+        # KRITISCH: Prüfe ob VPD das Deadband mit Hysteres verlassen hat
+        # Exit erst wenn deviation > exit_threshold (115% des deadbands)
+        if deviation > self._deadband_exit_threshold:
             if self._is_in_deadband:
+                time_since_exit = now - self._deadband_last_exit_time if self._deadband_last_exit_time else 0
                 _LOGGER.info(
-                    f"{self.room}: VPD {current_vpd} left deadband (target: {target_vpd}, "
-                    f"deviation: {deviation:.3f} > deadband: {deadband:.3f}) - "
-                    f"exiting deadband immediately"
+                    f"{self.room}: VPD {current_vpd} EXITED deadband with hysteresis "
+                    f"(deviation: {deviation:.3f} > exit_threshold: {self._deadband_exit_threshold:.3f}, "
+                    f"deadband: {deadband:.3f}, last_exit: {time_since_exit:.0f}s ago) - "
+                    f"exiting deadband"
                 )
+                self._deadband_last_exit_time = now
                 self._reset_deadband_state()
-            return
+            return False  # Deadband is NOT active
         
         # Prüfen ob wir bereits im Deadband sind
         if not self._is_in_deadband:
+            # Prüfe ob wir zu kurz nach Exit sind (Mindest-Hold-Zeit nach Exit)
+            if self._deadband_last_exit_time:
+                time_since_exit = now - self._deadband_last_exit_time
+                if time_since_exit < self._deadband_min_hold_after_exit:
+                    _LOGGER.debug(
+                        f"{self.room}: Blocking deadband re-entry - too soon after exit "
+                        f"({time_since_exit:.0f}s < {self._deadband_min_hold_after_exit}s hold)"
+                    )
+                    return False  # Deadband is NOT active (blocked by re-entry cooldown)
+            
             # Erster Eintritt in Deadband
             self._is_in_deadband = True
             self._deadband_hold_start = now
@@ -303,16 +343,19 @@ class OGBModeManager:
             _LOGGER.debug(f"{self.room}: Using dynamic deadband {dynamic_deadband} instead of {deadband} for {mode_name}")
             deadband = dynamic_deadband
         
+        # Update exit threshold with hysteresis
+        self._update_deadband_thresholds(deadband)
+        
         # Check if night mode and nightVPDHold is disabled
         is_night = not self.data_store.getDeep("isPlantDay.islightON", True)
         night_vpd_hold = self.data_store.getDeep("controlOptions.nightVPDHold", True)
-        
+
         if is_night and not night_vpd_hold:
             # Night mode without VPD hold - no deadband, use power-saving mode instead
             if self._is_in_deadband:
                 _LOGGER.info(f"{self.room}: Night mode without VPD hold - exiting deadband for power-saving")
                 self._reset_deadband_state()
-            return
+            return False  # Deadband is NOT active (night mode without nightVPDHold)
         
         # Calculate trend for predictive behavior
         trend = self._calculate_trend(current_vpd)
@@ -322,13 +365,13 @@ class OGBModeManager:
         if self._deadband_hold_start and (now - self._deadband_hold_start) > max_deadband_time:
             _LOGGER.info(f"{self.room}: Max deadband time ({max_deadband_time}s) reached - exiting")
             self._reset_deadband_state()
-            return
-        
+            return False  # Deadband is NOT active (max time reached)
+
         # Periodic check every 30 seconds during deadband
         if self._last_deadband_check and (now - self._last_deadband_check) < self._deadband_check_interval:
             # Skip this cycle, just update hold time
             self.data_store.setDeep("controlOptionData.deadband.hold_remaining", hold_remaining)
-            return
+            return True  # Deadband IS active (periodic check skip)
         
         self._last_deadband_check = now
         
@@ -433,6 +476,7 @@ class OGBModeManager:
             "currentVPD": current_vpd,
             "targetVPD": target_vpd,
             "deadband": deadband,
+            "exitThreshold": self._deadband_exit_threshold,
             "deviation": deviation,
             "holdTimeRemaining": hold_remaining,
             "holdDuration": self._deadband_hold_duration,
@@ -443,52 +487,43 @@ class OGBModeManager:
             "devicesReduced": devices_reduced,
             "ventilationRunning": ventilation_running,
             "lightStatus": light_status,
-            "deadbandActive": True
+            "deadbandActive": True,
+            "hysteresisFactor": self._deadband_hysteresis_factor
         }, haEvent=True, debug_type="INFO")
-        
-        # Execute deadband actions
-        if deadband_actions:
-            _LOGGER.info(
-                f"{self.room}: Smart Deadband Stage {stage} executing {len(deadband_actions)} actions"
-            )
-            
-            capability_to_device = {
-                'canHeat': 'Heater',
-                'canCool': 'Cooler', 
-                'canHumidify': 'Humidifier',
-                'canDehumidify': 'Dehumidifier',
-                'canClimate': 'Climate',
-                'canExhaust': 'Exhaust',
-                'canIntake': 'Intake',
-                'canWindow': 'Window',
-            }
-            
-            for action in deadband_actions:
-                cap = getattr(action, 'capability', None)
-                action_type = getattr(action, 'action', None)
-                if cap and action_type:
-                    device_name = capability_to_device.get(cap, cap.replace('can', ''))
-                    await self.event_manager.emit(f"Reduce {device_name}", action_type)
-        
+
+        # NOTE: Deadband actions are NOT executed here anymore
+        # The SmartDeadbandEntered event (lines 322-328) already handles device reduction via setToMinimum()
+        # The "Reduce" events were redundant and were blocked by device handlers anyway
+        # Devices are now restored to their previous state when exiting deadband (Device.py:restoreFromMinimum())
+
         # Check if hold time elapsed
         if hold_remaining <= 0:
             _LOGGER.info(
-                f"{self.room}: Deadband hold time ({self._deadband_hold_duration}s) elapsed - extending"
+                f"{self.room}: Deadband hold time ({self._deadband_hold_duration}s) elapsed - checking extension"
             )
-            # Extend hold time if VPD is still stable
+            # Extend hold time only if VPD is stable AND within hysteresis zone
             if trend == "stable" or trend == "towards_target":
-                self._deadband_hold_start = now
-                _LOGGER.info(f"{self.room}: Extending deadband - VPD stable")
+                if deviation <= self._deadband_exit_threshold:
+                    # Both conditions met: stable trend AND within hysteresis zone
+                    self._deadband_hold_start = now
+                    _LOGGER.info(
+                        f"{self.room}: Extending deadband - VPD stable ({trend}) and within hysteresis zone (deviation: {deviation:.3f} <= {self._deadband_exit_threshold:.3f})"
+                    )
+                else:
+                    # Trend is good but outside hysteresis zone - exit
+                    _LOGGER.info(
+                        f"{self.room}: Not extending - trend {trend} but outside hysteresis zone (deviation: {deviation:.3f} > {self._deadband_exit_threshold:.3f})"
+                    )
+                    self._reset_deadband_state()
+                    return False
             else:
+                # Trend is bad - exit
                 _LOGGER.info(f"{self.room}: Not extending - trend {trend}")
                 self._reset_deadband_state()
-            # Hold-Zeit abgelaufen, prüfe ob VPD immer noch im Deadband
-            if deviation <= deadband:
-                # Verlängere Hold-Zeit um weitere 2.5 Minuten
-                self._deadband_hold_start = now
-                _LOGGER.info(
-                    f"{self.room}: Still in deadband - extending hold time"
-                )
+                return False
+
+        # Deadband is active
+        return True
     
     def _reset_deadband_state(self):
         """Reset deadband state when leaving deadband."""
@@ -606,25 +641,9 @@ class OGBModeManager:
 
         _LOGGER.debug(f"ModeManager: {self.room} executing Closed Environment cycle")
 
-        # SMART DEADBAND CHECK für Closed Environment (VPD-basiert)
-        currentVPD = self.data_store.getDeep("vpd.current")
-        targetVPD = self.data_store.getDeep("vpd.targeted") or self.data_store.getDeep("vpd.perfection")
-        
-        if currentVPD is not None and targetVPD is not None:
-            deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
-            deviation = abs(float(currentVPD) - float(targetVPD))
-            
-            if deviation <= deadband:
-                # Im Deadband - Smart Deadband Handler aufrufen
-                await self._handle_smart_deadband(float(currentVPD), float(targetVPD), deadband, "Closed Environment")
-                # Trotzdem CO2 Control ausführen (wichtig für Closed Environment)
-                if self.data_store.getDeep("controlOptions.co2Control"):
-                    capabilities = self.data_store.get("capabilities") or {}
-                    await self.event_manager.emit("maintain_co2", capabilities)
-                return  # Keine normalen Closed Environment Actions ausführen
-            else:
-                # Außerhalb Deadband - Reset Deadband State
-                self._reset_deadband_state()
+        # NOTE: Smart Deadband für Closed Environment DEAKTIVIERT
+        # Closed Environment kontrolliert NUR Temperature und Humidity via min/max Limits
+        # Kein VPD-basierter Deadband - das verursachte nur Probleme
 
         # Execute single control cycle (stateless like VPD Perfection)
         await self.closedEnvironmentManager.execute_cycle()
@@ -665,13 +684,16 @@ class OGBModeManager:
         # SMART DEADBAND CHECK für VPD Perfection
         deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
         deviation = abs(float(currentVPD) - float(perfectionVPD))
-        
+
         if deviation <= deadband:
             # Im Deadband - Smart Deadband Handler aufrufen
-            await self._handle_smart_deadband(float(currentVPD), float(perfectionVPD), deadband, "VPD Perfection")
-            # Emit FineTune_vpd to maintain devices in rest while in target zone
-            await self.event_manager.emit("FineTune_vpd", capabilities)
-            return  # Keine normalen VPD Actions ausführen
+            deadband_active = await self._handle_smart_deadband(float(currentVPD), float(perfectionVPD), deadband, "VPD Perfection")
+
+            if deadband_active:
+                # Deadband IS active - devices are already reduced to minimum
+                # No FineTune needed - deadband handles this functionality
+                return  # Keine normalen VPD Actions ausführen
+            # If deadband is NOT active (e.g., night mode without nightVPDHold), continue to normal cycle
         else:
             # Außerhalb Deadband - Reset Deadband State
             self._reset_deadband_state()
@@ -686,11 +708,9 @@ class OGBModeManager:
                 f"{self.room}: Current VPD ({currentVPD}) is above maximum ({perfectionMaxVPD}). Reducing VPD."
             )
             await self.event_manager.emit("reduce_vpd", capabilities)
-        elif currentVPD != perfectionVPD:
-            _LOGGER.debug(
-                f"{self.room}: VPD {currentVPD} within range but not at perfection {perfectionVPD}. Fine-tuning."
-            )
-            await self.event_manager.emit("FineTune_vpd", capabilities)
+        # FineTune entfernt - Deadband übernimmt diese Funktion
+        # Wenn VPD zwischen min/max aber nicht perfekt ist, wird keine Aktion ausgeführt
+        # Das System lässt sich natürlich beruhigen, wie VPD Target Mode
 
         if self.data_store.getDeep("controlOptions.co2Control"):
             await self.event_manager.emit("maintain_co2", capabilities)
@@ -765,11 +785,14 @@ class OGBModeManager:
             # SMART DEADBAND CHECK - Wenn VPD im Deadband ist
             deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
             deviation = abs(currentVPD - targetedVPD)
-            
+
             if deviation <= deadband:
                 # Im Deadband - Smart Deadband Handler aufrufen
-                await self._handle_smart_deadband(currentVPD, targetedVPD, deadband, "VPD Target")
-                return  # Keine normalen VPD Actions ausführen
+                deadband_active = await self._handle_smart_deadband(currentVPD, targetedVPD, deadband, "VPD Target")
+
+                if deadband_active:
+                    return  # Keine normalen VPD Actions ausführen
+                # If deadband is NOT active (e.g., night mode without nightVPDHold), continue to normal cycle
             else:
                 # Außerhalb Deadband - Reset Deadband State
                 self._reset_deadband_state()

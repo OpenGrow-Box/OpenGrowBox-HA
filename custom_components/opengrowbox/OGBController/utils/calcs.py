@@ -23,8 +23,9 @@ def calculate_avg_value(data=[]):
             continue
 
         try:
-            # Konvertiere den Wert in float
-            value = float(value)
+            # Konvertiere den Wert in float und RUNDEN auf 2 Nachkommastellen!
+            # Dies verhindert, dass zu viele Nachkommastellen in die VPD-Berechnung durchrutschen
+            value = round(float(value), 2)
             total += value
             count += 1
         except ValueError:
@@ -36,7 +37,7 @@ def calculate_avg_value(data=[]):
         return "unavailable"
 
     avg_value = total / count
-    return round(avg_value, 2)
+    return round(avg_value, 2)  # Nochmal runden für Sicherheit
 
 
 # Berechne aktuellen VPD (asynchron)
@@ -56,8 +57,12 @@ def calculate_current_vpd(temp, humidity, leaf_offset):
     adp = (humidity / 100) * sdp_luft
     vpd = sdp_blatt - adp
 
-    _LOGGER.debug(f"VPD-Calculation got {round(vpd, 2)}")
-    return round(vpd, 2)
+    # CRITICAL: Round to 2 decimal places max (e.g., 1.34, 1.23, 0.31)
+    # More than 2 decimals causes issues with floating point precision
+    rounded_vpd = round(vpd, 2)
+
+    _LOGGER.debug(f"VPD-Calculation got {rounded_vpd}")
+    return rounded_vpd
 
 
 # Berechne perfekten VPD (asynchron)
@@ -128,6 +133,21 @@ def calc_dew_vpd(air_temp, dew_point):
             "vapor_pressure_actual": None,
             "vapor_pressure_saturation": None,
         }
+
+    sdp_luft = 0.6108 * math.exp((17.27 * air_temp) / (air_temp + 237.3))
+    adp = 0.6108 * math.exp((17. * dew_point) / (dew_point + 237.3))
+    dew_vpd = sdp_luft - adp
+
+    vapor_pressure_actual = 6.11 * (10 ** ((7.5 * dew_point) / (237.3 + dew_point)))
+    vapor_pressure_saturation = 6.11 * (10 ** ((7.5 * air_temp) / (237.3 + air_temp)))
+
+    # CRITICAL: Round dewpoint_vpd to 2 decimal places max (not 3!)
+    # All VPD values must be consistent: max 2 decimal places
+    return {
+        "dewpoint_vpd": round(dew_vpd, 2),
+        "vapor_pressure_actual": round(vapor_pressure_actual, 2),
+        "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
+    }
 
     sdp_luft = 0.6108 * math.exp((17.27 * air_temp) / (air_temp + 237.3))
     adp = 0.6108 * math.exp((17.27 * dew_point) / (dew_point + 237.3))

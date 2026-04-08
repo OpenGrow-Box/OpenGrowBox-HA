@@ -42,29 +42,34 @@
 │     • perfectMinVPD = data_store.getDeep("vpd.perfectMin")                  │
 │     • perfectMaxVPD = data_store.getDeep("vpd.perfectMax")                  │
 │                                                                             │
-│ 2.2 🆕 SMART DEADBAND CHECK (NEW!)                                          │
-│     deadband = 0.05 (default)                                               │
-│     deviation = |currentVPD - perfectionVPD|                                │
+ │ 2.2 🆕 SMART DEADBAND CHECK WITH HYSTERESIS (UPDATED!)                           │
+ │     deadband = 0.05 (default)                                               │
+ │     deviation = |currentVPD - perfectionVPD|                                │
+ │     exit_threshold = deadband * 1.15 = 0.0575 (15% hysteresis)            │
+ │                                                                             │
+ │     IF deviation <= deadband:                                               │
+ │       → _handle_smart_deadband() called                                     │
+ │       → Climate devices reduced to minimum (10%-25%-50%)                    │
+ │       → Air exchange devices (Exhaust, Intake, Window) reduced             │
+ │       → Ventilation continues running                                      │
+ │       → Hold time: 2.5 minutes                                              │
+ │       → LogForClient with hysteresis info                                   │
+ │       → RETURN (no VPD events!)                                             │
+ │     ELIF deviation > exit_threshold:                                         │
+ │       → Exit deadband (15% buffer to prevent oscillation)                   │
+ │       → _reset_deadband_state()                                             │
+ │       → Continue to Step 2.3                                                │
+ │     ELSE:                                                                   │
+ │       → Continue to Step 2.3                                                │
 │                                                                             │
-│     IF deviation <= deadband:                                               │
-│       → _handle_smart_deadband() called                                     │
-│       → Climate devices reduced to minimum                                  │
-│       → Air exchange devices (Exhaust, Intake, Window) reduced             │
-│       → Ventilation continues running                                      │
-│       → Hold time: 2.5 minutes                                              │
-│       → LogForClient: "Smart Deadband active"                               │
-│       → RETURN (no VPD events!)                                             │
-│     ELSE:                                                                   │
-│       → _reset_deadband_state()                                             │
-│       → Continue to Step 2.3                                                │
-│                                                                             │
-│ 2.3 VPD Decision (only if outside deadband):                               │
-│     IF currentVPD < perfectMinVPD:                                          │
-│        → Emit: "increase_vpd"                                               │
-│     ELIF currentVPD > perfectMaxVPD:                                        │
-│        → Emit: "reduce_vpd"                                                 │
-│     ELIF currentVPD != perfectionVPD:                                       │
-│        → Emit: "FineTune_vpd"                                               │
+ │ 2.3 VPD Decision (only if outside deadband):                               │
+ │     IF currentVPD < perfectMinVPD:                                          │
+ │        → Emit: "increase_vpd"                                               │
+ │     ELIF currentVPD > perfectMaxVPD:                                        │
+ │        → Emit: "reduce_vpd"                                                 │
+ │     ELSE:                                                                   │
+ │        → NO ACTION (VPD within range)                                       │
+ │        * FineTune REMOVED - Deadband handles this *                         │
 └─────────────────────────────────────────────────────────────────────────────┘
                                      ↓
   ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -296,20 +301,23 @@
 │ • Calculates: min_vpd = targeted - (targeted * tolerance/100)               │
 │              max_vpd = targeted + (targeted * tolerance/100)               │
 │                                                                             │
-│ • 🆕 SMART DEADBAND CHECK (NEW!):                                          │
-│   deadband = 0.05 (default)                                                 │
-│   deviation = |currentVPD - targetedVPD|                                    │
-│                                                                             │
-│   IF deviation <= deadband:                                                 │
-│     → _handle_smart_deadband() called                                       │
-│     → Climate devices reduced to minimum                                    │
-│     → Air exchange devices (Exhaust, Intake, Window) reduced               │
-│     → Ventilation continues running                                        │
-│     → Hold time: 2.5 minutes                                                │
-│     → LogForClient: "Smart Deadband active"                                 │
-│     → RETURN (no VPD events!)                                               │
-│   ELSE:                                                                     │
-│     → _reset_deadband_state()                                               │
+ │ • 🆕 SMART DEADBAND CHECK WITH HYSTERESIS (UPDATED!):                              │
+ │   deadband = 0.05 (default)                                                 │
+ │   deviation = |currentVPD - targetedVPD|                                    │
+ │   exit_threshold = deadband * 1.15 = 0.0575 (15% hysteresis)                │
+ │                                                                             │
+ │   IF deviation <= deadband:                                                 │
+ │     → _handle_smart_deadband() called                                       │
+ │     → Climate devices reduced to minimum (10%-25%-50%)                      │
+ │     → Air exchange devices (Exhaust, Intake, Window) reduced               │
+ │     → Ventilation continues running                                        │
+ │     → Hold time: 2.5 minutes                                                │
+ │     → LogForClient with hysteresis info                                     │
+ │     → RETURN (no VPD events!)                                               │
+ │   ELIF deviation > exit_threshold:                                           │
+ │     → Exit deadband (15% buffer to prevent oscillation)                     │
+ │     → _reset_deadband_state()                                               │
+ │                                                                             │
 │                                                                             │
 │ • Decision (only if outside deadband):                                      │
 │   IF currentVPD < min_vpd:                                                  │
@@ -350,6 +358,20 @@
 
 ## Closed Environment Mode
 
+### Overview
+
+Closed Environment mode is designed for **recirculating systems in sealed chambers** where temperature and humidity control is critical.
+
+**Key Characteristics:**
+- **Control Targets**: Uses `tentData.minTemp`, `tentData.maxTemp`, `tentData.minHumidity`, `tentData.maxHumidity` (ALWAYS filled)
+- **Data Source**: tentData is ALWAYS filled with either:
+  - Plant-stage-specific min/max values (from plantStages config)
+  - OR user-defined min/max values (from UI)
+- **Control Logic**: Maintains temperature and humidity within min/max limits
+- **VPD Usage**: VPD is ONLY used for Smart Deadband (informational, NOT for control)
+- **Night Mode**: Power-saving mode when light OFF and nightVPDHold=False
+- **Purpose**: Optimized for recirculating systems where ambient exchange is minimal
+
 ### Differences to VPD Perfection
 
 | Aspect | VPD Perfection | Closed Environment |
@@ -357,12 +379,79 @@
 | **Mode Handler** | `handle_vpd_perfection()` | `handle_closed_environment()` |
 | **Manager** | OGBModeManager → ClosedEnvironmentManager | |
 | **Action Handler** | ClosedActions.execute_closed_environment_cycle() | |
-| **Night Hold** | ✅ Active | ❌ Bypassed |
-| **VPD Deviation** | ✅ Active | ❌ Bypassed |
+| **Night Hold** | ✅ Active | ✅ Active (Power-Saving Mode) |
+| **VPD Usage** | ✅ Primary control target | ⚠️ Only for Smart Deadband (NOT for control) |
+| **Control Targets** | VPD-based (perfectMin/max) | **tentData min/max** (ALWAYS filled) |
+| **Data Source** | vpd.perfection (calculated) | tentData.min/max (from UI or plantStages) |
 | **Weighted Deviations** | ✅ Central calculation | ✅ Central calculation (0,0,0,0) |
 | **WeightPublication** | ✅ Emitted | ✅ Emitted |
 | **Environment Guard** | ✅ Active | ✅ Active |
 | **checkLimitsAndPublicate** | `checkLimitsAndPublicate()` | `checkLimitsAndPublicateNoVPD()` |
+| **CO2 Control in Deadband** | ❌ No (only outside deadband) | ✅ Yes (important for sealed chambers) |
+| **Device State Restoration** | ✅ Yes (restoreFromMinimum) | ✅ Yes (restoreFromMinimum) |
+
+### Control Logic (How It Works)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CLOSED ENVIRONMENT CONTROL LOGIC                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  DATA SOURCE (ALWAYS FILLED):                                             │
+│  ├─ tentData.minTemp  ← User-defined OR plant-stage-specific           │
+│  ├─ tentData.maxTemp  ← User-defined OR plant-stage-specific           │
+│  ├─ tentData.minHumidity  ← User-defined OR plant-stage-specific       │
+│  └─ tentData.maxHumidity  ← User-defined OR plant-stage-specific       │
+│                                                                             │
+│  CONTROL DECISION:                                                           │
+│  IF currentTemp < minTemp:                                               │
+│    → Heat until minTemp reached                                           │
+│  ELIF currentTemp > maxTemp:                                             │
+│    → Cool until maxTemp reached                                           │
+│  ELSE:                                                                     │
+│    → No action (temperature in range)                                      │
+│                                                                             │
+│  IF currentHumidity < minHumidity:                                       │
+│    → Humidify until minHumidity reached                                   │
+│  ELIF currentHumidity > maxHumidity:                                     │
+│    → Dehumidify until maxHumidity reached                                 │
+│  ELSE:                                                                     │
+│    → No action (humidity in range)                                        │
+│                                                                             │
+│  VPD IS ONLY USED FOR:                                                     │
+│  • Smart Deadband check (informational)                                   │
+│  • Logging/display purposes                                                │
+│  • NOT for control decisions!                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Example: Late Flower Scenario
+
+```
+User Configuration:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ tentData.minTemp:      20.0°C (from user UI)                         │
+│ tentData.maxTemp:      28.0°C (from user UI)                         │
+│ tentData.minHumidity:  40.0% (from user UI)                         │
+│ tentData.maxHumidity:  60.0% (from user UI)                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Control Behavior:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Current: 25.5°C / 58% RH                                                │
+│                                                                          │
+│ Temperature:                                                            │
+│   • 25.5°C is within 20.0-28.0°C range → NO ACTION                 │
+│                                                                          │
+│ Humidity:                                                              │
+│   • 58% is within 40-60% range → NO ACTION                            │
+│                                                                          │
+│ VPD (informational):                                                    │
+│   • VPD = 1.05 kPa (calculated from T/H, NOT used for control)        │
+│   • vpdCurrent displayed in logs for monitoring only                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Action Flow
 
@@ -372,48 +461,94 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBModeManager.handle_closed_environment()                                │
 │                                                                             │
-│ 1.1 🆕 SMART DEADBAND CHECK (NEW! - VPD-based)                              │
-│     currentVPD = data_store.getDeep("vpd.current")                          │
-│     targetVPD = data_store.getDeep("vpd.targeted") or vpd.perfection       │
-│                                                                             │
-│     IF currentVPD is not None AND targetVPD is not None:                    │
-│       deadband = 0.05 (default)                                             │
-│       deviation = |currentVPD - targetVPD|                                  │
-│                                                                             │
-│       IF deviation <= deadband:                                             │
-│         → _handle_smart_deadband() called                                   │
-│         → Climate devices reduced to minimum                                │
-│         → Air exchange devices (Exhaust, Intake, Window) reduced           │
-│         → Ventilation continues running                                    │
-│         → Hold time: 2.5 minutes                                            │
-│         → LogForClient: "Smart Deadband active"                             │
-│         → CO2 Control still executed (important!)                          │
-│         → RETURN (no normal Closed Env Actions!)                            │
-│       ELSE:                                                                 │
-│         → _reset_deadband_state()                                           │
-│                                                                             │
-│ 1.2 Normal Closed Environment Cycle (only if outside deadband):            │
-│     → ClosedEnvironmentManager.execute_cycle()                             │
+  │ 1.0 🆕 NIGHT MODE CHECK (NEW!)                                            │
+  │     is_light_on = data_store.getDeep("isPlantDay.islightON")             │
+  │     night_vpd_hold = data_store.getDeep("controlOptions.nightVPDHold")   │
+  │                                                                             │
+  │     IF NOT is_light_on AND NOT night_vpd_hold:                            │
+  │       → Night Mode Power-Saving is handled in Step 2                      │
+  │       → Continue to Step 1.1                                               │
+  │                                                                             │
+  │ 1.1 🆕 SMART DEADBAND CHECK WITH HYSTERIS (VPD-based)                   │
+  │     currentVPD = data_store.getDeep("vpd.current")                        │
+  │     targetVPD = data_store.getDeep("vpd.targeted") or vpd.perfection     │
+  │                                                                             │
+  │     IF currentVPD is not None AND targetVPD is not None:                   │
+  │       deadband = 0.05 (default)                                            │
+  │       deviation = |currentVPD - targetVPD|                                 │
+  │       exit_threshold = deadband * 1.15 = 0.0575 (15% hysteresis)           │
+  │                                                                             │
+  │       IF deviation <= deadband:                                            │
+  │         → deadband_active = _handle_smart_deadband() returns bool        │
+  │                                                                             │
+  │         IF deadband_active == True:                                        │
+  │           → Climate devices reduced to minimum (10%-25%-50%)               │
+  │           → Air exchange devices (Exhaust, Intake, Window) reduced        │
+  │           → Ventilation continues running                                 │
+  │           → Hold time: 2.5 minutes                                        │
+  │           → LogForClient with hysteresis info                             │
+  │           → CO2 Control still executed (important!)                       │
+  │           → RETURN (no normal Closed Env Actions!)                         │
+  │         ELSE (deadband_active == False):                                   │
+  │           → Deadband blocked (e.g., night mode without nightVPDHold)       │
+  │           → Continue to Step 1.2                                           │
+  │       ELIF deviation > exit_threshold:                                     │
+  │         → Exit deadband (15% buffer to prevent oscillation)                │
+  │         → _reset_deadband_state()                                          │
+  │                                                                             │
+  │ 1.2 Normal Closed Environment Cycle:                                      │
+  │     → ClosedEnvironmentManager.execute_cycle()                            │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 2: CLOSED ACTIONS                                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ OGBActionManager._handle_closed_environment_cycle()                        │
+│ ClosedActions.execute_closed_environment_cycle()                           │
 │                                                                             │
-│ → ClosedActions.execute_closed_environment_cycle()                         │
+│ 2.0 🆕 NIGHT MODE POWER-SAVING (NEW!)                                       │
+│     is_light_on = dataStore.getDeep("isPlantDay.islightON")                 │
+│     night_vpd_hold = dataStore.getDeep("controlOptions.nightVPDHold")      │
 │                                                                             │
-│ Executes:                                                                   │
-│ 1. monitor_o2_safety()                                                     │
-│ 2. maintain_co2()                                                          │
-│ 3. control_temperature_closed()                                           │
-│ 4. control_humidity_closed()                                               │
-│ 5. optimize_air_recirculation()                                            │
+│     IF NOT is_light_on AND NOT night_vpd_hold:                              │
+│       → _handle_night_mode_power_saving() called                            │
 │                                                                             │
-│ NOTE: All actions are collected and executed in ONE batch!                 │
-│ (Unlike before where each method sent separate LogForClient events)        │
+│       Night Mode Power-Saving Logic:                                        │
+│       ┌─────────────────────────────────────────────────────────────────┐   │
+│       │ Climate Devices (Save Power):                                   │   │
+│       │ • canHeat, canCool, canHumidify, canDehumidify → Reduce (OFF) │   │
+│       │ • canClimate, canCO2, canLight → Reduce (OFF)                   │   │
+│       └─────────────────────────────────────────────────────────────────┘   │
+│       ┌─────────────────────────────────────────────────────────────────┐   │
+│       │ Ventilation (Mold Prevention):                                  │   │
+│       │ • canExhaust, canVentilate, canWindow → Increase               │   │
+│       │ • canIntake → Variable (based on outside temp)                  │
+│       └─────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│       → LogForClient with isNightMode=True, nightVPDHold=False             │
+│       → RETURN (no normal Closed Env Actions!)                              │
+│                                                                             │
+│ 2.1 NOTE: Smart Deadband (VPD-based) DEAKTIVIERT für Closed Environment │
+│     → Closed Environment uses ONLY temp/hum deadbands (NOT VPD-based)        │
+│                                                                             │
+│ 2.2 Check Closed Environment specific deadbands (Temp and Humidity):       │
+│     closed_db_status = await _check_closed_deadbands()                      │
+│     temp_in_db = closed_db_status["temp_in_deadband"]                       │
+│     hum_in_db = closed_db_status["hum_in_deadband"]                         │
+│     temp_dev = closed_db_status["temp_deviation"]                           │
+│     hum_dev = closed_db_status["hum_deviation"]                             │
+│     temp_target = closed_db_status["temp_target"]  ← (min + max) / 2      │
+│     hum_target = closed_db_status["hum_target"]    ← (min + max) / 2      │
+│                                                                             │
+│ 2.3 Collect all actions:                                                    │
+│     • o2_actions = monitor_o2_safety()                                     │
+│     • co2_actions = maintain_co2()                                          │
+│     • temp_actions = control_temperature_closed() (if NOT in temp db)      │
+│     • hum_actions = control_humidity_closed() (if NOT in hum db)           │
+│     • air_actions = optimize_air_recirculation() (if NOT in any db)        │
+│                                                                             │
+│     NOTE: All actions are collected and executed in ONE batch!             │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 3: TEMPERATURE/HUMIDITY CONTROL                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -425,19 +560,108 @@
 │                                                                             │
 │ Each method returns action_map (does NOT execute immediately!)             │
 │ Actions are collected for batch execution                                  │
+│                                                                             │
+│ IMPORTANT: Uses tentData min/max limits for control                        │
+│ • Control Logic: current vs min/max (NOT VPD targets!)                  │
+│ • temp_target in log = (minTemp + maxTemp) / 2 (for display only)          │
+│ • hum_target in log = (minHumidity + maxHumidity) / 2 (for display only)    │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 4: BATCH EXECUTION                                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ ClosedActions.execute_closed_environment_cycle()                           │
 │                                                                             │
-│ Collects all actions:                                                       │
-│ • co2_actions from maintain_co2()                                          │
-│ • o2_actions from monitor_o2_safety()                                      │
-│ • temp_actions from control_temperature_closed()                           │
-│ • hum_actions from control_humidity_closed()                               │
-│ • air_actions from optimize_air_recirculation()                            │
+│ All actions combined into single action_map                                │
+│ → action_manager.checkLimitsAndPublicateNoVPD(all_actions)                 │
+│                                                                             │
+│ Single LogForClient Event:                                                  │
+│ {                                                                           │
+│   "Name": "dev_room",                                                       │
+│   "message": "Closed Environment: 5 actions executed",                     │
+│   "actions": "canExhaust:Increase, canCool:Reduce, canDehumidify:Increase",│
+│   "actionCount": 5,                                                         │
+│   "tempDeviation": 1.6,                                                     │
+│   "humDeviation": 0.8,                                                      │
+│   "tempCurrent": 25.5,                                                      │
+│   "tempTarget": 24.0,  ⚠️ (minTemp + maxTemp) / 2, NOT VPD target!          │
+│   "humCurrent": 58.0,                                                       │
+│   "humTarget": 50.0,   ⚠️ (minHumidity + maxHumidity) / 2, NOT VPD target!  │
+│   "vpdCurrent": 1.05,  ⚠️ For informational purposes only (NOT used for control)│
+│   "smartDeadbandActive": false                                              │
+│ }                                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 2: CLOSED ACTIONS                                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ClosedActions.execute_closed_environment_cycle()                           │
+│                                                                             │
+│ 2.0 🆕 NIGHT MODE POWER-SAVING (NEW!)                                       │
+│     is_light_on = dataStore.getDeep("isPlantDay.islightON")                 │
+│     night_vpd_hold = dataStore.getDeep("controlOptions.nightVPDHold")      │
+│                                                                             │
+│     IF NOT is_light_on AND NOT night_vpd_hold:                              │
+│       → _handle_night_mode_power_saving() called                            │
+│                                                                             │
+│       Night Mode Power-Saving Logic:                                        │
+│       ┌─────────────────────────────────────────────────────────────────┐   │
+│       │ Climate Devices (Save Power):                                   │   │
+│       │ • canHeat, canCool, canHumidify, canDehumidify → Reduce (OFF) │   │
+│       │ • canClimate, canCO2, canLight → Reduce (OFF)                   │   │
+│       └─────────────────────────────────────────────────────────────────┘   │
+│       ┌─────────────────────────────────────────────────────────────────┐   │
+│       │ Ventilation (Mold Prevention):                                  │   │
+│       │ • canExhaust, canVentilate, canWindow → Increase               │   │
+│       │ • canIntake → Variable (based on outside temp)                  │   │
+│       └─────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│       → LogForClient with isNightMode=True, nightVPDHold=False             │
+│       → RETURN (no normal Closed Env Actions!)                              │
+│                                                                             │
+│ 2.1 NOTE: Smart Deadband (VPD-based) DEAKTIVIERT für Closed Environment │
+│     → Closed Environment uses ONLY temp/hum deadbands (NOT VPD-based)        │
+│                                                                             │
+│ 2.2 Check Closed Environment specific deadbands (Temp and Humidity):       │
+│     closed_db_status = await _check_closed_deadbands()                      │
+│     temp_in_db = closed_db_status["temp_in_deadband"]                       │
+│     hum_in_db = closed_db_status["hum_in_deadband"]                         │
+│     temp_dev = closed_db_status["temp_deviation"]                           │
+│     hum_dev = closed_db_status["hum_deviation"]                             │
+│     temp_target = closed_db_status["temp_target"]  ⚠️ OWN TARGET, NOT VPD! │
+│     hum_target = closed_db_status["hum_target"]    ⚠️ OWN TARGET, NOT VPD! │
+│                                                                             │
+│ 2.3 Collect all actions:                                                    │
+│     • o2_actions = monitor_o2_safety()                                     │
+│     • co2_actions = maintain_co2()                                          │
+│     • temp_actions = control_temperature_closed() (if NOT in temp db)      │
+│     • hum_actions = control_humidity_closed() (if NOT in hum db)           │
+│     • air_actions = optimize_air_recirculation() (if NOT in any db)        │
+│                                                                             │
+│     NOTE: All actions are collected and executed in ONE batch!             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 3: TEMPERATURE/HUMIDITY CONTROL                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ClosedActions.control_temperature_closed()                                 │
+│ ClosedActions.control_humidity_closed()                                    │
+│                                                                             │
+│ Uses: _increase_temperature() / _decrease_temperature()                   │
+│       _increase_humidity() / _decrease_humidity()                         │
+│                                                                             │
+│ Each method returns action_map (does NOT execute immediately!)             │
+│ Actions are collected for batch execution                                  │
+│                                                                             │
+│ IMPORTANT: Uses OWN temp/hum targets, NOT VPD targets!                    │
+│ • temp_target = await _get_reference_temperature_target()                   │
+│ • hum_target = await _get_reference_humidity_target()                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STEP 4: BATCH EXECUTION                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ClosedActions.execute_closed_environment_cycle()                           │
 │                                                                             │
 │ All actions combined into single action_map                                │
 │ → action_manager.checkLimitsAndPublicateNoVPD(all_actions)                 │
@@ -452,10 +676,19 @@
 │   "humDeviation": 0.8,                                                      │
 │   "co2Status": "anheben",                                                   │
 │   "tempStatus": "kuehlen",                                                  │
-│   "humStatus": "entfeuchten"                                                │
+│   "humStatus": "entfeuchten",                                               │
+│   "tempCurrent": 24.5,                                                      │
+│   "tempTarget": 26.0,  ⚠️ OWN TARGET, NOT VPD TARGET!                     │
+│   "humCurrent": 58.0,                                                       │
+│   "humTarget": 60.0,   ⚠️ OWN TARGET, NOT VPD TARGET!                     │
+│   "co2Current": 750,                                                        │
+│   "co2TargetMin": 800,                                                      │
+│   "co2TargetMax": 1500,                                                     │
+│   "vpdCurrent": 1.05,  ⚠️ For informational purposes only!               │
+│   "smartDeadbandActive": false                                              │
 │ }                                                                           │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 5: CONFLICT RESOLUTION & ENVIRONMENT GUARD                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -468,7 +701,7 @@
 │ NOTE: No Core VPD Logic (Buffer Zones, VPD Context, Deviations)           │
 │       Closed Environment has its own control logic!                        │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                     ↓
+                                      ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STEP 6: DEVICE EXECUTION                                                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -484,8 +717,8 @@
 
 | Safety | VPD Perf | VPD Target | Closed Env |
 |------------|-----------|------------|------------|
-| **Night Hold** | ✅ | ✅ | ❌ |
-| **Smart Deadband** | ✅ (climate reduced, air exchange reduced) | ✅ (climate reduced, air exchange reduced) | ✅ (VPD-based) |
+| **Night Hold** | ✅ (Power-Saving Mode) | ✅ (Power-Saving Mode) | ✅ (Power-Saving Mode - NEW!) |
+| **Smart Deadband** | ✅ (with 15% hysteresis, climate reduced, air exchange reduced) | ✅ (with 15% hysteresis, climate reduced, air exchange reduced) | ✅ (VPD-based, with 15% hysteresis, returns bool) |
 | **Humidity Critical Override** | ✅ | ✅ | ✅ |
 | **Environment Guard** | ✅ (optional) | ✅ (optional) | ✅ (optional) |
 | **Buffer Zones** | ✅ | ✅ | ✅ |
@@ -563,23 +796,113 @@ def _calculate_trend(current_vpd: float) -> str:
 - Trend: towards_target
 - Result: Enter Stage 1 at 0.03 kPa (60% threshold) instead of 0.04 kPa (80% threshold)
 
-#### Night Mode Behavior
+#### Night Mode Behavior with Hysteresis
 
-The Smart Deadband only activates during night when `nightVPDHold` is enabled:
+The Smart Deadband behavior changes based on `is_light_on` and `nightVPDHold` settings:
 
 ```python
 is_night = not is_light_on
 night_vpd_hold = controlOptions.nightVPDHold
-
-if is_night and not night_vpd_hold:
-    # Night mode without VPD hold - no deadband
-    # Use power-saving mode instead
-    return
 ```
 
-**Why?**
-- Night with VPD hold: Devices need to control VPD → Deadband active
-- Night without VPD hold: Power-saving mode → No deadband needed
+**Behavior Matrix:**
+
+| Light Status | NightHoldVPD | Deadband Behavior | Device Behavior |
+|-------------|--------------|-------------------|-----------------|
+| **ON** | Any | ✅ Active with hysteresis | Normal VPD control |
+| **OFF** | `True` | ✅ Active with hysteresis | Normal VPD control at night |
+| **OFF** | `False` | ❌ Inactive (blocked) | Power-saving mode only |
+
+**Power-Saving Mode (Light OFF + NightHoldVPD=False):**
+```python
+if is_night and not night_vpd_hold:
+    # Deadband is NOT active
+    # Night Hold Fallback is used instead
+    
+    # Climate Devices (Minimized to save power):
+    • canHeat, canCool, canHumidify, canDehumidify → Reduce (OFF)
+    • canClimate, canCO2, canLight → Reduce (OFF)
+    
+    # Ventilation Devices (Active for mold prevention):
+    • canExhaust → Increase (Air exchange!)
+    • canVentilate → Increase (Air circulation!)
+    • canWindow → Increase (Air exchange!)
+    • canIntake → Variable (based on outside temp)
+```
+
+**Why this behavior?**
+- **Night with NightHoldVPD=True**: User wants VPD control at night → Deadband runs with hysteresis
+- **Night with NightHoldVPD=False**: Power-saving priority → No deadband, only active ventilation for mold prevention
+
+#### Hysteresis for Oscillation Prevention (NEW!)
+
+The Smart Deadband now includes **15% hysteresis** to prevent oscillation at deadband boundaries:
+
+```python
+# Configuration
+hysteresis_factor = 1.15  # 15% hysteresis
+min_hold_after_exit = 120  # Max 2 minutes hold after exit
+```
+
+**How Hysteresis Works:**
+
+```
+Example: Deadband = ±0.05 kPa, Target = 1.10 kPa
+
+Entry Condition:
+  deviation <= deadband (e.g., VPD=1.08 → |1.08-1.10| = 0.02 ≤ 0.05 ✅)
+  → Enters deadband
+  
+Exit Condition (WITH Hysteresis):
+  deviation > exit_threshold (e.g., VPD=1.16 → |1.16-1.10| = 0.06 > 0.0575 ✅)
+  → Exits deadband
+
+  where exit_threshold = deadband * 1.15 = 0.05 * 1.15 = 0.0575
+  
+Boundary Oscillation Example:
+  VPD: 1.049 → deviation=0.051 > 0.0575? NO ✅ → Still in deadband
+  VPD: 1.050 → deviation=0.050 > 0.0575? NO ✅ → Still in deadband
+  VPD: 1.051 → deviation=0.049 > 0.0575? NO ✅ → Still in deadband
+  
+  → NO OSCILLATION even with slight fluctuations!
+```
+
+**Re-Entry Block after Exit:**
+
+```python
+# After exiting deadband, wait minimum 120s before re-entering
+if _deadband_last_exit_time:
+    time_since_exit = now - _deadband_last_exit_time
+    if time_since_exit < 120:  # 2 minutes
+        return  # Block re-entry
+```
+
+**Benefits of Hysteresis:**
+- ✅ **Stability**: Prevents constant entering/exiting at boundaries
+- ✅ **Reduced Device Wear**: Fewer device state changes
+- ✅ **Smoother Operation**: Gradual transitions instead of rapid toggling
+- ✅ **Better Energy Efficiency**: Devices stay in optimal state longer
+
+**Logging (INFO Level + LogForClient):**
+```json
+{
+  "Name": "Room1",
+  "message": "Smart Deadband Stage 2 active - hold: 120s, trend: stable",
+  "VPDStatus": "InDeadband",
+  "currentVPD": 1.10,
+  "targetVPD": 1.10,
+  "deadband": 0.05,
+  "exitThreshold": 0.0575,
+  "deviation": 0.00,
+  "holdTimeRemaining": 120,
+  "holdDuration": 300,
+  "stage": 2,
+  "trend": "stable",
+  "mode": "VPD Perfection",
+  "hysteresisFactor": 1.15,
+  "deadbandActive": true
+}
+```
 
 #### Maximum Deadband Time with Periodic Checks
 
@@ -588,15 +911,94 @@ if is_night and not night_vpd_hold:
 max_deadband_time = 600 seconds  # 10 minutes
 deadband_check_interval = 30 seconds  # Check every 30 seconds
 deadband_hold_duration = 300 seconds  # 5 minutes hold time
+hysteresis_factor = 1.15  # 15% hysteresis for exit
+min_hold_after_exit = 120  # Max 2 minutes hold after exit
 ```
 
 **Behavior:**
 1. **Max Time (10 min)**: After 10 minutes in deadband, automatically exit
 2. **Periodic Checks (30 sec)**: Every 30 seconds, check if VPD still stable
 3. **Auto-Extension**: If VPD stable and trending towards target, extend for another 5 minutes
-4. **Early Exit**: If VPD leaves deadband at any time, exit immediately
+4. **Early Exit with Hysteresis**: If `deviation > deadband * 1.15`, exit immediately (prevents oscillation)
+5. **Re-Entry Block**: Minimum 120 seconds wait time after exit before re-entering deadband
 
-#### Implementation Details
+### Implementation Details
+
+**_handle_smart_deadband() (OGBModeManager.py) - Updated with Return Value:**
+
+```python
+async def _handle_smart_deadband(
+    self, current_vpd: float, target_vpd: float, deadband: float, mode_name: str
+) -> bool:
+    """
+    Smart Deadband Handler - Advanced version with dynamic stages and predictive logic.
+
+    Returns:
+        bool: True if deadband is active, False if deadband is blocked
+              (e.g., night mode without nightVPDHold)
+    """
+    # ... deadband logic ...
+
+    if is_night and not night_vpd_hold:
+        # Night mode without VPD hold - no deadband
+        if self._is_in_deadband:
+            self._reset_deadband_state()
+        return False  # Deadband is NOT active
+
+    # ... deadband logic ...
+
+    # Fixed Hold Time Extension Logic:
+    # Extend only if trend is good AND within hysteresis zone
+    if hold_remaining <= 0:
+        if trend == "stable" or trend == "towards_target":
+            if deviation <= self._deadband_exit_threshold:
+                # Both conditions met: stable trend AND within hysteresis zone
+                self._deadband_hold_start = now
+                _LOGGER.info("Extending deadband - VPD stable and within hysteresis zone")
+            else:
+                # Trend is good but outside hysteresis zone - exit
+                self._reset_deadband_state()
+                return False
+        else:
+            # Trend is bad - exit
+            self._reset_deadband_state()
+            return False
+
+    return True  # Deadband IS active
+```
+
+**Device State Restoration (Device.py):**
+
+```python
+async def on_smart_deadband_entered(self, data) -> None:
+    """Save current state before entering deadband."""
+    if self.isDimmable:
+        self._pre_deadband_duty_cycle = self.dutyCycle
+    else:
+        self._pre_deadband_is_running = self.isRunning
+
+    await self.setToMinimum()
+    self._in_smart_deadband = True
+
+async def on_smart_deadband_exited(self, data) -> None:
+    """Restore previous state when exiting deadband."""
+    if self._in_smart_deadband:
+        self._in_smart_deadband = False
+        await self.restoreFromMinimum()
+
+async def restoreFromMinimum(self):
+    """Restore device to previous state before entering deadband."""
+    if self.isDimmable:
+        if self._pre_deadband_duty_cycle is not None:
+            clamped = self.clamp_duty_cycle(self._pre_deadband_duty_cycle)
+            await self.turn_on(percentage=clamped)
+    else:
+        if self._pre_deadband_is_running is not None:
+            if self._pre_deadband_is_running:
+                await self.turn_on()
+            else:
+                await self.turn_off()
+```
 
 **_calculate_dynamic_deadband() (OGBModeManager.py):**
 
@@ -691,6 +1093,385 @@ def _determine_deadband_stage(self, deviation: float, deadband: float, trend: st
 | **Night Mode** | Always active | Only with nightVPDHold |
 | **Max Time** | 2.5 minutes | 10 minutes with 30s checks |
 | **Extension** | Automatic | Only if stable/towards_target |
+| **Exit Threshold** | Immediate at deadband | 15% hysteresis (deadband * 1.15) |
+| **Re-Entry Block** | None | Minimum 120 seconds after exit |
+
+---
+
+## Deadband & Quiet Zone
+
+### Overview
+
+The Smart Deadband is a sophisticated feature that reduces device activity when VPD is within an acceptable range, providing:
+
+- **Energy Savings**: Devices run at minimum (10%-25%-50%)
+- **Reduced Wear**: Fewer device state changes
+- **Oscillation Prevention**: 15% hysteresis prevents boundary oscillation
+- **Stability Tracking**: Trend analysis and periodic checks
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ DEADBAND FLOW DIAGRAM                                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  VPD Reading → Calculate Deviation → Check Deadband                │
+│                                                                     │
+│  IF deviation <= deadband (e.g., 0.05 kPa):                       │
+│    ├─ Check night mode + nightVPDHold                             │
+│    │  ├─ Light OFF + nightVPDHold=False → RETURN False (blocked) │
+│    │  └─ Light ON OR nightVPDHold=True → CONTINUE                 │
+│    │                                                               │
+│    ├─ Check if already in deadband                               │
+│    │  ├─ NO → Enter deadband (set flag, emit events)            │
+│    │  └─ YES → Continue (skip entry)                             │
+│    │                                                               │
+│    ├─ Check time since exit (re-entry block)                      │
+│    │  └─ < 120s → RETURN False (block re-entry)                  │
+│    │                                                               │
+│    ├─ Determine stage (based on deviation + trend)                │
+│    │  ├─ Stage 1 (Soft): Climate 50%, Air 75%                   │
+│    │  ├─ Stage 2 (Medium): Climate 25%, Air 50%                 │
+│    │  └─ Stage 3 (Full): Climate 10%, Air 25%                   │
+│    │                                                               │
+│    ├─ Emit SmartDeadbandEntered events                            │
+│    ├─ Reduce devices according to stage                           │
+│    ├─ Emit LogForClient (INFO + hysteresis info)                  │
+│    └─ RETURN True (deadband active)                               │
+│                                                                     │
+│  ELIF deviation > exit_threshold (deadband * 1.15):                │
+│    ├─ Exit deadband                                                │
+│    ├─ Record exit time (for re-entry block)                       │
+│    ├─ Emit SmartDeadbandExited events                             │
+│    ├─ Reset all deadband state                                    │
+│    └─ RETURN False (deadband not active)                          │
+│                                                                     │
+│  ELSE:                                                             │
+│    ├─ Continue normal operation                                    │
+│    └─ Process VPD actions (increase/reduce)                       │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+🆕 NEW: _handle_smart_deadband() now returns bool:
+     • True  → Deadband is active (devices reduced)
+     • False → Deadband is NOT active (blocked, e.g., night mode)
+```
+
+### Deadband vs Quiet Zone
+
+| Aspect | Smart Deadband | Quiet Zone |
+|--------|----------------|------------|
+| **Purpose** | Reduce device activity when VPD is good | Pause all VPD control temporarily |
+| **Trigger** | VPD within ±deadband of target | VPD in deadband AND quiet zone active |
+| **Duration** | Up to 10 minutes (extendable) | Until conditions change |
+| **Device State** | Reduced (10%-25%-50%) | Paused |
+| **Events** | SmartDeadbandEntered/Exited | Quiet Zone signal |
+| **Log Level** | INFO (with hysteresis info) | INFO (devices paused) |
+
+### Example Scenarios
+
+**Scenario 1: Perfect VPD (Deadband Active)**
+```
+VPD = 1.10, Target = 1.10, Deadband = ±0.05
+Deviation = 0.00 ≤ 0.05 → IN DEADBAND
+
+Stage 3 (Full): Stable 2+ minutes
+- Heater: 10% (reduced from 80%)
+- Cooler: 10% (reduced from 60%)
+- Exhaust: 25% (reduced from 70%)
+- Ventilation: 100% (unchanged)
+
+Log: "Smart Deadband Stage 3 active - hold: 120s, trend: stable"
+```
+
+**Scenario 2: Boundary Oscillation (Hysteresis Prevents Chaos)**
+```
+VPD oscillates: 1.049, 1.050, 1.051, 1.050, 1.049
+Target = 1.10, Deadband = ±0.05, Exit Threshold = 0.0575
+
+Cycle 1: VPD=1.049, deviation=0.051, exit_threshold=0.0575
+  → 0.051 > 0.0575? NO → STAYS IN DEADBAND
+
+Cycle 2: VPD=1.050, deviation=0.050, exit_threshold=0.0575
+  → 0.050 > 0.0575? NO → STAYS IN DEADBAND
+
+Cycle 3: VPD=1.051, deviation=0.049, exit_threshold=0.0575
+  → 0.049 > 0.0575? NO → STAYS IN DEADBAND
+
+Result: NO OSCILLATION, devices remain reduced!
+```
+
+**Scenario 3: Night Mode with NightHoldVPD=True**
+```
+Light: OFF, NightHoldVPD: TRUE
+VPD = 1.08, Target = 1.10, Deadband = ±0.05
+Deviation = 0.02 ≤ 0.05 → DEADBAND ACTIVE WITH HYSTERESIS
+
+Deadband runs normally at night:
+- Climate devices reduced to 10%-25%-50%
+- Air exchange devices reduced
+- Ventilation continues for air circulation
+- Hold time: 2.5 minutes
+- Exit threshold: 0.0575 (15% hysteresis)
+
+Log: "Night mode WITH NightHoldVPD - deadband active with hysteresis"
+```
+
+**Scenario 4: Night Mode with NightHoldVPD=False**
+```
+Light: OFF, NightHoldVPD: FALSE
+VPD = 1.08, Target = 1.10
+
+DEADBAND IS NOT ACTIVE (blocked by night mode)
+
+Night Hold Power-Saving Mode:
+- Climate devices: Reduce (OFF) - save power
+- Ventilation devices: Increase - mold prevention!
+  • Exhaust: Increase (air exchange)
+  • Ventilate: Increase (air circulation)
+  • Window: Increase (air exchange)
+  • Intake: Variable (based on outside temp)
+
+Log: "Night Hold Power-Saving Mode - Climate minimized, Ventilation active"
+```
+
+### Configuration Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `deadband` | 0.05 kPa | Base deadband value (varies by plant stage) |
+| `hysteresis_factor` | 1.15 (15%) | Exit threshold = deadband × 1.15 |
+| `min_hold_after_exit` | 120 seconds | Minimum wait time before re-entry |
+| `max_deadband_time` | 600 seconds (10 min) | Maximum time in deadband |
+| `deadband_check_interval` | 30 seconds | Check interval during deadband |
+| `deadband_hold_duration` | 300 seconds (5 min) | Base hold time |
+
+### Logging
+
+**Deadband Entry (INFO):**
+```json
+{
+  "Name": "Room1",
+  "message": "VPD 1.10 entered deadband ±0.05 of target 1.10 - starting smart deadband (hold: 300s)",
+  "currentVPD": 1.10,
+  "targetVPD": 1.10,
+  "deadband": 0.05,
+  "exitThreshold": 0.0575,
+  "hysteresisFactor": 1.15,
+  "mode": "VPD Perfection"
+}
+```
+
+**Deadband Exit (INFO):**
+```json
+{
+  "Name": "Room1",
+  "message": "VPD 1.16 EXITED deadband with hysteresis (deviation: 0.06 > exit_threshold: 0.0575, deadband: 0.05, last_exit: 0s ago) - exiting deadband"
+}
+```
+
+**Deadband Active (INFO - Every 30s):**
+```json
+{
+  "Name": "Room1",
+  "message": "Smart Deadband Stage 2 active - hold: 120s, trend: stable",
+  "VPDStatus": "InDeadband",
+  "currentVPD": 1.10,
+  "targetVPD": 1.10,
+  "deadband": 0.05,
+  "exitThreshold": 0.0575,
+  "deviation": 0.00,
+  "holdTimeRemaining": 120,
+  "holdDuration": 300,
+  "stage": 2,
+  "trend": "stable",
+  "mode": "VPD Perfection",
+  "hysteresisFactor": 1.15,
+  "deadbandActive": true,
+  "devicesDimmed": ["canHeat:25%", "canCool:25%"],
+  "devicesReduced": ["canHumidify", "canDehumidify"],
+  "ventilationRunning": ["canVentilate"]
+}
+```
+
+---
+
+## Closed Environment Night Mode Power-Saving
+
+### Overview
+
+Closed Environment Mode now includes **Night Mode Power-Saving** functionality, which is activated when:
+- Light is OFF (`isPlantDay.islightON = False`)
+- AND `nightVPDHold = False`
+
+### Power-Saving Logic
+
+When Night Mode Power-Saving is active, the system optimizes for energy efficiency while maintaining mold prevention:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ NIGHT MODE POWER-SAVING FOR CLOSED ENVIRONMENT                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│ Climate Devices (Minimized to Save Power):                                  │
+│ • canHeat       → Reduce (Heater OFF)                                      │
+│ • canCool       → Reduce (Cooler OFF)                                      │
+│ • canHumidify   → Reduce (Humidifier OFF)                                  │
+│ • canDehumidify→ Reduce (Dehumidifier OFF)                                │
+│ • canClimate    → Reduce (Climate OFF)                                     │
+│ • canCO2        → Reduce (CO2 OFF)                                         │
+│ • canLight      → Reduce (Light OFF)                                       │
+│                                                                             │
+│ Ventilation Devices (Active for Mold Prevention):                           │
+│ • canExhaust    → Increase (Air exchange!)                                 │
+│ • canVentilate  → Increase (Air circulation!)                              │
+│ • canWindow     → Increase (Air exchange!)                                 │
+│ • canIntake     → Variable (based on outside temperature)                   │
+│                                                                             │
+│ Intake Logic:                                                              │
+│ IF outside_temp >= (minTemp - 3°C):                                         │
+│    → Increase (Outside air is warm enough)                                 │
+│ ELSE:                                                                      │
+│    → Reduce (Too cold, save heating)                                       │
+│                                                                             │
+│ ⚠️ IMPORTANT: VPD is NOT used for control in Closed Environment!           │
+│ • VPD is only used for Smart Deadband check                                 │
+│ • Temperature and Humidity use their OWN targets                            │
+│ • VPD in log is for informational purposes only                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Example Log Output (Night Mode Power-Saving)
+
+```json
+{
+  "Name": "dev_room",
+  "message": "Night Mode Power-Saving: Climate minimized, Ventilation active - 8 actions",
+  "actions": "canHeat:Reduce, canCool:Reduce, canHumidify:Reduce, canDehumidify:Reduce, canClimate:Reduce, canCO2:Reduce, canExhaust:Increase, canVentilate:Increase",
+  "actionCount": 8,
+  "tempCurrent": 18.5,
+  "humCurrent": 65.0,
+  "co2Current": 600,
+  "vpdCurrent": 0.65,
+  "isNightMode": true,
+  "nightVPDHold": false
+}
+```
+
+### Key Differences to VPD Perfection/Target Night Mode
+
+| Aspect | VPD Perfection/Target | Closed Environment |
+|--------|---------------------|-------------------|
+| **Night Mode Trigger** | `is_light_on = False AND nightVPDHold = False` | Same |
+| **Climate Devices** | Reduced/Minimized | Reduced (OFF) |
+| **VPD Control** | Paused (no VPD actions) | N/A (no VPD control) |
+| **Temp/Hum Control** | Paused | Uses tentData min/max limits (for display: midpoint of min/max) |
+| **Ventilation** | Active (mold prevention) | Active (mold prevention) |
+| **VPD in Log** | `vpdCurrent`, `vpdTarget`, `vpdDeviation`, `vpdStatus` | `vpdCurrent` (informational only) |
+| **Control Logic** | VPD-based control paused | Control based on tentData min/max limits |
+
+---
+
+## Recent Bug Fixes and Improvements
+
+### Bug Fixes (2026-04-07)
+
+#### 1. **✅ Fixed: Hold Time Extension Logic** (OGBModeManager.py:518-537)
+
+**Problem:** When hold time elapsed and trend was "away_from_target", the deadband state was reset then immediately extended, causing inconsistent behavior.
+
+**Fix:** Modified the hold time extension logic to only extend when BOTH conditions are met:
+- Trend is good ("stable" OR "towards_target")
+- AND VPD is within hysteresis zone (`deviation <= exit_threshold`)
+
+**Before:**
+```python
+if hold_remaining <= 0:
+    if trend == "stable" or trend == "towards_target":
+        self._deadband_hold_start = now  # Extend
+    else:
+        self._reset_deadband_state()  # Reset
+    if deviation <= self._deadband_exit_threshold:
+        self._deadband_hold_start = now  # CONFLICT: Reset then extended!
+```
+
+**After:**
+```python
+if hold_remaining <= 0:
+    if trend == "stable" or trend == "towards_target":
+        if deviation <= self._deadband_exit_threshold:
+            # Both conditions met: extend
+            self._deadband_hold_start = now
+        else:
+            # Trend is good but outside hysteresis zone: exit
+            self._reset_deadband_state()
+            return False
+    else:
+        # Trend is bad: exit
+        self._reset_deadband_state()
+        return False
+```
+
+#### 2. **✅ Fixed: Device State Not Restored on Exit** (Device.py:2592-2612)
+
+**Problem:** When devices exited deadband, they only set `_in_smart_deadband = False` but did NOT restore their previous state, potentially leaving devices at minimum for an extended period.
+
+**Fix:** Implemented state saving and restoration:
+1. Save current state (`_pre_deadband_duty_cycle` or `_pre_deadband_is_running`) before entering deadband
+2. Restore previous state when exiting deadband via `restoreFromMinimum()`
+
+**Changes:**
+- Added `_pre_deadband_duty_cycle` and `_pre_deadband_is_running` attributes
+- Modified `on_smart_deadband_entered()` to save current state
+- Added `restoreFromMinimum()` method to restore previous state
+- Modified `on_smart_deadband_exited()` to call `restoreFromMinimum()`
+
+#### 3. **✅ Removed: Redundant "Reduce" Events** (OGBModeManager.py:494-516)
+
+**Problem:** Deadband handler emitted "Reduce" events for devices, but these were immediately blocked by device handlers because `_in_smart_deadband` was already `True`. This was inefficient and unnecessary.
+
+**Fix:** Removed the redundant "Reduce" event emission (lines 494-516). The `SmartDeadbandEntered` event already handles device reduction via `setToMinimum()`.
+
+**Impact:** Reduced event traffic and improved efficiency.
+
+### CO2 Control Behavior (Design Decision)
+
+The CO2 control behavior is intentionally different across modes:
+
+| Mode | CO2 in Deadband | CO2 outside Deadband | Reasoning |
+|------|----------------|------------------------|-----------|
+| VPD Perfection | ❌ No | ✅ Yes | Optimize for energy when VPD is already in target zone |
+| Closed Environment | ✅ Yes | ✅ Yes | CO2 is critical for sealed chambers, maintain even in deadband |
+| VPD Target | ❌ No | ❌ No | Simpler mode focused on VPD control only |
+
+This is a **design decision**, not a bug. Each mode has its own optimization strategy.
+
+### Test Coverage
+
+All fixes are covered by comprehensive tests:
+
+- **test_deadband_hysteresis.py**: 17 tests (all passing)
+  - Hysteresis exit threshold
+  - Night mode blocking
+  - Smart Deadband return values
+  - Hold time extension with good trend
+
+- **test_closed_environment_deadband.py**: 6 tests (all passing)
+  - Night mode power-saving
+  - Smart Deadband respect
+  - Own targets vs VPD targets
+  - VPD as informational only
+
+- **test_closed_environment_manager.py**: 5 tests (all passing)
+  - Cycle execution
+  - Target usage
+  - Night mode handling
+
+- **test_deadband_return_value.py**: 6 tests (all passing)
+  - Return value consistency across all modes
+  - Caller usage verification
 
 ---
 

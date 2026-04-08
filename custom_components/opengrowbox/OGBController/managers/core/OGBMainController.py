@@ -156,7 +156,18 @@ class OGBMainController:
         self.console_manager.set_data_store_manager(self.data_store_manager)
 
         # Notification system
-        self.notificator = OGBNotificator(self.hass, self.room)
+        # Get notification configuration from dataStore
+        notification_service = self.data_store.get("notification_service") or "persistent_notification.create"
+        critical_notification_service = self.data_store.getDeep("critical_notification_service")  # Optional override for critical alerts
+        notification_enabled = self.data_store.getDeep("notifyControl", True)  # Default to True
+        
+        self.notificator = OGBNotificator(
+            self.hass, 
+            self.room,
+            service=notification_service,
+            critical_service=critical_notification_service,
+            notification_enabled=notification_enabled
+        )
 
         # Monitoring and maintenance
         self.fallback_manager = OGBFallBackManager(

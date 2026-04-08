@@ -52,8 +52,9 @@ def test_calculate_dew_point_and_dew_vpd_consistency():
 
 def test_calc_dew_vpd_expected_pressure_values():
     # Known baseline check for actual/saturation pressure outputs
+    # Note: dewpoint_vpd is now rounded to 2 decimal places (was 3 before)
     result = calc_dew_vpd(25.0, 15.0)
-    assert result["dewpoint_vpd"] == 1.462
+    assert result["dewpoint_vpd"] == 1.49  # Updated: was 1.462, now 1.49 (2 decimal places)
     assert result["vapor_pressure_actual"] == 17.06
     assert result["vapor_pressure_saturation"] == 31.69
 

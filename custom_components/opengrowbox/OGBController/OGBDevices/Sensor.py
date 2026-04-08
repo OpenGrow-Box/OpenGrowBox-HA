@@ -583,6 +583,32 @@ class Sensor:
                         elif "_ph" in entity_id:
                             self.data_store.setDeep("Hydro.ph_current", numeric_value)
                             updated = True
+                        
+                        # NEW: Handle ultrasonic/reservoir sensors
+                        elif "_ultrasonic" in entity_id or "_reservoir" in entity_id or "_level" in entity_id:
+                            # Store raw value in dataStore
+                            self.data_store.setDeep("Hydro.ReservoirLevelRaw", numeric_value)
+                            
+                            # Get unit from sensor config
+                            unit = sensor_config.get("unit", "")
+                            
+                            # Emit ReservoirLevelUpdate event for ReservoirManager
+                            await self.event_manager.emit(
+                                "ReservoirLevelUpdate",
+                                {
+                                    "entity_id": entity_id,
+                                    "state": str(numeric_value),
+                                    "attributes": {
+                                        "unit_of_measurement": unit,
+                                        "last_update": datetime.now().isoformat()
+                                    }
+                                }
+                            )
+                            
+                            _LOGGER.debug(
+                                f"[{self.room}] Reservoir/Ultrasonic sensor updated: {entity_id} = {numeric_value} {unit}"
+                            )
+                            updated = True
 
                             # Recalculate ORP when pH changes (like DLI/PPFD recalculate on input changes)
                             temp_current = self.data_store.getDeep("Hydro.current_temp")

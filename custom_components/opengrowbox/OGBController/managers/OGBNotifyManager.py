@@ -10,7 +10,8 @@ _LOGGER = logging.getLogger(__name__)
 
 class OGBNotificator:
     def __init__(
-        self, hass, room: str, service: str = "persistent_notification.create"
+        self, hass, room: str, service: str = "persistent_notification.create",
+        critical_service: Optional[str] = None, notification_enabled: bool = True
     ):
         """
         OGB Notificator for critical and info messages.
@@ -18,10 +19,14 @@ class OGBNotificator:
         :param hass: Home Assistant core object
         :param room: Room/Context name (z. B. "FlowerTent")
         :param service: Default notification service (z. B. "persistent_notification.create" oder "notify.mobile_app_xyz")
+        :param critical_service: Override service for critical notifications (defaults to mobile app if configured)
+        :param notification_enabled: Global notification on/off switch
         """
         self.hass = hass
         self.room = room
         self.service = service  # Standard-Service
+        self.critical_service = critical_service  # Service für Critical Notifications
+        self.notification_enabled = notification_enabled  # Globaler An/Aus-Schalter
 
         # Rate limiting configuration
         self.rate_limits = {
@@ -170,6 +175,14 @@ class OGBNotificator:
         :param service: Override default service
         """
         try:
+            # Check global notification enabled switch
+            # NOTE: Critical notifications are ALWAYS sent regardless of global setting
+            if not self.notification_enabled and level != "critical":
+                _LOGGER.debug(
+                    f"[{self.room}] Notifications disabled globally, skipping {level}: {title}"
+                )
+                return
+
             # Check rate limits before sending
             if not await self._check_rate_limit(level, title):
                 _LOGGER.warning(
@@ -177,7 +190,22 @@ class OGBNotificator:
                 )
                 return
 
+            # Determine which service to use
             svc = service or self.service
+            
+            # For critical notifications, use critical_service if configured
+            if level == "critical":
+                if self.critical_service:
+                    svc = self.critical_service
+                elif svc == "persistent_notification.create":
+                    # Try to find a mobile app service for critical notifications
+                    mobile_service = await self._find_mobile_notification_service()
+                    if mobile_service:
+                        svc = mobile_service
+                        _LOGGER.info(
+                            f"[{self.room}] Using mobile notification service for critical alert: {svc}"
+                        )
+
             domain, srv = svc.split(".")
             service_data = {}
 
@@ -187,7 +215,7 @@ class OGBNotificator:
                 service_data = {"title": title, "message": message}
                 # Set appropriate priority based on level
                 if level == "critical":
-                    service_data["data"] = {"ttl": 0, "priority": "high"}
+                    service_data["data"] = {"ttl": 0, "priority": "high", "push": {"sound": "default"}}
                 elif level == "warning":
                     service_data["data"] = {"priority": "default"}
             else:
@@ -201,10 +229,32 @@ class OGBNotificator:
             # Record the notification for rate limiting
             self._record_notification(level)
 
-            _LOGGER.info(f"[{self.room}] {level.title()} notification sent: {title}")
+            _LOGGER.info(f"[{self.room}] {level.title()} notification sent via {svc}: {title}")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to send {level} notification: {e}")
+    
+    async def _find_mobile_notification_service(self) -> Optional[str]:
+        """
+        Find the first available mobile app notification service.
+        
+        :return: Service name (e.g., "notify.mobile_app_iphone") or None
+        """
+        try:
+            # Get all registered services
+            services = self.hass.services.async_services()
+            
+            # Look for mobile app notification services
+            if "notify" in services:
+                for service_name in services["notify"]:
+                    if service_name.startswith("mobile_app_"):
+                        return f"notify.{service_name}"
+            
+            _LOGGER.warning(f"[{self.room}] No mobile app notification service found for critical alerts")
+            return None
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error finding mobile notification service: {e}")
+            return None
 
     async def _check_rate_limit(self, level: str, title: str) -> bool:
         """
