@@ -8,17 +8,14 @@ This guide provides comprehensive troubleshooting procedures for common OpenGrow
 
 ### Step 1: Check System Status
 ```bash
-# Check overall system health
-curl http://your-ogb-device/api/v1/status
-
 # Check HA integration
 curl http://homeassistant:8123/api/states/sensor.ogb_zone1_temperature
 ```
 
 ### Step 2: Check Logs
 ```bash
-# Check OGB logs
-tail -f /var/log/opengrowbox/ogb.log
+# Check OGB Client logs
+tail -f /homeassistant/ogb_data/client_logs.json
 
 # Check HA logs for OGB entries
 grep "opengrowbox" /config/home-assistant.log

@@ -22,7 +22,13 @@ class OGBDeviceManager:
 - **Camera**: Live viewing, timelapse recording, and daily snapshots
 - **Exhaust/Intake**: Ventilation systems
 - **Heater/Cooler**: Temperature control devices
+
+- **Window**: Temperature control devices for adjustments from outsite
+- **Door**: Logs open/close and send notifcations for any Opening
+
 - **FridgeGrow**: Plantalytix/FridgeGrow device integration
+
+
 
 #### 3. Device Capabilities System
 - **Capability Mapping**: Device features and supported operations

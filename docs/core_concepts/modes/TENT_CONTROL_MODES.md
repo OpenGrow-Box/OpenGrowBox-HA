@@ -143,7 +143,166 @@ async def handle_targeted_vpd(self):
         await self.event_manager.emit("FineTune_vpd", capabilities)
 ```
 
-### 3. Drying Mode
+### 3. Closed Environment Mode
+
+**Sealed chamber control without traditional ventilation**
+
+#### When Active
+- **Trigger**: `tentMode = "Closed Environment"`
+- **Logic**: Temperature and humidity control using dehumidifiers/humidifiers without exhaust/intake
+- **Automation Level**: High - ambient-enhanced range control
+
+#### Key Features
+- **No ventilation**: Uses dehumidifiers/humidifiers instead of exhaust/intake fans
+- **Ambient enhancement**: Adjusts targets based on external conditions
+- **CO2 control**: Optional CO2 supplementation (requires `controlOptions.co2Control`)
+- **O2 safety**: Emergency ventilation if O2 drops below 19%
+
+#### Implementation
+
+```python
+async def handle_closed_environment(self):
+    """Closed Environment mode for sealed chambers."""
+    
+    # Get plant stage ranges (same as VPD Perfection)
+    plant_stage = self.data_store.get("plantStage")
+    stage_data = self.data_store.getDeep(f"plantStages.{plant_stage}")
+    
+    # Calculate perfection ranges with ambient enhancement
+    ambient_temp = self.data_store.getDeep("tentData.AmbientTemp")
+    ambient_hum = self.data_store.getDeep("tentData.AmbientHum")
+    
+    # Apply ambient influence (30% for temp, 40% for humidity)
+    temp_influence = (ambient_temp - stage_data["minTemp"]) * 0.3
+    hum_influence = (ambient_hum - stage_data["minHumidity"]) * 0.4
+    
+    # Adjusted targets
+    target_temp_min = stage_data["minTemp"] + temp_influence
+    target_temp_max = stage_data["maxTemp"] + temp_influence
+    target_hum_min = stage_data["minHumidity"] + hum_influence
+    target_hum_max = stage_data["maxHumidity"] + hum_influence
+    
+    # Control logic (similar to VPD Perfection)
+    current_temp = self.data_store.getDeep("tentData.temperature")
+    current_hum = self.data_store.getDeep("tentData.humidity")
+    
+    if current_temp < target_temp_min:
+        await self.event_manager.emit("increase_temperature")
+    elif current_temp > target_temp_max:
+        await self.event_manager.emit("decrease_temperature")
+    
+    if current_hum < target_hum_min:
+        await self.event_manager.emit("increase_humidity")
+    elif current_hum > target_hum_max:
+        await self.event_manager.emit("decrease_humidity")
+    
+    # Optional CO2 control
+    if self.data_store.getDeep("controlOptions.co2Control"):
+        await self.maintain_co2()
+```
+
+#### CO2 Control (Optional)
+
+```python
+async def maintain_co2(self):
+    """Maintain CO2 levels in closed environment."""
+    current_co2 = self.data_store.getDeep("sensors.co2")
+    co2_min = self.data_store.getDeep("controlOptionData.co2ppm.minPPM", 400)
+    co2_max = self.data_store.getDeep("controlOptionData.co2ppm.maxPPM", 1800)
+    
+    if current_co2 < co2_min:
+        await self.inject_co2()
+    elif current_co2 > co2_max:
+        await self.reduce_co2()
+    
+    # Emergency high CO2
+    if current_co2 > 2000:
+        await self.emergency_ventilation()
+```
+
+#### O2 Safety Monitoring
+
+```python
+async def monitor_o2_safety(self):
+    """Monitor O2 levels for safety in sealed environment."""
+    current_o2 = self.data_store.getDeep("sensors.o2")
+    
+    if current_o2 < 19.0:  # Critical level
+        await self.emergency_ventilation()
+    elif current_o2 < 20.0:  # Warning level
+        _LOGGER.warning(f"O2 level low: {current_o2}%")
+```
+
+#### When to Use
+- **Sealed grow chambers**: Air-tight environments with minimal air exchange
+- **Vertical farming pods**: Self-contained growing modules
+- **Research chambers**: Precise environmental control requirements
+- **Climate-controlled containers**: Mobile grow operations
+
+#### Hardware Requirements
+- **Required**: Temperature, humidity sensors
+- **Required for CO2**: CO2 sensor, CO2 injector/controller
+- **Required for O2 safety**: O2 sensor, emergency ventilation capability
+- **Climate control**: Dehumidifier, humidifier (no exhaust/intake)
+
+### 4. Script Mode
+
+**Custom user-defined automation scripts**
+
+#### When Active
+- **Trigger**: `tentMode = "Script Mode"`
+- **Logic**: Executes user-defined automation scripts
+- **Automation Level**: User-defined - complete flexibility
+
+#### Implementation
+
+```python
+async def handle_script_mode(self):
+    """Script Mode - execute user-defined automation."""
+    
+    # Get active script configuration
+    script_config = self.data_store.get("activeScript")
+    
+    if not script_config:
+        _LOGGER.warning("Script Mode active but no script configured")
+        return
+    
+    # Execute script steps
+    for step in script_config.get("steps", []):
+        await self.execute_script_step(step)
+        
+        # Wait for step duration or condition
+        if "duration" in step:
+            await asyncio.sleep(step["duration"])
+        elif "condition" in step:
+            await self.wait_for_condition(step["condition"])
+```
+
+#### Example Script Configuration
+
+```json
+{
+  "activeScript": {
+    "name": "Custom Light Schedule",
+    "steps": [
+      {
+        "action": "set_light",
+        "device": "light.main_grow_light",
+        "value": 100,
+        "duration": 43200
+      },
+      {
+        "action": "set_light",
+        "device": "light.main_grow_light",
+        "value": 0,
+        "duration": 43200
+      }
+    ]
+  }
+}
+```
+
+### 5. Drying Mode
 
 **Specialized mode for harvest drying and curing**
 
@@ -213,7 +372,7 @@ async def handle_5DayDry(self, phaseConfig):
     await self.apply_day_targets(targets)
 ```
 
-### 4. AI Control Mode (Premium)
+### 6. AI Control Mode (Premium)
 
 **Machine learning-driven environmental optimization**
 
@@ -262,7 +421,7 @@ async def handle_premium_modes(self, data):
         await self.event_manager.emit("MPCActions", data)
 ```
 
-### 5. PID Control Mode (Premium)
+### 7. PID Control Mode (Premium)
 
 **Proportional-Integral-Derivative feedback control**
 
@@ -296,7 +455,7 @@ class PIDController:
         return p_term + i_term + d_term
 ```
 
-### 6. MPC Control Mode (Premium)
+### 8. MPC Control Mode (Premium)
 
 **Model Predictive Control with optimization horizon**
 
@@ -322,7 +481,7 @@ async def handle_mpc_mode(self):
     await self.apply_control_step(optimal_trajectory[0])
 ```
 
-### 7. Disabled Mode
+### 9. Disabled Mode
 
 **Safety mode with all automation disabled**
 
@@ -365,6 +524,8 @@ async def selectActionMode(self, Publication):
     mode_handlers = {
         "VPD Perfection": self.handle_vpd_perfection,
         "VPD Target": self.handle_targeted_vpd,
+        "Closed Environment": self.handle_closed_environment,
+        "Script Mode": self.handle_script_mode,
         "Drying": self.handle_drying,
         "AI Control": lambda: self.handle_premium_modes({"controllerType": "AI"}),
         "PID Control": lambda: self.handle_premium_modes({"controllerType": "PID"}),
@@ -429,12 +590,25 @@ tent_mode_config = {
         "mode_start_time": "2025-12-24T10:00:00Z"
     },
 
-    # Plant stage data
+    # Plant stage and species data
+    "plantSpecies": "Cannabis",   # Current plant species
     "plantStage": "MidFlower",    # Current plant growth stage
-    "plantStages": {              # Detailed stage configurations
-        "Germination": {"vpdRange": [0.35, 0.70], ...},
-        "EarlyVeg": {"vpdRange": [0.60, 1.20], ...},
-        "MidFlower": {"vpdRange": [0.90, 1.70], ...}
+    "plantStages": {              # Detailed stage configurations (species-specific)
+        "MidFlower": {
+            "vpdRange": [0.90, 1.70],
+            "minTemp": 21,
+            "maxTemp": 25,
+            "minHumidity": 38,
+            "maxHumidity": 52,
+            "minEC": 1.8,
+            "maxEc": 2.4,
+            "minPh": 5.8,
+            "maxPh": 6.2,
+            "minLight": 70,
+            "maxLight": 90,
+            "minCo2": 1000,
+            "maxCo2": 1500
+        }
     }
 }
 ```
@@ -520,8 +694,63 @@ async def evaluate_mode_switching(self):
         await self.initiate_mode_switch(best_alternative, "performance_optimization")
 ```
 
+## Services
+
+### set_select_options
+
+**Dynamically update select entity options at runtime.**
+
+This service allows updating the available options of any OpenGrowBox select entity. It's primarily used internally when changing plant species to update the PlantStage select options.
+
+#### Service Data
+
+```json
+{
+  "entity_id": "select.ogb_plantstage_myroom",
+  "options": ["Germination", "Clones", "EarlyVeg", "MidVeg", "LateVeg"]
+}
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `entity_id` | string | Yes | The select entity to update (e.g., `select.ogb_plantstage_room`) |
+| `options` | list | Yes | List of new options to set |
+
+#### Behavior
+
+- Replaces all existing options with the new list
+- If the current selection is not in the new options, it resets to the first option
+- Automatically updates the Home Assistant state
+
+#### Example: Plant Species Change
+
+When switching from Cannabis (8 stages) to Lettuce (5 stages):
+
+```python
+# User selects "Lettuce" in OGB_PlantSpecies
+# System automatically updates PlantStage options:
+
+await hass.services.async_call(
+    "opengrowbox",
+    "set_select_options",
+    {
+        "entity_id": "select.ogb_plantstage_myroom",
+        "options": ["Germination", "Clones", "EarlyVeg", "MidVeg", "LateVeg"]
+    }
+)
+
+# PlantStage select now shows only 5 options instead of 8
+```
+
+#### Related Services
+
+- `opengrowbox.add_select_options` - Add options to existing list
+- `opengrowbox.remove_select_options` - Remove specific options
+
 ---
 
-**Last Updated**: December 24, 2025
-**Version**: 2.1 (Complete tentMode Documentation)
+**Last Updated**: January 2025
+**Version**: 2.2 (Added Plant Species, Closed Environment, Script Mode, set_select_options service)
 **Status**: Production Ready

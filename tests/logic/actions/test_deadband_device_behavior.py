@@ -88,13 +88,31 @@ async def test_device_set_to_minimum_turns_off_non_dimmable():
 @pytest.mark.asyncio
 async def test_on_smart_deadband_entered_calls_set_to_minimum():
     """Test that on_smart_deadband_entered calls setToMinimum and sets flag."""
-    device = create_mock_device("Heater", is_dimmable=True)
+    from custom_components.opengrowbox.OGBController.OGBDevices.Device import Device
+    
+    # Create a minimal mock device
+    device = Device.__new__(Device)
+    device.deviceName = "TestDevice"
+    device.deviceType = "Heater"
+    device.isInitialized = True
+    device._in_smart_deadband = False
+    device.isDimmable = True
+    device.dutyCycle = 50
+    device._pre_deadband_duty_cycle = None
+    device._pre_deadband_is_running = None
+    device.isRunning = True
+    device.minDuty = 20
+    device.isSpecialDevice = False
+    device.clamp_duty_cycle = lambda x: min(100, max(0, x))
+    
+    # Mock setToMinimum to track calls
+    original_set_to_minimum = device.setToMinimum = AsyncMock()
 
     # Call on_smart_deadband_entered
     await device.on_smart_deadband_entered({})
 
     # Verify: setToMinimum was called BEFORE flag was set
-    assert device.setToMinimum.called
+    assert original_set_to_minimum.called
     assert device._in_smart_deadband is True
     print("✓ on_smart_deadband_entered calls setToMinimum and sets flag")
 

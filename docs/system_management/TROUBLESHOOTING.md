@@ -56,9 +56,21 @@ tail -f /config/home-assistant.log | grep -i "import\|module"
 #### 2. Configuration Errors
 ```yaml
 # Check configuration.yaml syntax
-opengrowbox:
-  mainControl: "HomeAssistant"  # Required
-  updateInterval: 30           # Optional
+logger:
+  default: info
+  logs:
+    homeassistant.config_entries: debug
+    homeassistant.setup: debug
+    homeassistant.loader: debug
+    custom_components.opengrowbox: debug
+    custom_components.ogb-dev-env: debug
+
+default_config:
+
+frontend:
+  extra_module_url:
+  - /local/opengrowbox/ogb_icons.js
+
 ```
 
 **Fix:** Ensure basic configuration is present
