@@ -86,6 +86,7 @@ class OGBConfigurationManager:
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
             f"ogb_planttype_{self.room.lower()}": self._update_plant_type,
+            f"ogb_plantspecies_{self.room.lower()}": self._update_plant_species,
             f"ogb_tentmode_{self.room.lower()}": self._update_tent_mode,
             f"ogb_leaftemp_offset_{self.room.lower()}": self._update_leaf_temp_offset,
             f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_target,
@@ -417,6 +418,113 @@ class OGBConfigurationManager:
             self.data_store.set("plantType", value)
             await self.event_manager.emit("LightPlanChange", value)
             _LOGGER.debug(f"Light Plan changed to {value}")
+
+    async def _update_plant_species(self, data):
+        """Update plant species and reload plant stages with species-specific VPD values."""
+        value = data.newState[0]
+        current_species = self.data_store.get("plantSpecies")
+        
+        if current_species != value:
+            self.data_store.set("plantSpecies", value)
+            
+            # Import plant species functions
+            from ...data.OGBParams.OGBPlants import get_full_plant_stages, get_plant_species_stages, is_valid_species
+            
+            # Validate species
+            if not is_valid_species(value):
+                _LOGGER.warning(f"{self.room}: Invalid plant species '{value}', using default")
+                value = "Cannabis"
+            
+            # Get plant stages for this species
+            plant_stages = get_full_plant_stages(value)
+            new_stages_list = get_plant_species_stages(value)
+            
+            # Update the plant stages in data store
+            self.data_store.set("plantStages", plant_stages)
+            
+            # Update PlantStage select options to match species stages
+            await self._update_plant_stage_select_options(new_stages_list)
+            
+            # Emit event to trigger VPD recalculation with new stage values
+            await self.event_manager.emit("PlantSpeciesChange", value)
+            await self.event_manager.emit("PlantStageChange", self.data_store.get("plantStage"))
+            
+            _LOGGER.info(f"{self.room}: Plant species changed to '{value}', updated plant stages")
+
+    async def _update_plant_stage_select_options(self, new_stages: list):
+        """Update PlantStage select entity options based on species stages.
+        
+        Args:
+            new_stages: List of available stages for the current species
+        """
+        try:
+            # Build entity_id for the PlantStage select
+            entity_id = f"select.ogb_plantstage_{self.room.lower()}"
+            
+            # Use the opengrowbox.set_select_options service if available
+            # or directly manipulate the select entity
+            service_name = "set_select_options"
+            
+            # Check if service exists
+            if self.hass.services.has_service("opengrowbox", service_name):
+                # Use service to update options
+                await self.hass.services.async_call(
+                    domain="opengrowbox",
+                    service=service_name,
+                    service_data={
+                        "entity_id": entity_id,
+                        "options": new_stages
+                    },
+                    blocking=True
+                )
+                _LOGGER.debug(f"{self.room}: Called {service_name} service for {entity_id}")
+            else:
+                # Fallback: Direct entity manipulation via hass.data
+                select_entity = None
+                
+                if hasattr(self.hass, 'data') and 'opengrowbox' in self.hass.data:
+                    domain_data = self.hass.data['opengrowbox']
+                    if isinstance(domain_data, dict) and 'selects' in domain_data:
+                        # Search for the PlantStage select entity for this room
+                        target_name = f"OGB_PlantStage_{self.room}"
+                        for entity in domain_data['selects']:
+                            if hasattr(entity, '_name') and entity._name == target_name:
+                                select_entity = entity
+                                break
+                            # Alternative: check entity_id
+                            if hasattr(entity, 'entity_id') and f"ogb_plantstage_{self.room.lower()}" in entity.entity_id:
+                                select_entity = entity
+                                break
+                
+                if select_entity:
+                    current_stage = select_entity._attr_current_option
+                    
+                    # Update options to match species stages
+                    select_entity._attr_options = new_stages
+                    
+                    # Check if current stage is still valid
+                    if current_stage not in new_stages:
+                        # Set to first available stage
+                        new_stage = new_stages[0] if new_stages else "Germination"
+                        select_entity._attr_current_option = new_stage
+                        self.data_store.set("plantStage", new_stage)
+                        _LOGGER.info(
+                            f"{self.room}: PlantStage changed from '{current_stage}' to '{new_stage}' "
+                            f"(not available in new species)"
+                        )
+                    
+                    # Notify Home Assistant of the change
+                    if hasattr(select_entity, 'async_write_ha_state'):
+                        select_entity.async_write_ha_state()
+                    
+                    _LOGGER.debug(f"{self.room}: Updated PlantStage select options: {new_stages}")
+                else:
+                    _LOGGER.warning(
+                        f"{self.room}: Could not find PlantStage select entity. "
+                        f"Options will update on next restart."
+                    )
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Error updating PlantStage select options: {e}")
 
     async def _update_tent_mode(self, data):
         """Update tent mode."""

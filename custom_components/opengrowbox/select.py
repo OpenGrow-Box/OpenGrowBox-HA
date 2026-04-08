@@ -7,6 +7,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
 from .naming import (display_name_from_raw, global_device_info, legacy_entity_id,
                      room_device_info, room_selector_device_info)
+from .OGBController.data.OGBParams.OGBPlants import PLANT_SPECIES_OPTIONS, DEFAULT_PLANT_SPECIES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -189,6 +190,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             options=["Photoperiodic", "Auto"],
             initial_value="Photoperiodic",
+        ),
+        CustomSelect(
+            f"OGB_PlantSpecies_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=PLANT_SPECIES_OPTIONS,
+            initial_value=DEFAULT_PLANT_SPECIES,
         ),
         CustomSelect(
             f"OGB_TentMode_{coordinator.room_name}",
@@ -589,6 +597,58 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             DOMAIN,
             "remove_select_options",
             handle_remove_options,
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): str,
+                    vol.Required("options"): vol.All(list, [str]),
+                }
+            ),
+        )
+
+    if not hass.services.has_service(DOMAIN, "set_select_options"):
+
+        async def handle_set_options(call):
+            """Handle the set options service - replaces all options."""
+            entity_id = call.data.get("entity_id")
+            options = call.data.get("options")
+            found = False
+
+            _LOGGER.debug(f"Setting options for '{entity_id}': {options}")
+
+            for select in hass.data[DOMAIN]["selects"]:
+                if select.entity_id == entity_id:
+                    found = True
+                    
+                    # Store current option
+                    current_option = select._attr_current_option
+                    
+                    # Replace all options
+                    select._attr_options = list(options)
+                    
+                    # Check if current option is still valid
+                    if current_option not in options:
+                        # Set to first available option
+                        new_option = options[0] if options else None
+                        select._attr_current_option = new_option
+                        _LOGGER.info(
+                            f"Current option '{current_option}' not in new options, "
+                            f"setting '{select.name}' to '{new_option}'"
+                        )
+                    
+                    # Notify Home Assistant of the change
+                    select.async_write_ha_state()
+                    _LOGGER.debug(
+                        f"Set options for '{select.name}': {select._attr_options}"
+                    )
+                    break
+
+            if not found:
+                _LOGGER.error(f"Select entity with id '{entity_id}' not found.")
+
+        hass.services.async_register(
+            DOMAIN,
+            "set_select_options",
+            handle_set_options,
             schema=vol.Schema(
                 {
                     vol.Required("entity_id"): str,

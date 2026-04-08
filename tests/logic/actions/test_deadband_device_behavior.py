@@ -7,6 +7,32 @@ import pytest
 from unittest.mock import AsyncMock, Mock
 
 
+def create_mock_device(device_type, is_dimmable=True):
+    """Helper to create a minimal mock device with all required attributes."""
+    from custom_components.opengrowbox.OGBController.OGBDevices.Device import Device
+    
+    device = Device.__new__(Device)
+    device.deviceName = f"Test{device_type}"
+    device.deviceType = device_type
+    device.isInitialized = True
+    device._in_smart_deadband = False
+    device.isDimmable = is_dimmable
+    device.dutyCycle = 50
+    device._pre_deadband_duty_cycle = None
+    device._pre_deadband_is_running = None
+    device.isRunning = True
+    device.minDuty = 20
+    device.isSpecialDevice = False  # Important for turn_on signature
+    
+    # Mock methods
+    device.setToMinimum = AsyncMock()
+    device.clamp_duty_cycle = lambda x: min(100, max(0, x))
+    device.turn_on = AsyncMock()
+    device.turn_off = AsyncMock()
+    
+    return device
+
+
 @pytest.mark.asyncio
 async def test_device_set_to_minimum_reduces_dimmable():
     """Test that setToMinimum reduces dimmable device to 10% (or minDuty if higher)."""
@@ -19,14 +45,15 @@ async def test_device_set_to_minimum_reduces_dimmable():
     device.isSpecialDevice = False
     device.minDuty = 20
     device.dutyCycle = 80
-    device.isRunning = True
 
     # Mock the turn_on method
     device.turn_on = AsyncMock()
     device.clamp_duty_cycle = lambda x: min(100, max(0, x))
 
-    # Call setToMinimum
-    await device.setToMinimum()
+    # Call setToMinimum directly (not mocked)
+    # Need to bind the real method
+    from custom_components.opengrowbox.OGBController.OGBDevices.Device import Device as DeviceClass
+    await DeviceClass.setToMinimum(device)
 
     # Verify: turn_on was called with 20% (max(10, minDuty=20))
     assert device.turn_on.called
@@ -49,8 +76,9 @@ async def test_device_set_to_minimum_turns_off_non_dimmable():
     # Mock the turn_off method
     device.turn_off = AsyncMock()
 
-    # Call setToMinimum
-    await device.setToMinimum()
+    # Call setToMinimum directly
+    from custom_components.opengrowbox.OGBController.OGBDevices.Device import Device as DeviceClass
+    await DeviceClass.setToMinimum(device)
 
     # Verify: turn_off was called
     assert device.turn_off.called
@@ -60,18 +88,7 @@ async def test_device_set_to_minimum_turns_off_non_dimmable():
 @pytest.mark.asyncio
 async def test_on_smart_deadband_entered_calls_set_to_minimum():
     """Test that on_smart_deadband_entered calls setToMinimum and sets flag."""
-    from custom_components.opengrowbox.OGBController.OGBDevices.Device import Device
-
-    # Create a minimal mock device
-    device = Device.__new__(Device)
-    device.deviceName = "TestDevice"
-    device.deviceType = "Heater"
-    device.isInitialized = True
-    device._in_smart_deadband = False
-
-    # Mock methods
-    device.setToMinimum = AsyncMock()
-    device.clamp_duty_cycle = lambda x: x
+    device = create_mock_device("Heater", is_dimmable=True)
 
     # Call on_smart_deadband_entered
     await device.on_smart_deadband_entered({})
@@ -162,32 +179,19 @@ async def test_window_reduce_blocks_when_in_deadband():
 @pytest.mark.asyncio
 async def test_deadband_device_types_filter():
     """Test that only correct device types respond to SmartDeadbandEntered."""
-    from custom_components.opengrowbox.OGBController.OGBDevices.Device import Device
-
     # Test each device type
     deadband_types = {"Heater", "Cooler", "Humidifier", "Dehumidifier", "Climate", "Exhaust", "Intake", "Window"}
     non_deadband_types = {"Ventilation", "Light", "CO2", "GenericSwitch"}
 
     for dtype in deadband_types:
-        device = Device.__new__(Device)
-        device.deviceName = f"Test{dtype}"
-        device.deviceType = dtype
-        device.isInitialized = True
-        device._in_smart_deadband = False
-        device.setToMinimum = AsyncMock()
-        device.clamp_duty_cycle = lambda x: x
+        device = create_mock_device(dtype, is_dimmable=True)
 
         await device.on_smart_deadband_entered({})
         assert device._in_smart_deadband is True, f"{dtype} should respond to SmartDeadbandEntered"
         print(f"✓ {dtype} responds to SmartDeadbandEntered")
 
     for dtype in non_deadband_types:
-        device = Device.__new__(Device)
-        device.deviceName = f"Test{dtype}"
-        device.deviceType = dtype
-        device.isInitialized = True
-        device._in_smart_deadband = False
-        device.setToMinimum = AsyncMock()
+        device = create_mock_device(dtype, is_dimmable=True)
 
         await device.on_smart_deadband_entered({})
         assert device._in_smart_deadband is False, f"{dtype} should NOT respond to SmartDeadbandEntered"

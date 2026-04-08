@@ -19,6 +19,7 @@ class OGBConf:
     vpdDetermination: str = ""
     tentMode: str = ""
     plantStage: str = ""
+    plantSpecies: str = ""
     plantType: str = ""
     strainName: str = ""
     mainControl: str = "HomeAssistant"  # Default to HomeAssistant to enable device initialization

@@ -355,12 +355,18 @@ SENSOR_TYPES = {
         },
     },
     "salinity": {
-        "unit": "ppt",
+        "unit": "ppm",
         "device_class": "salinity",
         "state_class": "measurement",
-        "precision": 2,
+        "precision": 0,
         "contexts": {
-            "water": {"min_value": 0, "max_value": 70, "name": "Water Salinity"}
+            "water": {
+                "min_value": 0,
+                "max_value": 5000,
+                "optimal_min": 0,
+                "optimal_max": 1500,
+                "name": "Water Salinity"
+            }
         },
     },
     "weight": {
