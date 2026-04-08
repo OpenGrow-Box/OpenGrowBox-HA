@@ -143,27 +143,12 @@ async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
                 for name, required_level in _REQUIRED_LOGGER_OVERRIDES.items()
             )
 
-    if not has_default_config_key:
-        try:
-            await hass.async_add_executor_job(_add_default_config_to_yaml, config_path)
-            _LOGGER.info("Added default_config to configuration.yaml")
-        except Exception as err:
-            _LOGGER.warning("Could not add default_config to configuration.yaml: %s", err)
-
-    # Add logger config if missing or incomplete
-    if not (logger_default_ok and logger_overrides_ok):
-        try:
-            await hass.async_add_executor_job(_add_logger_to_yaml, config_path)
-            _LOGGER.info("Added logger config to configuration.yaml")
-        except Exception as err:
-            _LOGGER.warning("Could not add logger config to configuration.yaml: %s", err)
-
-    # Add extra_module_url for custom icons
-    icon_url = "/local/opengrowbox/ogb_icons.js"
+    # Add all required config (default_config, logger, frontend) in one go
     try:
-        await hass.async_add_executor_job(_add_extra_module_url_to_yaml, config_path, icon_url)
+        await hass.async_add_executor_job(_add_required_config_to_yaml, config_path)
+        _LOGGER.info("Updated configuration.yaml with required OpenGrowBox config")
     except Exception as err:
-        _LOGGER.warning("Could not add extra_module_url to configuration.yaml: %s", err)
+        _LOGGER.warning("Could not update configuration.yaml: %s", err)
 
     if has_default_config_key and logger_default_ok and logger_overrides_ok:
         return
@@ -186,7 +171,11 @@ async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
 
 
 def _add_required_config_to_yaml(config_path: str) -> None:
-    """Add default_config, logger, and frontend extra_module_url to configuration.yaml if missing."""
+    """Add default_config, logger, and frontend extra_module_url to configuration.yaml if missing.
+    
+    IMPORTANT: Only prepend missing blocks, do NOT overwrite existing content including
+    !include directives (automations.yaml, scripts.yaml, scenes.yaml, themes, etc.)
+    """
     if not os.path.exists(config_path):
         return
 
@@ -204,32 +193,49 @@ def _add_required_config_to_yaml(config_path: str) -> None:
     backup_path = config_path + ".ogb_config_bak"
     shutil.copy(config_path, backup_path)
 
-    config_lines = []
+    prepend_lines = []
 
     if needs_default_config:
-        config_lines.append("default_config:\n")
+        prepend_lines.append("default_config:")
 
     if needs_logger:
-        config_lines.append("""logger:
+        prepend_lines.append("""logger:
   default: info
   logs:
     homeassistant.config_entries: debug
     homeassistant.setup: debug
     homeassistant.loader: debug
     custom_components.opengrowbox: debug
-    custom_components.ogb-dev-env: debug
-""")
+    custom_components.ogb-dev-env: debug""")
 
+    # For frontend: inject into existing frontend section instead of prepending
     if needs_frontend:
-        config_lines.append("""frontend:
+        if "frontend:" in content:
+            # Inject extra_module_url into existing frontend block
+            # Find the frontend: line and insert after it
+            lines = content.split('\n')
+            new_lines = []
+            frontend_inserted = False
+            for i, line in enumerate(lines):
+                new_lines.append(line)
+                if line.strip() == "frontend:" and not frontend_inserted:
+                    new_lines.append("  extra_module_url:")
+                    new_lines.append("    - /local/opengrowbox/ogb_icons.js")
+                    frontend_inserted = True
+            content = '\n'.join(new_lines)
+        else:
+            prepend_lines.append("""frontend:
   extra_module_url:
-    - /local/opengrowbox/ogb_icons.js
-""")
+    - /local/opengrowbox/ogb_icons.js""")
+
+    # Write: prepend new lines before existing content (keeps !includes intact)
+    if prepend_lines:
+        content = "\n\n".join(prepend_lines) + "\n\n" + content
 
     with open(config_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(config_lines) + "\n" + content)
+        f.write(content)
 
-    _LOGGER.info("Added default_config, logger, and frontend to configuration.yaml (backup at %s)", backup_path)
+    _LOGGER.info("Updated configuration.yaml (backup at %s)", backup_path)
 
 
 def _add_default_config_to_yaml(config_path: str) -> None:
