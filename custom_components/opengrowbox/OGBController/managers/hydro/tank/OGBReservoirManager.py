@@ -85,8 +85,13 @@ class OGBReservoirManager:
     async def _check_sensor_update(self, data):
         """Check if updated sensor is our reservoir sensor"""
         try:
-            # Handle OGBEventPublication object (Name, newState, oldState)
-            entity_id = getattr(data, 'Name', '')
+            # Handle both dictionary and OGBEventPublication object
+            if isinstance(data, dict):
+                entity_id = data.get('entity_id', '')
+            else:
+                # OGBEventPublication object (Name, newState, oldState)
+                entity_id = getattr(data, 'Name', '')
+            
             if (
                 "reservoir" in entity_id.lower() 
                 or "ultrasonic" in entity_id.lower()
@@ -98,10 +103,27 @@ class OGBReservoirManager:
     async def _handle_level_update(self, data):
         """Handle reservoir level update from sensor"""
         try:
-            # Handle OGBEventPublication object
-            entity_id = getattr(data, 'Name', 'unknown')
-            new_state_list = getattr(data, 'newState', [])
-            state = new_state_list[0] if new_state_list else None
+            # Handle both OGBEventPublication object and dictionary
+            if isinstance(data, dict):
+                # Dictionary format (from tests or direct calls)
+                entity_id = data.get('entity_id', 'unknown')
+                state = data.get('state')
+                attributes = data.get('attributes', {})
+            else:
+                # OGBEventPublication object format
+                entity_id = getattr(data, 'Name', 'unknown')
+                new_state_list = getattr(data, 'newState', [])
+                state = new_state_list[0] if new_state_list else None
+                
+                # Get attributes from Home Assistant state
+                try:
+                    state_obj = self.hass.states.get(entity_id)
+                    if state_obj:
+                        attributes = state_obj.attributes or {}
+                    else:
+                        attributes = {}
+                except Exception:
+                    attributes = {}
             
             # Skip invalid values
             if state in [None, "unknown", "unavailable", "Unbekannt"]:
@@ -116,16 +138,6 @@ class OGBReservoirManager:
                 return
             
             self.current_level_raw = raw_value
-            
-            # Get attributes from Home Assistant state
-            try:
-                state_obj = self.hass.states.get(entity_id)
-                if state_obj:
-                    attributes = state_obj.attributes or {}
-                else:
-                    attributes = {}
-            except Exception:
-                attributes = {}
             
             # Determine unit and convert to percentage if needed
             unit = attributes.get("unit_of_measurement", "%")
