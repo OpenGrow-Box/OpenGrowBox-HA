@@ -164,6 +164,130 @@ async def test_extended_reservoir_management_30_days():
 
 @pytest.mark.longterm
 @pytest.mark.asyncio
+async def test_reservoir_autofill_handles_multiple_refills_over_time():
+    """
+    Simulates repeated reservoir depletion and verifies that the real autofill loop
+    can recover the tank multiple times without entering a blocked state.
+    """
+    from custom_components.opengrowbox.OGBController.managers.hydro.tank.OGBReservoirManager import OGBReservoirManager
+
+    event_manager = FakeEventManager()
+    store = FakeDataStore({
+        "mainControl": "HomeAssistant",
+        "Hydro": {
+            "ReservoirLevel": 80.0,
+            "ReservoirMinLevel": 15.0,
+            "ReservoirMaxLevel": 85.0,
+        },
+        "capabilities": {
+            "canReservoirFill": {
+                "state": True,
+                "count": 1,
+                "devEntities": ["switch.test_reservoir_fill"],
+            }
+        },
+    })
+
+    manager = OGBReservoirManager.__new__(OGBReservoirManager)
+    manager.room = "test_room"
+    manager.data_store = store
+    manager.event_manager = event_manager
+    manager.hass = MagicMock()
+    manager.notificator = None
+    manager._default_low = 25.0
+    manager._default_high = 85.0
+    manager._default_max_fill = 85.0
+    manager.fill_step_size = 5.0
+    manager.current_level = 80.0
+    manager.current_level_raw = 80.0
+    manager.level_unit = "%"
+    manager.last_alert_time = None
+    manager.last_alert_type = None
+    manager.alert_cooldown = timedelta(minutes=30)
+    manager.reservoir_sensor_entity = "sensor.test_reservoir_level"
+    manager.reservoir_pump_entity = "switch.test_reservoir_fill"
+    manager._is_filling = False
+    manager._fill_cycles_completed = 0
+    manager._fill_start_level = None
+    manager._fill_start_time = None
+    manager._last_fill_cycle_time = None
+    manager._consecutive_sensor_errors = 0
+    manager._max_sensor_errors = 2
+    manager._fill_blocked = False
+    manager._fill_block_reason = None
+    manager._last_feed_mode = None
+    manager._expected_pump_state = None
+
+    notifications = []
+    refill_runs = []
+
+    async def _notify_user(title, message, level="info"):
+        notifications.append({"title": title, "message": message, "level": level})
+
+    async def _run_fill_cycle(target_level: float) -> bool:
+        manager.current_level = target_level
+        store.setDeep("Hydro.ReservoirLevel", target_level)
+        return True
+
+    async def _activate_pump():
+        return None
+
+    async def _deactivate_pump():
+        return None
+
+    async def _find_reservoir_pump(log_missing: bool = True):
+        manager.reservoir_pump_entity = "switch.test_reservoir_fill"
+
+    manager._notify_user = _notify_user
+    manager._run_fill_cycle = _run_fill_cycle
+    manager._activate_pump = _activate_pump
+    manager._deactivate_pump = _deactivate_pump
+    manager._find_reservoir_pump = _find_reservoir_pump
+    manager._log_to_client = lambda *args, **kwargs: None
+
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(_seconds):
+        return None
+
+    try:
+        asyncio.sleep = fast_sleep
+
+        for day in range(90):
+            current_level = store.getDeep("Hydro.ReservoirLevel") or 80.0
+            depleted_level = max(0.0, current_level - 3.8)
+            store.setDeep("Hydro.ReservoirLevel", depleted_level)
+            manager.current_level = depleted_level
+
+            if depleted_level < manager.low_threshold:
+                refill_runs.append({"day": day, "start": depleted_level})
+                await manager._auto_fill_reservoir()
+                refill_runs[-1]["end"] = manager.current_level
+                refill_runs[-1]["cycles"] = manager._fill_cycles_completed
+
+        assert len(refill_runs) >= 2, "Expected multiple refill runs over long-term depletion"
+        assert all(run["end"] >= manager.max_fill_level for run in refill_runs)
+        assert all(run["cycles"] >= 10 for run in refill_runs), "Each refill should require multiple 5% cycles"
+        assert manager._fill_blocked is False, "Successful long-term refills should not block autofill"
+
+        start_messages = [n for n in notifications if "Fuellung gestartet" in n["message"]]
+        progress_messages = [n for n in notifications if "Füllung läuft" in n["title"]]
+        complete_messages = [n for n in notifications if "ABGESCHLOSSEN" in n["title"]]
+
+        assert len(start_messages) == len(refill_runs)
+        assert len(complete_messages) == len(refill_runs)
+        assert len(progress_messages) >= len(refill_runs) * 10
+
+        print(
+            f"✓ Multi-refill simulation: {len(refill_runs)} refill runs, "
+            f"{len(progress_messages)} progress notifications"
+        )
+    finally:
+        asyncio.sleep = original_sleep
+
+
+@pytest.mark.longterm
+@pytest.mark.asyncio
 async def test_device_duty_cycle_tracking_14_days():
     """
     Tracks device duty cycles over 14 days to verify:

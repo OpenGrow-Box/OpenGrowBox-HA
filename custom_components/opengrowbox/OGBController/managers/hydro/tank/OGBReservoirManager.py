@@ -90,6 +90,14 @@ class OGBReservoirManager:
             return float(value)
         except (ValueError, TypeError):
             return default
+
+    @low_threshold.setter
+    def low_threshold(self, value: float):
+        """Set low threshold for compatibility with tests/direct overrides."""
+        coerced = float(value)
+        self._default_low = coerced
+        if hasattr(self, "data_store") and self.data_store is not None:
+            self.data_store.setDeep("Hydro.ReservoirMinLevel", coerced)
     
     @property
     def high_threshold(self) -> float:
@@ -100,6 +108,15 @@ class OGBReservoirManager:
             return float(value)
         except (ValueError, TypeError):
             return default
+
+    @high_threshold.setter
+    def high_threshold(self, value: float):
+        """Set high threshold for compatibility with tests/direct overrides."""
+        coerced = float(value)
+        self._default_high = coerced
+        self._default_max_fill = coerced
+        if hasattr(self, "data_store") and self.data_store is not None:
+            self.data_store.setDeep("Hydro.ReservoirMaxLevel", coerced)
     
     @property
     def max_fill_level(self) -> float:
