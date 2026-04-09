@@ -444,6 +444,14 @@ class OGBDeviceManager:
             "ModbusDevice": OGBModbusDevice,
             "FridgeGrow": FridgeGrowDevice,
             "Pump": Pump,
+            # Pump types - all use the same Pump class
+            "FeedPump": Pump,
+            "ReservoirPump": Pump,
+            "RetrievePump": Pump,
+            "WateringPump": Pump,
+            "AeroPump": Pump,
+            "DWCPump": Pump,
+            "ClonerPump": Pump,
         }
         return device_classes.get(device_type, Device)
 

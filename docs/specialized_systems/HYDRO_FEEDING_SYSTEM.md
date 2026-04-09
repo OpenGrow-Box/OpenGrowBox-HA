@@ -109,17 +109,42 @@ nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at
 - **Adjustment**: Real-time pH/EC corrections
 - **Use Case**: Full automated hydroponic operation
 
-### 3. Own-Plan Mode
-- **Logic**: Custom user-defined feeding schedules
-- **Flexibility**: User-programmed nutrient ratios and timings
-- **Control**: Manual override of automatic calculations
-- **Use Case**: Specialized feeding regimens
+### 3. Config Mode
+- **Logic**: Configuration holder only
+- **Function**: Lets the user edit targets, concentrations, flow rates, and calibration values from the UI
+- **Safety**: Does not actively dose nutrients or pH solutions
+- **Use Case**: Setup, maintenance, testing, and safe manual preparation
 
-### 4. Config Mode
-- **Logic**: Configuration and testing mode
-- **Function**: System setup, calibration, and diagnostics
-- **Safety**: Limited operation for setup purposes
-- **Use Case**: Initial setup and system testing
+## Active Feed Modes
+
+Only these modes are active in the current implementation:
+
+| Mode | Behavior |
+|------|----------|
+| `Disabled` | No automatic feeding. Safe default. |
+| `Automatic` | Automatic nutrient and pH correction based on sensor values and targets. |
+| `Config` | UI/configuration mode only. No active dosing. |
+
+**Security note:** Invalid or unknown feed modes fall back to `Disabled`.
+
+## Pump Enable / Disable via Flow Rate
+
+In the `TankFeedManager`, nutrient and pH pumps can be disabled directly from the UI:
+
+- Set the pump flow rate to `0`
+- The pump is then treated as disabled
+- It will be skipped during nutrient or pH dosing
+
+This currently applies only to:
+
+- Nutrient pumps `A`, `B`, `C`, `X`, `Y`
+- pH pumps `PH_DOWN`, `PH_UP`
+
+It does **not** disable:
+
+- Reservoir refill pumps
+- Crop steering retrieve/return pumps
+- Plant watering pumps
 
 ## Nutrient Management
 

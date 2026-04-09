@@ -629,6 +629,8 @@ SENSOR_TRANSLATIONS = {
         "oxidation",
         "oxygen",
         "o2",
+        "orp",
+        "redox",
         "sauerstoff",
         "dissolved_oxygen",
         "do",

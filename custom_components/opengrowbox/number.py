@@ -324,6 +324,27 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             unit="L",
             initial_value=0,
         ),
+        CustomNumber(
+            f"OGB_Feed_Reservoir_Min_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            min_value=1,
+            max_value=100,
+            step=1,
+            unit="%",
+            initial_value=25,
+        ),
+        CustomNumber(
+            f"OGB_Feed_Reservoir_Max_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            min_value=1,
+            max_value=100,
+            step=1,
+            unit="%",
+            initial_value=85,
+        ),     
+
         # Hydro Tank Feed
         CustomNumber(
             f"OGB_Feed_PH_Target_{coordinator.room_name}",

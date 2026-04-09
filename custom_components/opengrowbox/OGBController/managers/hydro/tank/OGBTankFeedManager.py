@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import json
@@ -20,7 +20,6 @@ class ECUnit(Enum):
 class FeedMode(Enum):
     DISABLED = "Disabled"
     AUTOMATIC = "Automatic"
-    OWN_PLAN = "Own-Plan"
     CONFIG = "Config"
     
     
@@ -45,6 +44,29 @@ class PumpType(Enum):
     CUSTOM_Y = "switch.feedpump_y"         # Custom - free use
     PH_DOWN = "switch.feedpump_pp"         # pH minus (pH-)
     PH_UP = "switch.feedpump_pm"           # pH plus (pH+)
+
+# Mapping from PumpType to label keywords for label-based device discovery
+PUMP_TYPE_TO_LABELS = {
+    PumpType.NUTRIENT_A: ["feed_a", "feedpump_a", "nutrient_a", "nutrienta", "a_pump"],
+    PumpType.NUTRIENT_B: ["feed_b", "feedpump_b", "nutrient_b", "nutrientb", "b_pump"],
+    PumpType.NUTRIENT_C: ["feed_c", "feedpump_c", "nutrient_c", "nutrientc", "c_pump"],
+    PumpType.WATER: ["feed_w", "feedpump_w", "water_pump", "waterpump", "w_pump"],
+    PumpType.CUSTOM_X: ["feed_x", "feedpump_x", "custom_x", "x_pump"],
+    PumpType.CUSTOM_Y: ["feed_y", "feedpump_y", "custom_y", "y_pump"],
+    PumpType.PH_DOWN: ["feed_phm", "feedpump_pp", "ph_minus", "ph_down", "phminus", "php"],
+    PumpType.PH_UP: ["feed_php", "feedpump_pm", "ph_plus", "ph_up", "phplus", "phm"],
+}
+
+PUMP_TYPE_TO_FLOW_KEY = {
+    PumpType.NUTRIENT_A: "A",
+    PumpType.NUTRIENT_B: "B",
+    PumpType.NUTRIENT_C: "C",
+    PumpType.WATER: "W",
+    PumpType.CUSTOM_X: "X",
+    PumpType.CUSTOM_Y: "Y",
+    PumpType.PH_DOWN: "PH_DOWN",
+    PumpType.PH_UP: "PH_UP",
+}
 
 @dataclass
 class PlantStageConfig:
@@ -738,16 +760,13 @@ class OGBTankFeedManager:
         """Dose pH down solution"""
         try:
             dose_ml = 1.0
-            cal = self.pump_calibrations.get(PumpType.PH_DOWN.value)
-            
-            # Get calibration factor and calculate run time correctly
-            # calibration_factor = ml/s, so run_time = ml / (ml/s) = seconds
-            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
-            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+            calibration_factor = self._get_effective_pump_rate(PumpType.PH_DOWN)
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
             if run_time > 0:
                 _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_DOWN.value} with {dose_ml:.2f}ml for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
-                return await self._activate_pump(PumpType.PH_DOWN.value, run_time, dose_ml)
+                return await self._activate_pump(PumpType.PH_DOWN, run_time, dose_ml)
+            _LOGGER.info(f"[{self.room}] pH down pump disabled via flow rate 0 - skipping dose")
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down: {e}")
@@ -764,15 +783,13 @@ class OGBTankFeedManager:
         """Dose pH up solution"""
         try:
             dose_ml = 1.0
-            cal = self.pump_calibrations.get(PumpType.PH_UP.value)
-            
-            # Get calibration factor and calculate run time correctly
-            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
-            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+            calibration_factor = self._get_effective_pump_rate(PumpType.PH_UP)
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
             if run_time > 0:
                 _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_UP.value} with {dose_ml:.2f}ml for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
-                return await self._activate_pump(PumpType.PH_UP.value, run_time, dose_ml)
+                return await self._activate_pump(PumpType.PH_UP, run_time, dose_ml)
+            _LOGGER.info(f"[{self.room}] pH up pump disabled via flow rate 0 - skipping dose")
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH up: {e}")
@@ -795,16 +812,15 @@ class OGBTankFeedManager:
                     
                     # Get calibration factor and calculate run time correctly
                     pump_enum = getattr(PumpType, f"NUTRIENT_{nutrient}")
-                    cal = self.pump_calibrations.get(pump_enum.value)
-                    calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
-                    
-                    # Calculate run time: ml / (ml/s) = seconds
-                    run_time = total_ml / calibration_factor if calibration_factor > 0 else total_ml / self.pump_config.ml_per_second
+                    calibration_factor = self._get_effective_pump_rate(pump_enum)
+                    run_time = total_ml / calibration_factor if calibration_factor > 0 else 0.0
                     
                     if run_time > 0:
-                        if await self._activate_pump(pump_enum.value, run_time, total_ml):
+                        if await self._activate_pump(pump_enum, run_time, total_ml):
                             # Wait between nutrients (90 seconds for sensor settling)
                             await asyncio.sleep(90)
+                    else:
+                        _LOGGER.info(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
                             
             return True
                     
@@ -930,18 +946,17 @@ class OGBTankFeedManager:
                 if nutrient in self.nutrients and self.nutrients[nutrient] > 0:
                     # Get calibration factor and calculate run time correctly
                     pump_enum = getattr(PumpType, f"NUTRIENT_{nutrient}")
-                    cal = self.pump_calibrations.get(pump_enum.value)
-                    calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
-                    
-                    # Calculate run time: ml / (ml/s) = seconds
-                    run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+                    calibration_factor = self._get_effective_pump_rate(pump_enum)
+                    run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
                     if run_time > 0:
-                        if await self._activate_pump(pump_enum.value, run_time, dose_ml):
+                        if await self._activate_pump(pump_enum, run_time, dose_ml):
                             # Wait between nutrients to prevent mixing issues (90 seconds for sensor settling)
                             await asyncio.sleep(90)
                         else:
                             _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
+                    else:
+                        _LOGGER.info(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
 
             return True
 
@@ -975,19 +990,18 @@ class OGBTankFeedManager:
                         _LOGGER.warning(f"[{self.room}] No pump mapping for nutrient {nutrient}")
                         continue
                     
-                    cal = self.pump_calibrations.get(pump_enum.value)
-                    calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
-                    
-                    # Calculate run time: ml / (ml/s) = seconds
-                    run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+                    calibration_factor = self._get_effective_pump_rate(pump_enum)
+                    run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
                     if run_time > 0:
                         _LOGGER.debug(f"[{self.room}] Dosing {nutrient}: {dose_ml:.1f}ml for {run_time:.1f}s")
-                        if await self._activate_pump(pump_enum.value, run_time, dose_ml):
+                        if await self._activate_pump(pump_enum, run_time, dose_ml):
                             # Wait between nutrients to prevent mixing issues (90 seconds for sensor settling)
                             await asyncio.sleep(90)
                         else:
                             _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
+                    else:
+                        _LOGGER.info(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
 
             return True
 
@@ -999,15 +1013,14 @@ class OGBTankFeedManager:
         """Dose pH down with a specific amount."""
         try:
             # Get calibration factor and calculate run time correctly
-            cal = self.pump_calibrations.get(PumpType.PH_DOWN.value)
-            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+            calibration_factor = self._get_effective_pump_rate(PumpType.PH_DOWN)
             
-            # Calculate run time: ml / (ml/s) = seconds
-            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
             if run_time > 0:
                 _LOGGER.info(f"[{self.room}] Dosing {dose_ml:.2f}ml pH down for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
-                return await self._activate_pump(PumpType.PH_DOWN.value, run_time, dose_ml)
+                return await self._activate_pump(PumpType.PH_DOWN, run_time, dose_ml)
+            _LOGGER.info(f"[{self.room}] pH down pump disabled via flow rate 0 - skipping dose")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down with amount: {e}")
@@ -1017,37 +1030,128 @@ class OGBTankFeedManager:
         """Dose pH up with a specific amount."""
         try:
             # Get calibration factor and calculate run time correctly
-            cal = self.pump_calibrations.get(PumpType.PH_UP.value)
-            calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+            calibration_factor = self._get_effective_pump_rate(PumpType.PH_UP)
             
-            # Calculate run time: ml / (ml/s) = seconds
-            run_time = dose_ml / calibration_factor if calibration_factor > 0 else dose_ml / self.pump_config.ml_per_second
+            run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
             if run_time > 0:
                 _LOGGER.info(f"[{self.room}] Dosing {dose_ml:.2f}ml pH up for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
-                return await self._activate_pump(PumpType.PH_UP.value, run_time, dose_ml)
+                return await self._activate_pump(PumpType.PH_UP, run_time, dose_ml)
+            _LOGGER.info(f"[{self.room}] pH up pump disabled via flow rate 0 - skipping dose")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH up with amount: {e}")
         return False
 
-    async def _activate_pump(self, pump_type: str, run_time: float, dose_ml: float) -> bool:
+    async def _find_pump_entity(self, pump_type: Union[PumpType, str]) -> Optional[str]:
+        """
+        Find pump entity ID using label-based discovery.
+        
+        Search order:
+        1. Check OGB devices with matching labels
+        2. Search HA states for switch entities with matching names
+        3. Fallback to PumpType enum value (hardcoded entity ID)
+        
+        Args:
+            pump_type: PumpType enum or string pump identifier
+            
+        Returns:
+            Entity ID string or None if not found
+        """
+        try:
+            # Convert string to PumpType if needed
+            if isinstance(pump_type, str):
+                # Try to find matching PumpType by value
+                for pt in PumpType:
+                    if pt.value == pump_type:
+                        pump_type = pt
+                        break
+                else:
+                    # Not a known pump type value, use as-is (fallback)
+                    return pump_type
+            
+            # Get label keywords for this pump type
+            label_keywords = PUMP_TYPE_TO_LABELS.get(pump_type, [])
+            if not label_keywords:
+                _LOGGER.warning(f"[{self.room}] No label keywords defined for pump type {pump_type}")
+                return pump_type.value
+            
+            # Search 1: Check OGB devices
+            devices = self.data_store.getDeep("devices", [])
+            for device in devices:
+                device_labels = [lbl.get("name", "").lower() for lbl in device.get("labels", [])]
+                
+                # Check if any device label matches our keywords
+                for keyword in label_keywords:
+                    if any(keyword.lower() == lbl or keyword.lower() in lbl for lbl in device_labels):
+                        # Found matching device, get its entity ID
+                        entities = device.get("entities", [])
+                        for entity in entities:
+                            entity_id = entity.get("entity_id", "")
+                            if entity_id.startswith("switch."):
+                                _LOGGER.debug(
+                                    f"[{self.room}] Found pump {pump_type.name} via OGB device label "
+                                    f"'{keyword}': {entity_id}"
+                                )
+                                return entity_id
+            
+            # Search 2: Search HA states for matching switch entities
+            if self.hass and self.hass.states:
+                for keyword in label_keywords:
+                    # Try exact match first
+                    entity_id = f"switch.{keyword}"
+                    if self.hass.states.get(entity_id):
+                        _LOGGER.debug(
+                            f"[{self.room}] Found pump {pump_type.name} via HA state exact match: {entity_id}"
+                        )
+                        return entity_id
+                    
+                    # Try contains match
+                    for state in self.hass.states.async_all("switch"):
+                        state_entity_id = state.entity_id.lower()
+                        if keyword.lower() in state_entity_id:
+                            _LOGGER.debug(
+                                f"[{self.room}] Found pump {pump_type.name} via HA state contains match "
+                                f"'{keyword}': {state.entity_id}"
+                            )
+                            return state.entity_id
+            
+            # Fallback 3: Use hardcoded enum value
+            _LOGGER.debug(
+                f"[{self.room}] No label-based pump found for {pump_type.name}, "
+                f"using fallback: {pump_type.value}"
+            )
+            return pump_type.value
+            
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error finding pump entity for {pump_type}: {e}")
+            # Return original value as fallback
+            return pump_type.value if isinstance(pump_type, PumpType) else pump_type
+
+    async def _activate_pump(self, pump_type: Union[PumpType, str], run_time: float, dose_ml: float) -> bool:
         """Activate a pump for specified time using Home Assistant switch entity"""
         try:
-            _LOGGER.warning(f"[{self.room}] Activating {pump_type}: {dose_ml:.1f}ml for {run_time:.1f}s")
+            # Find the actual entity ID using label-based discovery
+            entity_id = await self._find_pump_entity(pump_type)
+            
+            if not entity_id:
+                _LOGGER.error(f"[{self.room}] Could not find entity for pump {pump_type}")
+                return False
+            
+            _LOGGER.warning(f"[{self.room}] Activating {pump_type} (entity: {entity_id}): {dose_ml:.1f}ml for {run_time:.1f}s")
 
             # Turn ON pump via Home Assistant service call
             await self.hass.services.async_call(
                 "switch",
                 "turn_on",
-                {"entity_id": pump_type},
+                {"entity_id": entity_id},
                 blocking=False
             )
 
             # Log action
             waterAction = OGBWaterAction(
                 Name=self.room,
-                Device=pump_type,
+                Device=str(pump_type),
                 Cycle=str(dose_ml),
                 Action="on",
                 Message=f"Dosing {dose_ml:.1f}ml"
@@ -1061,7 +1165,7 @@ class OGBTankFeedManager:
             await self.hass.services.async_call(
                 "switch",
                 "turn_off",
-                {"entity_id": pump_type},
+                {"entity_id": entity_id},
                 blocking=False
             )
             
@@ -1074,7 +1178,7 @@ class OGBTankFeedManager:
                 "Name": self.room,
                 "Type": "HYDROLOG",
                 "Message": "Pump activation failed",
-                "pump": pump_type,
+                "pump": str(pump_type),
                 "dose_ml": dose_ml,
                 "error": str(e)
             }, haEvent=True, debug_type="ERROR")
@@ -1222,6 +1326,31 @@ class OGBTankFeedManager:
             "PH_UP": self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Up", 10.0) / 60.0,
         }
         return pump_type_map.get(pump_type, self.pump_config.ml_per_second)
+
+    def _get_effective_pump_rate(self, pump_type: Union[PumpType, str]) -> float:
+        """Return usable pump rate in ml/s. Flow rate 0 disables the pump."""
+        flow_key = None
+        pump_lookup_key = pump_type
+
+        if isinstance(pump_type, PumpType):
+            flow_key = PUMP_TYPE_TO_FLOW_KEY.get(pump_type)
+            pump_lookup_key = pump_type.value
+        elif isinstance(pump_type, str):
+            for enum_value, mapped_key in PUMP_TYPE_TO_FLOW_KEY.items():
+                if pump_type in [enum_value.value, enum_value.name, mapped_key]:
+                    flow_key = mapped_key
+                    pump_lookup_key = enum_value.value
+                    break
+            if flow_key is None:
+                flow_key = pump_type
+
+        flow_rate = self._get_pump_flow_rate(flow_key)
+        if flow_rate <= 0:
+            return 0.0
+
+        cal = self.pump_calibrations.get(pump_lookup_key) or self.pump_calibrations.get(flow_key)
+        calibration_factor = cal.calibration_factor if cal else self.pump_config.ml_per_second
+        return calibration_factor if calibration_factor > 0 else flow_rate
 
     def _calculate_dose_time(self, ml_amount: float, pump_type: str = "A") -> float:
         """Calculate pump run time in seconds for desired ml amount using specific pump flow rate"""

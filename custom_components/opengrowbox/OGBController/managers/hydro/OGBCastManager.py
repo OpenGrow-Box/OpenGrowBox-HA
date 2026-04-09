@@ -548,6 +548,63 @@ class OGBCastManager:
         )
         await self.event_manager.emit("LogForClient", actionMap, haEvent=True, debug_type="INFO")
 
+    async def _find_retrieve_pumps(self, pump_devices) -> list:
+        """
+        Find retrieve/return pumps using label-based discovery.
+        
+        Search order:
+        1. Check OGB devices with RetrievePump labels
+        2. Fallback to entity ID keyword matching (backward compatibility)
+        
+        Args:
+            pump_devices: Dictionary with device entities
+            
+        Returns:
+            List of retrieve pump entity IDs
+        """
+        if not pump_devices or "devEntities" not in pump_devices:
+            return []
+        
+        # RetrievePump labels from DEVICE_TYPE_MAPPING
+        retrieve_labels = [
+            "retrieve", "return", "retrieve_pump", "return_pump", "recovery",
+            "rücklauf", "ruecklauf"
+        ]
+        
+        active_pumps = []
+        devices = pump_devices["devEntities"]
+        
+        # Search 1: Check OGB devices by labels
+        ogb_devices = self.data_store.getDeep("devices", [])
+        for device in ogb_devices:
+            device_labels = [lbl.get("name", "").lower() for lbl in device.get("labels", [])]
+            
+            # Check if any device label matches retrieve labels
+            for label in retrieve_labels:
+                if any(label.lower() == dl or label.lower() in dl for dl in device_labels):
+                    # Found matching device, get its entity ID
+                    entities = device.get("entities", [])
+                    for entity in entities:
+                        entity_id = entity.get("entity_id", "")
+                        if entity_id in devices:
+                            active_pumps.append(entity_id)
+                            _LOGGER.debug(
+                                f"[{self.room}] Found retrieve pump via label '{label}': {entity_id}"
+                            )
+                            break
+        
+        # Search 2: Fallback to entity ID keyword matching (backward compatibility)
+        if not active_pumps:
+            valid_keywords = ["return", "retrieve"]
+            for dev in devices:
+                if any(keyword in dev.lower() for keyword in valid_keywords):
+                    active_pumps.append(dev)
+                    _LOGGER.debug(
+                        f"[{self.room}] Found retrieve pump via entity ID fallback: {dev}"
+                    )
+        
+        return active_pumps
+
     async def retrive_Mode(
         self,
         cycle: bool,
@@ -558,19 +615,12 @@ class OGBCastManager:
     ):
         """Handle retrive pump operations - only for retrievepump devices."""
 
-        valid_keywords = ["return", "retrieve"]
-
-        devices = pumpDevices["devEntities"]
-        active_pumps = [
-            dev
-            for dev in devices
-            if any(keyword in dev.lower() for keyword in valid_keywords)
-        ]
+        active_pumps = await self._find_retrieve_pumps(pumpDevices)
 
         if not active_pumps:
             await self.event_manager.emit(
                 "LogForClient",
-                f"{log_prefix}: No valid Retrive pumps found.",
+                f"{log_prefix}: No valid Retrive pumps found. Add 'retrieve' or 'return' label to your pump device.",
                 haEvent=True,
                 debug_type="WARNING",
             )

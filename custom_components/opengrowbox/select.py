@@ -341,7 +341,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_Feed_Plan_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            options=["Own-Plan", "Automatic", "Config", "Disabled"],
+            options=["Automatic", "Config", "Disabled"],
             initial_value="Disabled",
         ),
         ##CROP_Steering

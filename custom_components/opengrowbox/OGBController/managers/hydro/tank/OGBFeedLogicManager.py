@@ -26,7 +26,6 @@ class FeedMode(Enum):
 
     DISABLED = "Disabled"
     AUTOMATIC = "Automatic"
-    OWN_PLAN = "Own-Plan"
     CONFIG = "Config"
 
 
@@ -61,7 +60,7 @@ class OGBFeedLogicManager:
         # Feed state tracking
         self.last_feed_time = None
         self.daily_feed_count = 0
-        self.feed_mode = FeedMode.AUTOMATIC
+        self.feed_mode = FeedMode.DISABLED
 
     async def handle_feed_mode_change(self, feed_mode: str):
         """
@@ -71,25 +70,23 @@ class OGBFeedLogicManager:
             feed_mode: New feeding mode string
         """
         try:
-            # Parse mode
+            # Parse mode - default to DISABLED for security
             try:
                 self.feed_mode = FeedMode(feed_mode)
             except ValueError:
                 _LOGGER.warning(
-                    f"{self.room} - Invalid feed mode: {feed_mode}, defaulting to AUTOMATIC"
+                    f"{self.room} - Invalid feed mode: {feed_mode}, defaulting to DISABLED for security"
                 )
-                self.feed_mode = FeedMode.AUTOMATIC
+                self.feed_mode = FeedMode.DISABLED
 
             # Handle mode-specific initialization
             if self.feed_mode == FeedMode.AUTOMATIC:
                 await self._handle_automatic_mode()
-            elif self.feed_mode == FeedMode.OWN_PLAN:
-                await self._handle_own_plan_mode()
             elif self.feed_mode == FeedMode.DISABLED:
                 await self._handle_disabled_mode()
             elif self.feed_mode == FeedMode.CONFIG:
-                # Config mode - no active feeding
-                pass
+                # Config mode - UI configuration only, no active feeding control
+                _LOGGER.info(f"{self.room} - Config mode active: UI settings enabled, feeding control disabled")
 
             _LOGGER.info(f"{self.room} - Feed mode changed to: {self.feed_mode.value}")
 
@@ -117,24 +114,6 @@ class OGBFeedLogicManager:
         # (This would be handled by the main manager)
 
         _LOGGER.debug(f"{self.room} - Automatic feeding mode initialized")
-
-    async def _handle_own_plan_mode(self):
-        """
-        Initialize own plan feeding mode.
-        """
-        # Load custom feeding plan from dataStore
-        custom_plan = self.data_store.getDeep("Hydro.Feeding.OwnPlan")
-
-        if custom_plan:
-            _LOGGER.info(
-                f"{self.room} - Custom feeding plan loaded: {len(custom_plan)} entries"
-            )
-        else:
-            _LOGGER.warning(
-                f"{self.room} - No custom feeding plan found, using defaults"
-            )
-
-        _LOGGER.debug(f"{self.room} - Own plan feeding mode initialized")
 
     async def _handle_disabled_mode(self):
         """

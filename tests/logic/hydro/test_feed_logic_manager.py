@@ -19,10 +19,10 @@ def _manager(initial=None):
 
 
 @pytest.mark.asyncio
-async def test_handle_feed_mode_change_invalid_defaults_to_automatic():
+async def test_handle_feed_mode_change_invalid_defaults_to_disabled():
     manager = _manager()
     await manager.handle_feed_mode_change("NotARealMode")
-    assert manager.feed_mode == FeedMode.AUTOMATIC
+    assert manager.feed_mode == FeedMode.DISABLED  # Security: default to DISABLED
     assert any(e["event_name"] == "LogForClient" for e in manager.event_manager.emitted)
 
 

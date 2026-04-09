@@ -58,7 +58,14 @@ class OGBConf:
             "Nut_X_ml": None,
             "Nut_Y_ml": None,
             "Nut_PH_ml": None,
-            "ReservoirVolume": 0,
+            "ReservoirVolume": None,
+            "ReservoirMaxLevel": None,
+            "ReservoirMinLevel": None,
+            "ReservoirLastUpdate": None,
+            "ReservoirLevelRaw": None,
+            "ReservoirLastUpdate": None,
+            "ReservoirMaxDistance": None,
+            "ReservoirMinDistance": None,
         }
     )
     CropSteering: Dict[str, Any] = field(

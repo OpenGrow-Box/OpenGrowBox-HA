@@ -8,6 +8,7 @@ from custom_components.opengrowbox.OGBController.managers.hydro.tank.OGBTankFeed
     ECUnit,
     FeedMode,
     OGBTankFeedManager,
+    PumpType,
 )
 
 from tests.logic.helpers import FakeDataStore, FakeEventManager
@@ -74,6 +75,34 @@ def test_normalize_ec_value_handles_us_and_ms_ranges():
 
     # µS/cm range (>100) should be converted to mS/cm
     assert manager._normalize_ec_value(1800) == 1.8
+
+
+def test_get_effective_pump_rate_returns_zero_when_flowrate_disabled():
+    store = FakeDataStore({"Hydro": {"Pump_FlowRate_A": 0.0}})
+    manager = _manager_stub(store)
+
+    assert manager._get_effective_pump_rate(PumpType.NUTRIENT_A) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_dose_nutrients_skips_disabled_pump_flowrate_zero():
+    store = FakeDataStore({"Hydro": {"Pump_FlowRate_A": 0.0}})
+    manager = _manager_stub(store, FakeEventManager())
+    manager.nutrients = {"A": 1.0}
+    manager._calculate_nutrient_dose = lambda _ml_per_liter: 5.0
+
+    calls = {"count": 0}
+
+    async def _activate(*_args, **_kwargs):
+        calls["count"] += 1
+        return True
+
+    manager._activate_pump = _activate
+
+    result = await manager._dose_nutrients()
+
+    assert result is True
+    assert calls["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -649,11 +678,11 @@ async def test_concentration_based_dosing_includes_x_and_y():
         # Verify all pumps including X and Y were dosed
         assert len(dosed_pumps) == 5
         pump_names = [p["pump"] for p in dosed_pumps]
-        assert "switch.feedpump_a" in pump_names
-        assert "switch.feedpump_b" in pump_names
-        assert "switch.feedpump_c" in pump_names
-        assert "switch.feedpump_x" in pump_names
-        assert "switch.feedpump_y" in pump_names
+        assert PumpType.NUTRIENT_A in pump_names
+        assert PumpType.NUTRIENT_B in pump_names
+        assert PumpType.NUTRIENT_C in pump_names
+        assert PumpType.CUSTOM_X in pump_names
+        assert PumpType.CUSTOM_Y in pump_names
     finally:
         asyncio.sleep = original_sleep
 
@@ -707,11 +736,11 @@ async def test_concentration_based_dosing_skips_zero_concentration():
         # Verify only A and C were dosed
         assert len(dosed_pumps) == 2
         pump_names = [p["pump"] for p in dosed_pumps]
-        assert "switch.feedpump_a" in pump_names
-        assert "switch.feedpump_c" in pump_names
-        assert "switch.feedpump_b" not in pump_names
-        assert "switch.feedpump_x" not in pump_names
-        assert "switch.feedpump_y" not in pump_names
+        assert PumpType.NUTRIENT_A in pump_names
+        assert PumpType.NUTRIENT_C in pump_names
+        assert PumpType.NUTRIENT_B not in pump_names
+        assert PumpType.CUSTOM_X not in pump_names
+        assert PumpType.CUSTOM_Y not in pump_names
     finally:
         asyncio.sleep = original_sleep
 

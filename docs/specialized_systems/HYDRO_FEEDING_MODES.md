@@ -1,68 +1,67 @@
-# Hydroponic Feeding System Modes - Detailed Implementation
+# Hydroponic Feeding Modes
 
 ## Overview
 
-The OpenGrowBox Hydroponic Feeding System provides **proportional dosing modes** with intelligent nutrient delivery, pH/EC control, and environmental adaptation. The system features **small-dose adjustments** rather than large batch preparations, ensuring precise control and preventing over-fertilization.
+The current hydro feeding implementation uses three modes in `OGBTankFeedManager` and `OGBFeedLogicManager`.
 
-**Key Innovation**: **Proportional Dosing** - Instead of large, infrequent nutrient batches, the system delivers calculated small doses based on real-time sensor deviations.
+## Modes
 
-## Hydroponic Feeding Modes
+### Disabled
 
-### 1. Automatic Mode (Proportional Dosing)
+- Automatic nutrient dosing is off
+- Automatic pH correction is off
+- This is the safe default
+- Invalid mode values also fall back to `Disabled`
 
-**Purpose**: Intelligent automated nutrient delivery with proportional adjustments based on real-time sensor feedback.
+### Automatic
 
-#### How It Works
-- **Trigger**: Every 10 minutes (sensor checks) + proportional dosing every 30+ minutes
-- **Process**: Small-dose nutrient adjustments, pH/EC corrections based on deviations
-- **Control**: Dead zone logic prevents micro-adjustments, proportional scaling for larger deviations
-- **Features**: Plant stage adaptation, environmental compensation, over-fertilization prevention
+- Sensor values are evaluated automatically
+- Nutrient dosing is calculated from configured targets, concentrations, and reservoir volume
+- pH up/down dosing is triggered when needed
+- Label-based pump discovery is used first, with fallback resolution where needed
 
-#### Proportional Dosing Algorithm
+### Config
 
-```python
-# Dead zone prevents unnecessary adjustments
-if abs(ec_deviation) < 0.03:  # 3% EC tolerance
-    no_nutrient_adjustment()
+- No active nutrient or pH dosing
+- Used to keep UI configuration available without automatic control
+- Intended for editing targets, concentrations, flow rates, and calibration values safely
 
-if abs(ph_deviation) < 0.1:   # 0.1 pH tolerance
-    no_ph_adjustment()
+## Removed Mode
 
-# Proportional dosing for larger deviations
-dose_ml = base_dose * (deviation / threshold)
-dose_ml = min(dose_ml, max_safe_dose)  # Safety capping
-```
+### Own-Plan
 
-#### Process Flow
+`Own-Plan` is no longer an active execution mode.
 
-```mermaid
-graph TD
-    A[Time/Sensor Trigger] --> B{Check Plant Stage}
-    B --> C[Get Nutrient Profile]
-    C --> D[Calculate Feed Volume]
-    D --> E[Check Environmental Factors]
-    E --> F[Adjust Nutrient Concentrations]
-    F --> G[Prepare Nutrient Solution]
-    G --> H[Mix Nutrients Sequentially]
-    H --> I[Measure & Adjust pH]
-    I --> J[Measure & Adjust EC]
-    J --> K[Final Mixing Cycle]
-    K --> L[Execute Feeding Cycle]
-    L --> M[Post-Feed Monitoring]
-    M --> N[Update Feeding History]
-```
+Reason:
 
-#### Implementation Details
+- it was not implemented end-to-end
+- it created unsafe ambiguity in feeding behavior
+- `Config` now covers the non-active UI/configuration use case
 
-```python
-# OGBTankFeedManager - Hydro Mode Execution
-async def execute_hydro_mode_feeding(self):
-    """Execute complete hydroponic feeding cycle."""
+## Pump Flow Rate = 0
 
-    # 1. Get current plant configuration
-    plant_stage = self.data_store.get("plantStage")
-    plant_type = self.data_store.get("plantType")
+For feed and pH pumps, a flow rate of `0` means the pump is disabled.
 
-    # 2. Retrieve nutrient profile for current stage
-    nutrient_profile = self.get_nutrient_profile(plant_stage, plant_type)</content>
-<parameter name="filePath">docs/specialized_systems/HYDRO_FEEDING_MODES.md
+This applies to:
+
+- `A`
+- `B`
+- `C`
+- `X`
+- `Y`
+- `PH_DOWN`
+- `PH_UP`
+
+Behavior:
+
+- the pump is skipped during dosing
+- no runtime is calculated
+- no pump activation event is sent for that pump
+
+This does not affect reservoir refill pumps.
+
+## Safety Notes
+
+- Unknown feed modes default to `Disabled`
+- `Config` keeps UI control available without dosing
+- Disabled feed/pH pumps are controlled by setting flow rate to `0`

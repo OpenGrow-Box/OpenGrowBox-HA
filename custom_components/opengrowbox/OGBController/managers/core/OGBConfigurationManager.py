@@ -144,6 +144,9 @@ class OGBConfigurationManager:
             f"ogb_feed_nutrient_x_{self.room.lower()}": self._update_feed_nutrient_x_ml,
             f"ogb_feed_nutrient_y_{self.room.lower()}": self._update_feed_nutrient_y_ml,
             f"ogb_feed_nutrient_ph_{self.room.lower()}": self._update_feed_nutrient_ph_ml,
+            # Reservoir Levels
+            f"ogb_feed_reservoir_min_{self.room.lower()}": self._update_reservoir_min_level,
+            f"ogb_feed_reservoir_max_{self.room.lower()}": self._update_reservoir_max_level,
             # Ambient/Outdoor Features
             f"ogb_ambientcontrol_{self.room.lower()}": self._update_ambient_control,
             # Devices
@@ -1212,6 +1215,42 @@ class OGBConfigurationManager:
             self.data_store.setDeep("Hydro.Nut_PH_ml", new_value)
             await self.event_manager.emit(
                 "FeedModeValueChange", {"type": "ph_ml", "value": new_value}
+            )
+
+    async def _update_reservoir_min_level(self, data):
+        """
+        Update reservoir minimum level threshold (trigger for auto-fill)
+        """
+        new_value = self._coerce_float(data.newState[0], context="reservoir_min_level")
+        if new_value is None:
+            _LOGGER.warning(f"{self.room}: Invalid reservoir min level value, skipping update")
+            return
+            
+        current_value = self.data_store.getDeep("Hydro.ReservoirMinLevel")
+
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.ReservoirMinLevel", new_value)
+            _LOGGER.info(f"{self.room}: Reservoir min level updated to {new_value}%")
+            await self.event_manager.emit(
+                "ReservoirLevelChange", {"type": "min_level", "value": new_value}
+            )
+
+    async def _update_reservoir_max_level(self, data):
+        """
+        Update reservoir maximum level threshold (target for auto-fill)
+        """
+        new_value = self._coerce_float(data.newState[0], context="reservoir_max_level")
+        if new_value is None:
+            _LOGGER.warning(f"{self.room}: Invalid reservoir max level value, skipping update")
+            return
+            
+        current_value = self.data_store.getDeep("Hydro.ReservoirMaxLevel")
+
+        if current_value != new_value:
+            self.data_store.setDeep("Hydro.ReservoirMaxLevel", new_value)
+            _LOGGER.info(f"{self.room}: Reservoir max level updated to {new_value}%")
+            await self.event_manager.emit(
+                "ReservoirLevelChange", {"type": "max_level", "value": new_value}
             )
 
     # Device configuration methods

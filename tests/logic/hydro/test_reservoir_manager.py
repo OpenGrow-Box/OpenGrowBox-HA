@@ -15,16 +15,16 @@ def _manager_stub(store=None, event_manager=None, hass=None):
     event_manager = event_manager or FakeEventManager()
     hass = hass or MagicMock()
     
+    # Initialize default threshold values in dataStore
+    store.setDeep("Hydro.ReservoirMinLevel", 25.0)
+    store.setDeep("Hydro.ReservoirMaxLevel", 85.0)
+    
     manager = OGBReservoirManager.__new__(OGBReservoirManager)
     manager.room = "dev_room"
     manager.data_store = store
     manager.event_manager = event_manager
     manager.hass = hass
     manager.notificator = None
-    
-    # Default thresholds
-    manager.low_threshold = 25.0
-    manager.high_threshold = 85.0
     
     # State tracking
     manager.current_level = None
@@ -34,6 +34,12 @@ def _manager_stub(store=None, event_manager=None, hass=None):
     manager.last_alert_type = None
     manager.alert_cooldown = timedelta(minutes=30)
     manager.reservoir_sensor_entity = None
+    
+    # Auto-fill tracking
+    manager._is_filling = False
+    manager._fill_blocked = False
+    manager._fill_cycles_completed = 0
+    manager.reservoir_pump_entity = None
     
     return manager
 

@@ -121,15 +121,61 @@ class OGBPlantWateringManager:
             raise
 
     def _get_active_pumps(self, pump_devices) -> List[str]:
+        """
+        Find watering pumps using label-based discovery.
+        
+        Search order:
+        1. Check OGB devices with WateringPump labels
+        2. Fallback to entity ID keyword matching (backward compatibility)
+        
+        Args:
+            pump_devices: Dictionary with device entities
+            
+        Returns:
+            List of watering pump entity IDs
+        """
         if not pump_devices or "devEntities" not in pump_devices:
             return []
-
-        valid_keywords = ["water", "cast", "feedpump_w"]
-        return [
-            dev
-            for dev in pump_devices["devEntities"]
-            if any(keyword in dev.lower() for keyword in valid_keywords)
+        
+        # WateringPump labels from DEVICE_TYPE_MAPPING
+        watering_labels = [
+            "watering", "plant_water", "irrigation", "watering_pump", "irrigate",
+            "bewässerung", "bewaesserung"
         ]
+        
+        devices = pump_devices["devEntities"]
+        active_pumps = []
+        
+        # Search 1: Check OGB devices by labels
+        ogb_devices = self.data_store.getDeep("devices", [])
+        for device in ogb_devices:
+            device_labels = [lbl.get("name", "").lower() for lbl in device.get("labels", [])]
+            
+            # Check if any device label matches watering labels
+            for label in watering_labels:
+                if any(label.lower() == dl or label.lower() in dl for dl in device_labels):
+                    # Found matching device, get its entity ID
+                    entities = device.get("entities", [])
+                    for entity in entities:
+                        entity_id = entity.get("entity_id", "")
+                        if entity_id in devices:
+                            active_pumps.append(entity_id)
+                            _LOGGER.debug(
+                                f"[{self.room}] Found watering pump via label '{label}': {entity_id}"
+                            )
+                            break
+        
+        # Search 2: Fallback to entity ID keyword matching (backward compatibility)
+        if not active_pumps:
+            valid_keywords = ["water", "cast", "feedpump_w"]
+            for dev in devices:
+                if any(keyword in dev.lower() for keyword in valid_keywords):
+                    active_pumps.append(dev)
+                    _LOGGER.debug(
+                        f"[{self.room}] Found watering pump via entity ID fallback: {dev}"
+                    )
+        
+        return active_pumps
 
     def _get_moisture_snapshot(self) -> Dict[str, Any]:
         mediums = self.medium_manager.get_mediums() if self.medium_manager else []

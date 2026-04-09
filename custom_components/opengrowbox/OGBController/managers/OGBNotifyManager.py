@@ -192,6 +192,7 @@ class OGBNotificator:
 
             # Determine which service to use
             svc = service or self.service
+            additional_services = []
             
             # For critical notifications, use critical_service if configured
             if level == "critical":
@@ -205,31 +206,37 @@ class OGBNotificator:
                         _LOGGER.info(
                             f"[{self.room}] Using mobile notification service for critical alert: {svc}"
                         )
+            elif level == "warning" and svc == "persistent_notification.create":
+                mobile_service = await self._find_mobile_notification_service()
+                if mobile_service:
+                    additional_services.append(mobile_service)
 
-            domain, srv = svc.split(".")
-            service_data = {}
+            for target_service in [svc, *additional_services]:
+                domain, srv = target_service.split(".")
+                service_data = {}
 
-            if svc == "persistent_notification.create":
-                service_data = {"title": title, "message": message}
-            elif svc.startswith("notify."):
-                service_data = {"title": title, "message": message}
-                # Set appropriate priority based on level
-                if level == "critical":
-                    service_data["data"] = {"ttl": 0, "priority": "high", "push": {"sound": "default"}}
-                elif level == "warning":
-                    service_data["data"] = {"priority": "default"}
-            else:
-                _LOGGER.error(f"[{self.room}] Unsupported notification service '{svc}'")
-                return
+                if target_service == "persistent_notification.create":
+                    service_data = {"title": title, "message": message}
+                elif target_service.startswith("notify."):
+                    service_data = {"title": title, "message": message}
+                    # Set appropriate priority based on level
+                    if level == "critical":
+                        service_data["data"] = {"ttl": 0, "priority": "high", "push": {"sound": "default"}}
+                    elif level == "warning":
+                        service_data["data"] = {"ttl": 0, "priority": "high", "push": {"sound": "default"}}
+                else:
+                    _LOGGER.error(f"[{self.room}] Unsupported notification service '{target_service}'")
+                    continue
 
-            await self.hass.services.async_call(
-                domain, srv, service_data, blocking=True
-            )
+                await self.hass.services.async_call(
+                    domain, srv, service_data, blocking=True
+                )
 
             # Record the notification for rate limiting
             self._record_notification(level)
 
-            _LOGGER.info(f"[{self.room}] {level.title()} notification sent via {svc}: {title}")
+            service_list = ", ".join([svc, *additional_services])
+            _LOGGER.info(f"[{self.room}] {level.title()} notification sent via {service_list}: {title}")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to send {level} notification: {e}")
