@@ -141,6 +141,34 @@ async def test_check_thresholds_triggers_high_alert():
 
 
 @pytest.mark.asyncio
+async def test_check_thresholds_stops_active_fill_without_high_alert():
+    """Active refill should complete at safety stop level without sending overflow warning."""
+    manager = _manager_stub()
+    manager.current_level = 80.1
+    manager._is_filling = True
+
+    high_alert_called = False
+    stop_reason = None
+
+    async def mock_high_alert():
+        nonlocal high_alert_called
+        high_alert_called = True
+
+    async def mock_stop_fill(reason):
+        nonlocal stop_reason
+        stop_reason = reason
+        manager._is_filling = False
+
+    manager._send_high_level_alert = mock_high_alert
+    manager._stop_fill = mock_stop_fill
+
+    await manager._check_thresholds()
+
+    assert high_alert_called is False
+    assert stop_reason == "Target level reached"
+
+
+@pytest.mark.asyncio
 async def test_check_thresholds_respects_cooldown():
     """Test that alerts respect cooldown period"""
     manager = _manager_stub()

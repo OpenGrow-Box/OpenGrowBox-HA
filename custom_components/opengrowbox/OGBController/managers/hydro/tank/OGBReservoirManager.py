@@ -127,6 +127,11 @@ class OGBReservoirManager:
             return float(value)
         except (ValueError, TypeError):
             return default
+
+    @property
+    def fill_stop_level(self) -> float:
+        """Safety stop level for refill cycles, 5% below configured max by default."""
+        return max(0.0, self.max_fill_level - getattr(self, "fill_step_size", 5.0))
     
     async def init(self):
         """Initialize and find reservoir sensor and pump"""
@@ -556,16 +561,17 @@ class OGBReservoirManager:
                 if not self._is_filling and not self._fill_blocked:
                     asyncio.create_task(self._auto_fill_reservoir())
         
-        # Check high threshold
+        # During active refill, reaching the safety stop level means completion, not overflow warning
+        elif self._is_filling and self.current_level >= self.fill_stop_level:
+            await self._stop_fill("Target level reached")
+            self.last_alert_type = None
+
+        # Check high threshold outside active refill
         elif self.current_level > high_thresh:
             if self.last_alert_type != "high":
                 await self._send_high_level_alert()
                 self.last_alert_time = now
                 self.last_alert_type = "high"
-                
-                # Stop filling if we reached target
-                if self._is_filling:
-                    await self._stop_fill("Target level reached")
         
         else:
             # Level is back in normal range, reset alert type
@@ -694,7 +700,7 @@ class OGBReservoirManager:
         self._fill_start_time = datetime.now()
         self._consecutive_sensor_errors = 0
         
-        target_level = self.max_fill_level
+        target_level = self.fill_stop_level
         
         _LOGGER.info(
             f"[{self.room}] Auto-fill initialized: {self.current_level:.1f}% → {target_level:.1f}%"
@@ -704,6 +710,7 @@ class OGBReservoirManager:
             "🚨 Reservoir kritisch",
             (
                 f"Fuellung gestartet: {self.current_level:.1f}% -> {target_level:.1f}%\n"
+                f"Konfiguriertes Maximum: {self.max_fill_level:.1f}%\n"
                 f"Schrittgroesse: {self.fill_step_size:.1f}%\n"
                 "Max. 5 Minuten pro Zyklus"
             ),
