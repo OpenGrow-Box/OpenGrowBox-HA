@@ -152,7 +152,7 @@ class OGBDampeningActions:
 
         # Apply dampening filter
         dampened_actions, blocked_actions = (
-            self.action_manager._filterActionsByDampening(
+            await self.action_manager._filterActionsByDampening(
                 enhanced_action_map, weighted_temp_dev, weighted_hum_dev
             )
         )
@@ -352,7 +352,7 @@ class OGBDampeningActions:
 
         # Apply cooldown filtering
         dampened_actions, blocked_actions = (
-            self.action_manager._filterActionsByDampening(
+            await self.action_manager._filterActionsByDampening(
                 action_map, temp_deviation, hum_deviation
             )
         )
@@ -429,7 +429,7 @@ class OGBDampeningActions:
             self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
         # Apply dampening (cooldown) filter
-        filtered_actions, _ = self.action_manager._filterActionsByDampening(
+        filtered_actions, _ = await self.action_manager._filterActionsByDampening(
             resolved_actions, temp_deviation, hum_deviation
         )
 
@@ -537,7 +537,7 @@ class OGBDampeningActions:
             self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
         # Apply dampening (cooldown) filter
-        filtered_actions, _ = self.action_manager._filterActionsByDampening(
+        filtered_actions, _ = await self.action_manager._filterActionsByDampening(
             resolved_actions, temp_deviation, hum_deviation
         )
 
@@ -876,7 +876,7 @@ class OGBDampeningActions:
         Calculate adaptive cooldown based on deviation severity.
 
         Larger deviations get longer cooldowns to allow time for effect.
-        Smaller deviations get shorter cooldowns to allow more responsive control.
+        Smaller deviations get shorter cooldowns for more responsive control.
 
         Args:
             capability: Device capability being controlled
@@ -885,28 +885,11 @@ class OGBDampeningActions:
         Returns:
             Cooldown time in minutes
         """
-        # Get base cooldown from action manager or use defaults
-        if hasattr(self.action_manager, 'defaultCooldownMinutes'):
-            base_cooldown = self.action_manager.defaultCooldownMinutes.get(capability, 2.0)
+        if hasattr(self.action_manager, 'cooldown_manager'):
+            base_cooldown = self.action_manager.cooldown_manager.cooldowns.get(capability, 2.0)
+            return self.action_manager.cooldown_manager._calculate_adaptive_dampening(base_cooldown, deviation)
         else:
-            # Fallback defaults
-            base_cooldown = 2.0
-
-        abs_deviation = abs(deviation)
-
-        # Adaptive scaling based on deviation severity
-        if abs_deviation > 5:
-            # Major deviations - longer cooldown to allow significant change
-            return base_cooldown * 1.5
-        elif abs_deviation > 3:
-            # Medium deviations - moderate cooldown extension
-            return base_cooldown * 1.2
-        elif abs_deviation < 1:
-            # Small deviations - shorter cooldown for more responsive control
-            return base_cooldown * 0.8
-
-        # Normal deviations - use base cooldown
-        return base_cooldown
+            return 2.0
 
     def _apply_buffer_zones(self, action_map: List, tent_data: Dict[str, Any]) -> List:
         """
@@ -932,17 +915,27 @@ class OGBDampeningActions:
         max_humidity = tent_data.get("maxHumidity", 80)
         min_humidity = tent_data.get("minHumidity", 40)
 
-        # Define buffer zones - configurable via data store with sensible defaults
-        HEATER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptions.heaterBuffer") or 2.0)    # Don't activate heater within X°C of max temp
-        COOLER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptions.coolerBuffer") or 2.0)    # Don't activate cooler within X°C of min temp
-        HUMIDIFIER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptions.humidifierBuffer") or 5.0)   # Don't activate humidifier within X% of max humidity
-        DEHUMIDIFIER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptions.dehumidifierBuffer") or 5.0) # Don't activate dehumidifier within X% of min humidity
+        # AT NIGHT: Disable ALL buffers for immediate response (Mold Prevention!)
+        is_night = not self.ogb.dataStore.getDeep("isPlantDay.islightON", True)
+        
+        if is_night:
+            # All buffers to 0 at night - immediate response for mold prevention
+            HEATER_BUFFER = 0.0
+            COOLER_BUFFER = 0.0
+            HUMIDIFIER_BUFFER = 0.0
+            DEHUMIDIFIER_BUFFER = 0.0
+        else:
+            # HARDCODED buffer values (not from datastore - that path doesn't exist!)
+            HEATER_BUFFER = float(2.5)
+            COOLER_BUFFER = float(2.5)
+            HUMIDIFIER_BUFFER = float(3.5)
+            DEHUMIDIFIER_BUFFER = float(3.5)
 
         # Calculate cutoff temperatures
         heater_cutoff_temp = max_temp - HEATER_BUFFER
         cooler_cutoff_temp = min_temp + COOLER_BUFFER
         humidifier_cutoff_humidity = max_humidity - HUMIDIFIER_BUFFER
-        dehumidifier_cutoff_humidity = min_humidity + DEHUMIDIFIER_BUFFER
+        dehumidifier_cutoff_humidity = max_humidity + DEHUMIDIFIER_BUFFER
 
         filtered_actions = []
 
@@ -988,10 +981,11 @@ class OGBDampeningActions:
                     continue
 
             elif capability == "canDehumidify" and action_type == "Increase":
+                # FIXED: Only block when humidity is already below max (dehumidifier would be useless)
                 if current_humidity <= dehumidifier_cutoff_humidity:
                     _LOGGER.debug(
                         f"{self.ogb.room}: Skipping dehumidifier activation - "
-                        f"humidity {current_humidity}% too close to min {min_humidity}% (buffer: {DEHUMIDIFIER_BUFFER}%)"
+                        f"humidity {current_humidity}% already below max {max_humidity}%"
                     )
                     continue
 
@@ -1385,10 +1379,10 @@ class OGBDampeningActions:
         from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
         
         # Climate devices that should be minimized at night to save power
-        climate_caps = {"canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2", "canLight"}
+        climate_caps = {"canHeat", "canCool", "canHumidify", "canDehumidify", "canCO2", "canLight", "canClimate"}
         
-        # Ventilation devices that should be actively controlled
-        ventilation_caps = {"canExhaust", "canVentilate", "canIntake", "canWindow"}
+        # Ventilation devices - controlled based on conditions
+        ventilation_caps = {"canExhaust", "canVentilate"}
         
         final_actions = []
         
@@ -1436,46 +1430,50 @@ class OGBDampeningActions:
                 priority="medium"
             ))
         
-        # 5. Intake - adjust based on outside temperature
+        # 5. Intake - check BOTH outside temperature AND humidity
         if caps.get("canIntake", {}).get("state", False):
             outside_temp = self.ogb.dataStore.getDeep("tentData.AmbientTemp")
+            outside_hum = self.ogb.dataStore.getDeep("tentData.AmbientHumidity")
             min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
+            max_humidity = self.ogb.dataStore.getDeep("tentData.maxHumidity")
             
             try:
                 outside_temp = float(outside_temp) if outside_temp is not None else None
+                outside_hum = float(outside_hum) if outside_hum is not None else None
                 min_temp = float(min_temp) if min_temp is not None else 18.0
+                max_humidity = float(max_humidity) if max_humidity is not None else 65.0
             except (ValueError, TypeError):
                 outside_temp = None
+                outside_hum = None
                 min_temp = 18.0
+                max_humidity = 65.0
             
-            # Logic: Only intake outside air if it's not too cold (would require heating)
-            if outside_temp is not None:
-                # Safe margin: don't intake if outside is more than 3°C below target min
-                if outside_temp >= (min_temp - 3):
-                    # Outside is warm enough - increase intake for fresh air
-                    final_actions.append(OGBActionPublication(
-                        capability="canIntake",
-                        action="Increase",
-                        Name=self.ogb.room,
-                        message=f"NightHold: Intake increased (outside {outside_temp}°C warm enough)",
-                        priority="medium"
-                    ))
-                else:
-                    # Outside is too cold - reduce intake to save heating
-                    final_actions.append(OGBActionPublication(
-                        capability="canIntake",
-                        action="Reduce",
-                        Name=self.ogb.room,
-                        message=f"NightHold: Intake reduced (outside {outside_temp}°C too cold, saving heat)",
-                        priority="low"
-                    ))
-            else:
-                # No outside temp data - default to moderate intake
+            # Rule 1: NO intake if outside humidity is too high (MOLD RISK!)
+            if outside_hum is not None and outside_hum >= (max_humidity + 10):
+                _LOGGER.debug(f"{self.ogb.room}: NightHold: Intake blocked - outside humidity {outside_hum}% too high")
+                final_actions.append(OGBActionPublication(
+                    capability="canIntake",
+                    action="Reduce",
+                    Name=self.ogb.room,
+                    message=f"NightHold: Intake reduced (outside RH {outside_hum}% too high - mold risk)",
+                    priority="low"
+                ))
+            # Rule 2: Only intake if temperature is acceptable
+            elif outside_temp is not None and outside_temp >= (min_temp - 3):
                 final_actions.append(OGBActionPublication(
                     capability="canIntake",
                     action="Increase",
                     Name=self.ogb.room,
-                    message="NightHold: Intake increased (no outside temp data, default to air exchange)",
+                    message=f"NightHold: Intake increased (outside {outside_temp}°C, RH {outside_hum}%)",
+                    priority="medium"
+                ))
+            else:
+                # Outside too cold
+                final_actions.append(OGBActionPublication(
+                    capability="canIntake",
+                    action="Reduce",
+                    Name=self.ogb.room,
+                    message=f"NightHold: Intake reduced (outside {outside_temp}°C too cold)",
                     priority="low"
                 ))
         
@@ -1582,9 +1580,16 @@ class OGBDampeningActions:
         Returns:
             Dictionary with dampening statistics
         """
+        active_cooldowns = 0
+        emergency_mode = False
+        if hasattr(self.action_manager, 'cooldown_manager'):
+            status = self.action_manager.cooldown_manager.get_status()
+            active_cooldowns = status["active_count"]
+            emergency_mode = status["emergency_mode"]
+
         return {
             "room": self.ogb.room,
             "dampening_enabled": True,  # Always enabled in this module
-            "active_cooldowns": len(self.action_manager.actionHistory),
-            "emergency_mode": getattr(self.action_manager, "_emergency_mode", False),
+            "active_cooldowns": active_cooldowns,
+            "emergency_mode": emergency_mode,
         }

@@ -34,82 +34,87 @@ class TestDeviceCooldownBasics:
     def test_default_cooldowns_are_loaded(self):
         """Test that default cooldown values are loaded correctly."""
         manager, _, _ = _make_action_manager()
-        
+
         # Check that all default cooldowns are present
         for cap, minutes in DEFAULT_DEVICE_COOLDOWNS.items():
-            assert manager.defaultCooldownMinutes.get(cap) == minutes, \
-                f"Expected {cap} cooldown to be {minutes}, got {manager.defaultCooldownMinutes.get(cap)}"
-    
-    def test_is_action_allowed_returns_true_for_new_capability(self):
+            assert manager.cooldown_manager.cooldowns.get(cap) == minutes, \
+                f"Expected {cap} cooldown to be {minutes}, got {manager.cooldown_manager.cooldowns.get(cap)}"
+
+    @pytest.mark.asyncio
+    async def test_is_action_allowed_returns_true_for_new_capability(self):
         """Test that new capabilities are always allowed."""
         manager, _, _ = _make_action_manager()
-        
+
         # New capability should be allowed
-        assert manager._isActionAllowed("canHeat", "Increase", 0.5) is True
-        assert manager._isActionAllowed("canCool", "Increase", 0.5) is True
+        assert await manager._isActionAllowed("canHeat", "Increase", 0.5) is True
+        assert await manager._isActionAllowed("canCool", "Increase", 0.5) is True
     
-    def test_action_registers_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_action_registers_cooldown(self):
         """Test that registering an action sets cooldown."""
         manager, _, _ = _make_action_manager()
-        
+
         # Register an action
-        manager._registerAction("canHeat", "Increase", 2.0)
-        
+        await manager._registerAction("canHeat", "Increase", 2.0)
+
         # Check that it's in history
-        assert "canHeat" in manager.actionHistory
-        
+        assert "canHeat" in manager.cooldown_manager.action_history
+
         # Check that cooldown is set (should be in the future)
-        cooldown_until = manager.actionHistory["canHeat"]["cooldown_until"]
+        cooldown_until = manager.cooldown_manager.action_history["canHeat"]["cooldown_until"]
         assert cooldown_until > datetime.now()
     
-    def test_action_blocked_during_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_action_blocked_during_cooldown(self):
         """Test that actions are blocked during cooldown."""
         manager, _, _ = _make_action_manager()
-        
+
         # Register an action
-        manager._registerAction("canHeat", "Increase", 2.0)
-        
+        await manager._registerAction("canHeat", "Increase", 2.0)
+
         # Try the same action immediately - should be blocked
-        is_allowed = manager._isActionAllowed("canHeat", "Increase", 2.0)
+        is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
         assert is_allowed is False, "Action should be blocked during cooldown"
     
-    def test_repeat_action_blocked_during_repeat_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_repeat_action_blocked_during_repeat_cooldown(self):
         """Test that repeating the same action is blocked during repeat cooldown."""
         manager, _, _ = _make_action_manager()
         
         # Register an action
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Main cooldown blocks ALL actions on this capability
-        assert manager._isActionAllowed("canHeat", "Reduce", 2.0) is False, \
+        assert await manager._isActionAllowed("canHeat", "Reduce", 2.0) is False, \
             "Different action should also be blocked by main cooldown"
         
         # Same action is also blocked (by main cooldown, not just repeat cooldown)
-        assert manager._isActionAllowed("canHeat", "Increase", 2.0) is False
+        assert await manager._isActionAllowed("canHeat", "Increase", 2.0) is False
     
-    def test_repeat_cooldown_blocks_same_action_after_main_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_repeat_cooldown_blocks_same_action_after_main_cooldown(self):
         """Test that repeat cooldown blocks same action even after main cooldown expires."""
         from datetime import datetime, timedelta
         
         manager, _, _ = _make_action_manager()
         
         # Register an action
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Simulate main cooldown passing (but not repeat cooldown)
         # Main cooldown = 3 min, repeat cooldown = 1.5 min
-        history = manager.actionHistory["canHeat"]
+        history = manager.cooldown_manager.action_history["canHeat"]
         # Move main cooldown into the past
         history["cooldown_until"] = datetime.now() - timedelta(seconds=1)
         # Keep repeat cooldown in the future
         history["repeat_cooldown"] = datetime.now() + timedelta(minutes=1)
         
         # Different action should now be allowed (main cooldown expired)
-        assert manager._isActionAllowed("canHeat", "Reduce", 2.0) is True, \
+        assert await manager._isActionAllowed("canHeat", "Reduce", 2.0) is True, \
             "Different action should be allowed after main cooldown expires"
         
         # Same action should still be blocked (by repeat cooldown)
-        assert manager._isActionAllowed("canHeat", "Increase", 2.0) is False, \
+        assert await manager._isActionAllowed("canHeat", "Increase", 2.0) is False, \
             "Same action should still be blocked by repeat cooldown"
 
 
@@ -122,7 +127,7 @@ class TestUserDefinedCooldowns:
         manager, _, event_manager = _make_action_manager()
         
         # Get default cooldown
-        default_cooldown = manager.defaultCooldownMinutes.get("canHeat", 3)
+        default_cooldown = manager.cooldown_manager.cooldowns.get("canHeat", 3)
         assert default_cooldown == 3
         
         # Adjust cooldown via event
@@ -130,7 +135,7 @@ class TestUserDefinedCooldowns:
         await manager.adjustDeviceGCD(adjustment_data)
         
         # Check that cooldown was updated
-        assert manager.defaultCooldownMinutes["canHeat"] == 10, \
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 10, \
             "Cooldown should be updated to 10 minutes"
     
     @pytest.mark.asyncio
@@ -143,14 +148,14 @@ class TestUserDefinedCooldowns:
         await manager.adjustDeviceGCD(adjustment_data)
         
         # Should not add to cooldowns
-        assert "canUnknown" not in manager.defaultCooldownMinutes
+        assert "canUnknown" not in manager.cooldown_manager.cooldowns
     
     def test_calculate_adaptive_cooldown_uses_custom_values(self):
         """Test that adaptive cooldown uses user-defined values."""
         manager, _, _ = _make_action_manager()
         
         # Set custom cooldown
-        manager.defaultCooldownMinutes["canHeat"] = 15
+        manager.cooldown_manager.cooldowns["canHeat"] = 15
         
         # Calculate adaptive cooldown
         cooldown = manager._calculateAdaptiveCooldown("canHeat", 2.0)
@@ -176,7 +181,7 @@ class TestUserDefinedCooldowns:
         manager, _, _ = _make_action_manager()
         
         # Set base cooldown
-        manager.defaultCooldownMinutes["canHeat"] = 5
+        manager.cooldown_manager.cooldowns["canHeat"] = 5
         
         # Test different deviation levels - default behavior: no adaptive scaling
         cooldown_small = manager._calculateAdaptiveCooldown("canHeat", 0.5)   # → 5 (base)
@@ -203,7 +208,7 @@ class TestUserDefinedCooldowns:
         data_store.setDeep("controlOptions.adaptiveCooldownEnabled", True)
         
         # Set base cooldown
-        manager.defaultCooldownMinutes["canHeat"] = 5
+        manager.cooldown_manager.cooldowns["canHeat"] = 5
         
         # Test different deviation levels with adaptive enabled
         # Note: thresholds are veryNear=0.5, near=1.0, high=3.0, critical=5.0
@@ -226,9 +231,10 @@ class TestUserDefinedCooldowns:
         assert cooldown_very_near > cooldown_high, "Very near deviation should have longer cooldown than high"
         assert cooldown_very_near > cooldown_normal, "Very near deviation should have longest cooldown"
     
-    def test_filter_actions_respects_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_filter_actions_respects_cooldown(self):
         """Test that action filtering respects cooldowns.
-        
+
         Note: Conflict resolution runs first and removes conflicting actions silently.
         The blocked list only contains actions rejected by dampening, not conflicts.
         """
@@ -248,18 +254,19 @@ class TestUserDefinedCooldowns:
         
         # Filter actions - canHeat+canCool conflict, one removed silently
         # canDehumidify passes and is registered
-        filtered, blocked = manager._filterActionsByDampening(actions, 2.0, 1.0)
+        filtered, blocked = await manager._filterActionsByDampening(actions, 2.0, 1.0)
         assert len(filtered) == 2, "canHeat+canCool conflict, 2 should pass"
         assert len(blocked) == 0, "No dampening blocks initially"
         
         # Verify actions were registered (whichever passed)
-        assert "canDehumidify" in manager.actionHistory
-        has_temp_action = "canHeat" in manager.actionHistory or "canCool" in manager.actionHistory
+        assert "canDehumidify" in manager.cooldown_manager.action_history
+        has_temp_action = "canHeat" in manager.cooldown_manager.action_history or "canCool" in manager.cooldown_manager.action_history
         assert has_temp_action, "One temp action should be registered"
     
-    def test_filter_actions_respects_selective_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_filter_actions_respects_selective_cooldown(self):
         """Test that filtering respects cooldowns for specific capabilities.
-        
+
         Note: Conflict resolution runs first - canHeat+canCool conflict.
         """
         manager, _, _ = _make_action_manager()
@@ -277,11 +284,11 @@ class TestUserDefinedCooldowns:
         ]
         
         # Register ONLY canHeat manually (don't run filter yet)
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Now filter - canHeat is in cooldown, canCool+canHeat conflict
         # canDehumidify should pass, one temp action may pass
-        filtered, blocked = manager._filterActionsByDampening(actions, 2.0, 1.0)
+        filtered, blocked = await manager._filterActionsByDampening(actions, 2.0, 1.0)
         
         # canDehumidify should definitely pass (no conflict, no cooldown)
         assert "canDehumidify" in [a.capability for a in filtered], "canDehumidify should pass"
@@ -298,7 +305,7 @@ class TestCooldownPersistence:
         manager, data_store, _ = _make_action_manager()
         
         # Adjust cooldown
-        manager.defaultCooldownMinutes["canHeat"] = 10
+        manager.cooldown_manager.cooldowns["canHeat"] = 10
         
         # Expected: The value should be saved to data_store
         # This will fail until the fix is implemented
@@ -326,15 +333,16 @@ class TestCooldownPersistence:
         
         # Expected: The values should be loaded from data_store
         # This will fail until the fix is implemented
-        # assert manager.defaultCooldownMinutes.get("canHeat") == 15
-        # assert manager.defaultCooldownMinutes.get("canCool") == 12
-        # assert manager.defaultCooldownMinutes.get("canDehumidify") == 3  # Default
+        # assert manager.cooldown_manager.cooldowns.get("canHeat") == 15
+        # assert manager.cooldown_manager.cooldowns.get("canCool") == 12
+        # assert manager.cooldown_manager.cooldowns.get("canDehumidify") == 3  # Default
 
 
 class TestCooldownWithRealDevices:
     """Test cooldown behavior with actual device actions."""
     
-    def test_device_uses_correct_cooldown_value(self):
+    @pytest.mark.asyncio
+    async def test_device_uses_correct_cooldown_value(self):
         """Test that devices use the correct cooldown value from manager.
         
         Default behavior (adaptiveCooldownEnabled=False):
@@ -343,21 +351,22 @@ class TestCooldownWithRealDevices:
         manager, _, _ = _make_action_manager()
         
         # Set custom cooldown for canDehumidify
-        manager.defaultCooldownMinutes["canDehumidify"] = 8
+        manager.cooldown_manager.cooldowns["canDehumidify"] = 8
         
         # Register action with deviation 5.0
         # With adaptive disabled (default), cooldown should be base value (8 min)
-        manager._registerAction("canDehumidify", "Increase", 5.0)
+        await manager._registerAction("canDehumidify", "Increase", 5.0)
         
         # Check that cooldown uses custom value (no adaptive scaling when disabled)
-        cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
+        cooldown_until = manager.cooldown_manager.action_history["canDehumidify"]["cooldown_until"]
         expected_cooldown = datetime.now() + timedelta(minutes=8)
         
         # Allow some tolerance for timing
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
         assert time_diff < 1.0, f"Cooldown should be ~8 minutes (base value, adaptive disabled), got {time_diff} seconds difference"
     
-    def test_device_uses_adaptive_cooldown_when_enabled(self):
+    @pytest.mark.asyncio
+    async def test_device_uses_adaptive_cooldown_when_enabled(self):
         """Test that devices use adaptive cooldown when explicitly enabled."""
         manager, data_store, _ = _make_action_manager()
         
@@ -365,110 +374,116 @@ class TestCooldownWithRealDevices:
         data_store.setDeep("controlOptions.adaptiveCooldownEnabled", True)
         
         # Set custom cooldown for canDehumidify
-        manager.defaultCooldownMinutes["canDehumidify"] = 8
+        manager.cooldown_manager.cooldowns["canDehumidify"] = 8
         
         # Register action with deviation 5.0 (triggers adaptive cooldown: 8 * 1.5 = 12 min)
         # Deviation 5.0 > critical threshold (5.0) triggers 1.5x multiplier
-        manager._registerAction("canDehumidify", "Increase", 6.0)
+        await manager._registerAction("canDehumidify", "Increase", 6.0)
         
         # Check that cooldown uses custom value with adaptive scaling
-        cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
+        cooldown_until = manager.cooldown_manager.action_history["canDehumidify"]["cooldown_until"]
         expected_cooldown = datetime.now() + timedelta(minutes=12)  # 8 * 1.5 = 12
         
         # Allow some tolerance for timing
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
         assert time_diff < 1.0, f"Cooldown should be ~12 minutes (8 * 1.5 adaptive), got {time_diff} seconds difference"
     
-    def test_multiple_devices_same_capability_share_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_multiple_devices_same_capability_share_cooldown(self):
         """Test that multiple devices with same capability share cooldown."""
         manager, _, _ = _make_action_manager()
         
         # Register action for first device
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Second device with same capability should be blocked
-        is_allowed = manager._isActionAllowed("canHeat", "Increase", 2.0)
+        is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
         assert is_allowed is False, "Second device should be blocked by shared cooldown"
     
-    def test_different_capabilities_have_independent_cooldowns(self):
+    @pytest.mark.asyncio
+    async def test_different_capabilities_have_independent_cooldowns(self):
         """Test that different capabilities have independent cooldowns."""
         manager, _, _ = _make_action_manager()
         
         # Register action for canHeat
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # canCool should still be allowed
-        is_allowed = manager._isActionAllowed("canCool", "Increase", 2.0)
+        is_allowed = await manager._isActionAllowed("canCool", "Increase", 2.0)
         assert is_allowed is True, "Different capability should not be blocked"
 
 
 class TestCooldownEdgeCases:
     """Test edge cases in cooldown logic."""
     
-    def test_zero_cooldown_allows_immediate_repeat(self):
+    @pytest.mark.asyncio
+    async def test_zero_cooldown_allows_immediate_repeat(self):
         """Test that zero cooldown allows immediate repeat."""
         manager, _, _ = _make_action_manager()
         
         # Set zero cooldown
-        manager.defaultCooldownMinutes["canHeat"] = 0
+        manager.cooldown_manager.cooldowns["canHeat"] = 0
         
         # Register action
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # With zero cooldown, should still be blocked by repeat cooldown (50% of 0 = 0)
         # But the main cooldown should be zero
-        cooldown_until = manager.actionHistory["canHeat"]["cooldown_until"]
+        cooldown_until = manager.cooldown_manager.action_history["canHeat"]["cooldown_until"]
         time_diff = (cooldown_until - datetime.now()).total_seconds()
         
         # Should be very close to zero
         assert time_diff < 1.0, f"Zero cooldown should have minimal time, got {time_diff}s"
     
-    def test_very_long_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_very_long_cooldown(self):
         """Test that very long cooldown values work correctly."""
         manager, _, _ = _make_action_manager()
         
         # Set very long cooldown (60 minutes)
-        manager.defaultCooldownMinutes["canHeat"] = 60
+        manager.cooldown_manager.cooldowns["canHeat"] = 60
         
         # Register action
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Should be blocked
-        is_allowed = manager._isActionAllowed("canHeat", "Increase", 2.0)
+        is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
         assert is_allowed is False
     
-    def test_emergency_mode_bypasses_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_emergency_mode_bypasses_cooldown(self):
         """Test that emergency mode bypasses cooldown."""
         manager, _, _ = _make_action_manager()
         
         # Register action
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Normal case - should be blocked
-        is_allowed = manager._isActionAllowed("canHeat", "Increase", 2.0)
+        is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
         assert is_allowed is False
         
         # Enable emergency mode
-        manager._emergency_mode = True
+        manager.cooldown_manager._emergency_mode = True
         
         # Emergency mode - should be allowed
-        is_allowed = manager._isActionAllowed("canHeat", "Increase", 2.0)
+        is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
         assert is_allowed is True, "Emergency mode should bypass cooldown"
 
 
 class TestCooldownLogging:
     """Test that cooldown actions are properly logged."""
     
-    def test_register_action_logs_cooldown(self):
+    @pytest.mark.asyncio
+    async def test_register_action_logs_cooldown(self):
         """Test that registering an action logs the cooldown time."""
         manager, _, _ = _make_action_manager()
         
         # This test verifies that logging happens
         # In production, check logs for cooldown information
-        manager._registerAction("canHeat", "Increase", 2.0)
+        await manager._registerAction("canHeat", "Increase", 2.0)
         
         # Verify history contains necessary info for logging
-        history = manager.actionHistory["canHeat"]
+        history = manager.cooldown_manager.action_history["canHeat"]
         assert "cooldown_until" in history
         assert "repeat_cooldown" in history
         assert "deviation" in history

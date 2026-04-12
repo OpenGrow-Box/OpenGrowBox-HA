@@ -266,7 +266,11 @@ async def test_reservoir_autofill_handles_multiple_refills_over_time():
                 refill_runs[-1]["cycles"] = manager._fill_cycles_completed
 
         assert len(refill_runs) >= 2, "Expected multiple refill runs over long-term depletion"
-        assert all(run["end"] >= manager.max_fill_level for run in refill_runs)
+
+        # Refill runs should end at or above fill_stop_level (which is max_fill_level - fill_step_size)
+        # This is a safety feature to stop 5% before the actual max to prevent overflow
+        assert all(run["end"] >= manager.fill_stop_level for run in refill_runs), \
+            f"Refill runs should end at or above fill_stop_level"
         assert all(run["cycles"] >= 10 for run in refill_runs), "Each refill should require multiple 5% cycles"
         assert manager._fill_blocked is False, "Successful long-term refills should not block autofill"
 

@@ -15,10 +15,11 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..data.OGBDataClasses.OGBPublications import (OGBActionPublication,
-                                              OGBHydroAction, OGBRetrieveAction,
-                                              OGBWaterAction,
-                                              OGBWeightPublication)
+                                               OGBHydroAction, OGBRetrieveAction,
+                                               OGBWaterAction,
+                                               OGBWeightPublication)
 from ..data.OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
+from .OGBgcdManager import OGBgcdManager
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -56,15 +57,9 @@ class OGBActionManager:
 
         # Action state
         self.isInitialized = False
-        self.actionHistory: Dict[str, Dict[str, Any]] = {}
-        
-        # Load cooldowns from datastore or use defaults
-        self.defaultCooldownMinutes = self._load_cooldowns_from_datastore()
 
-        # Lock for thread-safe action history updates
-        self._action_history_lock = asyncio.Lock()
-        self.adaptiveCooldownEnabled = False  # Disabled by default - user sets exact cooldowns
-        self._emergency_mode = False
+        # Cooldown manager (centralized cooldown handling)
+        self.cooldown_manager = OGBgcdManager(hass, data_store, room)
 
         # Initialize specialized action modules
         self.vpd_actions = None
@@ -143,67 +138,13 @@ class OGBActionManager:
             _LOGGER.error(f"Error initializing action modules for {self.room}: {e}")
             self.isInitialized = False
 
-    def _load_cooldowns_from_datastore(self) -> Dict[str, float]:
-        """
-        Load user-defined cooldowns from datastore, falling back to defaults.
-        
-        Returns:
-            Dictionary of capability -> cooldown in minutes
-        """
-        # Start with default cooldowns
-        cooldowns = DEFAULT_DEVICE_COOLDOWNS.copy()
-        
-        try:
-            # Try to load user-defined cooldowns from datastore
-            user_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
-            
-            if user_cooldowns and isinstance(user_cooldowns, dict):
-                # Update defaults with user values
-                updated_count = 0
-                for capability, minutes in user_cooldowns.items():
-                    if capability in cooldowns:
-                        cooldowns[capability] = float(minutes)
-                        updated_count += 1
-                    else:
-                        _LOGGER.warning(
-                            f"{self.room}: Unknown capability '{capability}' in user cooldowns, skipping"
-                        )
-                
-                if updated_count > 0:
-                    _LOGGER.info(
-                        f"{self.room}: Loaded {updated_count} user-defined cooldown(s) from datastore: {user_cooldowns}"
-                    )
-            else:
-                _LOGGER.debug(
-                    f"{self.room}: No user cooldowns found in datastore (user_cooldowns={user_cooldowns})"
-                )
-        except Exception as e:
-            _LOGGER.warning(
-                f"{self.room}: Failed to load user cooldowns from datastore: {e}. Using defaults."
-            )
-        
-        return cooldowns
 
-    def _save_cooldowns_to_datastore(self):
-        """
-        Save current cooldowns to datastore for persistence.
-        """
-        try:
-            # Save current cooldowns to datastore
-            self.data_store.setDeep("controlOptions.deviceCooldowns", self.defaultCooldownMinutes)
-            _LOGGER.info(
-                f"{self.room}: Saved {len(self.defaultCooldownMinutes)} cooldown(s) to datastore"
-            )
-        except Exception as e:
-            _LOGGER.error(
-                f"{self.room}: Failed to save cooldowns to datastore: {e}"
-            )
 
     # =================================================================
     # Core Action Logic
     # =================================================================
 
-    def _isActionAllowed(
+    async def _isActionAllowed(
         self, capability: str, action: str, deviation: float = 0
     ) -> bool:
         """
@@ -217,37 +158,7 @@ class OGBActionManager:
         Returns:
             True if action is allowed
         """
-        now = datetime.now()
-
-        if capability not in self.actionHistory:
-            return True
-
-        history = self.actionHistory[capability]
-
-        # Skip cooldown for emergency actions
-        if self._emergency_mode:
-            _LOGGER.warning(
-                f"{self.room}: Emergency mode - bypassing cooldown for {capability}"
-            )
-            return True
-
-        # Check if still in cooldown
-        if now < history.get("cooldown_until", now):
-            _LOGGER.debug(
-                f"{self.room}: {capability} still in cooldown until {history['cooldown_until']}"
-            )
-            return False
-
-        # Check if same action is being repeated too quickly
-        if history.get("action_type") == action and now < history.get(
-            "repeat_cooldown", now
-        ):
-            _LOGGER.debug(
-                f"{self.room}: {capability} repeat of '{action}' still blocked"
-            )
-            return False
-
-        return True
+        return await self.cooldown_manager.is_allowed(capability, action, deviation)
 
     def _calculateAdaptiveCooldown(self, capability: str, deviation: float) -> float:
         """
@@ -260,43 +171,9 @@ class OGBActionManager:
         Returns:
             Cooldown time in minutes
         """
-        # Get base cooldown (user-defined)
-        baseCooldown = self.defaultCooldownMinutes.get(capability, 2)
+        return self.cooldown_manager.calculate(capability, deviation)
 
-        # Check if adaptive cooldown is enabled (default: False)
-        adaptive_enabled = self.data_store.getDeep("controlOptions.adaptiveCooldownEnabled", False)
-        if not adaptive_enabled:
-            # User says x, user gets x!
-            # Unless in emergency mode
-            if self._emergency_mode:
-                # In emergency: Reduce cooldown for faster response
-                emergency_factor = self.data_store.getDeep("controlOptions.emergencyCooldownFactor", 0.5)
-                return baseCooldown * emergency_factor
-            return baseCooldown
-
-        # Adaptive cooldown is enabled - load user-configurable thresholds and factors
-        thresholds = self.data_store.getDeep("controlOptions.adaptiveCooldownThresholds", {
-            "critical": 5.0, "high": 3.0, "near": 1.0, "veryNear": 0.5
-        })
-        factors = self.data_store.getDeep("controlOptions.adaptiveCooldownFactors", {
-            "critical": 1.5, "high": 1.2, "near": 2.0, "veryNear": 3.0
-        })
-
-        abs_dev = abs(deviation)
-
-        # Apply adaptive factors if user explicitly enabled this feature
-        if abs_dev > thresholds["critical"]:
-            return baseCooldown * factors["critical"]
-        elif abs_dev > thresholds["high"]:
-            return baseCooldown * factors["high"]
-        elif abs_dev < thresholds["veryNear"]:
-            return baseCooldown * factors["veryNear"]
-        elif abs_dev < thresholds["near"]:
-            return baseCooldown * factors["near"]
-
-        return baseCooldown
-
-    def _registerAction(self, capability: str, action: str, deviation: float = 0):
+    async def _registerAction(self, capability: str, action: str, deviation: float = 0):
         """
         Register an action in the history system.
 
@@ -305,27 +182,9 @@ class OGBActionManager:
             action: Action type
             deviation: Current deviation from target
         """
-        now = datetime.now()
+        await self.cooldown_manager.register(capability, action, deviation)
 
-        cooldownMinutes = self._calculateAdaptiveCooldown(capability, deviation)
-        cooldownUntil = now + timedelta(minutes=cooldownMinutes)
-
-        # Longer cooldown for repeating the same action
-        repeatCooldown = now + timedelta(minutes=cooldownMinutes * 0.5)
-
-        self.actionHistory[capability] = {
-            "last_action": now,
-            "action_type": action,
-            "cooldown_until": cooldownUntil,
-            "repeat_cooldown": repeatCooldown,
-            "deviation": deviation,
-        }
-
-        _LOGGER.debug(
-            f"{self.room}: {capability} '{action}' registered, cooldown until {cooldownUntil}"
-        )
-
-    def _filterActionsByDampening(
+    async def _filterActionsByDampening(
         self, actionMap, tempDeviation: float = 0, humDeviation: float = 0
     ):
         """
@@ -353,14 +212,12 @@ class OGBActionManager:
             deviation = 0
             if capability in ["canHumidify", "canDehumidify"]:
                 deviation = humDeviation
-            elif capability in ["canHeat", "canCool", "canClimate"]:
+            elif capability in ["canHeat", "canCool"]:
                 deviation = tempDeviation
-            else:
-                deviation = max(abs(tempDeviation), abs(humDeviation))
 
-            if self._isActionAllowed(capability, actionType, deviation):
+            if await self._isActionAllowed(capability, actionType, deviation):
                 filteredActions.append(action)
-                self._registerAction(capability, actionType, deviation)
+                await self._registerAction(capability, actionType, deviation)
             else:
                 blockedActions.append(action)
 
@@ -424,7 +281,7 @@ class OGBActionManager:
 
         return emergencyConditions
 
-    def _clearCooldownForEmergency(self, emergencyConditions: List[str]):
+    async def _clearCooldownForEmergency(self, emergencyConditions: List[str]):
         """
         Clear cooldowns during emergencies.
 
@@ -434,13 +291,7 @@ class OGBActionManager:
         if not emergencyConditions:
             return
 
-        # Set emergency mode flag
-        self._emergency_mode = True
-
-        # Clear all cooldowns
-        now = datetime.now()
-        for capability in self.actionHistory:
-            self.actionHistory[capability]["cooldown_until"] = now
+        await self.cooldown_manager.set_emergency_mode(True)
 
         # Clear emergency mode after short delay to allow actions
         # Track the task to prevent orphaned tasks
@@ -453,7 +304,7 @@ class OGBActionManager:
     async def _clear_emergency_mode(self):
         """Clear emergency mode after delay."""
         await asyncio.sleep(5)  # 5 seconds
-        self._emergency_mode = False
+        await self.cooldown_manager.set_emergency_mode(False)
         _LOGGER.info(f"{self.room}: Emergency mode cleared")
 
     # =================================================================
@@ -470,16 +321,7 @@ class OGBActionManager:
         _LOGGER.warning(f"{data}")
         cap = data.get("cap")
         minutes = data.get("minutes")
-
-        if cap in self.defaultCooldownMinutes:
-            self.defaultCooldownMinutes[cap] = minutes
-            _LOGGER.warning(
-                f"Cooldown for {cap} set to {minutes} minutes. GCDS: {self.defaultCooldownMinutes}"
-            )
-            # Save to datastore for persistence
-            self._save_cooldowns_to_datastore()
-        else:
-            _LOGGER.error(f"Unknown capability: {cap}")
+        await self.cooldown_manager.adjust(cap, minutes)
 
     async def _handle_increase_vpd(self, capabilities):
         """Handle VPD increase requests."""
@@ -812,23 +654,11 @@ class OGBActionManager:
         Returns:
             Dictionary with dampening status for all capabilities
         """
-        now = datetime.now()
-        status = {}
-
-        for capability, history in self.actionHistory.items():
-            cooldownRemaining = history.get("cooldown_until", now) - now
-            status[capability] = {
-                "last_action": history.get("last_action"),
-                "action_type": history.get("action_type"),
-                "cooldown_remaining_seconds": max(0, cooldownRemaining.total_seconds()),
-                "is_blocked": now < history.get("cooldown_until", now),
-            }
-
-        return status
+        return self.cooldown_manager.get_status()
 
     def clearDampeningHistory(self):
         """Clear the dampening history (for debugging/reset)."""
-        self.actionHistory.clear()
+        self.cooldown_manager.action_history.clear()
         _LOGGER.info(f"{self.room}: Dampening history reset")
 
     def get_action_status(self) -> Dict[str, Any]:
@@ -838,19 +668,13 @@ class OGBActionManager:
         Returns:
             Dictionary with action system status
         """
+        gcd_status = self.cooldown_manager.get_status()
         return {
             "room": self.room,
             "initialized": self.isInitialized,
-            "emergency_mode": self._emergency_mode,
-            "adaptive_cooldown_enabled": self.adaptiveCooldownEnabled,
-            "active_cooldowns": len(
-                [
-                    c
-                    for c in self.actionHistory.values()
-                    if datetime.now() < c.get("cooldown_until", datetime.now())
-                ]
-            ),
-            "total_actions_tracked": len(self.actionHistory),
+            "emergency_mode": gcd_status["emergency_mode"],
+            "active_cooldowns": gcd_status["active_count"],
+            "total_actions_tracked": len(self.cooldown_manager.action_history),
             "modules": {
                 "vpd_actions": self.vpd_actions is not None,
                 "emergency_actions": self.emergency_actions is not None,
@@ -1072,15 +896,13 @@ class OGBActionManager:
         # Create action summary
         action_summary = ", ".join([f"{a.capability}:{a.action}" for a in final_actions])
 
-        # Build log message
-        if dampening_enabled and blocked_actions:
+        # Build log message - Always show cooldown info
+        blocked_devices = ", ".join([f"{getattr(a, 'capability', '?')}" for a in blocked_actions]) if blocked_actions else ""
+        
+        if dampening_enabled:
             message = (
                 f"VPD Perfection: Core Logic + Dampening: {len(final_actions)} actions executed "
                 f"({len(blocked_actions)} blocked by cooldown)"
-            )
-        elif dampening_enabled:
-            message = (
-                f"VPD Perfection: Core Logic + Dampening: {len(final_actions)} actions executed"
             )
         else:
             message = (
@@ -1096,6 +918,7 @@ class OGBActionManager:
                 "actions": action_summary,
                 "actionCount": len(final_actions),
                 "blockedActions": len(blocked_actions),
+                "blockedDevices": blocked_devices,
                 "dampeningEnabled": dampening_enabled,
                 "tempDeviation": real_temp_dev,
                 "humDeviation": real_hum_dev,
@@ -1172,7 +995,7 @@ class OGBActionManager:
             )
         else:
             # Fallback: Only resolve conflicts
-            enhanced_actions = self._resolve_action_conflicts(actionMap)
+            enhanced_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
 
         # STEP 2: DAMPENING FEATURES (only if enabled)
         # - Cooldown filtering (user-defined base cooldowns)
@@ -1185,7 +1008,7 @@ class OGBActionManager:
             filtered_actions, blocked_actions = await self.dampening_actions.process_dampening_features(
                 enhanced_actions, weighted_temp_dev, weighted_hum_dev, tent_data
             )
-            final_actions = self._resolve_action_conflicts(filtered_actions)
+            final_actions = self.dampening_actions._resolve_action_conflicts(filtered_actions)
         else:
             # No dampening - use enhanced actions directly
             final_actions = enhanced_actions
@@ -1258,7 +1081,7 @@ class OGBActionManager:
                 actionMap, weighted_temp_dev, weighted_hum_dev, tent_data
             )
         else:
-            enhanced_actions = self._resolve_action_conflicts(actionMap)
+            enhanced_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
 
         # STEP 2: DAMPENING FEATURES (only if enabled)
         dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)
@@ -1268,7 +1091,7 @@ class OGBActionManager:
             filtered_actions, blocked_actions = await self.dampening_actions.process_dampening_features(
                 enhanced_actions, weighted_temp_dev, weighted_hum_dev, tent_data
             )
-            final_actions = self._resolve_action_conflicts(filtered_actions)
+            final_actions = self.dampening_actions._resolve_action_conflicts(filtered_actions)
         else:
             final_actions = enhanced_actions
 
@@ -1281,6 +1104,8 @@ class OGBActionManager:
         # Log results
         current_vpd_for_log = self.data_store.getDeep("vpd.current")
         target_vpd_for_log = self.data_store.getDeep("vpd.targeted")
+        blocked_devices = ", ".join([f"{getattr(a, 'capability', '?')}" for a in blocked_actions]) if blocked_actions else ""
+        
         await self.event_manager.emit(
             "LogForClient",
             {
@@ -1289,6 +1114,7 @@ class OGBActionManager:
                 "actions": ", ".join([f"{a.capability}:{a.action}" for a in final_actions]),
                 "actionCount": len(final_actions),
                 "blockedActions": len(blocked_actions),
+                "blockedDevices": blocked_devices,
                 "dampeningEnabled": dampening_enabled,
                 "vpdDeviation": vpd_deviation,
                 "vpdCurrent": current_vpd_for_log,
@@ -1429,7 +1255,7 @@ class OGBActionManager:
             action_set["actions"].append(action_entry)
 
         # Use lock for thread-safe action history updates to prevent race conditions
-        async with self._action_history_lock:
+        async with self.cooldown_manager._lock:
             previousActions = self.data_store.get("previousActions") or []
             
             # Only add if we have actions
@@ -1730,7 +1556,7 @@ class OGBActionManager:
                 self._background_tasks.clear()
             
             # Clear action history
-            self.actionHistory.clear()
+            self.cooldown_manager.action_history.clear()
             
             # Clear previous actions from datastore
             self.data_store.set("previousActions", [])

@@ -33,13 +33,13 @@ class TestCooldownPersistenceImplementation:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Check that user values were loaded
-        assert manager.defaultCooldownMinutes["canHeat"] == 15
-        assert manager.defaultCooldownMinutes["canCool"] == 12
-        assert manager.defaultCooldownMinutes["canDehumidify"] == 8
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 15
+        assert manager.cooldown_manager.cooldowns["canCool"] == 12
+        assert manager.cooldown_manager.cooldowns["canDehumidify"] == 8
         
         # Check that defaults are still present for non-user values
-        assert manager.defaultCooldownMinutes["canHumidify"] == DEFAULT_DEVICE_COOLDOWNS["canHumidify"]
-        assert manager.defaultCooldownMinutes["canExhaust"] == DEFAULT_DEVICE_COOLDOWNS["canExhaust"]
+        assert manager.cooldown_manager.cooldowns["canHumidify"] == DEFAULT_DEVICE_COOLDOWNS["canHumidify"]
+        assert manager.cooldown_manager.cooldowns["canExhaust"] == DEFAULT_DEVICE_COOLDOWNS["canExhaust"]
     
     def test_load_cooldowns_from_datastore_with_invalid_capability(self):
         """Test that invalid capabilities in datastore are skipped."""
@@ -58,14 +58,14 @@ class TestCooldownPersistenceImplementation:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Check that valid value was loaded
-        assert manager.defaultCooldownMinutes["canHeat"] == 15
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 15
         
         # Check that invalid capability was not added
-        assert "canInvalidCapability" not in manager.defaultCooldownMinutes
+        assert "canInvalidCapability" not in manager.cooldown_manager.cooldowns
         
         # Check that all default capabilities are still present
         for cap in DEFAULT_DEVICE_COOLDOWNS:
-            assert cap in manager.defaultCooldownMinutes
+            assert cap in manager.cooldown_manager.cooldowns
     
     def test_load_cooldowns_from_datastore_empty(self):
         """Test loading when datastore has no user cooldowns."""
@@ -77,7 +77,7 @@ class TestCooldownPersistenceImplementation:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Should have all defaults
-        assert manager.defaultCooldownMinutes == DEFAULT_DEVICE_COOLDOWNS
+        assert manager.cooldown_manager.cooldowns == DEFAULT_DEVICE_COOLDOWNS
     
     def test_save_cooldowns_to_datastore(self):
         """Test saving cooldowns to datastore."""
@@ -87,10 +87,10 @@ class TestCooldownPersistenceImplementation:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Modify a cooldown
-        manager.defaultCooldownMinutes["canHeat"] = 20
+        manager.cooldown_manager.cooldowns["canHeat"] = 20
         
         # Save to datastore
-        manager._save_cooldowns_to_datastore()
+        manager.cooldown_manager.save_to_datastore()
         
         # Check that it was saved
         saved_cooldowns = data_store.getDeep("controlOptions.deviceCooldowns")
@@ -115,7 +115,7 @@ class TestCooldownPersistenceImplementation:
         assert saved_cooldowns["canHeat"] == 25
         
         # Check that it was also updated in memory
-        assert manager.defaultCooldownMinutes["canHeat"] == 25
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 25
     
     def test_load_and_save_roundtrip(self):
         """Test that cooldowns survive a load/save roundtrip."""
@@ -137,20 +137,20 @@ class TestCooldownPersistenceImplementation:
         manager1 = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify loaded values
-        assert manager1.defaultCooldownMinutes["canHeat"] == 18
-        assert manager1.defaultCooldownMinutes["canCool"] == 14
+        assert manager1.cooldown_manager.cooldowns["canHeat"] == 18
+        assert manager1.cooldown_manager.cooldowns["canCool"] == 14
         
         # Modify and save
-        manager1.defaultCooldownMinutes["canHeat"] = 22
-        manager1._save_cooldowns_to_datastore()
+        manager1.cooldown_manager.cooldowns["canHeat"] = 22
+        manager1.cooldown_manager.save_to_datastore()
         
         # Create second manager (simulating restart)
         manager2 = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify that new manager loads the saved values
-        assert manager2.defaultCooldownMinutes["canHeat"] == 22
-        assert manager2.defaultCooldownMinutes["canCool"] == 14
-        assert manager2.defaultCooldownMinutes["canDehumidify"] == 10
+        assert manager2.cooldown_manager.cooldowns["canHeat"] == 22
+        assert manager2.cooldown_manager.cooldowns["canCool"] == 14
+        assert manager2.cooldown_manager.cooldowns["canDehumidify"] == 10
 
 
 class TestCooldownWithDifferentDataTypes:
@@ -171,8 +171,8 @@ class TestCooldownWithDifferentDataTypes:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Should convert to float
-        assert manager.defaultCooldownMinutes["canHeat"] == 15.0
-        assert manager.defaultCooldownMinutes["canCool"] == 12.5
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 15.0
+        assert manager.cooldown_manager.cooldowns["canCool"] == 12.5
     
     def test_cooldown_with_invalid_value_in_datastore(self):
         """Test that invalid values in datastore are handled gracefully."""
@@ -190,8 +190,8 @@ class TestCooldownWithDifferentDataTypes:
         try:
             manager = OGBActionManager(None, data_store, event_manager, "test_room")
             # Invalid values should be skipped, defaults used
-            assert manager.defaultCooldownMinutes["canHeat"] == DEFAULT_DEVICE_COOLDOWNS["canHeat"]
-            assert manager.defaultCooldownMinutes["canCool"] == DEFAULT_DEVICE_COOLDOWNS["canCool"]
+            assert manager.cooldown_manager.cooldowns["canHeat"] == DEFAULT_DEVICE_COOLDOWNS["canHeat"]
+            assert manager.cooldown_manager.cooldowns["canCool"] == DEFAULT_DEVICE_COOLDOWNS["canCool"]
         except Exception as e:
             # If it crashes, verify it's a type error from conversion
             assert "float" in str(e).lower() or "invalid" in str(e).lower()
@@ -216,13 +216,13 @@ class TestCooldownWithPartialData:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # User values should be used
-        assert manager.defaultCooldownMinutes["canHeat"] == 20
-        assert manager.defaultCooldownMinutes["canCool"] == 15
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 20
+        assert manager.cooldown_manager.cooldowns["canCool"] == 15
         
         # Defaults should be used for others
-        assert manager.defaultCooldownMinutes["canDehumidify"] == DEFAULT_DEVICE_COOLDOWNS["canDehumidify"]
-        assert manager.defaultCooldownMinutes["canHumidify"] == DEFAULT_DEVICE_COOLDOWNS["canHumidify"]
-        assert manager.defaultCooldownMinutes["canExhaust"] == DEFAULT_DEVICE_COOLDOWNS["canExhaust"]
+        assert manager.cooldown_manager.cooldowns["canDehumidify"] == DEFAULT_DEVICE_COOLDOWNS["canDehumidify"]
+        assert manager.cooldown_manager.cooldowns["canHumidify"] == DEFAULT_DEVICE_COOLDOWNS["canHumidify"]
+        assert manager.cooldown_manager.cooldowns["canExhaust"] == DEFAULT_DEVICE_COOLDOWNS["canExhaust"]
     
     def test_all_capabilities_present_after_load(self):
         """Test that all default capabilities are present after loading user values."""
@@ -239,14 +239,15 @@ class TestCooldownWithPartialData:
         
         # All default capabilities should still be present
         for cap in DEFAULT_DEVICE_COOLDOWNS:
-            assert cap in manager.defaultCooldownMinutes, \
+            assert cap in manager.cooldown_manager.cooldowns, \
                 f"Capability {cap} missing after load"
 
 
 class TestCooldownIntegrationWithDampening:
     """Test that cooldowns integrate correctly with dampening logic."""
     
-    def test_dampening_uses_loaded_cooldowns(self):
+    @pytest.mark.asyncio
+    async def test_dampening_uses_loaded_cooldowns(self):
         """Test that dampening logic uses the loaded cooldown values."""
         data_store = FakeDataStore({
             "controlOptions": {
@@ -256,24 +257,24 @@ class TestCooldownIntegrationWithDampening:
             }
         })
         event_manager = FakeEventManager()
-        
+
         # Verify data is in datastore
         stored = data_store.getDeep("controlOptions.deviceCooldowns")
         assert stored is not None, "User cooldowns should be in datastore"
         assert stored["canDehumidify"] == 10, "canDehumidify should be 10 in datastore"
-        
+
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
-        
+
         # Verify custom cooldown is loaded
-        assert manager.defaultCooldownMinutes["canDehumidify"] == 10, \
-            f"Expected 10, got {manager.defaultCooldownMinutes['canDehumidify']}"
-        
+        assert manager.cooldown_manager.cooldowns["canDehumidify"] == 10, \
+            f"Expected 10, got {manager.cooldown_manager.cooldowns['canDehumidify']}"
+
         # Register action with deviation 5.0
         # NOTE: adaptiveCooldownEnabled is False by default, so no adaptive scaling
-        manager._registerAction("canDehumidify", "Increase", 5.0)
+        await manager._registerAction("canDehumidify", "Increase", 5.0)
         
         # Check that cooldown uses custom value (10 min, no adaptive scaling)
-        cooldown_until = manager.actionHistory["canDehumidify"]["cooldown_until"]
+        cooldown_until = manager.cooldown_manager.action_history["canDehumidify"]["cooldown_until"]
         expected_cooldown = datetime.now() + timedelta(minutes=10)
         
         # Allow some tolerance for timing
@@ -295,12 +296,12 @@ class TestCooldownIntegrationWithDampening:
         manager = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Initial values
-        assert manager.defaultCooldownMinutes["canHeat"] == 15
-        assert manager.defaultCooldownMinutes["canCool"] == 12
+        assert manager.cooldown_manager.cooldowns["canHeat"] == 15
+        assert manager.cooldown_manager.cooldowns["canCool"] == 12
         
         # Adjust canHeat
-        manager.defaultCooldownMinutes["canHeat"] = 25
-        manager._save_cooldowns_to_datastore()
+        manager.cooldown_manager.cooldowns["canHeat"] = 25
+        manager.cooldown_manager.save_to_datastore()
         
         # Verify in datastore
         saved = data_store.getDeep("controlOptions.deviceCooldowns")
@@ -311,5 +312,5 @@ class TestCooldownIntegrationWithDampening:
         manager2 = OGBActionManager(None, data_store, event_manager, "test_room")
         
         # Verify both values are correct
-        assert manager2.defaultCooldownMinutes["canHeat"] == 25
-        assert manager2.defaultCooldownMinutes["canCool"] == 12
+        assert manager2.cooldown_manager.cooldowns["canHeat"] == 25
+        assert manager2.cooldown_manager.cooldowns["canCool"] == 12

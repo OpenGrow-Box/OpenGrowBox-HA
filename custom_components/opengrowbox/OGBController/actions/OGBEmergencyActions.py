@@ -94,7 +94,7 @@ class OGBEmergencyActions:
         self._emergency_mode = True
 
         # Clear all device cooldowns to allow immediate action
-        self._clear_all_cooldowns()
+        asyncio.create_task(self._clear_all_cooldowns())
 
         # Schedule emergency mode deactivation
         asyncio.create_task(self._deactivate_emergency_mode())
@@ -105,21 +105,16 @@ class OGBEmergencyActions:
         """
         await asyncio.sleep(5)  # 5 seconds
         self._emergency_mode = False
+        if hasattr(self.ogb.actionManager, 'cooldown_manager'):
+            await self.ogb.actionManager.cooldown_manager.set_emergency_mode(False)
         _LOGGER.info(f"{self.ogb.room}: Emergency mode deactivated")
 
-    def _clear_all_cooldowns(self):
+    async def _clear_all_cooldowns(self):
         """
         Clear all device cooldowns during emergency situations.
         """
-        now = datetime.now()
-
-        # Access the action manager's cooldown history
-        if hasattr(self.ogb, "actionManager") and hasattr(
-            self.ogb.actionManager, "actionHistory"
-        ):
-            for capability in self.ogb.actionManager.actionHistory:
-                self.ogb.actionManager.actionHistory[capability]["cooldown_until"] = now
-
+        if hasattr(self.ogb.actionManager, 'cooldown_manager'):
+            await self.ogb.actionManager.cooldown_manager.set_emergency_mode(True)
             _LOGGER.warning(
                 f"{self.ogb.room}: All device cooldowns cleared for emergency response"
             )

@@ -271,9 +271,11 @@ class OGBConsoleManager:
         Usage: gcd <capability> <minutes>
         """
         if len(params) == 0:
-            # Show all current GCDs
+            # Show all current GCDs from datastore
             response = "📊 Current Global Cooldowns:\n" + "=" * 50 + "\n"
-            for cap, minutes in DEFAULT_DEVICE_COOLDOWNS.items():
+            stored_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
+            current_cooldowns = stored_cooldowns if stored_cooldowns else DEFAULT_DEVICE_COOLDOWNS
+            for cap, minutes in current_cooldowns.items():
                 response += f"  {cap:<15} : {minutes} min\n"
             response += "=" * 50
             await self._send_response(response)
@@ -301,7 +303,6 @@ class OGBConsoleManager:
             )
             return
 
-        DEFAULT_DEVICE_COOLDOWNS[capability] = minutes
         gcdAdjustment = {"cap": capability, "minutes": minutes}
         await self.event_manager.emit("AdjustDeviceGCD", gcdAdjustment)
         await self._send_response(

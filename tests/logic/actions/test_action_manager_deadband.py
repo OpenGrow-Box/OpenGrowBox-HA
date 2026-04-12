@@ -238,7 +238,7 @@ async def test_adaptive_cooldown_disabled_by_default():
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
 
-    base_cooldown = manager.defaultCooldownMinutes.get("canExhaust", 1.0)
+    base_cooldown = manager.cooldown_manager.cooldowns.get("canExhaust", 1.0)
 
     # With adaptive disabled, user gets exactly what they set
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)  # Very close
@@ -266,15 +266,15 @@ async def test_adaptive_cooldown_emergency_override():
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
 
-    base_cooldown = manager.defaultCooldownMinutes.get("canExhaust", 1.0)
+    base_cooldown = manager.cooldown_manager.cooldowns.get("canExhaust", 1.0)
 
     # Normal mode: user gets what they set
-    manager._emergency_mode = False
+    manager.cooldown_manager._emergency_mode = False
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
     assert cooldown == base_cooldown  # 1.0
 
     # Emergency mode: cooldown is reduced
-    manager._emergency_mode = True
+    manager.cooldown_manager._emergency_mode = True
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
     assert cooldown == base_cooldown * 0.5  # 0.5 (50% reduction)
 
@@ -296,7 +296,7 @@ async def test_adaptive_cooldown_enabled_by_user():
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
 
-    base_cooldown = manager.defaultCooldownMinutes.get("canExhaust", 1.0)
+    base_cooldown = manager.cooldown_manager.cooldowns.get("canExhaust", 1.0)
 
     # Very close to target
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
