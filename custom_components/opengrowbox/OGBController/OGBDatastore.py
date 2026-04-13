@@ -103,6 +103,18 @@ class DataStore(SimpleEventEmitter):
         super().__init__()
         # Falls initial_state None ist, benutze das leere OGBConf Objekt
         self.state = initial_state
+        # Repair keys that may have been corrupted by old buggy versions
+        self._repair_corrupted_state_keys()
+
+    def _repair_corrupted_state_keys(self):
+        """Repair state keys that were corrupted by previous code bugs."""
+        cap_cal = getattr(self.state, "capCalibration", None)
+        if not isinstance(cap_cal, dict):
+            setattr(self.state, "capCalibration", {"active": None, "results": {}})
+
+        profiles = getattr(self.state, "DeviceProfiles", None)
+        if not isinstance(profiles, dict):
+            setattr(self.state, "DeviceProfiles", {})
 
     def __repr__(self):
         return f"Datastore State:'{self.state}'"

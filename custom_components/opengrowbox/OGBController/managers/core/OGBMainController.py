@@ -10,6 +10,7 @@ from ...data.OGBDataClasses.OGBData import OGBConf
 from ...OGBDatastore import DataStore
 from ..OGBEventManager import OGBEventManager
 from ..OGBConsoleManager import OGBConsoleManager
+from ..OGBCalibManager import OGBCalibManager
 from ..OGBDataCleanupManager import OGBDataCleanupManager
 from ..OGBDeviceManager import OGBDeviceManager
 from ..OGBDSManager import OGBDSManager
@@ -155,6 +156,11 @@ class OGBMainController:
         # Inject data_store_manager for script storage access
         self.console_manager.set_data_store_manager(self.data_store_manager)
 
+        self.calib_manager = OGBCalibManager(
+            self.hass, self.data_store, self.event_manager, self.room
+        )
+        self.console_manager.set_calib_manager(self.calib_manager)
+
         # Notification system
         # Get notification configuration from dataStore
         notification_service = self.data_store.get("notification_service") or "persistent_notification.create"
@@ -168,6 +174,10 @@ class OGBMainController:
             critical_service=critical_notification_service,
             notification_enabled=notification_enabled
         )
+
+        # Inject notificator into CO2 manager
+        if hasattr(self, 'co2_manager'):
+            self.co2_manager.notificator = self.notificator
 
         # Monitoring and maintenance
         self.fallback_manager = OGBFallBackManager(

@@ -125,6 +125,7 @@ class OpenGrowBox:
         self.actionManager = self.main_controller.action_manager
         self.feedManager = self.main_controller.feed_manager
         self.consoleManager = self.main_controller.console_manager
+        self.calibManager = self.main_controller.calib_manager
         self.premiumManager = self.premium_manager  # From our initialization
         
         # Medium Manager - CRITICAL: This was missing and caused sensors not to register to mediums
@@ -646,6 +647,15 @@ class OpenGrowBox:
                     _LOGGER.debug(f"✅ Action manager shutdown for {self.room}")
                 except Exception as e:
                     _LOGGER.error(f"Error shutting down action manager: {e}")
+
+            # 5a. Stop calibration manager (abort any active calibration safely)
+            if hasattr(self, 'calibManager') and self.calibManager:
+                try:
+                    if hasattr(self.calibManager, 'stop_calibration'):
+                        await self.calibManager.stop_calibration()
+                    _LOGGER.debug(f"✅ Calibration manager shutdown for {self.room}")
+                except Exception as e:
+                    _LOGGER.error(f"Error shutting down calibration manager: {e}")
 
             # 6. Stop medium manager
             if hasattr(self, 'mediumManager') and self.mediumManager:

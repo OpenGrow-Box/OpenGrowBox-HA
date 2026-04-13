@@ -302,6 +302,12 @@ class OGBConf:
                 "closedTempDeadband": 0.5,
                 "closedHumidDeadband": 1.5,
             },
+            "buffers": {
+                "heaterBuffer": 2.0,
+                "coolerBuffer": 2.0,
+                "humidifierBuffer": 5.0,
+                "dehumidifierBuffer": 5.0
+            }
         }
     )
     safety: Dict[str, Any] = field(
@@ -713,6 +719,12 @@ class OGBConf:
                 "effect": 2.0,
                 "sideEffect": {},
             },
+        }
+    ),
+    capCalibration: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "active": None,
+            "results": {}
         }
     ),
     logType: str = ""

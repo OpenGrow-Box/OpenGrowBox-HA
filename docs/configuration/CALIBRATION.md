@@ -260,6 +260,162 @@ The CropSteering system also performs automatic VWCMax calibration during the P1
 
 This "passive" calibration updates VWCMax as part of normal operation.
 
+### Capability Calibration (Device Impact Profiling)
+
+The capability calibration system measures the **real-world environmental impact** of each device capability (e.g., heating, cooling, humidification, CO₂). This allows OGB to learn how much temperature, humidity, or CO₂ change a specific set of devices produces per minute.
+
+#### Supported Capabilities
+
+| Capability | Metrics Measured | Typical Duration (Non-dimmable) | Typical Duration (Dimmable) |
+|------------|------------------|--------------------------------|----------------------------|
+| `canHeat` | Temperature, Humidity | ~4.5 min | ~7.5 min |
+| `canCool` | Temperature, Humidity | ~4.5 min | ~7.5 min |
+| `canHumidify` | Temperature, Humidity | ~5.5 min | ~8.5 min |
+| `canDehumidify` | Temperature, Humidity | ~5.5 min | ~8.5 min |
+| `canClimate` | Temperature, Humidity | ~6.5 min | ~9.5 min |
+| `canLight` | Temperature, Humidity | ~6.5 min | ~9.5 min |
+| `canCO2` | CO₂ | ~3.5 min | — |
+
+> **Note for `canClimate`**: Climate devices can heat, cool, and dehumidify depending on their active mode. The calibration result reflects **only** the mode that is currently active during measurement.
+
+#### Console Commands
+
+```bash
+# Start capability calibration (case-insensitive)
+cap_calibrate canHeat
+cap_calibrate canCool
+cap_calibrate canCO2
+
+# Check current calibration status and stored results
+cap_cal_status
+
+# Stop a running calibration
+cap_cal_stop
+```
+
+> **Tip**: Capability names are case-insensitive. `cap_calibrate canheat`, `cap_calibrate CANHEAT`, and `cap_calibrate canHeat` all work.
+
+#### How It Works
+
+The calibration uses **three dedicated events** handled by each device object:
+
+| Event | Purpose | Target Devices |
+|-------|---------|----------------|
+| `CalibOff` | Turn **all** devices **OFF** | All devices in the room |
+| `CalibOn` | Turn **all** devices **ON** | All devices in the room |
+| `CalibStart` | Turn on **calibration target** devices only | Devices belonging to the calibrated capability |
+
+**Process Flow:**
+
+1. **System Pause** (Preparation):
+   - Original `tentMode` is saved
+   - `CalibOff` event is sent to **all** devices
+   - Each device executes `hard_turn_off()` – a brute-force shutdown that bypasses normal logic and directly calls HA services (`fan.turn_off`, `light.turn_off`, `switch.turn_off`, etc.)
+   - Room set to `Disabled` mode
+   - HA `select.ogb_tentmode_*` entity updated
+   - 10s stabilization period
+
+2. **Baseline** (60s):
+   - All devices remain off
+   - Sensor readings collected every 10s
+
+3. **Effect Phase** (varies by device type):
+   - **Non-dimmable devices** (switches, simple heaters):
+     - `CalibStart` event sent to target capability devices
+     - Devices turn fully on
+     - Duration: 3–5 minutes (capability-specific)
+   
+   - **Dimmable devices** (lights, fans, humidifiers):
+     - Response curve measurement in 4 steps:
+       - 25% for 90s
+       - 50% for 90s  
+       - 75% for 90s
+       - 100% for 120s
+     - At each step, `CalibStart` event sent with `level` parameter
+     - Device sets internal voltage/dutyCycle and activates
+     - Total duration: ~7–8 minutes
+
+4. **Cooldown** (30s):
+   - `CalibOff` event shuts down all devices
+
+5. **Result Calculation**:
+   - Non-dimmable: Single `delta_per_min` value
+   - Dimmable: Response curve with slope per percentage
+
+6. **Restore**:
+   - Original `tentMode` restored
+   - HA select entity synced
+   - Normal control resumes
+
+> **Technical detail**: The `hard_turn_off()` method ensures **complete shutdown** even for dimmable fans (Exhaust, Intake, Ventilation) that normally only reduce speed. It directly calls `fan.turn_off` on all fan entities and sets number entities to 0, bypassing the complex logic of the standard `turn_off()` method.
+
+#### Calibration Result Structure
+
+Results are stored under `capCalibration.results.{capability}` and persist across restarts.
+
+**Non-dimmable device result** (e.g., `canHeat` with simple switch heater):
+
+```python
+capCalibration.results.canHeat = {
+    "timestamp": "2026-04-13T14:30:00",
+    "isDimmable": False,
+    "temperature": {
+        "baseline_avg": 22.5,
+        "effect_avg": 25.1,
+        "delta": 2.6,
+        "delta_per_min": 0.520,
+        "confidence": 1.0
+    },
+    "humidity": {
+        "baseline_avg": 62.0,
+        "effect_avg": 58.5,
+        "delta": -3.5,
+        "delta_per_min": -0.700,
+        "confidence": 1.0
+    }
+}
+```
+
+**Dimmable device result** (e.g., `canLight` with dimmable LED):
+
+```python
+capCalibration.results.canLight = {
+    "timestamp": "2026-04-13T14:30:00",
+    "isDimmable": True,
+    "temperature": {
+        "baseline_avg": 22.0,
+        "response_curve": {
+            25: {"delta": 0.5, "delta_per_min": 0.050, "confidence": 0.90},
+            50: {"delta": 1.8, "delta_per_min": 0.180, "confidence": 0.95},
+            75: {"delta": 4.2, "delta_per_min": 0.420, "confidence": 0.95},
+            100: {"delta": 8.5, "delta_per_min": 0.850, "confidence": 1.0}
+        },
+        "slope_per_percent": 0.0087,
+        "r_squared": 0.98
+    },
+    "humidity": {
+        "baseline_avg": 60.0,
+        "response_curve": {
+            25: {"delta": -0.3, "delta_per_min": -0.030, "confidence": 0.85},
+            50: {"delta": -1.2, "delta_per_min": -0.120, "confidence": 0.92},
+            75: {"delta": -2.8, "delta_per_min": -0.280, "confidence": 0.95},
+            100: {"delta": -5.5, "delta_per_min": -0.550, "confidence": 1.0}
+        },
+        "slope_per_percent": -0.0056,
+        "r_squared": 0.96
+    }
+}
+```
+
+#### Safety Limits
+
+The calibration aborts automatically if any of the following thresholds are exceeded:
+- **Temperature** > 35 °C or < 10 °C
+- **Humidity** < 30 %
+- **CO₂** > 2500 ppm
+
+If aborted (manually or by safety), the original `tentMode` is always restored.
+
 #### VWC Calibration Data Persistence
 
 **Important**: VWC calibration values are now persisted across HA restarts:
@@ -655,6 +811,7 @@ def recover_calibration_data():
 - ✅ **Hydroponic dosing pumps** (proportional nutrient delivery)
 - ✅ Humidity control devices
 - ✅ Thermal control systems
+- ✅ **Capability impact profiling** (heat, cool, humidity, CO₂ per device group)
 - ✅ Automated calibration scheduling
 - ✅ Validation and testing procedures
 

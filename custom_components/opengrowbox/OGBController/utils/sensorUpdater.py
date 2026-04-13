@@ -89,6 +89,21 @@ async def _update_specific_sensor(entity, room, value, hass):
         _LOGGER.info(f"Failed to update sensor '{entity_id}' via service: {e}")
 
 
+async def _update_specific_select(entity, room, value, hass):
+
+    entity_id = f"select.{entity}_{room.lower()}"
+    try:
+        await hass.services.async_call(
+            domain="select",
+            service="select_option",
+            service_data={"entity_id": entity_id, "option": value},
+            blocking=True,
+        )
+    except Exception as e:
+        _LOGGER.info(f"Failed to update select '{entity_id}' via service: {e}")
+
+
+
 async def _update_specific_number(entity, room, value, hass):
 
     entity_id = f"number.{entity}{room.lower()}"

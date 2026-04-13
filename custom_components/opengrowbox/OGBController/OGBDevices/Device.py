@@ -48,10 +48,15 @@ class Device:
         self.eventManager.on("WorkModeChange", self.WorkMode)
         self.eventManager.on("MinMaxControlDisabled", self.on_minmax_control_disabled)
         self.eventManager.on("MinMaxControlEnabled", self.on_minmax_control_enabled)
-        
+
         # Smart Deadband Events (Climate-Geräte)
         self.eventManager.on("SmartDeadbandEntered", self.on_smart_deadband_entered)
         self.eventManager.on("SmartDeadbandExited", self.on_smart_deadband_exited)
+
+        # Calibration events
+        self.eventManager.on("CalibOff", self._on_calib_off)
+        self.eventManager.on("CalibOn", self._on_calib_on)
+        self.eventManager.on("CalibStart", self._on_calib_start)
 
         # Smart Deadband State
         self._in_smart_deadband = False
@@ -1852,6 +1857,122 @@ class Device:
         except Exception as e:
             _LOGGER.error(f"Fehler beim Ausschalten von {self.deviceName}: {e}")
 
+    async def hard_turn_off(self):
+        """Forcefully turn off the device by directly calling services on all entities."""
+        try:
+            _LOGGER.debug(f"{self.deviceName}: hard_turn_off started")
+            
+            # 1. Alle Switches durchgehen und direkt ausschalten
+            for switch in (self.switches or []):
+                entity_id = switch.get("entity_id", "")
+                if not entity_id:
+                    continue
+                    
+                try:
+                    if entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan", service="turn_off",
+                            service_data={"entity_id": entity_id}
+                        )
+                    elif entity_id.startswith("light."):
+                        await self.hass.services.async_call(
+                            domain="light", service="turn_off",
+                            service_data={"entity_id": entity_id}
+                        )
+                    elif entity_id.startswith("switch."):
+                        await self.hass.services.async_call(
+                            domain="switch", service="turn_off",
+                            service_data={"entity_id": entity_id}
+                        )
+                    elif entity_id.startswith("climate."):
+                        await self.hass.services.async_call(
+                            domain="climate", service="set_hvac_mode",
+                            service_data={"entity_id": entity_id, "hvac_mode": "off"}
+                        )
+                    elif entity_id.startswith("humidifier."):
+                        await self.hass.services.async_call(
+                            domain="humidifier", service="turn_off",
+                            service_data={"entity_id": entity_id}
+                        )
+                    elif entity_id.startswith("cover."):
+                        await self.hass.services.async_call(
+                            domain="cover", service="close_cover",
+                            service_data={"entity_id": entity_id}
+                        )
+                except Exception as e:
+                    _LOGGER.error(f"{self.deviceName}: hard_turn_off failed for {entity_id}: {e}")
+            
+            # 2. Options (Number Entities) auf 0 setzen
+            for option in (self.options or []):
+                entity_id = option.get("entity_id", "")
+                if entity_id and entity_id.startswith("number."):
+                    try:
+                        await self.hass.services.async_call(
+                            domain="number", service="set_value",
+                            service_data={"entity_id": entity_id, "value": 0}
+                        )
+                    except Exception as e:
+                        _LOGGER.error(f"{self.deviceName}: hard_turn_off set_value 0 failed for {entity_id}: {e}")
+            
+            self.isRunning = False
+            _LOGGER.debug(f"{self.deviceName}: hard_turn_off completed")
+            
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: hard_turn_off failed: {e}", exc_info=True)
+
+    async def _on_calib_off(self, data):
+        """Handle calibration off event – turn this device fully off."""
+        room = data.get("room")
+        _LOGGER.info(f"{self.deviceName}: CalibOff received room={room}")
+        if room != self.room:
+            return
+        try:
+            await self.hard_turn_off()
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: CalibOff failed: {e}", exc_info=True)
+
+    async def _on_calib_on(self, data):
+        """Handle calibration on event – turn this device fully on."""
+        room = data.get("room")
+        _LOGGER.info(f"{self.deviceName}: CalibOn received room={room}")
+        if room != self.room:
+            return
+        try:
+            await self.turn_on()
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: CalibOn failed: {e}", exc_info=True)
+
+    async def _on_calib_start(self, data):
+        """Handle calibration start event – turn on only target cap devices."""
+        room = data.get("room")
+        cap = data.get("cap")
+        level = data.get("level")
+        _LOGGER.info(f"{self.deviceName}: CalibStart received room={room} cap={cap} level={level} isDimmable={self.isDimmable}")
+        if room != self.room:
+            return
+        capabilities = self.dataStore.get("capabilities") or {}
+        cap_data = capabilities.get(cap, {})
+        dev_entities = cap_data.get("devEntities", [])
+        if self.deviceName not in dev_entities:
+            return
+
+        try:
+            if level is not None and self.isDimmable:
+                lvl = float(level)
+                # Set both voltage and dutyCycle so every device type picks the right one internally
+                self.voltage = lvl
+                self.dutyCycle = lvl
+                # Push to HA number entity if available
+                try:
+                    await self.set_value(lvl)
+                except Exception:
+                    pass
+                await self.turn_on()
+            else:
+                await self.turn_on()
+        except Exception as e:
+            _LOGGER.error(f"{self.deviceName}: CalibStart failed: {e}", exc_info=True)
+
     async def set_value(self, value: int | float | str | None) -> None:
         """Setzt einen numerischen Wert, falls unterstützt und relevant (duty oder voltage)."""
         if not self.options:
@@ -2664,7 +2785,8 @@ class Device:
             self._in_smart_deadband = False
 
             # Restore previous state
-            await self.restoreFromMinimum()
+            #await self.restoreFromMinimum()
+            _LOGGER.info(f"{self.deviceName}: Smart Deadband EXITED - device will resume normal operation in next control cycle")
 
             _LOGGER.info(
                 f"{self.deviceName}: Smart Deadband EXITED - device restored to previous state"

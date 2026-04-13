@@ -44,10 +44,15 @@ class OGBConsoleManager:
         
         # Reference to data_store_manager (set after initialization)
         self.data_store_manager = None
+        self.calib_manager = None
     
     def set_data_store_manager(self, data_store_manager):
         """Set the data store manager for script storage access."""
         self.data_store_manager = data_store_manager
+
+    def set_calib_manager(self, calib_manager):
+        """Set the calibration manager for cap calibration commands."""
+        self.calib_manager = calib_manager
 
     def _register_commands(self):
         """Registers all available commands with their metadata"""
@@ -119,6 +124,31 @@ class OGBConsoleManager:
             "Script mode management",
             "script <status|save|load|template|backup|restore|validate>",
             ["script status", "script save", "script template basic_vpd_control"],
+        )
+
+        # Capability Calibration Commands
+        self.register_command(
+            "cap_calibrate",
+            self.cmd_cap_calibrate,
+            "Starts capability calibration (canHeat, canCool, canHumidify, canCO2, etc.)",
+            "cap_calibrate <capability>",
+            ["cap_calibrate canHeat", "cap_calibrate canCO2"],
+        )
+
+        self.register_command(
+            "cap_cal_status",
+            self.cmd_cap_cal_status,
+            "Shows capability calibration status and stored results",
+            "cap_cal_status",
+            ["cap_cal_status"],
+        )
+
+        self.register_command(
+            "cap_cal_stop",
+            self.cmd_cap_cal_stop,
+            "Stops an ongoing capability calibration",
+            "cap_cal_stop",
+            ["cap_cal_stop"],
         )
 
     def register_command(
@@ -719,6 +749,106 @@ class OGBConsoleManager:
                 f"⚠️ Unknown subcommand: '{subcommand}'\n"
                 f"Available: status, template, load, backup, restore, validate"
             )
+
+    # =========================
+    # CAPABILITY CALIBRATION COMMANDS
+    # =========================
+
+    def _resolve_cap(self, cap_input: str) -> str:
+        """Case-insensitive capability lookup. Returns exact key or empty string."""
+        capabilities = self.data_store.get("capabilities") or {}
+        for key in capabilities:
+            if key.lower() == cap_input.lower():
+                return key
+        return ""
+
+    async def cmd_cap_calibrate(self, params: List[str]):
+        """Starts capability calibration."""
+        if not params:
+            await self._send_response(
+                "⚠️ Missing capability.\n"
+                "Usage: cap_calibrate <capability>\n"
+                "Examples: cap_calibrate canHeat, cap_calibrate canCO2"
+            )
+            return
+
+        cap = self._resolve_cap(params[0])
+        if not cap:
+            capabilities = self.data_store.get("capabilities") or {}
+            available = ", ".join(sorted(capabilities.keys()))
+            await self._send_response(
+                f"⚠️ Unknown capability: '{params[0]}'\n"
+                f"Available: {available}"
+            )
+            return
+
+        # Emit calibration start event
+        event_type = "ogb_cap_calibration_command"
+        event_data = {"room": self.room, "action": "start", "cap": cap}
+        _LOGGER.info(f"[Console {self.room}] Firing event {event_type} with {event_data}")
+        self.hass.bus.async_fire(event_type, event_data)
+
+        await self._send_response(
+            f"🔄 Calibration start requested for '{cap}'.\n"
+            "Check 'cap_cal_status' for progress."
+        )
+
+    async def cmd_cap_cal_status(self, params: List[str]):
+        """Shows capability calibration status and stored results."""
+        raw_active = self.data_store.getDeep("capCalibration.active")
+        _LOGGER.info(f"[Console {self.room}] cap_cal_status read capCalibration.active = {raw_active}")
+        response = "🔧 Capability Calibration Status:\n" + "=" * 50 + "\n"
+
+        # Active calibration
+        active = self.data_store.getDeep("capCalibration.active")
+        if active:
+            response += (
+                f"\n▶️  Active calibration:\n"
+                f"   Capability: {active.get('cap')}\n"
+                f"   State: {active.get('state')}\n"
+                f"   Started: {active.get('started_at', 'N/A')[:19]}\n"
+            )
+        else:
+            response += "\nℹ️  No calibration running.\n"
+
+        # Stored results
+        results = self.data_store.getDeep("capCalibration.results", {})
+        if results:
+            response += "\n📊 Stored Results:\n"
+            for cap, data in sorted(results.items()):
+                response += f"\n   {cap}:\n"
+                response += f"      Timestamp: {data.get('timestamp', 'N/A')[:19]}\n"
+                for metric_key, metric_data in data.items():
+                    if metric_key == "timestamp":
+                        continue
+                    if isinstance(metric_data, dict):
+                        dpm = metric_data.get('delta_per_min', 0)
+                        conf = metric_data.get('confidence', 0)
+                        response += (
+                            f"      {metric_key}: {dpm:+.3f}/min "
+                            f"(confidence: {conf})\n"
+                        )
+                    else:
+                        response += f"      {metric_key}: {metric_data}\n"
+        else:
+            response += "\n📊 No calibration results stored yet.\n"
+
+        response += "\n" + "=" * 50
+        response += "\n💡 Use 'cap_calibrate <cap>' to start a new calibration"
+        await self._send_response(response)
+
+    async def cmd_cap_cal_stop(self, params: List[str]):
+        """Stops an ongoing capability calibration."""
+        active = self.data_store.getDeep("capCalibration.active")
+        if not active:
+            await self._send_response("ℹ️ No calibration is currently running.")
+            return
+
+        event_type = "ogb_cap_calibration_command"
+        event_data = {"room": self.room, "action": "stop"}
+        self.hass.bus.async_fire(event_type, event_data)
+
+        await self._send_response("🛑 Stop signal sent for active calibration.")
 
     # =========================
     # UTILITY METHODS
