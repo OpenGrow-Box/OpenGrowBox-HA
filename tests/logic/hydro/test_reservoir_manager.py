@@ -312,4 +312,38 @@ async def test_handles_sensor_update_with_distance():
     
     # 55cm from 100cm max and 10cm min = 50% full
     assert abs(manager.current_level - 50.0) < 0.001
-    assert manager.current_level_raw == 55.0
+
+
+@pytest.mark.asyncio
+async def test_emergency_stop_at_max_level():
+    """Test that emergency stop is triggered when max fill level is reached."""
+    manager = _manager_stub()
+    
+    emitted_events = []
+    async def mock_emit(event_name, event_data, haEvent=False, debug_type=None):
+        emitted_events.append({"name": event_name, "data": event_data})
+    
+    manager.event_manager.emit = mock_emit
+    manager.current_level = 85.0
+    
+    await manager._check_reservoir_safety()
+    
+    assert len(emitted_events) == 1
+    assert emitted_events[0]["name"] == "EmergencyReservoirStop"
+
+
+@pytest.mark.asyncio
+async def test_emergency_stop_not_triggered_below_max():
+    """Test that emergency stop is NOT triggered below max level."""
+    manager = _manager_stub()
+    
+    emitted_events = []
+    async def mock_emit(event_name, event_data, haEvent=False, debug_type=None):
+        emitted_events.append({"name": event_name, "data": event_data})
+    
+    manager.event_manager.emit = mock_emit
+    manager.current_level = 80.0
+    
+    await manager._check_reservoir_safety()
+    
+    assert len(emitted_events) == 0

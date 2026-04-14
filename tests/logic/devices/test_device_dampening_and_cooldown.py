@@ -462,12 +462,12 @@ class TestCooldownEdgeCases:
         is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
         assert is_allowed is False
         
-        # Enable emergency mode
-        manager.cooldown_manager._emergency_mode = True
+        # Enable emergency mode with critical_cold (canHeat solves this)
+        await manager.cooldown_manager.set_emergency_conditions(["critical_cold"])
         
         # Emergency mode - should be allowed
         is_allowed = await manager._isActionAllowed("canHeat", "Increase", 2.0)
-        assert is_allowed is True, "Emergency mode should bypass cooldown"
+        assert is_allowed is True, "Emergency mode should bypass cooldown for canHeat with critical_cold"
 
 
 class TestCooldownLogging:
@@ -487,4 +487,147 @@ class TestCooldownLogging:
         assert "cooldown_until" in history
         assert "repeat_cooldown" in history
         assert "deviation" in history
-        assert "action_type" in history
+
+
+class TestCooldownOnlyActiveWhenDampeningEnabled:
+    """Test that cooldown filtering only happens when dampening is enabled."""
+    
+    @pytest.mark.asyncio
+    async def test_cooldown_bypassed_when_dampening_disabled(self):
+        """Test that actions are not filtered when dampening is OFF."""
+        data_store = FakeDataStore({
+            "controlOptions": {
+                "vpdDeviceDampening": False,  # Dampening OFF
+            }
+        })
+        event_manager = FakeEventManager()
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
+        
+        # Register an action
+        await manager._registerAction("canHeat", "Increase", 2.0)
+        
+        # With dampening OFF, actions should pass through
+        filtered, blocked = await manager._process_actions_with_cooldown_filter([
+            MockAction("canHeat", "Increase")
+        ])
+        
+        # Action should NOT be blocked (dampening is OFF)
+        assert len(filtered) == 1, "Action should pass through when dampening is OFF"
+        assert len(blocked) == 0, "No actions should be blocked when dampening is OFF"
+    
+    @pytest.mark.asyncio
+    async def test_cooldown_active_when_dampening_enabled(self):
+        """Test that actions are filtered when dampening is ON."""
+        data_store = FakeDataStore({
+            "controlOptions": {
+                "vpdDeviceDampening": True,  # Dampening ON
+            }
+        })
+        event_manager = FakeEventManager()
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
+        
+        # Register an action
+        await manager._registerAction("canHeat", "Increase", 2.0)
+        
+        # Try to execute same action immediately
+        filtered, blocked = await manager._process_actions_with_cooldown_filter([
+            MockAction("canHeat", "Increase")
+        ])
+        
+        # Action should be blocked (dampening is ON)
+        assert len(blocked) == 1, "Action should be blocked by cooldown when dampening is ON"
+        assert len(filtered) == 0, "Action should be filtered when dampening is ON"
+
+
+class TestDampeningLoggingShowsDeviceActivations:
+    """Test that dampening logs device activations to LogForClient."""
+    
+    @pytest.mark.asyncio
+    async def test_dampening_emits_logforclient_with_actions(self):
+        """Test that dampening emits LogForClient event with action details."""
+        data_store = FakeDataStore({
+            "controlOptions": {
+                "vpdDeviceDampening": True,
+            }
+        })
+        event_manager = FakeEventManager()
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
+        
+        # Capture emitted events
+        emitted_events = []
+        async def mock_emit(event_name, event_data, haEvent=False, debug_type=None):
+            emitted_events.append({"name": event_name, "data": event_data})
+        
+        manager.event_manager.emit = mock_emit
+        
+        # Call the logging method
+        await manager._log_vpd_results(
+            real_temp_dev=2.0,
+            real_hum_dev=-5.0,
+            tempPercentage=20.0,
+            humPercentage=30.0,
+            final_actions=[MockAction("canHeat", "Increase")],
+            blocked_actions=[],
+            dampening_enabled=True
+        )
+        
+        # Check that LogForClient was emitted
+        log_events = [e for e in emitted_events if e["name"] == "LogForClient"]
+        assert len(log_events) > 0, "LogForClient event should be emitted"
+        
+        # Check that action info is included
+        log_data = log_events[0]["data"]
+        assert "actions" in log_data, "Log should include actions"
+        assert "actionCount" in log_data, "Log should include action count"
+        assert "dampeningEnabled" in log_data, "Log should indicate if dampening is enabled"
+    
+    @pytest.mark.asyncio
+    async def test_dampening_logging_shows_cooldown_info(self):
+        """Test that dampening logging includes cooldown information."""
+        data_store = FakeDataStore({
+            "controlOptions": {
+                "vpdDeviceDampening": True,
+            }
+        })
+        event_manager = FakeEventManager()
+        manager = OGBActionManager(None, data_store, event_manager, "test_room")
+        
+        # Register an action to create active cooldown
+        await manager._registerAction("canHeat", "Increase", 2.0)
+        
+        # Capture emitted events
+        emitted_events = []
+        async def mock_emit(event_name, event_data, haEvent=False, debug_type=None):
+            emitted_events.append({"name": event_name, "data": event_data})
+        
+        manager.event_manager.emit = mock_emit
+        
+        # Call the logging method
+        await manager._log_vpd_results(
+            real_temp_dev=2.0,
+            real_hum_dev=-5.0,
+            tempPercentage=20.0,
+            humPercentage=30.0,
+            final_actions=[],
+            blocked_actions=[MockAction("canHeat", "Increase")],
+            dampening_enabled=True
+        )
+        
+        # Check that cooldown info is included
+        log_events = [e for e in emitted_events if e["name"] == "LogForClient"]
+        assert len(log_events) > 0, "LogForClient event should be emitted"
+        
+        log_data = log_events[0]["data"]
+        assert "activeCooldowns" in log_data, "Log should include active cooldown count"
+        assert "cooldownInfo" in log_data, "Log should include cooldown details"
+        assert log_data["activeCooldowns"] > 0, "Should have active cooldowns"
+
+
+# Mock action class for testing
+class MockAction:
+    def __init__(self, capability, action):
+        self.capability = capability
+        self.action = action
+        self.message = "Test Action"
+        self.priority = "medium"
+        self.Name = "test_room"

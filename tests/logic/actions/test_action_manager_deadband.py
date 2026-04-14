@@ -108,11 +108,19 @@ async def test_closed_environment_no_deadband():
 
 @pytest.mark.asyncio
 async def test_conflicting_actions_removed_humidify_dehumidify():
-    """Test that humidify and dehumidify conflicts are resolved."""
-    data_store = FakeDataStore({})
+    """Test that humidify and dehumidify conflicts are resolved based on humidity status."""
+    # Need tentData with humidity to trigger the conflict resolution bypass
+    data_store = FakeDataStore({
+        "tentData": {
+            "humidity": 50.0,  # In range - no humidity status override
+            "minHumidity": 45.0,
+            "maxHumidity": 55.0,
+        }
+    })
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
 
+    # Test with Increase vs Increase (both want different outcomes)
     actions = [
         OGBActionPublication(
             Name="test_room",
@@ -125,16 +133,56 @@ async def test_conflicting_actions_removed_humidify_dehumidify():
             Name="test_room",
             message="test",
             capability="canDehumidify",
-            action="Reduce",
+            action="Increase",  # Both Increase = conflict
             priority="high",  # Higher priority wins
         ),
     ]
 
     filtered = manager._remove_conflicting_actions(actions)
 
+    # With no humidity status set, priority resolution should apply
     assert len(filtered) == 1
     assert filtered[0].capability == "canDehumidify"
     assert filtered[0].priority == "high"
+
+
+@pytest.mark.asyncio
+async def test_humidify_dehumidify_both_pass_when_humidity_status_active():
+    """Test that when humidity is too low or too high, BOTH actions pass through."""
+    # Set humidity too low to trigger bypass
+    data_store = FakeDataStore({
+        "tentData": {
+            "humidity": 40.0,  # Too low!
+            "minHumidity": 45.0,
+            "maxHumidity": 55.0,
+        }
+    })
+    event_manager = FakeEventManager()
+    manager = OGBActionManager(None, data_store, event_manager, "test_room")
+
+    # Test with Increase (humidify) vs Reduce (dehumidify) - opposite actions
+    actions = [
+        OGBActionPublication(
+            Name="test_room",
+            message="test",
+            capability="canHumidify",
+            action="Increase",  # To raise humidity
+            priority="medium",
+        ),
+        OGBActionPublication(
+            Name="test_room",
+            message="test",
+            capability="canDehumidify",
+            action="Reduce",  # To stop running dehumidifier
+            priority="high",
+        ),
+    ]
+
+    # With humidity too low, both should pass through!
+    filtered = manager._remove_conflicting_actions(actions)
+
+    # Both should pass through (humidity status triggers bypass)
+    assert len(filtered) == 2
 
 
 @pytest.mark.asyncio
@@ -269,12 +317,12 @@ async def test_adaptive_cooldown_emergency_override():
     base_cooldown = manager.cooldown_manager.cooldowns.get("canExhaust", 1.0)
 
     # Normal mode: user gets what they set
-    manager.cooldown_manager._emergency_mode = False
+    manager.cooldown_manager._emergency_conditions = []
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
     assert cooldown == base_cooldown  # 1.0
 
     # Emergency mode: cooldown is reduced
-    manager.cooldown_manager._emergency_mode = True
+    manager.cooldown_manager._emergency_conditions = ["critical_overheat"]
     cooldown = manager._calculateAdaptiveCooldown("canExhaust", 0.3)
     assert cooldown == base_cooldown * 0.5  # 0.5 (50% reduction)
 

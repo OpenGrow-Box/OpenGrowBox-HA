@@ -752,6 +752,15 @@ class OGBReservoirManager:
                 else:
                     self._consecutive_sensor_errors = 0
                     self._fill_cycles_completed += 1
+                    
+                    # SAFETY CHECK: After each fill cycle, check if we've reached max level
+                    await self._check_reservoir_safety()
+                    
+                    # If emergency stop was triggered, exit the fill loop
+                    if not self._is_filling:
+                        _LOGGER.warning(f"[{self.room}] Auto-fill stopped due to emergency condition")
+                        break
+                    
                     next_cycle_target = min(
                         self.current_level + self.fill_step_size,
                         target_level,
@@ -785,7 +794,11 @@ class OGBReservoirManager:
                             break
             
             # Fill complete or stopped
-            if self.current_level >= target_level:
+            # SAFETY CHECK: Final safety check before declaring fill complete
+            await self._check_reservoir_safety()
+            
+            # Only notify if fill completed normally (not stopped by emergency)
+            if self._is_filling and self.current_level >= target_level:
                 duration = (datetime.now() - self._fill_start_time).total_seconds() / 60
                 await self._notify_user(
                     "✅ Füllung ABGESCHLOSSEN",
@@ -859,6 +872,15 @@ class OGBReservoirManager:
                             f"+{added:.1f}% in {elapsed:.0f}s"
                         )
                         break
+                    
+                    # SAFETY CHECK: Check if we've reached max fill level while pumping
+                    if self.current_level >= self.max_fill_level:
+                        _LOGGER.warning(
+                            f"[{self.room}] Max fill level reached during pumping: {self.current_level:.1f}% >= {self.max_fill_level:.1f}% - EMERGENCY STOP"
+                        )
+                        await self._deactivate_pump()
+                        await self._check_reservoir_safety()
+                        return False
                 else:
                     # No sensor reading
                     _LOGGER.warning(f"[{self.room}] No sensor reading during fill cycle")
@@ -978,6 +1000,52 @@ class OGBReservoirManager:
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to deactivate reservoir pump: {e}")
+    
+    async def _check_reservoir_safety(self):
+        """
+        Check reservoir level safety limits.
+        
+        Similar to CO2 safety check - when max fill level is reached,
+        trigger emergency stop to prevent overfilling.
+        """
+        try:
+            if self.current_level is None:
+                return
+            
+            # SAFETY CHECK: Max fill level reached - EMERGENCY STOP
+            if self.current_level >= self.max_fill_level:
+                _LOGGER.warning(
+                    f"[{self.room}] RESERVOIR MAX LEVEL REACHED: {self.current_level:.1f}% >= {self.max_fill_level:.1f}% - TRIGGERING EMERGENCY STOP"
+                )
+                
+                # Emit emergency event
+                await self.event_manager.emit(
+                    "EmergencyReservoirStop",
+                    {
+                        "level": self.current_level,
+                        "max_level": self.max_fill_level,
+                        "reason": "reservoir_max_reached",
+                        "room": self.room
+                    }
+                )
+                
+                # Stop filling immediately
+                if self._is_filling:
+                    await self._stop_fill("Max level reached - emergency stop")
+                
+                # Notify user
+                await self._notify_user(
+                    "🚨 RESERVOIR NOTFALL-STOP",
+                    (
+                        f"Maximaler Fuellstand erreicht: {self.current_level:.1f}%\n"
+                        f"Konfiguriertes Maximum: {self.max_fill_level:.1f}%\n"
+                        "Pumpe wurde gestoppt"
+                    ),
+                    level="critical"
+                )
+        
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error during reservoir safety check: {e}")
     
     async def _stop_fill(self, reason: str):
         """Stop filling process"""

@@ -127,7 +127,7 @@ class OGBDampeningActions:
         # Check for emergency conditions
         emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
         if emergency_conditions:
-            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+            await self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
         # Get capabilities and determine optimal devices
         caps = self.ogb.dataStore.get("capabilities")
@@ -348,7 +348,7 @@ class OGBDampeningActions:
         # Check for emergency conditions
         emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
         if emergency_conditions:
-            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+            await self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
         # Apply cooldown filtering
         dampened_actions, blocked_actions = (
@@ -426,7 +426,7 @@ class OGBDampeningActions:
         # Emergency handling
         emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
         if emergency_conditions:
-            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+            await self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
         # Apply dampening (cooldown) filter
         filtered_actions, _ = await self.action_manager._filterActionsByDampening(
@@ -534,7 +534,7 @@ class OGBDampeningActions:
         # Emergency handling
         emergency_conditions = self.action_manager._getEmergencyOverride(tent_data)
         if emergency_conditions:
-            self.action_manager._clearCooldownForEmergency(emergency_conditions)
+            await self.action_manager._clearCooldownForEmergency(emergency_conditions)
 
         # Apply dampening (cooldown) filter
         filtered_actions, _ = await self.action_manager._filterActionsByDampening(
@@ -909,33 +909,27 @@ class OGBDampeningActions:
             return action_map
 
         current_temp = tent_data.get("temperature", 0)
-        max_temp = tent_data.get("maxTemp", 30)
-        min_temp = tent_data.get("minTemp", 15)
-        current_humidity = tent_data.get("humidity", 50)
+        max_temp = tent_data.get("maxTemp", 28)
+        min_temp = tent_data.get("minTemp", 17)
+        current_humidity = tent_data.get("humidity", 55)
         max_humidity = tent_data.get("maxHumidity", 80)
         min_humidity = tent_data.get("minHumidity", 40)
 
-        # AT NIGHT: Disable ALL buffers for immediate response (Mold Prevention!)
-        is_night = not self.ogb.dataStore.getDeep("isPlantDay.islightON", True)
-        
-        if is_night:
-            # All buffers to 0 at night - immediate response for mold prevention
-            HEATER_BUFFER = 0.0
-            COOLER_BUFFER = 0.0
-            HUMIDIFIER_BUFFER = 0.0
-            DEHUMIDIFIER_BUFFER = 0.0
-        else:
-            # HARDCODED buffer values (not from datastore - that path doesn't exist!)
-            HEATER_BUFFER = float(2.5)
-            COOLER_BUFFER = float(2.5)
-            HUMIDIFIER_BUFFER = float(3.5)
-            DEHUMIDIFIER_BUFFER = float(3.5)
+        HEATER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.heaterBuffer") or 2.0)
+        COOLER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.coolerBuffer") or 2.0)
+        HUMIDIFIER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.humidifierBuffer") or 5.0)
+        DEHUMIDIFIER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.dehumidifierBuffer") or 5.0)
 
-        # Calculate cutoff temperatures
-        heater_cutoff_temp = max_temp - HEATER_BUFFER
-        cooler_cutoff_temp = min_temp + COOLER_BUFFER
-        humidifier_cutoff_humidity = max_humidity - HUMIDIFIER_BUFFER
-        dehumidifier_cutoff_humidity = max_humidity + DEHUMIDIFIER_BUFFER
+        # Increase actions: prevent starting device too close to the opposite limit
+        # These buffers make sense - don't start devices near their opposite limits
+        heater_increase_cutoff     = max_temp - HEATER_BUFFER        # don't start heater near max
+        cooler_increase_cutoff     = min_temp + COOLER_BUFFER        # don't start cooler near min
+        humidifier_increase_cutoff = max_humidity - HUMIDIFIER_BUFFER    # don't start humidifier near max
+        dehumidifier_increase_cutoff = min_humidity + DEHUMIDIFIER_BUFFER  # don't start dehumidifier near min
+
+        # REDUCE actions: NO buffers - always allow stopping devices when needed!
+        # The opposite capability will handle stopping if limits are exceeded
+        # Reduce buffer removal - these were preventing device shutdown when needed
 
         filtered_actions = []
 
@@ -943,53 +937,53 @@ class OGBDampeningActions:
             capability = getattr(action, 'capability', '')
             action_type = getattr(action, 'action', '')
 
-            # Apply temperature buffer zones
-            if capability == "canHeat" and action_type == "Increase":
-                if current_temp >= heater_cutoff_temp:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Skipping heater activation - "
-                        f"temp {current_temp}°C too close to max {max_temp}°C (buffer: {HEATER_BUFFER}°C)"
-                    )
-                    continue
+            if capability == "canHeat":
+                if action_type == "Increase":
+                    if current_temp >= heater_increase_cutoff:
+                        _LOGGER.warning(
+                            f"{self.ogb.room}: BLOCKED heater increase - temp {current_temp}°C >= cutoff {heater_increase_cutoff}°C "
+                            f"(max_temp={max_temp}°C, buffer={HEATER_BUFFER}°C)"
+                        )
+                        continue
+                # Reduce: Always allow - no buffer needed
 
-            elif capability == "canCool" and action_type == "Increase":
-                if current_temp <= cooler_cutoff_temp:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Skipping cooler activation - "
-                        f"temp {current_temp}°C too close to min {min_temp}°C (buffer: {COOLER_BUFFER}°C)"
-                    )
-                    continue
+            elif capability == "canCool":
+                if action_type == "Increase":
+                    if current_temp <= cooler_increase_cutoff:
+                        _LOGGER.warning(
+                            f"{self.ogb.room}: BLOCKED cooler increase - temp {current_temp}°C <= cutoff {cooler_increase_cutoff}°C "
+                            f"(min_temp={min_temp}°C, buffer={COOLER_BUFFER}°C)"
+                        )
+                        continue
+                elif action_type == "Reduce":
+                    # Safety check: Don't reduce cooling when temp is critically high
+                    if current_temp >= max_temp - 1.0:
+                        _LOGGER.warning(
+                            f"{self.ogb.room}: BLOCKED cooler reduce - temp {current_temp}°C >= {max_temp - 1.0}°C "
+                            f"(too close to max {max_temp}°C)"
+                        )
+                        continue
 
-            elif capability == "canCool" and action_type == "Reduce":
-                # Only reduce cooling if temp is not critically high
-                # Safety check: Don't reduce cooling when temp is above safe threshold
-                if current_temp >= max_temp - 1.0:  # Within 1°C of max temp
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Blocking cooler reduction - "
-                        f"temp {current_temp}°C too close to max {max_temp}°C"
-                    )
-                    continue
-                # Otherwise allow: Reducing cooling increases VPD by allowing temp to rise
+            elif capability == "canHumidify":
+                if action_type == "Increase":
+                    if current_humidity >= humidifier_increase_cutoff:
+                        _LOGGER.warning(
+                            f"{self.ogb.room}: BLOCKED humidifier increase - humidity {current_humidity}% >= cutoff {humidifier_increase_cutoff}% "
+                            f"(max_humidity={max_humidity}%, buffer={HUMIDIFIER_BUFFER}%)"
+                        )
+                        continue
+                # Reduce: Always allow - no buffer needed
 
-            # Apply humidity buffer zones
-            elif capability == "canHumidify" and action_type == "Increase":
-                if current_humidity >= humidifier_cutoff_humidity:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Skipping humidifier activation - "
-                        f"humidity {current_humidity}% too close to max {max_humidity}% (buffer: {HUMIDIFIER_BUFFER}%)"
-                    )
-                    continue
+            elif capability == "canDehumidify":
+                if action_type == "Increase":
+                    if current_humidity <= dehumidifier_increase_cutoff:
+                        _LOGGER.warning(
+                            f"{self.ogb.room}: BLOCKED dehumidifier increase - humidity {current_humidity}% <= cutoff {dehumidifier_increase_cutoff}% "
+                            f"(min_humidity={min_humidity}%, buffer={DEHUMIDIFIER_BUFFER}%)"
+                        )
+                        continue
+                # Reduce: Always allow - no buffer needed!
 
-            elif capability == "canDehumidify" and action_type == "Increase":
-                # FIXED: Only block when humidity is already below max (dehumidifier would be useless)
-                if current_humidity <= dehumidifier_cutoff_humidity:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Skipping dehumidifier activation - "
-                        f"humidity {current_humidity}% already below max {max_humidity}%"
-                    )
-                    continue
-
-            # Action passed buffer zone checks
             filtered_actions.append(action)
 
         if len(filtered_actions) < len(action_map):
@@ -1000,6 +994,7 @@ class OGBDampeningActions:
             )
 
         return filtered_actions
+
 
     def _add_vpd_context_enhancements(self, actions, vpd_status, temp_dev, hum_dev, tent_data):
         """
@@ -1064,11 +1059,15 @@ class OGBDampeningActions:
                 temp_actions = self._create_temperature_correction_actions(temp_dev, priority="high", vpd_status=vpd_status)
                 enhanced.extend(temp_actions)
 
-        # Humidity deviation handling based on VPD status
-        if abs(hum_dev) > 5.0:  # Significant humidity deviation
+        # Humidity deviation handling - ALWAYS correct if humidity exceeds max
+        if hum_dev > 0:  # Any positive deviation = humidity too high
             if vpd_status in ["critical", "high"]:
                 # Urgent humidity correction
                 hum_actions = self._create_humidity_correction_actions(hum_dev, priority="high")
+                enhanced.extend(hum_actions)
+            elif vpd_status in ["medium", "low"]:
+                # Standard humidity correction
+                hum_actions = self._create_humidity_correction_actions(hum_dev, priority="medium")
                 enhanced.extend(hum_actions)
 
         return enhanced
@@ -1094,8 +1093,8 @@ class OGBDampeningActions:
                 priority="emergency"
             ))
 
-        # Humidity emergency actions - only if we have dehumidification capability
-        if hum_dev > 10.0 and caps.get("canDehumidify", {}).get("state"):
+        # Humidity emergency actions - ALWAYS correct if humidity exceeds max
+        if hum_dev > 0 and caps.get("canDehumidify", {}).get("state"):
             actions.append(OGBActionPublication(
                 capability="canDehumidify",
                 action="Increase",
@@ -1127,8 +1126,8 @@ class OGBDampeningActions:
                 priority="high"
             ))
 
-        # Humidity correction - only if we have dehumidification capability
-        if hum_dev > 7.0 and caps.get("canDehumidify", {}).get("state"):
+        # Humidity correction - ALWAYS correct if humidity exceeds max
+        if hum_dev > 0 and caps.get("canDehumidify", {}).get("state"):
             actions.append(OGBActionPublication(
                 capability="canDehumidify",
                 action="Increase",
@@ -1169,9 +1168,9 @@ class OGBDampeningActions:
                     priority="medium"
                 ))
 
-        # Gentle humidity correction - check capability exists first
-        if abs(hum_dev) > 3.0:
-            if hum_dev > 0 and caps.get("canDehumidify", {}).get("state"):
+        # Humidity correction - ALWAYS correct based on deviation
+        if hum_dev > 0:  # Any positive deviation = humidity too high
+            if caps.get("canDehumidify", {}).get("state"):
                 actions.append(OGBActionPublication(
                     capability="canDehumidify",
                     action="Increase",
@@ -1179,7 +1178,8 @@ class OGBDampeningActions:
                     message="Medium VPD: Balanced humidity adjustment",
                     priority="medium"
                 ))
-            elif hum_dev < 0 and caps.get("canHumidify", {}).get("state"):
+        elif hum_dev < 0:  # Any negative deviation = humidity too low
+            if caps.get("canHumidify", {}).get("state"):
                 actions.append(OGBActionPublication(
                     capability="canHumidify",
                     action="Increase",
@@ -1300,9 +1300,6 @@ class OGBDampeningActions:
         """
         enhanced_actions = list(base_action_map)  # Copy original actions
 
-        # Apply buffer zones to prevent oscillation near limits
-        enhanced_actions = self._apply_buffer_zones(enhanced_actions, tent_data)
-
         # Add VPD-status aware enhancements
         enhanced_actions = self._add_vpd_context_enhancements(
             enhanced_actions, vpd_status, temp_deviation, hum_deviation, tent_data
@@ -1313,6 +1310,10 @@ class OGBDampeningActions:
             enhanced_actions, temp_deviation, hum_deviation, vpd_status
         )
 
+        # Apply buffer zones LAST to filter ALL actions (including newly added ones)
+        # This prevents oscillation near limits and ensures absolute limits are respected
+        enhanced_actions = self._apply_buffer_zones(enhanced_actions, tent_data)
+
         # Add emergency actions
         # Add CO2 actions
         # Priority: Emergency (highest) > VPD Context > Deviation > Base > CO2 (lowest)
@@ -1321,7 +1322,11 @@ class OGBDampeningActions:
 
     def _resolve_action_conflicts(self, action_map: List) -> List:
         """
-        Resolve conflicts between actions targeting the same capability.
+        Resolve conflicts between actions.
+
+        Delegates to ActionManager's _remove_conflicting_actions() which
+        correctly checks for cross-capability conflicts like
+        canHumidify vs canDehumidify, canHeat vs canCool, etc.
 
         Args:
             action_map: List of actions that may conflict
@@ -1329,33 +1334,7 @@ class OGBDampeningActions:
         Returns:
             Resolved action list with conflicts removed
         """
-        # Group actions by capability
-        actions_by_capability = {}
-        for action in action_map:
-            cap = getattr(action, "capability", None)
-            if cap:
-                if cap not in actions_by_capability:
-                    actions_by_capability[cap] = []
-                actions_by_capability[cap].append(action)
-
-        resolved_actions = []
-
-        # For each capability, select the best action
-        for cap, actions in actions_by_capability.items():
-            if len(actions) == 1:
-                resolved_actions.extend(actions)
-            else:
-                # Select highest priority action
-                priority_order = {"emergency": 0, "high": 1, "medium": 2, "low": 3}
-                best_action = min(
-                    actions,
-                    key=lambda x: priority_order.get(
-                        getattr(x, "priority", "medium"), 2
-                    ),
-                )
-                resolved_actions.append(best_action)
-
-        return resolved_actions
+        return self.action_manager._remove_conflicting_actions(action_map)
 
     async def _execute_actions(self, action_map: List):
         """Execute the final list of actions."""

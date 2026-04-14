@@ -144,6 +144,28 @@ class OGBActionManager:
     # Core Action Logic
     # =================================================================
 
+    async def _process_actions_with_cooldown_filter(self, action_map: List) -> Tuple[List, List]:
+        """
+        Central method to apply cooldown filtering to any action list.
+        Ensures all code paths go through the cooldown filter when dampening is enabled.
+
+        IMPORTANT: Cooldown filtering is ONLY applied when vpdDeviceDampening is True.
+        When dampening is OFF, actions pass through without cooldown checks.
+
+        Args:
+            action_map: List of actions to process
+
+        Returns:
+            Tuple of (filtered_actions, blocked_actions)
+        """
+        dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)
+        
+        if not dampening_enabled:
+            return action_map, []  # No filtering when dampening is OFF
+        
+        # Only apply cooldown filtering when dampening is ON
+        return await self._filterActionsByDampening(action_map)
+
     async def _isActionAllowed(
         self, capability: str, action: str, deviation: float = 0
     ) -> bool:
@@ -283,7 +305,7 @@ class OGBActionManager:
 
     async def _clearCooldownForEmergency(self, emergencyConditions: List[str]):
         """
-        Clear cooldowns during emergencies.
+        Set emergency conditions - only devices that solve these conditions bypass cooldowns.
 
         Args:
             emergencyConditions: List of emergency conditions
@@ -291,21 +313,21 @@ class OGBActionManager:
         if not emergencyConditions:
             return
 
-        await self.cooldown_manager.set_emergency_mode(True)
+        await self.cooldown_manager.set_emergency_conditions(emergencyConditions)
 
-        # Clear emergency mode after short delay to allow actions
+        # Clear emergency conditions after short delay to allow actions
         # Track the task to prevent orphaned tasks
         if not hasattr(self, '_background_tasks'):
             self._background_tasks = set()
-        task = asyncio.create_task(self._clear_emergency_mode())
+        task = asyncio.create_task(self._clear_emergency_conditions())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _clear_emergency_mode(self):
-        """Clear emergency mode after delay."""
+    async def _clear_emergency_conditions(self):
+        """Clear emergency conditions after delay."""
         await asyncio.sleep(5)  # 5 seconds
-        await self.cooldown_manager.set_emergency_mode(False)
-        _LOGGER.info(f"{self.room}: Emergency mode cleared")
+        await self.cooldown_manager.set_emergency_conditions([])
+        _LOGGER.info(f"{self.room}: Emergency conditions cleared")
 
     # =================================================================
     # Event Handlers
@@ -555,6 +577,55 @@ class OGBActionManager:
             f"{self.room}: VPD in deadband - entering quiet zone, no device actions"
         )
 
+    def _remove_duplicate_actions(self, actionMap: List) -> List:
+        """
+        Remove duplicate actions with the same capability.
+        Keeps the LAST occurrence while preserving original order of first occurrences.
+        
+        This must be called BEFORE cooldown filtering to prevent
+        multiple registrations of the same capability.
+        
+        Args:
+            actionMap: List of actions to deduplicate
+            
+        Returns:
+            Deduplicated action list
+        """
+        # Find the index of the LAST occurrence of each capability
+        last_occurrence = {}
+        first_occurrence = {}
+        for i, action in enumerate(actionMap):
+            cap = getattr(action, 'capability', None)
+            if cap:
+                last_occurrence[cap] = i
+                if cap not in first_occurrence:
+                    first_occurrence[cap] = i
+        
+        # Collect unique actions (only those at last occurrence indices)
+        last_actions = {cap: actionMap[i] for cap, i in last_occurrence.items()}
+        
+        # Sort by first occurrence index to preserve original order
+        unique_actions = [
+            last_actions[cap] 
+            for cap in sorted(first_occurrence.keys(), key=lambda c: first_occurrence[c])
+        ]
+        
+        if len(unique_actions) < len(actionMap):
+            _LOGGER.debug(
+                f"{self.room}: Deduplicated {len(actionMap)} actions → {len(unique_actions)} unique"
+            )
+            
+        return unique_actions
+
+    CONFLICTING_ACTION_PAIRS = [
+        # (cap_a, action_a) conflicts with (cap_b, action_b)
+        ("canHumidify",   "Increase", "canDehumidify", "Increase"),  # beide erhöhen/senken Feuchte entgegengesetzt
+        ("canHumidify",   "Reduce",   "canDehumidify", "Reduce"),
+        ("canHeat",       "Increase", "canCool",        "Increase"),  # heizen + kühlen gleichzeitig
+        ("canHeat",       "Reduce",   "canCool",        "Reduce"),
+        ("canExhaust",    "Increase", "canHumidify",    "Increase"),  # Abluft erhöhen + befeuchten = sinnlos
+        ("canExhaust",    "Increase", "canIntake",      "Reduce"),    # beide reduzieren Luftwechsel
+    ]
     CONFLICTING_PAIRS = [
         ("canHumidify", "canDehumidify"),
         ("canHeat", "canCool"),
@@ -563,46 +634,51 @@ class OGBActionManager:
 
     def _remove_conflicting_actions(self, actionMap: List) -> List:
         """
-        Remove actions that directly contradict each other.
-        Keeps the higher-priority action of each conflicting pair.
-
-        Args:
-            actionMap: List of actions to filter
-
-        Returns:
-            Filtered list without conflicting actions
+        Remove actions that physically contradict each other on action-level.
+        Conflicts are defined as (capA, actionType) vs (capB, actionType) pairs.
+        Higher priority wins; equal priority keeps cap_a.
         """
-        cap_to_action = {}
-        for action in actionMap:
-            cap = getattr(action, 'capability', None)
-            if cap:
-                cap_to_action[cap] = action
+        # Build lookup: capability → action object
+        cap_to_action = {
+            getattr(a, 'capability', None): a
+            for a in actionMap
+            if getattr(a, 'capability', None)
+        }
 
-        blocked_caps = set()
         prio_map = {"high": 3, "medium": 2, "low": 1}
+        blocked_caps = set()
 
-        for cap_a, cap_b in self.CONFLICTING_PAIRS:
-            if cap_a in cap_to_action and cap_b in cap_to_action:
-                action_a = cap_to_action[cap_a]
-                action_b = cap_to_action[cap_b]
+        for cap_a, act_a, cap_b, act_b in self.CONFLICTING_ACTION_PAIRS:
+            action_a = cap_to_action.get(cap_a)
+            action_b = cap_to_action.get(cap_b)
 
-                prio_a = prio_map.get(getattr(action_a, 'priority', 'medium'), 2)
-                prio_b = prio_map.get(getattr(action_b, 'priority', 'medium'), 2)
+            if not action_a or not action_b:
+                continue
 
-                if prio_b > prio_a:
-                    blocked_caps.add(cap_a)
-                    _LOGGER.info(
-                        f"{self.room}: Conflict resolved – {cap_b} (prio={prio_b}) "
-                        f"overrides {cap_a} (prio={prio_a})"
-                    )
-                else:
-                    blocked_caps.add(cap_b)
-                    _LOGGER.info(
-                        f"{self.room}: Conflict resolved – {cap_a} (prio={prio_a}) "
-                        f"overrides {cap_b} (prio={prio_b})"
-                    )
+            # Only conflict if action types actually match the pair definition
+            if getattr(action_a, 'action', '') != act_a:
+                continue
+            if getattr(action_b, 'action', '') != act_b:
+                continue
+
+            prio_a = prio_map.get(getattr(action_a, 'priority', 'medium'), 2)
+            prio_b = prio_map.get(getattr(action_b, 'priority', 'medium'), 2)
+
+            if prio_b > prio_a:
+                blocked_caps.add(cap_a)
+                _LOGGER.info(
+                    f"{self.room}: Conflict – {cap_b}:{act_b} (prio={prio_b}) "
+                    f"overrides {cap_a}:{act_a} (prio={prio_a})"
+                )
+            else:
+                blocked_caps.add(cap_b)
+                _LOGGER.info(
+                    f"{self.room}: Conflict – {cap_a}:{act_a} (prio={prio_a}) "
+                    f"overrides {cap_b}:{act_b} (prio={prio_b})"
+                )
 
         return [a for a in actionMap if getattr(a, 'capability', None) not in blocked_caps]
+
 
     # =================================================================
     # Closed Environment Action Handlers
@@ -844,13 +920,16 @@ class OGBActionManager:
             "ventilationDevices": vent_count
         }, haEvent=True, debug_type="INFO")
         
+        # Apply cooldown filtering if dampening is enabled
+        dampened_actions, blocked_actions = await self._process_actions_with_cooldown_filter(finalActions)
+        
         # Execute all night hold actions
-        if finalActions:
+        if dampened_actions:
             _LOGGER.info(
-                f"{self.room}: Night Hold executing {len(finalActions)} actions - "
+                f"{self.room}: Night Hold executing {len(dampened_actions)} actions - "
                 f"Climate minimized, Ventilation active for mold prevention"
             )
-            await self.publicationActionHandler(finalActions)
+            await self.publicationActionHandler(dampened_actions)
 
     async def _log_vpd_results(
         self,
@@ -899,10 +978,25 @@ class OGBActionManager:
         # Build log message - Always show cooldown info
         blocked_devices = ", ".join([f"{getattr(a, 'capability', '?')}" for a in blocked_actions]) if blocked_actions else ""
         
+        # Get cooldown status if dampening is enabled
+        cooldown_status = {}
+        active_cooldown_count = 0
+        if dampening_enabled:
+            status = self.cooldown_manager.get_status()
+            active_cooldown_count = status.get("active_count", 0)
+            
+            # Build detailed cooldown info for each device
+            for cap in status.get("active_cooldowns", []):
+                if cap in status:
+                    cooldown_status[cap] = {
+                        "remaining_seconds": status[cap].get("cooldown_remaining_seconds", 0),
+                        "is_blocked": status[cap].get("is_blocked", False)
+                    }
+        
         if dampening_enabled:
             message = (
                 f"VPD Perfection: Core Logic + Dampening: {len(final_actions)} actions executed "
-                f"({len(blocked_actions)} blocked by cooldown)"
+                f"({len(blocked_actions)} blocked by cooldown, {active_cooldown_count} active cooldowns)"
             )
         else:
             message = (
@@ -920,6 +1014,8 @@ class OGBActionManager:
                 "blockedActions": len(blocked_actions),
                 "blockedDevices": blocked_devices,
                 "dampeningEnabled": dampening_enabled,
+                "activeCooldowns": active_cooldown_count,
+                "cooldownInfo": cooldown_status,
                 "tempDeviation": real_temp_dev,
                 "humDeviation": real_hum_dev,
                 "tempPercentage": tempPercentage,
@@ -962,10 +1058,11 @@ class OGBActionManager:
         if not is_vpd_mode:
             _LOGGER.warning(
                 f"{self.room}: Core VPD Logic skipped - mode '{mode}' is not a VPD mode. "
-                f"Actions will be executed directly without Core VPD Logic."
+                f"Actions will be executed with Cooldown filtering but without Core VPD Logic."
             )
-            # For non-VPD modes, just apply Environment Guard and execute
-            final_actions = await self._apply_environment_guard(actionMap)
+            # For non-VPD modes: Apply cooldown filtering if dampening is enabled
+            dampened_actions, blocked_actions = await self._process_actions_with_cooldown_filter(actionMap)
+            final_actions = await self._apply_environment_guard(dampened_actions)
             await self.publicationActionHandler(final_actions)
             return
 
@@ -1041,9 +1138,11 @@ class OGBActionManager:
         if not is_vpd_mode:
             _LOGGER.warning(
                 f"{self.room}: Core VPD Logic skipped - mode '{mode}' is not a VPD mode. "
-                f"Actions will be executed directly without Core VPD Logic."
+                f"Actions will be executed with Cooldown filtering but without Core VPD Logic."
             )
-            final_actions = await self._apply_environment_guard(actionMap)
+            # For non-VPD modes: Apply cooldown filtering if dampening is enabled
+            dampened_actions, blocked_actions = await self._process_actions_with_cooldown_filter(actionMap)
+            final_actions = await self._apply_environment_guard(dampened_actions)
             await self.publicationActionHandler(final_actions)
             return
 
@@ -1106,16 +1205,33 @@ class OGBActionManager:
         target_vpd_for_log = self.data_store.getDeep("vpd.targeted")
         blocked_devices = ", ".join([f"{getattr(a, 'capability', '?')}" for a in blocked_actions]) if blocked_actions else ""
         
+        # Get cooldown status if dampening is enabled
+        cooldown_status = {}
+        active_cooldown_count = 0
+        if dampening_enabled:
+            status = self.cooldown_manager.get_status()
+            active_cooldown_count = status.get("active_count", 0)
+            
+            # Build detailed cooldown info for each device
+            for cap in status.get("active_cooldowns", []):
+                if cap in status:
+                    cooldown_status[cap] = {
+                        "remaining_seconds": status[cap].get("cooldown_remaining_seconds", 0),
+                        "is_blocked": status[cap].get("is_blocked", False)
+                    }
+        
         await self.event_manager.emit(
             "LogForClient",
             {
                 "Name": self.room,
-                "message": f"VPD Target: {len(final_actions)} actions executed ({len(blocked_actions)} blocked by cooldown)",
+                "message": f"VPD Target: {len(final_actions)} actions executed ({len(blocked_actions)} blocked by cooldown, {active_cooldown_count} active cooldowns)",
                 "actions": ", ".join([f"{a.capability}:{a.action}" for a in final_actions]),
                 "actionCount": len(final_actions),
                 "blockedActions": len(blocked_actions),
                 "blockedDevices": blocked_devices,
                 "dampeningEnabled": dampening_enabled,
+                "activeCooldowns": active_cooldown_count,
+                "cooldownInfo": cooldown_status,
                 "vpdDeviation": vpd_deviation,
                 "vpdCurrent": current_vpd_for_log,
                 "vpdTarget": target_vpd_for_log,
@@ -1159,7 +1275,9 @@ class OGBActionManager:
         if self.dampening_actions:
             final_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
 
-        final_actions = await self._apply_environment_guard(final_actions)
+        # Apply cooldown filtering if dampening is enabled
+        dampened_actions, blocked_actions = await self._process_actions_with_cooldown_filter(final_actions)
+        final_actions = await self._apply_environment_guard(dampened_actions)
         await self.publicationActionHandler(final_actions)
 
     async def checkLimitsAndPublicateWithDampening(self, actionMap: List):

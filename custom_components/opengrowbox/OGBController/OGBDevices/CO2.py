@@ -37,6 +37,7 @@ class CO2(Device):
         self.event_manager.on("NewCO2Publication", self.handleNewCO2Value)
         self.event_manager.on("Increase CO2", self.increaseAction)
         self.event_manager.on("Reduce CO2", self.reduceAction)
+        self.event_manager.on("EmergencyCO2Stop", self.emergencyStop)
 
         _LOGGER.info(f"CO2 Device {self.deviceName} initialized with {len(self.switches)} switches, {len(self.sensors)} sensors, {len(self.options)} options")
 
@@ -73,3 +74,9 @@ class CO2(Device):
         """Protokolliert die ausgeführte Aktion."""
         log_message = f"{self.deviceName} PPM-Current:{self.currentCO2} Target-PPM:{self.targetCO2}"
         _LOGGER.debug(f"{action_name}: {log_message}")
+
+    async def emergencyStop(self, data):
+        """EMERGENCY STOP - Turn off CO2 pump immediately (called by safety system)"""
+        _LOGGER.critical(f"EMERGENCY CO2 STOP triggered for {self.deviceName} - Turning OFF immediately!")
+        self.log_action("EMERGENCY_STOP/TurnOff")
+        await self.turn_off()

@@ -47,9 +47,87 @@ class OGBgcdManager:
 
         self.cooldowns: Dict[str, float] = self.load_from_datastore()
         self.action_history: Dict[str, Dict[str, Any]] = {}
-        self._emergency_mode = False
+        self._emergency_conditions: List[str] = []
+        
+        # Emergency priority mapping: which capabilities solve which emergencies
+        # ALL capabilities must be listed here to ensure proper emergency response
+        self._emergency_priority = {
+            "critical_overheat": [
+                "canCool",
+                "canExhaust",
+                "canVentilate",
+                "canWindow",
+                "canClimate",
+                "canDehumidify",
+                "canCO2"
+            ],
+            "critical_cold": [
+                "canHeat",
+                "canVentilate",
+                "canIntake",
+                "canWindow",
+                "canClimate",
+                "canHumidify",
+                "canCO2"
+            ],
+            "immediate_condensation_risk": [
+                "canDehumidify",
+                "canExhaust",
+                "canVentilate",
+                "canWindow",
+                "canClimate",
+                "canHeat",
+                "canCO2"
+            ],
+            "critical_humidity_high": [
+                "canDehumidify",
+                "canExhaust",
+                "canVentilate",
+                "canWindow",
+                "canClimate",
+                "canHeat",
+                "canCO2"
+            ],
+            "critical_humidity_low": [
+                "canHumidify",
+                "canIntake",
+                "canVentilate",
+                "canWindow",
+                "canClimate",
+                "canCool",
+                "canCO2"
+            ],
+            "critical_o2_low": [
+                "canVentilate",
+                "canIntake",
+                "canExhaust",
+                "canWindow",
+                "canClimate",
+                "canCO2"
+            ],
+        }
 
         self._lock = asyncio.Lock()
+
+    def _can_solve_emergency(self, capability: str) -> bool:
+        """
+        Check if a capability can help solve any active emergency condition.
+        
+        Args:
+            capability: Device capability to check
+            
+        Returns:
+            True if capability can solve an active emergency
+        """
+        if not self._emergency_conditions:
+            return False
+            
+        for condition in self._emergency_conditions:
+            solving_capabilities = self._emergency_priority.get(condition, [])
+            if capability in solving_capabilities:
+                return True
+                
+        return False
 
     def load_from_datastore(self) -> Dict[str, float]:
         """
@@ -122,10 +200,29 @@ class OGBgcdManager:
 
         history = self.action_history[capability]
 
-        if self._emergency_mode:
+        # Check if this capability helps solve any active emergency
+        if self._can_solve_emergency(capability):
             _LOGGER.warning(
-                f"{self.room}: Emergency mode - bypassing cooldown for {capability}"
+                f"{self.room}: Emergency override - bypassing cooldown for {capability} (solves {self._emergency_conditions})"
             )
+            return True
+
+        # Reduce actions have shorter cooldowns to allow stopping devices quickly
+        if action == "Reduce":
+            # Get reduce cooldown factor from datastore (default: 0.1 = 10% of normal cooldown)
+            reduce_factor = self.data_store.getDeep("controlOptions.reduceCooldownFactor", 0.1)
+            
+            # Calculate reduced cooldown time
+            base_cooldown = history.get("cooldown_until", now)
+            last_action = history.get("last_action", now)
+            cooldown_duration = base_cooldown - last_action
+            reduce_cooldown = last_action + (cooldown_duration * reduce_factor)
+            
+            if now < reduce_cooldown:
+                _LOGGER.debug(
+                    f"{self.room}: {capability} Reduce action still in cooldown until {reduce_cooldown} (factor: {reduce_factor})"
+                )
+                return False
             return True
 
         if now < history.get("cooldown_until", now):
@@ -163,7 +260,7 @@ class OGBgcdManager:
 
         adaptive_enabled = self.data_store.getDeep("controlOptions.adaptiveCooldownEnabled", False)
         if not adaptive_enabled:
-            if self._emergency_mode:
+            if self._emergency_conditions:
                 emergency_factor = self.data_store.getDeep("controlOptions.emergencyCooldownFactor", 0.5)
                 return base_cooldown * emergency_factor
             return base_cooldown
@@ -278,31 +375,53 @@ class OGBgcdManager:
             "cooldowns": self.cooldowns.copy(),
             "active_count": len(active_cooldowns),
             "active_cooldowns": active_cooldowns,
-            "emergency_mode": self._emergency_mode,
+            "emergency_conditions": self._emergency_conditions.copy(),
+            "emergency_mode": bool(self._emergency_conditions),  # Backwards compatibility
         }
 
+        # Calculate cooldown status for ALL devices in action history
         for cap, data in self.action_history.items():
-            if cap in status["cooldowns"]:
-                cooldown_remaining = data.get("cooldown_until", now) - now
+            cooldown_until = data.get("cooldown_until", now)
+            cooldown_remaining = cooldown_until - now
+            
+            # Only add status if cooldown is still active (remaining > 0)
+            if cooldown_remaining.total_seconds() > 0:
                 status[cap] = {
                     "cooldown_remaining_seconds": max(0, cooldown_remaining.total_seconds()),
-                    "is_blocked": now < data.get("cooldown_until", now),
+                    "is_blocked": True,
                 }
 
         return status
 
     async def set_emergency_mode(self, enabled: bool):
         """
-        Set emergency mode state.
-
+        Set emergency mode state (deprecated - use set_emergency_conditions).
+        
         Args:
             enabled: True to enable emergency mode
         """
-        self._emergency_mode = enabled
-
         if enabled:
-            await self._clear_all()
-            _LOGGER.warning(f"{self.room}: Emergency mode enabled, all cooldowns cleared")
+            await self.set_emergency_conditions(["critical_overheat"])  # Default fallback
+        else:
+            await self.set_emergency_conditions([])
+
+    async def set_emergency_conditions(self, conditions: List[str]):
+        """
+        Set active emergency conditions.
+        
+        Only devices that can solve these conditions will bypass cooldowns.
+        
+        Args:
+            conditions: List of active emergency conditions
+        """
+        self._emergency_conditions = conditions
+        
+        if conditions:
+            _LOGGER.warning(
+                f"{self.room}: Emergency conditions active: {conditions}"
+            )
+        else:
+            _LOGGER.info(f"{self.room}: Emergency conditions cleared")
 
     async def _clear_all(self):
         """
