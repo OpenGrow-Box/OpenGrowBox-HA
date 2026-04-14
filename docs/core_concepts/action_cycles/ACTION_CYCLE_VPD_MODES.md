@@ -36,6 +36,68 @@ The guard prefers ambient/outside measurements when available:
 This ensures protection is active for VPD modes, Drying, Premium controller actions,
 and direct event emissions.
 
+## Dynamic Fan Logic (Temperature-Aware Fan Control)
+
+Static VPD fan logic can create dangerous situations when users only have one fan type (e.g., only exhaust, no intake). OpenGrowBox now applies **dynamic fan logic** that rewrites fan actions based on current temperature priorities.
+
+### The Problem
+
+- **reduce_vpd** (VPD too high) normally reduces exhaust and increases intake.
+  - If the user has **only exhaust** and temperature is already high, reducing exhaust traps heat and makes the situation worse.
+- **increase_vpd** (VPD too low) normally increases exhaust and reduces intake.
+  - If the user has **only exhaust** and temperature is already low, increasing exhaust sucks out heat and makes the situation worse.
+
+### How It Works
+
+The `_apply_dynamic_fan_logic()` filter runs after buffer zones but before conflict resolution in the action pipeline. It checks:
+
+1. Whether the action map contains VPD fan actions (`canExhaust`, `canIntake`, `canVentilate`)
+2. Current temperature relative to `minTemp`/`maxTemp`
+3. Which fan capabilities are actually available
+
+### Decision Matrix
+
+#### `reduce_vpd` context (VPD too high)
+
+| Temperature Condition | `canExhaust` | `canIntake` | `canVentilate` | Reason |
+|-----------------------|--------------|-------------|----------------|--------|
+| `temp >= maxTemp - 1°C` | **Increase** | Increase (if available) | **Increase** | Cooling takes priority over VPD reduction |
+| `temp < maxTemp - 1°C` | Reduce | Increase | Reduce | Classic VPD-reduce behavior |
+
+#### `increase_vpd` context (VPD too low)
+
+| Temperature Condition | `canExhaust` | `canIntake` | `canVentilate` | Reason |
+|-----------------------|--------------|-------------|----------------|--------|
+| `temp <= minTemp + 1°C` | **Reduce** | Reduce (if available) | **Reduce** | Heat retention takes priority over VPD increase |
+| `temp > minTemp + 1°C` | Increase | Reduce | Increase | Classic VPD-increase behavior |
+
+### Code Location
+
+- **Implementation**: `OGBDampeningActions._apply_dynamic_fan_logic()`
+- **Integration**: Called inside `_enhance_action_map()`, `process_actions_basic()`, and `process_actions_target_basic()`
+- **Buffer**: `FAN_TEMP_BUFFER = 1.0` °C
+
+### Example Scenarios
+
+**Scenario 1: Critical - only exhaust, high temp, VPD too high**
+```
+Before dynamic logic: canExhaust -> Reduce
+After dynamic logic:  canExhaust -> Increase
+Reason: temp 27.5°C >= 27°C (maxTemp 28°C - 1°C buffer)
+```
+
+**Scenario 2: Critical - only exhaust, low temp, VPD too low**
+```
+Before dynamic logic: canExhaust -> Increase
+After dynamic logic:  canExhaust -> Reduce
+Reason: temp 20.5°C <= 21°C (minTemp 20°C + 1°C buffer)
+```
+
+**Scenario 3: Both fans available, temp OK**
+```
+No changes made. Classic VPD fan behavior applies.
+```
+
 ## VPD Sensing Pipeline
 
 ### 1. Sensor Data Collection
@@ -523,6 +585,13 @@ async def process_actions_with_dampening(self, action_map: List):
     enhanced_action_map = self._enhance_action_map(
         action_map, temp_deviation, hum_deviation, tent_data,
         capabilities, vpd_light_control, is_light_on, optimal_devices
+    )
+
+    # Apply dynamic fan logic (temperature-aware fan control)
+    # Rewrites exhaust/intake/ventilation actions when temperature
+    # priorities conflict with static VPD fan logic
+    enhanced_action_map = self._apply_dynamic_fan_logic(
+        enhanced_action_map, tent_data
     )
 
     # Apply cooldown-based filtering

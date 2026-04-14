@@ -405,6 +405,9 @@ class OGBDampeningActions:
         # Apply buffer zones to prevent oscillation
         buffered_actions = self._apply_buffer_zones(action_map, tent_data)
 
+        # Apply dynamic fan logic based on temperature priorities
+        buffered_actions = self._apply_dynamic_fan_logic(buffered_actions, tent_data)
+
         # Resolve conflicts between actions
         resolved_actions = self._resolve_action_conflicts(buffered_actions)
 
@@ -512,6 +515,9 @@ class OGBDampeningActions:
 
         # Apply buffer zones to prevent oscillation
         buffered_actions = self._apply_buffer_zones(action_map, tent_data)
+
+        # Apply dynamic fan logic based on temperature priorities
+        buffered_actions = self._apply_dynamic_fan_logic(buffered_actions, tent_data)
 
         # Resolve conflicts between actions
         resolved_actions = self._resolve_action_conflicts(buffered_actions)
@@ -995,6 +1001,182 @@ class OGBDampeningActions:
 
         return filtered_actions
 
+    def _apply_dynamic_fan_logic(self, action_map: List, tent_data: Dict[str, Any]) -> List:
+        """
+        Dynamically adjust fan actions based on temperature to prevent critical situations.
+        
+        CRITICAL FIX: Static VPD fan logic can be dangerous when users only have one fan type.
+        - reduce_vpd: If temp is too high, reducing exhaust WITHOUT intake compensation is dangerous
+        - increase_vpd: If temp is too low, increasing exhaust WITHOUT intake compensation is dangerous
+        
+        Logic:
+        - reduce_vpd (VPD too high):
+            * temp > maxTemp or temp > maxTemp - buffer: INCREASE exhaust/ventilation for cooling
+            * temp OK: classic behavior (reduce exhaust, increase intake)
+        - increase_vpd (VPD too low):
+            * temp < minTemp or temp < minTemp + buffer: REDUCE exhaust/ventilation to retain heat
+            * temp OK: classic behavior (increase exhaust, reduce intake)
+        
+        Args:
+            action_map: List of actions to filter/enhance
+            tent_data: Current environmental data
+            
+        Returns:
+            Enhanced action list with temperature-aware fan logic
+        """
+        if not tent_data or not action_map:
+            return action_map
+
+        current_temp = tent_data.get("temperature")
+        max_temp = tent_data.get("maxTemp")
+        min_temp = tent_data.get("minTemp")
+        
+        if current_temp is None or max_temp is None or min_temp is None:
+            return action_map
+        
+        try:
+            current_temp = float(current_temp)
+            max_temp = float(max_temp)
+            min_temp = float(min_temp)
+        except (TypeError, ValueError):
+            return action_map
+
+        # Check which fans are available
+        caps = self.ogb.dataStore.get("capabilities") or {}
+        has_exhaust = caps.get("canExhaust", {}).get("state", False)
+        has_intake = caps.get("canIntake", {}).get("state", False)
+        has_ventilate = caps.get("canVentilate", {}).get("state", False)
+        
+        # Determine the VPD action context from the existing action map
+        # reduce_vpd = exhaust Reduce + intake Increase
+        # increase_vpd = exhaust Increase + intake Reduce
+        is_reduce_vpd = False
+        is_increase_vpd = False
+        
+        for action in action_map:
+            cap = getattr(action, 'capability', '')
+            act = getattr(action, 'action', '')
+            if cap == 'canExhaust' and act == 'Reduce':
+                is_reduce_vpd = True
+            elif cap == 'canExhaust' and act == 'Increase':
+                is_increase_vpd = True
+        
+        if not is_reduce_vpd and not is_increase_vpd:
+            # No VPD fan actions to modify
+            return action_map
+
+        FAN_TEMP_BUFFER = 1.0  # 1°C buffer zone
+        modified_actions = []
+        changes_made = []
+        
+        for action in action_map:
+            cap = getattr(action, 'capability', '')
+            act = getattr(action, 'action', '')
+            msg = getattr(action, 'message', '')
+            
+            if cap not in ('canExhaust', 'canIntake', 'canVentilate'):
+                modified_actions.append(action)
+                continue
+            
+            # === reduce_vpd context: VPD is too high ===
+            if is_reduce_vpd:
+                if current_temp >= (max_temp - FAN_TEMP_BUFFER):
+                    # Temperature is high or near max - COOLING takes priority over VPD reduction
+                    if cap == 'canExhaust':
+                        if act == 'Reduce':
+                            # CRITICAL: Don't reduce exhaust when temp is high!
+                            # If no intake exists, reducing exhaust would trap heat
+                            new_action = self._create_modified_action(
+                                action, 'Increase',
+                                f"{msg} [DynamicFan: temp {current_temp}°C >= {max_temp - FAN_TEMP_BUFFER}°C, exhaust INCREASED for cooling instead of reduced]"
+                            )
+                            modified_actions.append(new_action)
+                            changes_made.append(f"canExhaust: Reduce -> Increase (temp high)")
+                            continue
+                    elif cap == 'canIntake':
+                        if act == 'Increase':
+                            # Keep intake increase for cooling if available
+                            modified_actions.append(action)
+                            continue
+                    elif cap == 'canVentilate':
+                        if act == 'Reduce':
+                            new_action = self._create_modified_action(
+                                action, 'Increase',
+                                f"{msg} [DynamicFan: temp {current_temp}°C >= {max_temp - FAN_TEMP_BUFFER}°C, ventilation INCREASED for cooling]"
+                            )
+                            modified_actions.append(new_action)
+                            changes_made.append(f"canVentilate: Reduce -> Increase (temp high)")
+                            continue
+                else:
+                    # Temperature is OK - classic reduce_vpd behavior
+                    # BUT: If user has NO intake, reducing exhaust alone is risky
+                    # We allow it but add intake increase if intake exists
+                    if cap == 'canExhaust' and act == 'Reduce' and not has_intake:
+                        # Only exhaust exists and temp is OK-ish - reduce slightly but log warning
+                        _LOGGER.debug(
+                            f"{self.ogb.room}: DynamicFan - reducing exhaust without intake compensation "
+                            f"(temp {current_temp}°C OK, only exhaust available)"
+                        )
+            
+            # === increase_vpd context: VPD is too low ===
+            elif is_increase_vpd:
+                if current_temp <= (min_temp + FAN_TEMP_BUFFER):
+                    # Temperature is low or near min - HEATING retention takes priority
+                    if cap == 'canExhaust':
+                        if act == 'Increase':
+                            # CRITICAL: Don't increase exhaust when temp is low!
+                            # If no intake exists, increasing exhaust would suck out heat
+                            new_action = self._create_modified_action(
+                                action, 'Reduce',
+                                f"{msg} [DynamicFan: temp {current_temp}°C <= {min_temp + FAN_TEMP_BUFFER}°C, exhaust REDUCED to retain heat instead of increased]"
+                            )
+                            modified_actions.append(new_action)
+                            changes_made.append(f"canExhaust: Increase -> Reduce (temp low)")
+                            continue
+                    elif cap == 'canIntake':
+                        if act == 'Reduce':
+                            # Keep intake reduce to retain heat
+                            modified_actions.append(action)
+                            continue
+                    elif cap == 'canVentilate':
+                        if act == 'Increase':
+                            new_action = self._create_modified_action(
+                                action, 'Reduce',
+                                f"{msg} [DynamicFan: temp {current_temp}°C <= {min_temp + FAN_TEMP_BUFFER}°C, ventilation REDUCED to retain heat]"
+                            )
+                            modified_actions.append(new_action)
+                            changes_made.append(f"canVentilate: Increase -> Reduce (temp low)")
+                            continue
+                else:
+                    # Temperature is OK - classic increase_vpd behavior
+                    if cap == 'canExhaust' and act == 'Increase' and not has_intake:
+                        _LOGGER.debug(
+                            f"{self.ogb.room}: DynamicFan - increasing exhaust without intake compensation "
+                            f"(temp {current_temp}°C OK, only exhaust available)"
+                        )
+            
+            modified_actions.append(action)
+        
+        if changes_made:
+            _LOGGER.warning(
+                f"{self.ogb.room}: DynamicFan logic modified actions due to temperature priority: "
+                f"{', '.join(changes_made)}"
+            )
+        
+        return modified_actions
+
+    def _create_modified_action(self, original_action, new_action_type: str, new_message: str):
+        """Create a copy of an action with modified action type and message."""
+        from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
+        
+        return OGBActionPublication(
+            capability=getattr(original_action, 'capability', ''),
+            action=new_action_type,
+            Name=getattr(original_action, 'Name', self.ogb.room),
+            message=new_message,
+            priority=getattr(original_action, 'priority', 'medium') or 'medium',
+        )
+
 
     def _add_vpd_context_enhancements(self, actions, vpd_status, temp_dev, hum_dev, tent_data):
         """
@@ -1310,13 +1492,17 @@ class OGBDampeningActions:
             enhanced_actions, temp_deviation, hum_deviation, vpd_status
         )
 
-        # Apply buffer zones LAST to filter ALL actions (including newly added ones)
+        # Apply buffer zones to filter ALL actions (including newly added ones)
         # This prevents oscillation near limits and ensures absolute limits are respected
         enhanced_actions = self._apply_buffer_zones(enhanced_actions, tent_data)
 
+        # Apply dynamic fan logic based on temperature priorities
+        # CRITICAL: Prevents dangerous fan actions when only one fan type is available
+        enhanced_actions = self._apply_dynamic_fan_logic(enhanced_actions, tent_data)
+
         # Add emergency actions
         # Add CO2 actions
-        # Priority: Emergency (highest) > VPD Context > Deviation > Base > CO2 (lowest)
+        # Priority: Emergency (highest) > VPD Context > Deviation > Dynamic Fan > Base > CO2 (lowest)
 
         return enhanced_actions
 

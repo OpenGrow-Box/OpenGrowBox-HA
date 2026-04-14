@@ -5,10 +5,11 @@
 2. [VPD Target Mode](#vpd-target-mode)
 3. [Closed Environment Mode](#closed-environment-mode)
 4. [Safety Mechanisms](#safety-mechanisms)
-5. [Deadband & Quiet Zone](#deadband--quiet-zone)
-6. [Conflict Resolution](#conflict-resolution)
-7. [Adaptive Cooldown](#adaptive-cooldown)
-8. [Environment Guard Details](#environment-guard-details)
+5. [Dynamic Fan Logic](#dynamic-fan-logic-temperature-aware-fan-control)
+6. [Deadband & Quiet Zone](#deadband--quiet-zone)
+7. [Conflict Resolution](#conflict-resolution)
+8. [Adaptive Cooldown](#adaptive-cooldown)
+9. [Environment Guard Details](#environment-guard-details)
 
 ---
 
@@ -185,12 +186,16 @@
 └─────────────────────────────────────────────────────────────────────────────┘
                                       ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STEP 5: DAMPENING ACTIONS                                                   │
+│ STEP 5: DAMPENING ACTIONS + DYNAMIC FAN LOGIC 🌡️                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ OGBDampeningActions.process_actions_basic()                                │
 │                                                                             │
 │ • Receives temp_deviation, hum_deviation (from ActionManager)              │
 │ • Applies Buffer Zones (prevents oscillation)                              │
+│ • 🆕 DYNAMIC FAN LOGIC: Rewrites fan actions based on temperature!         │
+│   - reduce_vpd + temp >= maxTemp - 1°C → exhaust INCREASE (cooling!)      │
+│   - increase_vpd + temp <= minTemp + 1°C → exhaust REDUCE (heat retention)│
+│   - Prevents critical situations when only one fan type is available       │
 │ • Resolves Action conflicts (highest priority per capability)              │
 │ • Filters through Dampening/Cooldown (uses weighted deviations)            │
 │                                                                             │
@@ -719,12 +724,169 @@ Control Behavior:
 |------------|-----------|------------|------------|
 | **Night Hold** | ✅ (Power-Saving Mode) | ✅ (Power-Saving Mode) | ✅ (Power-Saving Mode - NEW!) |
 | **Smart Deadband** | ✅ (with 15% hysteresis, climate reduced, air exchange reduced) | ✅ (with 15% hysteresis, climate reduced, air exchange reduced) | ✅ (VPD-based, with 15% hysteresis, returns bool) |
+| **Dynamic Fan Logic** | ✅ (Temperature-aware fan control) | ✅ (Temperature-aware fan control) | ❌ |
 | **Humidity Critical Override** | ✅ | ✅ | ✅ |
 | **Environment Guard** | ✅ (optional) | ✅ (optional) | ✅ (optional) |
 | **Buffer Zones** | ✅ | ✅ | ✅ |
 | **Conflict Resolution** | ✅ | ✅ | ✅ |
 | **Weighted Deviations** | ✅ | ✅ | ✅ (all 0) |
 | **Dampening/Cooldown** | ✅ (optional) | ✅ (optional) | ❌ |
+
+### Dynamic Fan Logic (Temperature-Aware Fan Control)
+
+**Problem:** Static VPD fan logic can be dangerous when users only have one fan type (e.g., only exhaust, no intake).
+
+**Solution:** `_apply_dynamic_fan_logic()` rewrites fan actions based on temperature priorities.
+
+#### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ DYNAMIC FAN LOGIC FLOW                                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  reduce_vpd context (VPD too high):                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ IF temp >= maxTemp - 1°C:                                           │   │
+│  │   → canExhaust: Reduce → INCREASE (cool instead of trap heat)      │   │
+│  │   → canVentilate: Reduce → INCREASE                                │   │
+│  │   → canIntake: Increase (unchanged - helps cooling)                │   │
+│  │ ELSE:                                                               │   │
+│  │   → Classic behavior (Reduce exhaust, Increase intake)             │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  increase_vpd context (VPD too low):                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ IF temp <= minTemp + 1°C:                                           │   │
+│  │   → canExhaust: Increase → REDUCE (retain heat)                    │   │
+│  │   → canVentilate: Increase → REDUCE                                │   │
+│  │   → canIntake: Reduce (unchanged - helps retain heat)              │   │
+│  │ ELSE:                                                               │   │
+│  │   → Classic behavior (Increase exhaust, Reduce intake)             │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  FAN_TEMP_BUFFER = 1.0°C (prevents oscillation near limits)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Decision Matrix
+
+| Context | Temperature | canExhaust | canIntake | canVentilate | Reason |
+|---------|-------------|------------|-----------|--------------|--------|
+| **reduce_vpd** | temp >= maxTemp - 1°C | **Increase** | Increase | **Increase** | Cooling priority |
+| **reduce_vpd** | temp < maxTemp - 1°C | Reduce | Increase | Reduce | Classic VPD-reduce |
+| **increase_vpd** | temp <= minTemp + 1°C | **Reduce** | Reduce | **Reduce** | Heat retention priority |
+| **increase_vpd** | temp > minTemp + 1°C | Increase | Reduce | Increase | Classic VPD-increase |
+
+#### Example Scenarios
+
+**Scenario 1: Critical - only exhaust, high temp, VPD too high**
+```
+User has: canExhaust only (no intake)
+VPD: Too high → reduce_vpd triggered
+Temperature: 27.5°C (maxTemp = 28°C)
+
+Before Dynamic Fan Logic:
+  → canExhaust: Reduce (traps heat! DANGER!)
+
+After Dynamic Fan Logic:
+  → canExhaust: Increase (cooling! SAFE!)
+  
+Log: "DynamicFan: temp 27.5°C >= 27.0°C, exhaust INCREASED for cooling"
+```
+
+**Scenario 2: Critical - only exhaust, low temp, VPD too low**
+```
+User has: canExhaust only (no intake)
+VPD: Too low → increase_vpd triggered
+Temperature: 20.5°C (minTemp = 20°C)
+
+Before Dynamic Fan Logic:
+  → canExhaust: Increase (sucks out heat! DANGER!)
+
+After Dynamic Fan Logic:
+  → canExhaust: Reduce (retains heat! SAFE!)
+  
+Log: "DynamicFan: temp 20.5°C <= 21.0°C, exhaust REDUCED to retain heat"
+```
+
+**Scenario 3: Both fans available, temp OK**
+```
+User has: canExhaust + canIntake
+VPD: Too high → reduce_vpd triggered
+Temperature: 24°C (minTemp = 20°C, maxTemp = 28°C)
+
+Dynamic Fan Logic: No changes (temp in safe range)
+  → canExhaust: Reduce (classic behavior)
+  → canIntake: Increase (classic behavior)
+```
+
+#### Implementation
+
+**Location:** `OGBDampeningActions._apply_dynamic_fan_logic()`
+
+**Integration Points:**
+- `_enhance_action_map()` - Main path for Core VPD Logic
+- `process_actions_basic()` - Deprecated but still used
+- `process_actions_target_basic()` - VPD Target mode
+
+**Code:**
+```python
+def _apply_dynamic_fan_logic(self, action_map: List, tent_data: Dict) -> List:
+    """Rewrite fan actions based on temperature priorities."""
+    
+    current_temp = tent_data.get("temperature")
+    max_temp = tent_data.get("maxTemp")
+    min_temp = tent_data.get("minTemp")
+    
+    # Detect VPD context
+    is_reduce_vpd = any(a.capability == 'canExhaust' and a.action == 'Reduce' 
+                        for a in action_map)
+    is_increase_vpd = any(a.capability == 'canExhaust' and a.action == 'Increase' 
+                          for a in action_map)
+    
+    FAN_TEMP_BUFFER = 1.0  # 1°C buffer
+    
+    for action in action_map:
+        cap = action.capability
+        act = action.action
+        
+        # reduce_vpd + high temp → INCREASE exhaust/ventilation
+        if is_reduce_vpd and current_temp >= (max_temp - FAN_TEMP_BUFFER):
+            if cap in ('canExhaust', 'canVentilate') and act == 'Reduce':
+                action.action = 'Increase'
+                action.message += " [DynamicFan: cooling priority]"
+        
+        # increase_vpd + low temp → REDUCE exhaust/ventilation
+        elif is_increase_vpd and current_temp <= (min_temp + FAN_TEMP_BUFFER):
+            if cap in ('canExhaust', 'canVentilate') and act == 'Increase':
+                action.action = 'Reduce'
+                action.message += " [DynamicFan: heat retention priority]"
+    
+    return action_map
+```
+
+#### Why This Matters
+
+- **Single-fan setups** (exhaust-only) are common in budget grows
+- Static VPD logic assumes both exhaust AND intake are available
+- Without dynamic correction:
+  - High-VPD + high-temp + reduce exhaust = **heat trap** → plant stress/death
+  - Low-VPD + low-temp + increase exhaust = **heat loss** → plant stress/death
+- The 1°C buffer prevents rapid oscillation near temperature limits
+
+#### Test Coverage
+
+Comprehensive test suite in `tests/logic/actions/test_dynamic_fan_logic.py`:
+- ✅ reduce_vpd + temp OK + both fans → unchanged
+- ✅ reduce_vpd + temp HIGH + only exhaust → switches to Increase
+- ✅ reduce_vpd + temp HIGH + both fans → exhaust switches to Increase
+- ✅ increase_vpd + temp OK + only exhaust → unchanged
+- ✅ increase_vpd + temp LOW + only exhaust → switches to Reduce
+- ✅ increase_vpd + temp LOW + both fans → both reduce
+- ✅ reduce_vpd + temp HIGH + ventilation → also switches
+- ✅ No fan actions → pass-through unchanged
+- ✅ Missing tent_data → pass-through unchanged
 
 ### Smart Deadband (Advanced)
 
@@ -1654,11 +1816,11 @@ async def checkLimitsAndPublicateNoVPD(self, actionMap: List):
 
 ```python
 async def process_core_vpd_logic(
-    self, action_map: List, temp_deviation: float, hum_deviation: float, 
+    self, action_map: List, temp_deviation: float, hum_deviation: float,
     tent_data: Dict[str, Any]
 ) -> List:
     """Process Core VPD Logic (ALWAYS active)."""
-    
+
     # 1. Enhance action map
     enhanced_actions = self._enhance_action_map(
         action_map, temp_deviation, hum_deviation, tent_data, caps,
@@ -1667,12 +1829,18 @@ async def process_core_vpd_logic(
     #   - Apply buffer zones (prevent oscillation near limits)
     #   - Add VPD context enhancements (priorities based on VPD status)
     #   - Add deviations-based actions (intelligent additional actions)
-    
-    # 2. Resolve conflicts
+
+    # 2. Apply dynamic fan logic (temperature-aware safety filter)
+    enhanced_actions = self._apply_dynamic_fan_logic(enhanced_actions, tent_data)
+    #   - Rewrites exhaust/intake/ventilation actions when temperature
+    #     priorities conflict with static VPD fan logic
+    #   - Prevents critical situations when only one fan type is available
+
+    # 3. Resolve conflicts
     final_actions = self._resolve_action_conflicts(enhanced_actions)
     #   - Remove contradictory actions
     #   - Keep highest priority action per capability
-    
+
     return final_actions
 ```
 

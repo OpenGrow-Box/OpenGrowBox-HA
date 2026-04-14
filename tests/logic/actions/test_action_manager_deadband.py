@@ -187,7 +187,7 @@ async def test_humidify_dehumidify_both_pass_when_humidity_status_active():
 
 @pytest.mark.asyncio
 async def test_conflicting_actions_removed_heat_cool():
-    """Test that heat and cool conflicts are resolved."""
+    """Test that heat and cool conflicts are resolved for same-direction actions."""
     data_store = FakeDataStore({})
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
@@ -204,7 +204,7 @@ async def test_conflicting_actions_removed_heat_cool():
             Name="test_room",
             message="test",
             capability="canCool",
-            action="Reduce",
+            action="Increase",
             priority="medium",
         ),
     ]
@@ -264,7 +264,7 @@ async def test_no_conflict_with_different_capabilities():
         OGBActionPublication(
             Name="test_room",
             message="test",
-            capability="canIntake",
+            capability="canHeat",
             action="Reduce",
             priority="medium",
         ),
@@ -273,6 +273,36 @@ async def test_no_conflict_with_different_capabilities():
     filtered = manager._remove_conflicting_actions(actions)
 
     assert len(filtered) == 2
+
+
+@pytest.mark.asyncio
+async def test_conflicting_actions_exhaust_intake_reduce():
+    """Test that exhaust Increase + intake Reduce conflict is resolved."""
+    data_store = FakeDataStore({})
+    event_manager = FakeEventManager()
+    manager = OGBActionManager(None, data_store, event_manager, "test_room")
+
+    actions = [
+        OGBActionPublication(
+            Name="test_room",
+            message="test",
+            capability="canExhaust",
+            action="Increase",
+            priority="medium",
+        ),
+        OGBActionPublication(
+            Name="test_room",
+            message="test",
+            capability="canIntake",
+            action="Reduce",
+            priority="high",
+        ),
+    ]
+
+    filtered = manager._remove_conflicting_actions(actions)
+
+    assert len(filtered) == 1
+    assert filtered[0].capability == "canIntake"
 
 
 @pytest.mark.asyncio

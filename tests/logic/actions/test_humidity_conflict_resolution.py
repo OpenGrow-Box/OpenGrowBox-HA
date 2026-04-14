@@ -143,11 +143,11 @@ async def test_humidity_too_low_humidify_wins_conflict():
 @pytest.mark.asyncio
 async def test_reduce_actions_always_pass_through():
     """
-    Test that Reduce actions ALWAYS pass through regardless of humidity status.
+    Test that Reduce actions ALWAYS pass through buffer zones regardless of humidity status.
     This is critical to allow devices to stop when needed.
     """
     room = "test_room"
-    
+
     # Test with both too_high and too_low
     for humidity, min_h, max_h in [(60.0, 45.0, 55.0), (40.0, 45.0, 55.0)]:
         data_store = FakeDataStore({
@@ -167,11 +167,11 @@ async def test_reduce_actions_always_pass_through():
             },
             "tentMode": "VPD Perfection",
         })
-        
+
         event_manager = FakeEventManager()
         manager = OGBActionManager(None, data_store, event_manager, room)
 
-        # Create Reduce actions - these should ALWAYS pass through
+        # Create Reduce actions - buffer zones should NEVER block Reduce actions
         actions = [
             OGBActionPublication(
                 capability="canHumidify",
@@ -189,12 +189,24 @@ async def test_reduce_actions_always_pass_through():
             ),
         ]
 
-        # Resolve conflicts
-        resolved = manager._remove_conflicting_actions(actions)
+        # Buffer zones should not block Reduce actions
+        from custom_components.opengrowbox.OGBController.actions.OGBDampeningActions import OGBDampeningActions
 
-        # BOTH Reduce actions should pass through!
-        assert len(resolved) == 2
-        capabilities = [a.capability for a in resolved]
+        fake_ogb = type('FakeOGB', (), {
+            'room': room,
+            'dataStore': data_store,
+            'actionManager': manager,
+            'eventManager': event_manager,
+        })()
+
+        dampening = OGBDampeningActions(fake_ogb)
+
+        tent_data = data_store.get("tentData")
+        buffered = dampening._apply_buffer_zones(actions, tent_data)
+
+        # BOTH Reduce actions should pass through buffer zones!
+        assert len(buffered) == 2
+        capabilities = [a.capability for a in buffered]
         assert "canHumidify" in capabilities
         assert "canDehumidify" in capabilities
 

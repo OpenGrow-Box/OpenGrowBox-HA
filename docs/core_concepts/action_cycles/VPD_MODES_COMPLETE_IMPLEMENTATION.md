@@ -442,6 +442,15 @@ async def process_actions_with_dampening(self, action_map: List):
         capabilities, vpd_light_control, is_light_on, optimal_devices
     )
 
+    // 6b. Apply dynamic fan logic (temperature-aware fan control)
+    // Critical safety filter: rewrites exhaust/intake/ventilation actions
+    // when temperature priorities conflict with static VPD fan logic.
+    // Example: if VPD is too high but temp is already near max,
+    // reducing exhaust without intake compensation would trap heat.
+    enhanced_action_map = self._apply_dynamic_fan_logic(
+        enhanced_action_map, tent_data
+    )
+
     // 7. Apply cooldown-based filtering (core dampening logic)
     dampened_actions, blocked_actions = self.action_manager._filterActionsByDampening(
         enhanced_action_map, temp_deviation, hum_deviation
@@ -461,6 +470,60 @@ async def process_actions_with_dampening(self, action_map: List):
     await self._execute_actions(final_actions)
     return final_actions
 ```
+
+### Dynamic Fan Logic (Temperature-Aware Safety Filter)
+
+```python
+# OGBDampeningActions._apply_dynamic_fan_logic()
+def _apply_dynamic_fan_logic(self, action_map: List, tent_data: Dict[str, Any]) -> List:
+    """
+    Dynamically adjust fan actions based on temperature to prevent critical situations.
+
+    CRITICAL FIX: Static VPD fan logic can be dangerous when users only have one fan type.
+    - reduce_vpd: If temp is too high, reducing exhaust WITHOUT intake compensation is dangerous
+    - increase_vpd: If temp is too low, increasing exhaust WITHOUT intake compensation is dangerous
+    """
+
+    current_temp = tent_data.get("temperature")
+    max_temp = tent_data.get("maxTemp")
+    min_temp = tent_data.get("minTemp")
+
+    # Detect VPD action context from the action map
+    is_reduce_vpd = any(
+        a.capability == 'canExhaust' and a.action == 'Reduce' for a in action_map
+    )
+    is_increase_vpd = any(
+        a.capability == 'canExhaust' and a.action == 'Increase' for a in action_map
+    )
+
+    FAN_TEMP_BUFFER = 1.0  # 1°C buffer zone
+
+    for action in action_map:
+        cap = action.capability
+        act = action.action
+
+        # === reduce_vpd context: VPD is too high ===
+        if is_reduce_vpd and current_temp >= (max_temp - FAN_TEMP_BUFFER):
+            if cap == 'canExhaust' and act == 'Reduce':
+                action.action = 'Increase'  # Cool instead of trap heat
+            elif cap == 'canVentilate' and act == 'Reduce':
+                action.action = 'Increase'
+
+        # === increase_vpd context: VPD is too low ===
+        elif is_increase_vpd and current_temp <= (min_temp + FAN_TEMP_BUFFER):
+            if cap == 'canExhaust' and act == 'Increase':
+                action.action = 'Reduce'  # Retain heat instead of vent
+            elif cap == 'canVentilate' and act == 'Increase':
+                action.action = 'Reduce'
+
+    return action_map
+```
+
+**Why this matters:**
+- **Single-fan setups** (exhaust-only) are common in budget grows.
+- Static VPD logic assumes both exhaust AND intake are available.
+- Without dynamic correction, a high-VPD + high-temp situation would reduce exhaust → heat builds up → plants stress/die.
+- The 1°C buffer prevents rapid oscillation near temperature limits.
 
 ### 3. Cooldown-Based Action Filtering
 
@@ -703,7 +766,8 @@ graph TD
     K --> L[Determine VPD Status]
     L --> M[Get Optimal Devices]
     M --> N[Enhance Action Map]
-    N --> O[_filterActionsByDampening]
+    N --> N2[_apply_dynamic_fan_logic]
+    N2 --> O[_filterActionsByDampening]
 
     O --> P[_isActionAllowed Check]
     P --> Q{Cooldown Active?}
