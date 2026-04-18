@@ -14,6 +14,60 @@ SCRIPT_MAX_SIZE_KB = 100
 SCRIPT_BACKUP_SUFFIX = "_backup"
 SCRIPT_DIR = "scripts"
 
+# State management constants
+# Keys die IMMER aus State File geladen werden (nur diese!)
+# Alles andere wird durch HA Entities restored
+PRESERVED_STATE_KEYS = {
+    # Custom Plant Stages (nur wenn aktiv)
+    "customPlantStages",
+    "customLightPlantStages",
+    
+    # Grow-Mediums
+    "growMediums",
+    
+    # Plant Dates (wenn nicht durch HA Entities)
+    "plantDates",
+    
+    # Camera Timelapse
+    "plantsView",
+    
+    # Stage Source (um zu wissen ob custom verwendet wird)
+    "plantStageSource",
+    "lightPlantStageSource",
+}
+
+# Keys die NIEMALS aus State File geladen werden (Code-Defaults)
+IGNORED_STATE_KEYS = {
+    # Steuerungs-Modi (werden durch HA Entities restored)
+    "tentMode", "mainControl",
+    
+    # Pflanzen-Daten (werden durch HA Entities restored)
+    "plantStage", "plantSpecies", "plantType", "strainName", "plantName",
+    
+    # VPD-Berechnungen (werden neu berechnet)
+    "vpd", "vpd.range", "vpd.perfection", "vpd.perfectMin", "vpd.perfectMax",
+    "vpd.targeted", "vpd.targetedMin", "vpd.targetedMax", "vpd.tolerance",
+    
+    # Plant Stages (Code-Defaults)
+    "plantStages",
+    
+    # Hydro-Settings (werden durch HA Entities restored)
+    "Hydro", "CropSteering",
+    
+    # Control Options (werden durch HA Entities restored)
+    "controlOptions",
+    
+    # Runtime-Metadaten
+    "DeviceProfiles", "sensorEntities", "sensors",
+    "previousActions",
+    "livePlantStagesCache", "liveLightPlantStagesCache",
+    
+    # Runtime-Werte
+    "tentData", "Light", "specialLights",
+    "weather", "drying", "subscriptionData", "workData",
+    "capCalibration", "DeviceMinMax",
+}
+
 
 def _is_corrupted_tuple_string(value: Any) -> bool:
     """Detect if a value is a corrupted tuple string.
@@ -217,6 +271,18 @@ class OGBDSManager:
             # Schema check only (do not restore runtime capability assignments)
             data = _merge_capabilities(data, self.room)
             
+            # PRÜFEN ob customPlantStages aktiv sind
+            plant_stage_source = data.get("plantStageSource", "default")
+            light_stage_source = data.get("lightPlantStageSource", "default")
+            
+            if plant_stage_source != "custom":
+                _LOGGER.debug(f"[{self.room}] Plant stage source is '{plant_stage_source}', ignoring customPlantStages from state")
+                data.pop("customPlantStages", None)
+            
+            if light_stage_source != "custom":
+                _LOGGER.debug(f"[{self.room}] Light stage source is '{light_stage_source}', ignoring customLightPlantStages from state")
+                data.pop("customLightPlantStages", None)
+            
             # Load growMediums first if present - this is critical for MediumManager
             if "growMediums" in data:
                 mediums = data["growMediums"]
@@ -232,16 +298,27 @@ class OGBDSManager:
                 plants_view = data["plantsView"]
                 _LOGGER.debug(f"[{self.room}] Found plantsView in saved state: {plants_view}")
             
-            # Load all data into datastore
+            # Nur PRESERVED_KEYS laden
+            loaded_count = 0
             for key, value in data.items():
                 if key in ("devices", "capabilities"):
                     continue
+                
+                if key in IGNORED_STATE_KEYS:
+                    _LOGGER.debug(f"[{self.room}] Ignoring '{key}' from state file (will use HA entities or code defaults)")
+                    continue
+                
+                if key not in PRESERVED_STATE_KEYS:
+                    _LOGGER.warning(f"[{self.room}] '{key}' is not in PRESERVED_STATE_KEYS - ignoring from state file")
+                    continue
+                
                 self.data_store.set(key, value)
-
+                loaded_count += 1
+            
             # Keep runtime-built capabilities, only ensure schema keys exist
             self._ensure_capability_schema_only_in_datastore()
             
-            _LOGGER.warning(f"[{self.room}] ✅ State loaded ASYNCHRONOUSLY into datastore ({len(data)} keys)")
+            _LOGGER.warning(f"[{self.room}] ✅ State loaded ASYNCHRONOUSLY into datastore ({loaded_count} keys preserved)")
             
         except json.JSONDecodeError as e:
             _LOGGER.error(f"[{self.room}] Failed to parse state file: {e}")
@@ -264,28 +341,23 @@ class OGBDSManager:
         return os.path.join(subdir, filename)
 
     async def saveState(self, data):
-        """Speichert den vollständigen aktuellen State."""
+        """Speichert nur kritische Daten, die nicht durch HA Entities gespeichert werden."""
         _LOGGER.debug(f"[{self.room}] RECEIVED SaveState event: {data}")
         try:
             state = self.data_store.getFullState()
             
-            # CRITICAL: Detect and fix corrupted data before saving
-            # This prevents saving corrupted tuple strings that cause file growth
-            state = self._sanitize_state_for_save(state)
+            # Nur PRESERVED_KEYS speichern
+            preserved_state = {}
+            for key in PRESERVED_STATE_KEYS:
+                if key in state:
+                    preserved_state[key] = state[key]
             
-            # Log key sizes for debugging unbounded growth
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                for key, value in state.items():
-                    try:
-                        key_size = len(json.dumps(value, default=str))
-                        if key_size > 5000:  # Log keys larger than 5KB
-                            _LOGGER.debug(f"[{self.room}] State key '{key}' size: {key_size} bytes")
-                    except:
-                        pass
-
+            # CRITICAL: Sanitize before saving
+            preserved_state = self._sanitize_state_for_save(preserved_state)
+            
             # Teste JSON-Serialisierung vor dem Speichern
             try:
-                json_string = json.dumps(state, indent=2, default=str)
+                json_string = json.dumps(preserved_state, indent=2, default=str)
                 json_size_kb = len(json_string) / 1024
                 
                 # CRITICAL: Refuse to save if file is too large (indicates corruption)
@@ -293,7 +365,7 @@ class OGBDSManager:
                     _LOGGER.error(f"[{self.room}] ❌ State file too large ({json_size_kb:.1f}KB) - saving reduced emergency state")
 
                     # Find the largest keys for debugging
-                    for key, value in state.items():
+                    for key, value in preserved_state.items():
                         try:
                             key_size = len(json.dumps(value, default=str)) / 1024
                             if key_size > 10:
@@ -302,7 +374,7 @@ class OGBDSManager:
                             pass
 
                     # Fallback: persist a reduced state instead of losing all recent changes
-                    reduced_state = self._create_reduced_state_for_emergency(state)
+                    reduced_state = self._create_reduced_state_for_emergency(preserved_state)
                     json_string = json.dumps(reduced_state, indent=2, default=str)
                     _LOGGER.warning(f"[{self.room}] ⚠️ Reduced state persisted ({len(json_string) / 1024:.1f}KB) to prevent config loss")
                 elif json_size_kb > 50:
@@ -312,18 +384,19 @@ class OGBDSManager:
                     
             except Exception as json_error:
                 _LOGGER.error(f"❌ JSON serialization failed: {json_error}")
-                simplified_state = self._create_simplified_state(state)
+                simplified_state = self._create_simplified_state(preserved_state)
                 json_string = json.dumps(simplified_state, indent=2, default=str)
                 _LOGGER.warning(f"⚠️ Saving simplified state instead")
 
             await asyncio.to_thread(self._sync_save, json_string)
-            _LOGGER.warning(f"[{self.room}] ✅ DataStore saved to {self.storage_path}")
+            _LOGGER.warning(f"[{self.room}] ✅ DataStore saved to {self.storage_path} ({len(preserved_state)} keys)")
 
         except Exception as e:
             _LOGGER.error(f"❌ Failed to save DataStore: {e}")
             import traceback
 
             _LOGGER.error(f"❌ Full traceback: {traceback.format_exc()}")
+
     
     def _sanitize_state_for_save(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Sanitize state before saving to prevent corruption.
@@ -407,15 +480,16 @@ class OGBDSManager:
 
     def _create_reduced_state_for_emergency(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Create reduced state payload for emergency persistence.
-
-        Keeps critical operational keys (especially plantsView) and drops very large payloads.
+        
+        Only keeps PRESERVED_STATE_KEYS to avoid config loss.
         """
         reduced: Dict[str, Any] = {}
-
+        
         # Always keep plantsView to avoid timelapse config reset after restart
-        plants_view = state.get("plantsView") if isinstance(state, dict) else None
-        if not isinstance(plants_view, dict):
-            plants_view = {
+        if "plantsView" in state:
+            reduced["plantsView"] = state["plantsView"]
+        else:
+            reduced["plantsView"] = {
                 "isTimeLapseActive": False,
                 "TimeLapseIntervall": "900",
                 "StartDate": "",
@@ -425,20 +499,15 @@ class OGBDSManager:
                 "daily_snapshot_time": "09:00",
                 "capture_at_night": False,
             }
-        reduced["plantsView"] = plants_view
-
-        # Keep all reasonably small keys (<= 10KB serialized)
+        
+        # Keep all other PRESERVED_STATE_KEYS
         if isinstance(state, dict):
-            for key, value in state.items():
+            for key in PRESERVED_STATE_KEYS:
                 if key == "plantsView":
                     continue
-                try:
-                    key_size = len(json.dumps(value, default=str))
-                    if key_size <= 10 * 1024:
-                        reduced[key] = value
-                except Exception:
-                    continue
-
+                if key in state:
+                    reduced[key] = state[key]
+        
         return reduced
 
     def _sync_save(self, json_string):

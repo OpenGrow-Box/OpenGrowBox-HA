@@ -657,7 +657,7 @@ class OGBRegistryEvenListener:
         if not entry.device_id:
             return
         
-        from ..data.OGBParams.OGBParams import CAP_MAPPING
+        from .data.OGBParams.OGBParams import CAP_MAPPING
         
         # Find which capabilities this device type belongs to
         for cap, device_types in CAP_MAPPING.items():

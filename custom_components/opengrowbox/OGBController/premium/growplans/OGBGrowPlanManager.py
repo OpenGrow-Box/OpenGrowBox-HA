@@ -60,31 +60,14 @@ class OGBGrowPlanManager:
         """Setup Home Assistant event listeners."""
         self._register_event_listener("new_grow_plans", self._on_new_grow_plans)
         self._register_event_listener("plan_activation", self._on_plan_activation)
-        self._register_bus_listener("ogb_premium_growplan_pause", self._pause_manager)
-        self._register_bus_listener("ogb_premium_growplan_resume", self._resume_manager)
-
+    
     def _register_bus_listener(self, event_name, callback):
         unsub = self.hass.bus.async_listen(event_name, callback)
         self._ha_unsubscribers.append(unsub)
-
+    
     def _register_event_listener(self, event_name, callback):
         self.event_manager.on(event_name, callback)
-        self._event_bindings.append((event_name, callback))
-
-    async def _pause_manager(self,data):
-        if self.managerActive == True:
-            self.managerActive == False
-            self.data_store.set("growManagerActive",False)
-            await self.event_manager.emit("SaveRequest",self.room)   
-        logging.warning(f"{self.room} Grow-Manager State:{self.managerActive} got Resumed with {self.activate_grow_plan.plan_name} - {data}")            
-
-    async def _resume_manager(self,data):
-
-        if self.managerActive == False:
-            self.managerActive == True
-            self.data_store.set("growManagerActive",True)
-            await self.event_manager.emit("SaveRequest",self.room)         
-        logging.warning(f"{self.room} Grow-Manager State:{self.managerActive} got Resumed with {self.activate_grow_plan.plan_name} - {data}")        
+        self._event_bindings.append((event_name, callback))        
             
     async def _load_saved_state(self):
         """Lade gespeicherten Zustand wenn vorhanden"""

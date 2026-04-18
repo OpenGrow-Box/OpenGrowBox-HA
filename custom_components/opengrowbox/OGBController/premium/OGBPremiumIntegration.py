@@ -275,17 +275,12 @@ class OGBPremiumIntegration:
         self._register_bus_listener("ogb_premium_login", self._on_prem_login)
         self._register_bus_listener("ogb_premium_logout", self._on_prem_logout)
         self._register_bus_listener("ogb_premium_get_profile", self._get_user_profile)
-
-        # GrowPlan handlers
-        self._register_bus_listener("ogb_premium_get_growplans", self._ui_get_growplans_request)
-        self._register_bus_listener("ogb_premium_add_growplan", self._ui_grow_plan_add_request)
-        self._register_bus_listener("ogb_premium_del_growplan", self._ui_grow_plan_del_request)
-        self._register_bus_listener("ogb_premium_growplan_activate", self._ui_grow_plan_activation)
-
+        
         # Feature Service handlers (for frontend featureService.js)
         self._register_bus_listener("ogb_features_get_subscription", self._handle_get_subscription)
         self._register_bus_listener("ogb_features_get_available", self._handle_get_available_features)
         self._register_bus_listener("ogb_features_check_access", self._handle_check_feature_access)
+
 
         # V1 WebSocket event handlers
         self._register_event_listener("AnalyticsUpdate", self._handle_analytics_update)
@@ -1560,7 +1555,7 @@ class OGBPremiumIntegration:
                     if success:  # Only proceed if authenticated
                         strain_name = state_data.get("strain_name", None)
                         planRequestData = {"event_id": "starting_event", "strain_name": strain_name}
-                        await self.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                        # Grow plans werden nicht mehr angefordert - nur noch empfangen
                         await self._restore_tent_mode_after_premium_restore()
                         await self._send_auth_to_other_rooms()
                         await self._broadcast_restored_state()
@@ -1586,7 +1581,7 @@ class OGBPremiumIntegration:
                     _LOGGER.info(f"✅ {self.room} Premium session restored via fresh login")
                     strain_name = state_data.get("strain_name", None)
                     planRequestData = {"event_id": "starting_event", "strain_name": strain_name}
-                    await self.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                    # Grow plans werden nicht mehr angefordert - nur noch empfangen
                     await self._restore_tent_mode_after_premium_restore()
                     await self._send_auth_to_other_rooms()
                     await self._broadcast_restored_state()
@@ -1681,6 +1676,12 @@ class OGBPremiumIntegration:
             connection_info = self.ogb_ws.get_connection_info() if self.ogb_ws else {}
             health = await self.ogb_ws.health_check() if self.ogb_ws else {}
 
+            active_grow_plan_name = None
+            current_week = None
+            if self.growPlanManager and self.growPlanManager.active_grow_plan:
+                active_grow_plan_name = self.growPlanManager.active_grow_plan.get("plan_name")
+                current_week = self.growPlanManager.current_week
+
             await self._send_auth_response(event_id, "success", "Profile retrieved", {
                 # UI expects 'user' object to exist when logged in
                 "user": {
@@ -1696,6 +1697,8 @@ class OGBPremiumIntegration:
                 "health_status": health,
                 "ogb_max_sessions": self.ogb_ws.ogb_max_sessions if self.ogb_ws else 0,
                 "ogb_sessions": self.ogb_ws.ogb_sessions if self.ogb_ws else 0,
+                "active_grow_plan_name": active_grow_plan_name,
+                "current_week": current_week,
             })
 
         except Exception as e:
@@ -1904,7 +1907,12 @@ class OGBPremiumIntegration:
                 # CRITICAL: Add full subscription_data to auth_data for frontend
                 auth_data['subscription_data'] = self.subscription_data
                 auth_data['is_premium'] = self.is_premium
-                
+
+                # Add active grow plan info
+                if self.growPlanManager and self.growPlanManager.active_grow_plan:
+                    auth_data['active_grow_plan_name'] = self.growPlanManager.active_grow_plan.get("plan_name")
+                    auth_data['current_week'] = self.growPlanManager.current_week
+
                 # Store subscription_data in datastore for feature checks by other managers
                 self.data_store.set("subscriptionData", self.subscription_data)
                 _LOGGER.debug(f"📦 {self.room} Stored subscription_data in datastore for feature checks")
@@ -2052,7 +2060,7 @@ class OGBPremiumIntegration:
         """Send authentication data to other rooms."""
         try:
             auth_data = {
-                "AuthenticatedRoom": self.room,
+                "authenticatedRoom": self.room,
                 "ogb_login_email": self.ogb_login_email,
                 "ogb_login_token": self.ogb_login_token,
                 "user_id": self.user_id,
@@ -2063,6 +2071,8 @@ class OGBPremiumIntegration:
                 "token_expires_at": self.ogb_ws.token_expires_at if self.ogb_ws else None,
                 "ogb_sessions": self.ogb_ws.ogb_sessions if self.ogb_ws else 0,
                 "ogb_max_sessions": self.ogb_ws.ogb_max_sessions if self.ogb_ws else 0,
+                "active_grow_plan_name": self.growPlanManager.active_grow_plan.get("plan_name") if self.growPlanManager and self.growPlanManager.active_grow_plan else None,
+                "current_week": self.growPlanManager.current_week if self.growPlanManager else None,
             }
 
             await self.event_manager.emit("isAuthenticated", auth_data, haEvent=True)
@@ -2084,6 +2094,12 @@ class OGBPremiumIntegration:
             connection_info = self.ogb_ws.get_connection_info() if self.ogb_ws else {}
 
             # NOW send the validated subscription_data to frontend
+            active_grow_plan_name = None
+            current_week = None
+            if self.growPlanManager and self.growPlanManager.active_grow_plan:
+                active_grow_plan_name = self.growPlanManager.active_grow_plan.get("plan_name")
+                current_week = self.growPlanManager.current_week
+
             profile_data = {
                 "currentPlan": self.subscription_data.get("plan_name", "free") if self.subscription_data else "free",
                 "is_premium": self.is_premium,
@@ -2093,6 +2109,8 @@ class OGBPremiumIntegration:
                 "user_id": self.user_id,
                 "is_logged_in": self.is_logged_in,
                 "connection_info": connection_info,
+                "active_grow_plan_name": active_grow_plan_name,
+                "current_week": current_week,
             }
 
             await self._send_auth_response(
@@ -2359,6 +2377,8 @@ class OGBPremiumIntegration:
                 "is_premium": is_premium,
                 "is_logged_in": is_logged_in,
                 "subscription_data": subscription_data,
+                "active_grow_plan_name": self.growPlanManager.active_grow_plan.get("plan_name") if self.growPlanManager and self.growPlanManager.active_grow_plan else None,
+                "current_week": self.growPlanManager.current_week if self.growPlanManager else None,
             }
 
             if self.is_logged_in:
@@ -2632,28 +2652,29 @@ class OGBPremiumIntegration:
         # actionData is populated by OGBActionManager.publicationActionHandler() for ALL modes
         grow_data = {
             "room": self.room,
-            "mainControl": self.data_store.get("mainControl"),  # CRITICAL: API needs this to decide controller execution
+            "mainControl": self.data_store.get("mainControl"), 
             "tentMode": self.data_store.get("tentMode"),
             "strainName": self.data_store.get("strainName"),
+            "plantSpecies": self.data_store.get("plantSpecies"),
             "plantStage": self.data_store.get("plantStage"),
             "planttype": self.data_store.get("plantType"),
+            "plantDates": self.data_store.get("plantDates"),
+
             "cultivationArea": self.data_store.get("growAreaM2"),
             "vpd": self.data_store.get("vpd"),
             "isLightON": self.data_store.get("isPlantDay"),
-            "plantDates": self.data_store.get("plantDates"),
+
             "tentData": self.data_store.get("tentData"),
             "Hydro": self.data_store.get("Hydro"),
             "growMediums": self.data_store.get("growMediums"),
             "controlOptions": self.data_store.get("controlOptions"),
             "capabilities": self.data_store.get("capabilities"),
-            # Compatibility alias expected by OpenGrowBoxDataAdapter in ogb-grow-api
             "devCaps": self.data_store.get("capabilities"),
             "vpdDetermination": self.data_store.get("vpdDetermination"),
-            # CRITICAL: Include previous actions for API processing (CompactDataSchema.js)
             "previousActions": self.data_store.get("previousActions") or [],
-            # CRITICAL: Include actionData for AI training (HistoricalDataTrainer.js)
-            # This is populated by OGBActionManager.publicationActionHandler() for ALL control modes
             "actionData": self.data_store.get("actionData") or {},
+
+            "capCalibration": self.data_store.get("capCalibration") or {},
         }
         
         # Add optional data if not too large
@@ -2703,133 +2724,11 @@ class OGBPremiumIntegration:
             import traceback
             _LOGGER.warning(f"📋 {self.room} #{event_id} Full traceback: {traceback.format_exc()}")
             return False
-
-    # =================================================================
-    # GROW PLANS
-    # =================================================================
-
-    async def _ui_get_growplans_request(self, event):
-        """Handle get grow plans request from frontend."""
-        event_id = event.data.get("event_id")
-        requestingRoom = event.data.get("requestingRoom")
-        if self.room.lower() != requestingRoom.lower():
-            return
-
-        if not self.is_logged_in:
-            return
-
-        await self._get_prem_grow_plans(event)
-
-        try:
-            if self.ogb_ws and self.ogb_ws.ws_connected:
-                growPlans = {
-                    "AllPlans": self.growPlanManager.grow_plans if self.growPlanManager else [],
-                    "PrivatePlans": self.growPlanManager.grow_plans_private if self.growPlanManager else [],
-                    "PublicPlans": self.growPlanManager.grow_plans_public if self.growPlanManager else [],
-                    "ActivePlan": self.growPlanManager.active_grow_plan if self.growPlanManager else None,
-                }
-                await self._send_auth_response(event_id, "success", "GrowPlans retrieved", growPlans)
-        except Exception as e:
-            _LOGGER.error(f"GET Grow Plan error: {str(e)}")
-            await self._send_auth_response(event_id, "error", f"Failed to GET Grow Plans: {str(e)}")
-
-    async def _get_prem_grow_plans(self, event):
-        """Request grow plans from Premium API."""
-        event_id = event.data.get("event_id")
-        strain_name = self.data_store.get("strainName")
-
-        if strain_name is None or strain_name == "":
-            return
-
-        _LOGGER.debug(f"Requesting Grow Plans for Strain: {strain_name}")
-        planRequestData = {"event_id": event_id, "strain_name": strain_name}
-
-        if self.ogb_ws:
-            success = await self.ogb_ws.prem_event("get_grow_plans", planRequestData)
-            if success and self.growPlanManager:
-                await self._send_auth_response(event_id, "success", "GrowPlan Added", self.growPlanManager.grow_plans)
-
-    async def _ui_grow_plan_add_request(self, event):
-        """Handle add grow plan request from frontend."""
-        if not self.is_logged_in:
-            return
-
-        raw_plan = event.data.get("growPlan")
-        event_id = event.data.get("event_id")
-
-        if not raw_plan:
-            _LOGGER.warning("No 'growPlan' found in event.")
-            return
-
-        try:
-            grow_plan = json.loads(raw_plan) if isinstance(raw_plan, str) else raw_plan
-        except Exception as e:
-            _LOGGER.error(f"Failed to decode grow plan JSON: {e}")
-            return
-
-        requestingRoom = grow_plan.get("roomKey")
-        if requestingRoom.lower() != self.room.lower():
-            return
-
-        _LOGGER.debug(f"✅ Adding GrowPlan {grow_plan} Room:{self.room}")
-
-        if self.ogb_ws:
-            success = await self.ogb_ws.prem_event("add_grow_plan", grow_plan)
-            _LOGGER.debug("Grow Plan sent successfully" if success else "Failed to send grow Plan")
-            await self._send_auth_response(event_id, "success", "GrowPlan Added", True)
-            return success
-
-    async def _ui_grow_plan_del_request(self, event):
-        """Handle delete grow plan request from frontend."""
-        if not self.is_logged_in:
-            return
-
-        mainControl = self.data_store.get("mainControl")
-        if mainControl != "Premium":
-            return
-
-        event_room = event.data.get("room") or ""
-        if self.room.lower() != event_room.lower():
-            return
-
-        try:
-            event_id = event.data.get("event_id")
-            delPlan = event.data
-
-            if self.ogb_ws:
-                await self.ogb_ws.prem_event("del_grow_plan", delPlan)
-            await self._send_auth_response(event_id, "success", "Delete Grow Plan", {})
-
-        except Exception as e:
-            _LOGGER.error(f"Delete Grow Plan error: {str(e)}")
-            await self._send_auth_response(event.data.get("event_id"), "error", f"Failed to Delete Grow Plan: {str(e)}")
-
-    async def _ui_grow_plan_activation(self, event):
-        """Handle grow plan activation request from frontend."""
-        if not self.is_logged_in:
-            return
-
-        requestingRoom = event.data.get("requestingRoom")
-
-        if self.room.lower() != requestingRoom.lower():
-            return
-
-        growPlan = event.data.get("growPlan")
-
-        _LOGGER.debug(f"{self.room} Grow Plan to Activate: {growPlan}")
-        try:
-            event_id = event.data.get("event_id")
-            if event_id and self.ogb_ws:
-                await self.ogb_ws.prem_event("grow_plan_activation", growPlan)
-                await self._save_request(True)
-
-        except Exception as e:
-            _LOGGER.error(f"Activate Grow Plan error: {str(e)}")
-            await self._send_auth_response(event.data.get("event_id"), "error", f"Failed to Activate Grow Plan: {str(e)}")
-
+    
     # =================================================================
     # PREM UI CONTROL
     # =================================================================
+
 
     async def _handle_ctrl_change(self, data):
         """Handle control change from API."""

@@ -164,7 +164,7 @@ class OGBPremiumActions:
         Args:
             premActions: Premium action data with PID states and commands
         """
-        _LOGGER.warning(f"{self.ogb.room}: Start PID Actions Handling")
+        _LOGGER.debug(f"{self.ogb.room}: Start PID Actions Handling")
         await self._execute_controller_actions(premActions, "PID")
 
     async def MPCActions(self, premActions: Dict[str, Any]):
@@ -177,7 +177,7 @@ class OGBPremiumActions:
         Args:
             premActions: Premium action data with MPC optimization results
         """
-        _LOGGER.warning(f"{self.ogb.room}: Start MPC Actions Handling")
+        _LOGGER.debug(f"{self.ogb.room}: Start MPC Actions Handling")
         await self._execute_controller_actions(premActions, "MPC")
 
     async def AIActions(self, premActions: Dict[str, Any]):
@@ -190,7 +190,7 @@ class OGBPremiumActions:
         Args:
             premActions: Premium action data with AI decisions
         """
-        _LOGGER.warning(f"{self.ogb.room}: Start AI Actions Handling")
+        _LOGGER.debug(f"{self.ogb.room}: Start AI Actions Handling")
         await self._execute_controller_actions(premActions, "AI")
 
     async def _execute_device_action(self, device: str, action: str):
@@ -218,7 +218,7 @@ class OGBPremiumActions:
         event_name = device_mappings.get(device)
         if event_name:
             await self.ogb.eventManager.emit(event_name, action)
-            _LOGGER.warning(f"{self.ogb.room}: {action.capitalize()} {device}.")
+            _LOGGER.debug(f"{self.ogb.room}: {action.capitalize()} {device}.")
         else:
             _LOGGER.error(
                 f"{self.ogb.room}: Unknown device '{device}' for action '{action}'"

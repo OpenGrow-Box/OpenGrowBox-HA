@@ -1468,19 +1468,6 @@ class OGBWebSocketConManager:
                 except Exception as e:
                     logging.error(f"❌ {self.ws_room} Cleanup failed after limit exceeded: {e}")
 
-        @self.sio.on("new_grow_plans", namespace=ns)
-        async def on_new_grow_plans(data):
-            """Handle new grow plans from server"""
-            logging.info(f"🌱 {self.ws_room} Received new_grow_plans: {data}")
-            await self._handle_grow_plans(data)
-
-        @self.sio.on("grow_plans", namespace=ns)
-        async def on_grow_plans(data):
-            """Handle grow plans response from server"""
-            logging.info(f"🌱 {self.ws_room} Received grow_plans: {data}")
-            await self._handle_grow_plans(data)
-
-        # === Subscription Lifecycle Events ===
         @self.sio.on("subscription_expiring_soon", namespace=ns)
         async def on_subscription_expiring_soon(data):
             """Handle subscription expiring warning"""
@@ -1831,10 +1818,6 @@ class OGBWebSocketConManager:
         if "usage" in msg_type_lower or msg_type == "api_usage_update":
             await self._handle_api_usage_update(msg_data)
         
-        # Grow plans
-        elif "grow_plan" in msg_type_lower or "grow-plan" in msg_type_lower:
-            await self._handle_grow_plans(msg_data)
-        
         # Session updates
         elif "session" in msg_type_lower:
             await self._handle_session_update(msg_data)
@@ -1985,17 +1968,6 @@ class OGBWebSocketConManager:
             logging.error(f"❌ {self.ws_room} Error handling api_usage_update: {e}")
             import traceback
             logging.error(traceback.format_exc())
-
-    async def _handle_grow_plans(self, data: dict):
-        """Handle grow plans from server"""
-        try:
-            logging.info(f"🌱 {self.ws_room} Processing grow_plans: {data}")
-            
-            # Emit to HA for GrowPlanManager to handle
-            await self._safe_emit("new_grow_plans", data, haEvent=True)
-            
-        except Exception as e:
-            logging.error(f"❌ {self.ws_room} Error handling grow_plans: {e}")
 
     # =================================================================
     # Subscription Lifecycle Handlers

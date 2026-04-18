@@ -15,7 +15,7 @@ class ModbusSensor(OGBModbusDevice, Sensor):
         OGBModbusDevice.__init__(self, *args, modbus_config=modbus_config, **kwargs)
 
         # Override Sensor-specific attributes
-        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}}
+        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "other": {}}
         self._entity_to_config = {}
         self._alert_active = False
 

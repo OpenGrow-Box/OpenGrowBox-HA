@@ -137,7 +137,7 @@ SENSOR_CONTEXTS = {
         "name": "Air/Ambient",
         "description": "Luftbasierte Sensoren (Umgebung, Growbox)",
         "icon": "mdi:weather-partly-cloudy",
-        "suffixes": ["", "air", "luft", "umgebung"],
+        "suffixes": ["", "air", "luft", "umgebung", "temperature", "humidity", "co2", "dewpoint"],
     },
     "leaf": {
         "name": "Leaf/Blatt",
@@ -166,6 +166,26 @@ SENSOR_CONTEXTS = {
             "rockwoll",
             "medium",
         ],
+    },
+    "energy": {
+        "name": "Energy/Power",
+        "description": "Strom- und Energieverbrauchssensoren",
+        "icon": "mdi:lightning-bolt",
+        "suffixes": [
+            "power",
+            "energy",
+            "verbrauch",
+            "consumption",
+            "watt",
+            "strom",
+            "leistung",
+        ],
+    },
+    "other": {
+        "name": "Other/Unbekannt",
+        "description": "Nicht kategorisierte Sensoren",
+        "icon": "mdi:help-circle-outline",
+        "suffixes": [],
     },
 }
 
@@ -390,6 +410,32 @@ SENSOR_TYPES = {
         "precision": 3,
         "contexts": {"soil": {"min_value": 0, "max_value": 15, "name": "Pot Weight"}},
     },
+    "power": {
+        "unit": "W",
+        "device_class": "power",
+        "state_class": "measurement",
+        "precision": 2,
+        "contexts": {
+            "energy": {
+                "min_value": 0,
+                "max_value": 10000,
+                "name": "Power",
+            }
+        },
+    },
+    "energy": {
+        "unit": "kWh",
+        "device_class": "energy",
+        "state_class": "total_increasing",
+        "precision": 3,
+        "contexts": {
+            "energy": {
+                "min_value": 0,
+                "max_value": 100000,
+                "name": "Energy",
+            }
+        },
+    },
 }
 
 
@@ -426,12 +472,17 @@ def extract_context_from_entity(entity_id, sensor_type=None):
         "salinity": "water",
         "oxidation": "water",
         # Medium-specific sensors (EC/pH typically in soil/substrate)
-        "ec": "soil",
-        "ph": "soil",
-        "conductivity": "soil",
+        "ec": "water",  # EC sensors are water-based (reservoir)
+        "tds": "water", # TDS sensors are water-based (reservoir)
+        "orp": "water", # ORP sensors are water-based (reservoir)      
+        "ph": "water",  # pH sensors are water-based (reservoir)
+        "conductivity": "soil",  # Soil conductivity sensors
         "temperature": "soil",  # Substrate temperature sensors
         "battery": "soil",  # Battery status for soil sensors
         "illuminance": "soil",  # Light sensors at plant level
+        # Energy sensors
+        "power": "energy",
+        "energy": "energy",
     }
 
     # Falls Sensor-Typ bekannt und in Fixed-Liste: verwende den
@@ -444,8 +495,8 @@ def extract_context_from_entity(entity_id, sensor_type=None):
             if suffix and suffix in entity_lower:
                 return context
 
-    # Standard: air
-    return "air"
+    # Standard: other (unbekannte Sensoren)
+    return "other"
 
 
 # Hilfsfunktion: Kontext-spezifische Konfiguration holen

@@ -49,7 +49,7 @@ class Sensor:
         self.labelMap = allLabels
 
         # NEUE STRUKTUR: Gruppiert nach Kontext, dann nach Sensor-Typ
-        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}}
+        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "other": {}}
 
         # Entity-ID zu Sensor-Config Mapping für schnellen Zugriff
         self._entity_to_config = {}
@@ -106,7 +106,7 @@ class Sensor:
         ]
 
         # Nach Kontext gruppieren
-        for context in ["air", "water", "soil", "light"]:
+        for context in ["air", "water", "soil", "light", "energy", "other"]:
             context_sensors = self.sensorReadings[context]
 
             if not context_sensors:
@@ -164,7 +164,7 @@ class Sensor:
             _LOGGER.warning("Keine deviceData vorhanden.")
             return None
 
-        sensor_map = {"air": {}, "water": {}, "soil": {}, "light": {}}
+        sensor_map = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "other": {}}
         platform_set = set()
         unrecognized_suffixes = []
 
@@ -194,8 +194,10 @@ class Sensor:
                 context = "water"
             elif "dli" in label_ids or "ppfd" in label_ids:
                 context = "light"
+            elif "energy" in label_ids:
+                context = "energy"
             else:
-                context = extract_context_from_entity(entity_id) or "air"
+                context = extract_context_from_entity(entity_id) or "other"
 
             # Sensor-Typen anhand Label + Translation + englischem Fallback bestimmen
             # Use merged labels (entity labels + device-level labels), not only entry labels.
@@ -245,7 +247,7 @@ class Sensor:
                 return
 
             # Initialisiere jeden Kontext
-            for context in ["air", "water", "soil", "light"]:
+            for context in ["air", "water", "soil", "light", "energy", "other"]:
                 context_sensors = self.sensorMap["sensors"][context]
 
                 for sensor_type, sensor_entries in context_sensors.items():
@@ -309,7 +311,7 @@ class Sensor:
         Args:
             sensor_type: Der kanonische Sensortyp
             sensor_entry: Das sensor_entry Dictionary
-            context: Der Kontext (air/water/soil)
+            context: Der Kontext (air/water/soil/light/energy)
         """
         entity_id = sensor_entry["entity_id"]
 
@@ -737,7 +739,7 @@ class Sensor:
 
         Args:
             sensor_type: Der kanonische Sensortyp
-            context: Optional - spezifischer Kontext (air/water/soil)
+            context: Optional - spezifischer Kontext (air/water/soil/light/energy)
 
         Returns:
             list: Liste mit aktuellen Readings (aus Cache)
@@ -745,7 +747,7 @@ class Sensor:
         readings = []
 
         # Wenn Kontext angegeben, nur diesen durchsuchen
-        contexts_to_search = [context] if context else ["air", "water", "soil"]
+        contexts_to_search = [context] if context else ["air", "water", "soil", "light", "energy", "other"]
 
         for ctx in contexts_to_search:
             if sensor_type in self.sensorReadings[ctx]:
@@ -774,7 +776,7 @@ class Sensor:
         Gibt alle Sensoren eines bestimmten Kontexts zurück.
 
         Args:
-            context: "air", "water" oder "soil"
+            context: "air", "water", "soil", "light" oder "energy"
 
         Returns:
             dict: Alle Sensor-Typen in diesem Kontext
@@ -804,7 +806,7 @@ class Sensor:
             list: Liste der Kontexte die Sensoren haben
         """
         contexts = []
-        for context in ["air", "water", "soil"]:
+        for context in ["air", "water", "soil", "light", "energy", "other"]:
             if self.sensorReadings[context]:
                 contexts.append(context)
         return contexts
@@ -971,7 +973,7 @@ class Sensor:
 
             elif sensor_type:
                 # Kalibriere alle Sensoren dieses Typs
-                contexts_to_search = [context] if context else ["air", "water", "soil"]
+                contexts_to_search = [context] if context else ["air", "water", "soil", "light", "energy", "other"]
                 count = 0
 
                 for ctx in contexts_to_search:
@@ -1021,7 +1023,7 @@ class Sensor:
 
             elif sensor_type:
                 # Setze für alle Sensoren dieses Typs
-                contexts_to_search = [context] if context else ["air", "water", "soil"]
+                contexts_to_search = [context] if context else ["air", "water", "soil", "light", "energy", "other"]
                 count = 0
 
                 for ctx in contexts_to_search:
@@ -1074,7 +1076,7 @@ class Sensor:
 
         all_readings = {}
 
-        for context in ["air", "water", "soil"]:
+        for context in ["air", "water", "soil", "light", "energy", "other"]:
             context_readings = {}
 
             for sensor_type, sensors in self.sensorReadings[context].items():
@@ -1111,7 +1113,7 @@ class Sensor:
 
         # Zähle Sensoren pro Kontext
         context_counts = {}
-        for context in ["air", "water", "soil"]:
+        for context in ["air", "water", "soil", "light", "energy", "other"]:
             count = sum(
                 len(sensors) for sensors in self.sensorReadings[context].values()
             )

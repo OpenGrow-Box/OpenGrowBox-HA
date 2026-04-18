@@ -520,7 +520,9 @@ class OGBDeviceManager:
                         expected_label
                     )
 
-                    if normalized_current != normalized_expected:
+                    # Re-Identification nur wenn neuer Label gültig UND unterschiedlich
+                    # Wenn neuer Label EMPTY ist (keine Labels), aber aktueller gültig → NICHT re-identifizieren
+                    if normalized_expected != "EMPTY" and normalized_current != normalized_expected:
                         devicesToReidentify.append(realDevice)
                         _LOGGER.warning(
                             f"Device '{realDevice['name']}' label changed from '{currentLabel}' to '{expected_label}' "

@@ -240,9 +240,10 @@ class OpenGrowBox:
                     strain_name = self.data_store.get("strainName")
                     planRequestData = {"event_id": "grow_plans_on_start", "strain_name": strain_name}
 
-                    # Start plan retrieval normally
+                    # Grow plans werden nicht mehr angefordert - nur noch empfangen
                     if hasattr(self.premium_manager, 'ogb_ws'):
-                        success = await self.premium_manager.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                        # success = await self.premium_manager.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                        pass
 
                         # If successful → start background task
                         if success and self.premium_manager.growPlanManager.managerActive:

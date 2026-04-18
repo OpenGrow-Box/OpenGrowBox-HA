@@ -29,6 +29,8 @@ class OGBPlantWateringManager:
 
     async def start(self, duration: float, pump_devices, cooldown_minutes: Optional[float] = None):
         """Start the plant-watering monitor loop."""
+        _LOGGER.debug(f"[{self.room}] PlantWatering.start() called: duration={duration}, cooldown_minutes={cooldown_minutes}, pump_devices={pump_devices}")
+        
         # AMBIENT ROOM CHECK
         if self.room.lower() == "ambient":
             _LOGGER.debug(f"{self.room}: Plant Watering skipped - ambient room")
@@ -36,6 +38,7 @@ class OGBPlantWateringManager:
 
         cooldown = self._resolve_cooldown_minutes(cooldown_minutes)
         active_pumps = self._get_active_pumps(pump_devices)
+        _LOGGER.debug(f"[{self.room}] Active pumps found: {active_pumps}")
 
         if not active_pumps:
             await self._emit_log(
@@ -64,6 +67,8 @@ class OGBPlantWateringManager:
 
     async def run_single_shot(self, duration: float, pump_devices):
         """Run one immediate watering shot."""
+        _LOGGER.debug(f"[{self.room}] PlantWatering.run_single_shot() called: duration={duration}, pump_devices={pump_devices}")
+        
         active_pumps = self._get_active_pumps(pump_devices)
         if not active_pumps:
             await self._emit_log(
@@ -76,9 +81,12 @@ class OGBPlantWateringManager:
         await self._run_watering_shot(active_pumps, float(duration), reason="Manueller Shot")
 
     async def _run_monitor_loop(self, duration: float, cooldown_minutes: float, active_pumps: List[str]):
+        _LOGGER.debug(f"[{self.room}] _run_monitor_loop started: duration={duration}, cooldown_minutes={cooldown_minutes}, active_pumps={active_pumps}")
+        
         try:
             while True:
                 snapshot = self._get_moisture_snapshot()
+                _LOGGER.debug(f"[{self.room}] Monitor loop iteration: snapshot={snapshot}")
 
                 if snapshot.get("sensor_count", 0) <= 0:
                     self._sensor_blocked = True
@@ -102,6 +110,7 @@ class OGBPlantWateringManager:
                     )
 
                 should_water, reason = self._should_water(snapshot, cooldown_minutes)
+                _LOGGER.debug(f"[{self.room}] _should_water decision: should_water={should_water}, reason={reason}")
 
                 if should_water:
                     await self._run_watering_shot(active_pumps, duration, reason)
@@ -117,17 +126,14 @@ class OGBPlantWateringManager:
 
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
+            _LOGGER.debug(f"[{self.room}] _run_monitor_loop cancelled")
             await self._turn_off_pumps(active_pumps)
             raise
 
     def _get_active_pumps(self, pump_devices) -> List[str]:
         """
-        Find watering pumps using label-based discovery.
-        
-        Search order:
-        1. Check OGB devices with WateringPump labels
-        2. Fallback to entity ID keyword matching (backward compatibility)
-        
+        Find watering pumps using entity ID keyword matching (like CastManager).
+
         Args:
             pump_devices: Dictionary with device entities
             
@@ -135,46 +141,23 @@ class OGBPlantWateringManager:
             List of watering pump entity IDs
         """
         if not pump_devices or "devEntities" not in pump_devices:
+            _LOGGER.debug(f"[{self.room}] _get_active_pumps: No pump devices provided")
             return []
         
-        # WateringPump labels from DEVICE_TYPE_MAPPING
-        watering_labels = [
-            "watering", "plant_water", "irrigation", "watering_pump", "irrigate",
-            "bewässerung", "bewaesserung"
-        ]
-        
         devices = pump_devices["devEntities"]
+        _LOGGER.debug(f"[{self.room}] _get_active_pumps: All pump devices: {devices}")
+        
         active_pumps = []
         
-        # Search 1: Check OGB devices by labels
-        ogb_devices = self.data_store.getDeep("devices", [])
-        for device in ogb_devices:
-            device_labels = [lbl.get("name", "").lower() for lbl in device.get("labels", [])]
-            
-            # Check if any device label matches watering labels
-            for label in watering_labels:
-                if any(label.lower() == dl or label.lower() in dl for dl in device_labels):
-                    # Found matching device, get its entity ID
-                    entities = device.get("entities", [])
-                    for entity in entities:
-                        entity_id = entity.get("entity_id", "")
-                        if entity_id in devices:
-                            active_pumps.append(entity_id)
-                            _LOGGER.debug(
-                                f"[{self.room}] Found watering pump via label '{label}': {entity_id}"
-                            )
-                            break
+        # Suche nach Keywords in Entity-IDs (wie im CastManager)
+        valid_keywords = ["water", "cast", "feedpump_w", "watering", "plant_water", "irrigation"]
         
-        # Search 2: Fallback to entity ID keyword matching (backward compatibility)
-        if not active_pumps:
-            valid_keywords = ["water", "cast", "feedpump_w"]
-            for dev in devices:
-                if any(keyword in dev.lower() for keyword in valid_keywords):
-                    active_pumps.append(dev)
-                    _LOGGER.debug(
-                        f"[{self.room}] Found watering pump via entity ID fallback: {dev}"
-                    )
+        for dev in devices:
+            if any(keyword in dev.lower() for keyword in valid_keywords):
+                active_pumps.append(dev)
+                _LOGGER.debug(f"[{self.room}] Found watering pump: {dev}")
         
+        _LOGGER.debug(f"[{self.room}] Filtered active pumps: {active_pumps}")
         return active_pumps
 
     def _get_moisture_snapshot(self) -> Dict[str, Any]:
@@ -296,11 +279,12 @@ class OGBPlantWateringManager:
         return 30.0
 
     async def _run_watering_shot(self, active_pumps: List[str], duration: float, reason: str):
+        _LOGGER.debug(f"[{self.room}] _run_watering_shot: active_pumps={active_pumps}, duration={duration}, reason={reason}")
+        
         snapshot = self._get_moisture_snapshot()
 
         if snapshot.get("sensor_count", 0) <= 0:
             self._sensor_blocked = True
-            await self._turn_off_pumps(active_pumps)
             await self._emit_log(
                 message="Plant-Watering Sensor-Based: NO SENSOR - I will stop using pump until sensor available.",
                 actions=["SAFETY STOP", "No sensor available"],
@@ -336,12 +320,15 @@ class OGBPlantWateringManager:
             force=True,
         )
 
+        _LOGGER.debug(f"[{self.room}] Starting watering shot for pumps: {active_pumps}")
         for dev_id in active_pumps:
+            _LOGGER.debug(f"[{self.room}] Sending PumpAction for: {dev_id}")
             await self.cast_manager._register_pump_operation(dev_id, "plant_watering")
             pump_action = OGBHydroAction(
                 Name=self.room, Action="on", Device=dev_id, Cycle=True
             )
             await self.event_manager.emit("PumpAction", pump_action)
+            _LOGGER.debug(f"[{self.room}] PumpAction emitted for: {dev_id}")
 
         remaining = max(float(duration), 0.0)
         check_step_sec = 2.0

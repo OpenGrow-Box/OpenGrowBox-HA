@@ -473,8 +473,6 @@ class OGBMainController:
             self.data_store.set("mainControl", "HomeAssistant")
             _LOGGER.info(f"🔧 Set mainControl to 'HomeAssistant' for room {self.room}")
 
-        _LOGGER.info(f"🔧 Initialized default data store values for room {self.room}")
-
     async def _handle_outsite_data(self, event):
         """Handle outside weather data."""
         if self.room.lower() == "ambient":

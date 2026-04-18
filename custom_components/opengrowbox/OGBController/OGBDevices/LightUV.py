@@ -180,10 +180,40 @@ class LightUV(Light):
             light_on_str = self.data_store.getDeep("isPlantDay.lightOnTime")
             light_off_str = self.data_store.getDeep("isPlantDay.lightOffTime")
             
-            if light_on_str:
-                self.lightOnTime = datetime.strptime(light_on_str, "%H:%M:%S").time()
-            if light_off_str:
-                self.lightOffTime = datetime.strptime(light_off_str, "%H:%M:%S").time()
+            # Sichere Zeit-Zuweisung mit Validierung
+            if light_on_str and light_off_str:
+                try:
+                    self.lightOnTime = datetime.strptime(light_on_str, "%H:%M:%S").time()
+                    self.lightOffTime = datetime.strptime(light_off_str, "%H:%M:%S").time()
+                    
+                    # Validierung: LightOn muss VOR LightOff sein
+                    if self.lightOnTime >= self.lightOffTime:
+                        _LOGGER.warning(f"Invalid times - LightOn ({self.lightOnTime}) >= LightOff ({self.lightOffTime}), using defaults")
+                        self.lightOnTime = time(9, 0)   # Default 09:00
+                        self.lightOffTime = time(20, 0) # Default 20:00
+                except ValueError as e:
+                    _LOGGER.error(f"Failed to parse light times: {e}, using defaults")
+                    self.lightOnTime = time(9, 0)
+                    self.lightOffTime = time(20, 0)
+            elif light_on_str and not light_off_str:
+                # Nur LightOn vorhanden, Default für LightOff setzen
+                try:
+                    self.lightOnTime = datetime.strptime(light_on_str, "%H:%M:%S").time()
+                except ValueError:
+                    self.lightOnTime = time(9, 0)
+                self.lightOffTime = time(20, 0)
+            elif light_off_str and not light_on_str:
+                # Nur LightOff vorhanden, Default für LightOn setzen
+                self.lightOnTime = time(9, 0)
+                try:
+                    self.lightOffTime = datetime.strptime(light_off_str, "%H:%M:%S").time()
+                except ValueError:
+                    self.lightOffTime = time(20, 0)
+            else:
+                # Keine Zeiten vorhanden - Defaults verwenden
+                self.lightOnTime = time(9, 0)
+                self.lightOffTime = time(20, 0)
+                _LOGGER.warning("No light times in datastore, using defaults 09:00-20:00")
                 
             self.islightON = self.data_store.getDeep("isPlantDay.islightON")
             
@@ -400,6 +430,20 @@ class LightUV(Light):
         uv_start = light_on_dt + timedelta(minutes=delay_minutes)
         uv_end = light_off_dt - timedelta(minutes=stop_minutes)
         
+        # Prüfen ob genug Zeit für UV vorhanden ist
+        available_minutes = (light_off_dt - light_on_dt).total_seconds() / 60
+        required_minutes = delay_minutes + stop_minutes + 1  # +1 minute minimum
+        
+        if available_minutes < required_minutes:
+            _LOGGER.warning(
+                f"{self.deviceName}: Not enough light time for UV window - "
+                f"LightOn: {self.lightOnTime}, LightOff: {self.lightOffTime}, "
+                f"Available: {available_minutes:.0f}min, Required: {required_minutes:.0f}min. UV will stay off."
+            )
+            if self.is_uv_active:
+                await self._deactivate_uv("Not enough light time for UV")
+            return
+        
         # Check max duration limit
         max_duration_hours = getattr(self, 'max_duration_hours', 6)
         max_duration_dt = timedelta(hours=max_duration_hours)
@@ -432,6 +476,13 @@ class LightUV(Light):
         )
         
         # Determine if we should be ON or OFF
+        # Prüfe ZUERST ob genug Zeit für UV vorhanden ist
+        if available_minutes < required_minutes:
+            # Nicht genug Zeit - UV muss AUS bleiben
+            if self.is_uv_active:
+                await self._deactivate_uv("Not enough light time for UV")
+            return
+        
         if in_uv_window and not exposure_limit_reached:
             if not self.is_uv_active:
                 await self._activate_uv('schedule')
