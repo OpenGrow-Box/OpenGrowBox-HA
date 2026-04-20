@@ -109,7 +109,7 @@ async def test_start_calibration_starts_task(setup_manager):
     # Patch internal run so it finishes immediately
     ran = []
 
-    async def _fake_run(cap, devices):
+    async def _fake_run(cap, devices, restore_tent_mode=True):
         ran.append((cap, devices))
 
     manager._run_calibration = _fake_run
@@ -153,9 +153,9 @@ async def test_run_calibration_full_flow(setup_manager):
         }
 
     manager._measure_phase = _fake_measure
-    manager.EFFECT_DURATIONS = {"canHeat": 180}  # 3 min for calculation
+    manager.EFFECT_DURATIONS = {"canHeat": 120}  # 2 min for calculation (different from BASELINE_DURATION)
 
-    await manager._run_calibration("canHeat", [heater])
+    await manager._run_calibration("canHeat", [heater], restore_tent_mode=True)
 
     # Check events were emitted correctly
     emitted_names = [e["event_name"] for e in event_manager.emitted]
@@ -171,8 +171,8 @@ async def test_run_calibration_full_flow(setup_manager):
     results = data_store.getDeep("capCalibration.results.canHeat")
     assert results is not None
     assert results.get("isDimmable") is False
-    assert results["temperature"]["delta_per_min"] == pytest.approx(1.0, rel=1e-3)  # 3.0 / 3 min
-    assert results["humidity"]["delta_per_min"] == pytest.approx(-1.667, rel=1e-3)  # -5.0 / 3 min
+    assert results["temperature"]["delta_per_min"] == pytest.approx(1.5, rel=1e-3)  # 3.0 / 2 min
+    assert results["humidity"]["delta_per_min"] == pytest.approx(-2.5, rel=1e-3)  # -5.0 / 2 min
 
     # SaveState emitted
     assert any(e["event_name"] == "SaveState" for e in event_manager.emitted)
