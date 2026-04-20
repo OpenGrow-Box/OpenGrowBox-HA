@@ -374,9 +374,9 @@ PLANT_SPECIES_VPD_MAPS: Dict[str, Dict[str, Dict[str, Any]]] = {
     # Cannabis - Time to get some 420
     "Cannabis": {
         "Germination": {
-            "vpdRange": [0.412, 0.70],
+            "vpdRange": [0.41, 0.70],
             "minTemp": 20,
-            "maxTemp": 24,
+            "maxTemp": 25,
             "minHumidity": 65,
             "maxHumidity": 85,
             "minEC": 0.6,
@@ -391,7 +391,7 @@ PLANT_SPECIES_VPD_MAPS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "Clones": {
             "vpdRange": [0.412, 0.65],
             "minTemp": 20,
-            "maxTemp": 26,
+            "maxTemp": 25,
             "minHumidity": 65,
             "maxHumidity": 85,
             "minEC": 0.8,
@@ -449,7 +449,7 @@ PLANT_SPECIES_VPD_MAPS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "maxCo2": 1200,
         },
         "EarlyFlower": {
-            "vpdRange": [1.0, 1.25],
+            "vpdRange": [0.95, 1.25],
             "minTemp": 22,
             "maxTemp": 28,
             "minHumidity": 55,
