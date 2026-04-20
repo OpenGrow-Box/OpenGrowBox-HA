@@ -24,7 +24,7 @@ Default: Active for middle 4-6 hours of a 12-hour light cycle
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from typing import Optional
 
 from .Light import Light

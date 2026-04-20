@@ -180,9 +180,9 @@ class Light(Device):
                
                 if self.voltage is None or self.voltage == 0:
                     self.checkForControlValue()
-                
-                self.checkPlantStageLightValue()
+
                 self.checkMinMax(False)
+                self.checkPlantStageLightValue()
                 
                 # 4. Initialize voltage ONLY if voltage is still 0/None
                 if self.voltage == 0 or self.voltage is None:
@@ -667,7 +667,7 @@ class Light(Device):
 
             for i in range(1, 11):
                 if not self.islightON:
-                    _LOGGER.debug(f"{self.deviceName}: SunRise abgebrochen - Licht aus")
+                    _LOGGER.warning(f"{self.deviceName}: ⚠️ SunRise abgebrochen - islightON ist False! (Step {i}/10)")
                     break
 
                 if self.sun_phase_paused:
@@ -675,11 +675,11 @@ class Light(Device):
                 else:
                     await asyncio.sleep(step_duration)
 
-                    # Letzter Schritt → exakt target_voltage, kein Rundungsfehler
-                    if i == 10:
-                        self.voltage = round(target_voltage)
+                    # First step → use start_voltage, subsequent steps → calculate increment
+                    if i == 1:
+                        self.voltage = round(start_voltage)
                     else:
-                        self.voltage = round(start_voltage + (voltage_step * i))
+                        self.voltage = round(start_voltage + (voltage_step * (i - 1)))
 
                     message = f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
@@ -874,7 +874,7 @@ class Light(Device):
                     # Only use minVoltage if it's explicitly set (> 0), otherwise use initVoltage
                     if self.voltage is None or self.voltage == 0:
                         if self.minVoltage is not None and self.minVoltage > 0:
-                            self.voltage = self.initVoltage
+                            self.voltage = self.minVoltage
                         else:
                             self.voltage = self.initVoltage
                     message = "Turn On"
