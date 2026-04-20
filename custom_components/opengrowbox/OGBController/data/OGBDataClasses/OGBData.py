@@ -357,9 +357,9 @@ class OGBConf:
     plantStages: Dict[str, Dict[str, Any]] = field(
         default_factory=lambda: {
             "Germination": {
-                "vpdRange": [0.412, 0.70],
+                "vpdRange": [0.41, 0.70],
                 "minTemp": 20,
-                "maxTemp": 24,
+                "maxTemp": 25,
                 "minHumidity": 65,
                 "maxHumidity": 85,
                 "minEC": 0.6,
@@ -417,7 +417,7 @@ class OGBConf:
                 "maxCo2": 1000,
             },
             "LateVeg": {
-                "vpdRange": [0.9, 1.20],
+                "vpdRange": [0.9, 1.2],
                 "minTemp": 22,
                 "maxTemp": 27,
                 "minHumidity": 55,

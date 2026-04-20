@@ -19,23 +19,26 @@ class OGBCalibManager:
     """Manages per-capability device calibration."""
 
     # Measurement durations in seconds
-    BASELINE_DURATION = 60
-    COOLDOWN_DURATION = 30
+    BASELINE_DURATION = 180      # 3 minutes for stable baseline
+    COOLDOWN_DURATION = 60      # 1 minute to turn off devices
 
     # Dimmable device step calibration
     DIMMABLE_STEPS = [25, 50, 75, 100]
-    DIMMABLE_STEP_DURATION = 90  # seconds per step
-    DIMMABLE_FULL_DURATION = 120  # seconds for 100% step
+    DIMMABLE_STEP_DURATION = 180  # 3 minutes per step (thermal stabilization)
+    DIMMABLE_FULL_DURATION = 300  # 5 minutes for 100% (max heat)
 
     # Non-dimmable fallback durations
     EFFECT_DURATIONS = {
-        "canHeat": 180,
-        "canCool": 180,
-        "canHumidify": 240,
-        "canDehumidify": 240,
-        "canClimate": 300,
-        "canLight": 300,
-        "canCO2": 120,
+        "canHeat": 300,       # 5 minutes
+        "canCool": 300,       # 5 minutes
+        "canHumidify": 300,    # 5 minutes
+        "canDehumidify": 300,  # 5 minutes
+        "canClimate": 360,    # 6 minutes
+        "canLight": 900,      # 15 minutes (LED thermal inertia - full end heat!)
+        "canCO2": 180,        # 3 minutes
+        "canIntake": 300,     # 5 minutes (fan moves air, affects temp/humidity)
+        "canExhaust": 300,    # 5 minutes (fan moves air, affects temp/humidity)
+        "canVentilation": 180,  # 3 minutes (ventilation is faster to measure)
     }
 
     # Safety abort thresholds
@@ -54,6 +57,9 @@ class OGBCalibManager:
         "canClimate": ["temperature", "humidity"],
         "canLight": ["temperature", "humidity"],
         "canCO2": ["co2"],
+        "canIntake": ["temperature", "humidity"],  # Fan affects temp/humidity
+        "canExhaust": ["temperature", "humidity"],  # Fan affects temp/humidity
+        "canVentilation": ["temperature", "humidity"],  # Ventilation affects temp/humidity
     }
 
     def __init__(self, hass, data_store, event_manager, room, notificator=None):
@@ -94,7 +100,7 @@ class OGBCalibManager:
     MULTI_MODE_CAPS = {"canClimate"}
 
     async def start_calibration(self, cap: str):
-        """Start a calibration run for the given capability."""
+        """Start a calibration run for the capability."""
         _LOGGER.info(f"[{self.room}] start_calibration called for {cap}")
         if self._calibration_task and not self._calibration_task.done():
             _LOGGER.warning(f"[{self.room}] Calibration already running – abort it first.")
@@ -130,9 +136,57 @@ class OGBCalibManager:
 
         self._abort_requested = False
         self._calibration_task = asyncio.create_task(
-            self._run_calibration(cap, target_devices)
+            self._run_calibration(cap, target_devices, restore_tent_mode=True)
         )
         _LOGGER.info(f"[{self.room}] Started calibration task for {cap}")
+
+    async def start_calibration_for_sequence(self, cap: str):
+        """Start calibration for use in a multi-calibration sequence.
+
+        Keeps tent mode disabled between calibrations to prevent control commands
+        from interrupting the sequence.
+        """
+        _LOGGER.info(f"[{self.room}] start_calibration_for_sequence called for {cap}")
+
+        # Validate capability
+        capabilities = self.data_store.get("capabilities") or {}
+        cap_data = capabilities.get(cap)
+        if not cap_data:
+            _LOGGER.warning(f"[{self.room}] Unknown capability: '{cap}'")
+            return
+
+        dev_entities = cap_data.get("devEntities", [])
+        if not dev_entities:
+            _LOGGER.warning(f"[{self.room}] No devices found for capability '{cap}'.")
+            return
+
+        devices = self.data_store.get("devices") or []
+        target_devices = [d for d in devices if getattr(d, "deviceName", None) in dev_entities]
+        if not target_devices:
+            _LOGGER.warning(f"[{self.room}] Could not resolve device objects for '{cap}'.")
+            return
+
+        # Reset abort flag for this calibration
+        self._abort_requested = False
+
+        # IMPORTANT: Don't create new task if one is already running
+        if self._calibration_task and not self._calibration_task.done():
+            _LOGGER.warning(f"[{self.room}] Calibration already running")
+            return
+
+        self._calibration_task = asyncio.create_task(
+            self._run_calibration(cap, target_devices, restore_tent_mode=False)
+        )
+        _LOGGER.info(f"[{self.room}] Started calibration task for sequence: {cap}")
+
+    async def finish_sequence(self):
+        """Restore tent mode after a multi-calibration sequence is complete."""
+        if self._original_tent_mode is not None:
+            self.data_store.set("tentMode", self._original_tent_mode)
+            await _update_specific_select("ogb_tentmode", self.room, self._original_tent_mode, self.hass)
+            await self.event_manager.emit("selectActionMode", self._original_tent_mode)
+            await self._notify(f"🔁 Sequence complete! Original tent mode '{self._original_tent_mode}' restored.")
+            self._original_tent_mode = None
 
     async def stop_calibration(self):
         """Abort an active calibration and restore device states."""
@@ -175,18 +229,26 @@ class OGBCalibManager:
     # Core calibration loop
     # ------------------------------------------------------------------
 
-    async def _run_calibration(self, cap: str, devices: List[Any]):
-        """Orchestrate baseline -> effect steps -> cooldown -> compute."""
-        _LOGGER.info(f"[{self.room}] _run_calibration started for {cap}")
+    async def _run_calibration(self, cap: str, devices: List[Any], restore_tent_mode: bool = True):
+        """Orchestrate baseline -> effect steps -> cooldown -> compute.
+
+        Args:
+            cap: The capability to calibrate
+            devices: List of devices to use for calibration
+            restore_tent_mode: If True, restore original tent mode after calibration.
+                              If False, keep tent mode disabled (for multi-calibration sequences).
+        """
+        _LOGGER.info(f"[{self.room}] _run_calibration started for {cap}, restore_tent_mode={restore_tent_mode}")
 
         try:
             metrics = self.METRIC_KEYS.get(cap, ["temperature", "humidity"])
             is_dimmable = self._has_dimmable_devices(cap)
 
             # Save original mode and disable control
-            self._original_tent_mode = self.data_store.get("tentMode")
-            
-            _LOGGER.info(f"[{self.room}] Original tentMode saved: {self._original_tent_mode}")
+            if self._original_tent_mode is None:
+                self._original_tent_mode = self.data_store.get("tentMode")
+                _LOGGER.info(f"[{self.room}] Original tentMode saved: {self._original_tent_mode}")
+
             self.data_store.set("tentMode", "Disabled")
 
             await _update_specific_select("ogb_tentmode", self.room, "Disabled", self.hass)
@@ -288,13 +350,19 @@ class OGBCalibManager:
             await self._notify(f"❌ Calibration failed: {e}")
         finally:
             await self.event_manager.emit("CalibOff", {"room": self.room, "cap": cap})
-            if self._original_tent_mode is not None:
+
+            # Only restore tent mode if explicitly requested (single calibration)
+            # For multi-calibration sequences, keep disabled until all are done
+            if restore_tent_mode and self._original_tent_mode is not None:
                 self.data_store.set("tentMode", self._original_tent_mode)
                 await _update_specific_select("ogb_tentmode", self.room, self._original_tent_mode, self.hass)
                 await self.event_manager.emit("selectActionMode", self._original_tent_mode)
                 self._original_tent_mode = None
+                await self._notify("🔁 Original tent mode restored.")
+            else:
+                await self._notify("ℹ️ Tent mode kept disabled for remaining calibrations.")
+
             self.data_store.setDeep("capCalibration.active", None)
-            await self._notify("🔁 Original tent mode restored.")
 
     # ------------------------------------------------------------------
     # Helpers

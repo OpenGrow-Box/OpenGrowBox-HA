@@ -144,6 +144,14 @@ class OGBConsoleManager:
         )
 
         self.register_command(
+            "calibrate_all_caps",
+            self.cmd_calibrate_all_caps,
+            "Calibrates all capabilities in order (humidify → dehumidify → heat → cool → light)",
+            "calibrate_all_caps",
+            ["calibrate_all_caps"],
+        )
+
+        self.register_command(
             "cap_cal_stop",
             self.cmd_cap_cal_stop,
             "Stops an ongoing capability calibration",
@@ -849,6 +857,152 @@ class OGBConsoleManager:
         self.hass.bus.async_fire(event_type, event_data)
 
         await self._send_response("🛑 Stop signal sent for active calibration.")
+
+    async def cmd_calibrate_all_caps(self, params: List[str]):
+        """Calibrates all capabilities in sequence: humidify → dehumidify → heat → cool → light."""
+        if not self.calib_manager:
+            await self._send_response("❌ Calibration manager not available.")
+            return
+
+        # Check if calibration already running
+        active = self.data_store.getDeep("capCalibration.active")
+        if active:
+            await self._send_response(
+                "⚠️ Calibration already running.\n"
+                "Use 'cap_cal_stop' to abort current calibration first."
+            )
+            return
+
+        # Define calibration order - light last (takes 15 min!)
+        CALIBRATION_ORDER = [
+            "canHumidify",
+            "canDehumidify",
+            "canHeat",
+            "canCool",
+            "canIntake",
+            "canExhaust",
+            "canVentilation",
+            "canLight",
+        ]
+
+        capabilities = self.data_store.get("capabilities") or {}
+
+        # Build list of caps that have devices
+        caps_to_calibrate = []
+        skipped = []
+        for cap in CALIBRATION_ORDER:
+            cap_data = capabilities.get(cap, {})
+            dev_entities = cap_data.get("devEntities", [])
+            if dev_entities:
+                caps_to_calibrate.append(cap)
+            else:
+                skipped.append(cap)
+
+        if not caps_to_calibrate:
+            await self._send_response(
+                "ℹ️ No devices found for calibration.\n"
+                "Assign devices to capabilities first."
+            )
+            return
+
+        # Send initial message
+        total_time = 0
+        for cap in caps_to_calibrate:
+            if cap == "canLight":
+                total_time += 900  # 15 min
+            elif cap in ("canHeat", "canCool", "canHumidify", "canDehumidify", "canIntake", "canExhaust"):
+                total_time += 300  # 5 min each
+            elif cap == "canVentilation":
+                total_time += 180  # 3 min (faster)
+        total_time += 180  # baseline
+        total_time += 60   # cooldown
+
+        await self._send_response(
+            f"🔄 Starting full calibration sequence...\n"
+            f"📋 Capabilities: {', '.join(caps_to_calibrate)}\n"
+            f"⏱️ Estimated time: ~{total_time // 60} minutes\n"
+            f"🚫 Skipped (no devices): {', '.join(skipped) if skipped else 'none'}\n\n"
+            f"Tent mode will stay disabled during entire sequence!"
+        )
+
+        # Run calibrations sequentially
+        completed = []
+        failed = []
+
+        for i, cap in enumerate(caps_to_calibrate):
+            # Verify devices exist for this capability
+            cap_data = capabilities.get(cap, {})
+            dev_entities = cap_data.get("devEntities", [])
+            if not dev_entities:
+                await self._send_response(f"⚠️ No devices for {cap}, skipping.")
+                continue
+
+            # Show starting message FIRST
+            await self._send_response(
+                f"\n{'='*50}\n"
+                f"🔧 Calibrating {cap} ({i+1}/{len(caps_to_calibrate)})...\n"
+                f"{'='*50}"
+            )
+
+            # Start calibration using sequence method (keeps tent mode disabled)
+            task = asyncio.create_task(self.calib_manager.start_calibration_for_sequence(cap))
+
+            # Wait for calibration to actually start (poll for up to 10 seconds)
+            started = False
+            for _ in range(20):  # 20 * 0.5s = 10 seconds
+                await asyncio.sleep(0.5)
+                if self.data_store.getDeep("capCalibration.active"):
+                    started = True
+                    break
+
+            if not started:
+                await task  # Ensure task completes
+                failed.append(cap)
+                await self._send_response(f"❌ {cap} failed to start!")
+                continue
+
+            # Wait for calibration to complete
+            wait_count = 0
+            while True:
+                active = self.data_store.getDeep("capCalibration.active")
+                if not active:
+                    break
+                await asyncio.sleep(5)
+                wait_count += 1
+                # Timeout after 20 minutes per calibration
+                if wait_count > 240:
+                    await self._send_response(f"⚠️ Timeout waiting for {cap}, stopping...")
+                    await self.calib_manager.stop_calibration()
+                    break
+
+            # Check results AFTER calibration is complete
+            results = self.data_store.getDeep(f"capCalibration.results.{cap}")
+            if results:
+                completed.append(cap)
+                await self._send_response(f"✅ {cap} completed!")
+            else:
+                failed.append(cap)
+                await self._send_response(f"❌ {cap} failed! Check HA logs for details.")
+
+            # Small delay between calibrations to let system stabilize
+            await asyncio.sleep(2)
+
+        # Restore original tent mode after sequence is complete
+        await self.calib_manager.finish_sequence()
+
+        # Summary
+        summary = [
+            "\n" + "="*50,
+            "📊 FULL CALIBRATION COMPLETE",
+            "="*50,
+        ]
+        if completed:
+            summary.append(f"✅ Completed: {', '.join(completed)}")
+        if failed:
+            summary.append(f"❌ Failed: {', '.join(failed)}")
+
+        summary.append("="*50)
+        await self._send_response("\n".join(summary))
 
     # =========================
     # UTILITY METHODS

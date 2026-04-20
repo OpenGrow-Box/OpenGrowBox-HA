@@ -821,7 +821,8 @@ class OGBWizardManager:
                     }, haEvent=True, debug_type="WARNING")
                     return None
 
-                return await response.json()
+                result = await response.json()
+                return result.get("data") or result
         except Exception as err:
             _LOGGER.error(
                 "Failed to fetch live plant config for room %s: %s",

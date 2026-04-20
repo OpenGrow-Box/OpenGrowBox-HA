@@ -2135,13 +2135,16 @@ class OGBPremiumIntegration:
             if not desired_mode:
                 return
 
-            # Respect explicit user OFF choice across restarts.
-            # If Tent Mode is Disabled, never auto-restore to a premium mode.
-            if self.data_store.get("tentMode") == "Disabled":
+            # CRITICAL FIX: If lastTentMode is set, the user was in premium mode before restart.
+            # "Disabled" as current mode is just a fallback because the select entity couldn't
+            # restore the premium mode (it wasn't in the initial options yet).
+            # We ALWAYS attempt restore when lastTentMode exists - never skip.
+            current_mode = self.data_store.get("tentMode")
+            if current_mode == "Disabled":
                 _LOGGER.debug(
-                    f"ℹ️ {self.room} Skipping premium tent mode restore because current mode is Disabled"
+                    f"ℹ️ {self.room} Current mode is Disabled but lastTentMode={desired_mode} "
+                    f"- will attempt premium restore"
                 )
-                return
 
             # Force a fresh controls reconciliation (bypass debounce window).
             self._last_manage_controls_time = 0

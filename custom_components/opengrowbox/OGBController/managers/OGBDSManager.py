@@ -21,19 +21,25 @@ PRESERVED_STATE_KEYS = {
     # Custom Plant Stages (nur wenn aktiv)
     "customPlantStages",
     "customLightPlantStages",
-    
+
     # Grow-Mediums
     "growMediums",
-    
+
     # Plant Dates (wenn nicht durch HA Entities)
     "plantDates",
-    
+
     # Camera Timelapse
     "plantsView",
-    
+
     # Stage Source (um zu wissen ob custom verwendet wird)
     "plantStageSource",
     "lightPlantStageSource",
+
+    # Device Calibration (kritisch für Environment Actions)
+    "capCalibration",
+
+    # Drying (Start-Timestamps und Phasen)
+    "drying",
 }
 
 # Keys die NIEMALS aus State File geladen werden (Code-Defaults)
@@ -64,8 +70,8 @@ IGNORED_STATE_KEYS = {
     
     # Runtime-Werte
     "tentData", "Light", "specialLights",
-    "weather", "drying", "subscriptionData", "workData",
-    "capCalibration", "DeviceMinMax",
+    "weather", "subscriptionData", "workData",
+    "DeviceMinMax",
 }
 
 
