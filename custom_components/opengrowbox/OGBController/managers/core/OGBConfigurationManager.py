@@ -725,9 +725,21 @@ class OGBConfigurationManager:
 
             self.data_store.setDeep("vpd.range", vpd_range)
 
-            # Only update Temp/Humidity targets if minMaxControl is NOT active
-            # (Light MinMax is handled separately in Light.py)
-            if min_max_active == False:
+            # Check if GrowPlan is active - if so, don't overwrite tentData values
+            grow_plan_active = self.data_store.get("growManagerActive")
+            if grow_plan_active:
+                _LOGGER.info(
+                    f"{self.room}: GrowPlan is active, skipping tentData overwrite. "
+                    f"GrowPlan values will be used via get_active_value()"
+                )
+                # Still update VPD perfection values
+                self.data_store.setDeep("vpd.perfection", perfect_vpd)
+                self.data_store.setDeep("vpd.perfectMin", perfect_vpd_min)
+                self.data_store.setDeep("vpd.perfectMax", perfect_vpd_max)
+                await self.event_manager.emit("PlantStageChange", plant_stage)
+            elif min_max_active == False:
+                # Only update Temp/Humidity targets if minMaxControl is NOT active
+                # (Light MinMax is handled separately in Light.py)
                 self.data_store.setDeep("tentData.maxTemp", max_temp)
                 self.data_store.setDeep("tentData.minTemp", min_temp)
                 self.data_store.setDeep("tentData.maxHumidity", max_humidity)

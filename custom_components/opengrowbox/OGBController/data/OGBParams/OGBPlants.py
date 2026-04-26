@@ -479,7 +479,7 @@ PLANT_SPECIES_VPD_MAPS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "maxCo2": 1500,
         },
         "LateFlower": {
-            "vpdRange": [1.15, 1.65],
+            "vpdRange": [1.15, 1.55],
             "minTemp": 20,
             "maxTemp": 26,
             "minHumidity": 40,

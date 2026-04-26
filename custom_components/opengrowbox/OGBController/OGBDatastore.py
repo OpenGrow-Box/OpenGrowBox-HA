@@ -142,6 +142,112 @@ class DataStore(SimpleEventEmitter):
                 return default  # Schlüssel oder Attribut existiert nicht
         return data if data is not None else default
 
+    def get_active_value(self, path, default=None):
+        """Smart getter: Liefert GrowPlan-Werte wenn aktiv, sonst normale Werte.
+
+        Verwendung in Managern statt getDeep() für Umgebungswerte.
+        Prüft ob GrowPlan aktiv ist und mapped tentData keys zu GrowPlan keys.
+
+        Args:
+            path: Pfad zum Wert (z.B. "tentData.maxTemp")
+            default: Default-Wert wenn nicht gefunden
+
+        Returns:
+            Wert aus GrowPlan (wenn aktiv) oder aus normalem Pfad
+        """
+        # Prüfe ob GrowPlan aktiv ist
+        grow_plan_active = self.get("growManagerActive")
+        if grow_plan_active:
+            # Hole aktuelle Woche - zuerst aus currentWeekData, dann aus weeks
+            week_data = self.getDeep("growPlan.currentWeekData")
+            if not week_data:
+                # Versuche aus weeks zu laden
+                weeks = self.getDeep("growPlan.weeks", [])
+                current_week = self.getDeep("growPlan.currentWeek", 1)
+                for week in weeks:
+                    if week.get("week") == current_week:
+                        week_data = week
+                        break
+            
+            if week_data:
+                env = week_data.get("environment", {})
+                light_cycle = env.get("lightCycle", {})
+                light_intensity = env.get("lightIntensity", {})
+                tent_controls = week_data.get("tentControls", {})
+                
+                # Mapping mit neuer Datenstruktur (final)
+                if path == "tentData.maxTemp":
+                    temp = env.get("temperature", {})
+                    if isinstance(temp, dict):
+                        day_temp = temp.get("day")
+                        if isinstance(day_temp, dict):
+                            return day_temp.get("max")
+                        return day_temp
+                    return temp
+                elif path == "tentData.minTemp":
+                    temp = env.get("temperature", {})
+                    if isinstance(temp, dict):
+                        night_temp = temp.get("night")
+                        if isinstance(night_temp, dict):
+                            return night_temp.get("min")
+                        return night_temp
+                    return temp
+                elif path == "tentData.maxHumidity":
+                    return env.get("humidity", {}).get("day")
+                elif path == "tentData.minHumidity":
+                    return env.get("humidity", {}).get("night")
+                elif path == "tentData.targetVPD":
+                    return env.get("vpd", {}).get("target")
+                elif path == "tentData.targetCO2":
+                    co2 = env.get("co2", {})
+                    if isinstance(co2, dict):
+                        return co2.get("optimal")
+                    return co2
+                elif path == "tentMode":
+                    return week_data.get("tentMode")
+                elif path == "isPlantDay.lightOnTime":
+                    start_hour = light_cycle.get("startTime")
+                    if start_hour is not None:
+                        return f"{int(start_hour):02d}:00:00"
+                elif path == "isPlantDay.lightOffTime":
+                    start_hour = light_cycle.get("startTime", 0)
+                    on_hours = light_cycle.get("on", 0)
+                    if start_hour is not None and on_hours is not None:
+                        end_hour = (start_hour + on_hours) % 24
+                        return f"{int(end_hour):02d}:00:00"
+                elif path == "isPlantDay.sunRiseTime":
+                    sunrise_min = light_cycle.get("sunrise", 0)
+                    if sunrise_min:
+                        return f"00:{int(sunrise_min):02d}:00"
+                elif path == "isPlantDay.sunSetTime":
+                    sunset_min = light_cycle.get("sunset", 0)
+                    if sunset_min:
+                        return f"00:{int(sunset_min):02d}:00"
+                elif path == "DeviceMinMax.Light.minVoltage":
+                    if isinstance(light_intensity, dict):
+                        return light_intensity.get("min")
+                    elif isinstance(light_intensity, (int, float)):
+                        return 0
+                elif path == "DeviceMinMax.Light.maxVoltage":
+                    if isinstance(light_intensity, dict):
+                        return light_intensity.get("max")
+                    elif isinstance(light_intensity, (int, float)):
+                        return light_intensity
+                # TentControls
+                elif path == "controlOptions.nightVpdHold":
+                    return tent_controls.get("nightVpdHold", {}).get("enabled")
+                elif path == "controlOptions.deviceDampening":
+                    return tent_controls.get("deviceDampening", {}).get("enabled")
+                elif path == "controlOptions.vpdDeterminationMode":
+                    return tent_controls.get("vpdDetermination", {}).get("mode")
+                elif path == "controlOptions.dryingMode":
+                    return tent_controls.get("drying", {}).get("mode")
+                elif path == "controlOptions.dryingEnabled":
+                    return tent_controls.get("drying", {}).get("enabled")
+
+        # Fallback zu normalem Pfad
+        return self.getDeep(path, default)
+
     def setDeep(self, path, value):
         """Setzt einen Wert in verschachtelten Daten und löst Events aus."""
         keys = path.split(".")

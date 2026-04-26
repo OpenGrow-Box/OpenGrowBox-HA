@@ -780,7 +780,7 @@ class OGBCSManager:
         ]
 
         if not dripper_devices:
-            _LOGGER.warning(f"{self.room} - _get_drippers: No dripper devices found in: {devices}")
+            _LOGGER.debug(f"{self.room} - _get_drippers: No dripper devices found in: {devices}")
 
         return dripper_devices
 

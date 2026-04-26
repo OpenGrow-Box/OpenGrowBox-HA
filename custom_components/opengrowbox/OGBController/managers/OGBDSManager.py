@@ -181,7 +181,7 @@ def _merge_capabilities(data: Dict[str, Any], room: str) -> Dict[str, Any]:
         data["capabilities"] = saved_caps
 
     # Default structure for new capabilities
-    DEFAULT_CAP = {"state": False, "count": 0, "devEntities": []}
+    DEFAULT_CAP = {"state": False, "count": 0, "devEntities": [], "deviceData": {}}
 
     # Add missing capabilities
     added_caps = []
@@ -223,7 +223,7 @@ class OGBDSManager:
 
     def _ensure_capability_schema_only_in_datastore(self):
         """Ensure all known capability keys exist in datastore without restoring old device assignments."""
-        default_cap = {"state": False, "count": 0, "devEntities": []}
+        default_cap = {"state": False, "count": 0, "devEntities": [], "deviceData": {}}
         current_caps = self.data_store.get("capabilities")
         if not isinstance(current_caps, dict):
             current_caps = {}

@@ -245,7 +245,6 @@ class OGBPremiumIntegration:
         self.growPlanManager = OGBGrowPlanManager(
             self.hass, self.data_store, self.event_manager, self.room
         )
-        self.growPlanManager.set_ws_client(self.ogb_ws)
 
         # Initialize analytics modules
         self.analytics = OGBPremAnalytics(api_proxy=None, cache=None)  # TODO: Add proper api_proxy and cache
@@ -806,14 +805,38 @@ class OGBPremiumIntegration:
         instead of the stale values from the initial login.
         """
         try:
-            # New consistent API structure: { plan, features, limits, usage, timestamp, ... }
+            # New consistent API structure: { plan, features, limits, usage, activeGrowPlan, timestamp, ... }
             server_plan = data.get("plan")
             features = data.get("features", {})
             limits = data.get("limits", {})
             usage = data.get("usage", {})
-            
+            active_grow_plan = data.get("activeGrowPlan")
+
             _LOGGER.debug(f"📊 {self.room} API usage update received: plan={server_plan}")
-            
+
+            # Store active grow plan info if present
+            if active_grow_plan:
+                _LOGGER.info(
+                    f"🌱 {self.room} Active grow plan received: "
+                    f"name={active_grow_plan.get('name')}, "
+                    f"strain={active_grow_plan.get('strainName')}, "
+                    f"week={active_grow_plan.get('elapsedWeeks')}/{active_grow_plan.get('maxWeeks')}"
+                )
+                if not self.subscription_data:
+                    self.subscription_data = {}
+                self.subscription_data["active_grow_plan"] = active_grow_plan
+                # Also store in data_store for frontend access
+                self.data_store.set("activeGrowPlan", active_grow_plan)
+
+                # Update GrowPlanManager with active plan info via dedicated method
+                if self.growPlanManager:
+                    self.growPlanManager.update_active_plan_from_api(active_grow_plan)
+                    _LOGGER.info(
+                        f"🌱 {self.room} Updated GrowPlanManager via API: "
+                        f"plan_id={self.growPlanManager.active_grow_plan_id}, "
+                        f"week={self.growPlanManager.current_week}"
+                    )
+
             # Get active connections from usage
             active_connections = usage.get("activeConnections", 0)
             
@@ -1273,7 +1296,16 @@ class OGBPremiumIntegration:
 
             # Forward to grow plan manager
             if self.growPlanManager:
-                await self.growPlanManager.activate_plan(growPlan)
+                # Handle both dict and object formats
+                if isinstance(growPlan, dict):
+                    plan_id = growPlan.get("id") or growPlan.get("plan_id")
+                else:
+                    plan_id = getattr(growPlan, "id", None) or getattr(growPlan, "plan_id", None)
+                
+                if plan_id:
+                    await self.growPlanManager.activate_grow_plan(plan_id)
+                else:
+                    _LOGGER.warning(f"⚠️ {self.room} Could not extract plan_id from growPlan: {growPlan}")
 
                 # Fire HA event
                 self.hass.bus.async_fire("ogb_premium_growplan_activated", {

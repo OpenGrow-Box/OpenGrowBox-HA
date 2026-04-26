@@ -864,7 +864,7 @@ class OGBActionManager:
         if caps.get("canIntake", {}).get("state", False):
             outside_temp = self.data_store.getDeep("tentData.AmbientTemp")
             inside_temp = self.data_store.getDeep("tentData.temperature")
-            min_temp = self.data_store.getDeep("tentData.minTemp")
+            min_temp = self.data_store.get_active_value("tentData.minTemp")
             
             try:
                 outside_temp = float(outside_temp) if outside_temp is not None else None

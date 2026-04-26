@@ -221,18 +221,18 @@ class OGBConf:
     ownDeviceList: List[Any] = field(default_factory=list)
     capabilities: Dict[str, Dict[str, Any]] = field(
         default_factory=lambda: {
-            "canHeat": {"state": False, "count": 0, "devEntities": []},
-            "canCool": {"state": False, "count": 0, "devEntities": []},
-            "canHumidify": {"state": False, "count": 0, "devEntities": []},
-            "canClimate": {"state": False, "count": 0, "devEntities": []},
-            "canDehumidify": {"state": False, "count": 0, "devEntities": []},
-            "canVentilate": {"state": False, "count": 0, "devEntities": []},
-            "canExhaust": {"state": False, "count": 0, "devEntities": []},
-            "canIntake": {"state": False, "count": 0, "devEntities": []},
-            "canLight": {"state": False, "count": 0, "devEntities": []},
-            "canPump": {"state": False, "count": 0, "devEntities": []},
-            "canCO2": {"state": False, "count": 0, "devEntities": []},
-            "canWatch": {"state": False, "count": 0, "devEntities": []},
+            "canHeat": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canCool": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canHumidify": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canClimate": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canDehumidify": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canVentilate": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canExhaust": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canIntake": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canLight": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canPump": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canCO2": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
+            "canWatch": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},
         }
     )
     previousActions: List[Any] = field(default_factory=list)
@@ -462,7 +462,7 @@ class OGBConf:
                 "maxCo2": 1500,
             },
             "LateFlower": {
-                "vpdRange": [1.15, 1.65],
+                "vpdRange": [1.15, 1.55],
                 "minTemp": 20,
                 "maxTemp": 26,
                 "minHumidity": 40,

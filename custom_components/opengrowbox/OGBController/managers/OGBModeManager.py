@@ -674,7 +674,7 @@ class OGBModeManager:
 
         # Validierung: Alle Werte müssen gesetzt sein
         if currentVPD is None or perfectionMinVPD is None or perfectionMaxVPD is None or perfectionVPD is None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: VPD values not initialized (current={currentVPD}, min={perfectionMinVPD}, max={perfectionMaxVPD}, perfect={perfectionVPD}). Skipping VPD control."
             )
             return

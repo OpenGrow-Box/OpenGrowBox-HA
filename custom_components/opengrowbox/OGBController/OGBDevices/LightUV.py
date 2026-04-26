@@ -24,7 +24,7 @@ Default: Active for middle 4-6 hours of a 12-hour light cycle
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time as dt_time
 from typing import Optional
 
 from .Light import Light
@@ -187,32 +187,34 @@ class LightUV(Light):
                     self.lightOffTime = datetime.strptime(light_off_str, "%H:%M:%S").time()
                     
                     # Validierung: LightOn muss VOR LightOff sein
-                    if self.lightOnTime >= self.lightOffTime:
+                    # ABER: Wenn LightOff 00:00 ist, geht das Licht über Mitternacht
+                    # In diesem Fall ist LightOn (22:15) > LightOff (00:00) OK
+                    if self.lightOnTime >= self.lightOffTime and self.lightOffTime != dt_time(0, 0):
                         _LOGGER.warning(f"Invalid times - LightOn ({self.lightOnTime}) >= LightOff ({self.lightOffTime}), using defaults")
-                        self.lightOnTime = time(9, 0)   # Default 09:00
-                        self.lightOffTime = time(20, 0) # Default 20:00
+                        self.lightOnTime = dt_time(9, 0)   # Default 09:00
+                        self.lightOffTime = dt_time(20, 0) # Default 20:00
                 except ValueError as e:
                     _LOGGER.error(f"Failed to parse light times: {e}, using defaults")
-                    self.lightOnTime = time(9, 0)
-                    self.lightOffTime = time(20, 0)
+                    self.lightOnTime = dt_time(9, 0)
+                    self.lightOffTime = dt_time(20, 0)
             elif light_on_str and not light_off_str:
                 # Nur LightOn vorhanden, Default für LightOff setzen
                 try:
                     self.lightOnTime = datetime.strptime(light_on_str, "%H:%M:%S").time()
                 except ValueError:
-                    self.lightOnTime = time(9, 0)
-                self.lightOffTime = time(20, 0)
+                    self.lightOnTime = dt_time(9, 0)
+                self.lightOffTime = dt_time(20, 0)
             elif light_off_str and not light_on_str:
                 # Nur LightOff vorhanden, Default für LightOn setzen
-                self.lightOnTime = time(9, 0)
+                self.lightOnTime = dt_time(9, 0)
                 try:
                     self.lightOffTime = datetime.strptime(light_off_str, "%H:%M:%S").time()
                 except ValueError:
-                    self.lightOffTime = time(20, 0)
+                    self.lightOffTime = dt_time(20, 0)
             else:
                 # Keine Zeiten vorhanden - Defaults verwenden
-                self.lightOnTime = time(9, 0)
-                self.lightOffTime = time(20, 0)
+                self.lightOnTime = dt_time(9, 0)
+                self.lightOffTime = dt_time(20, 0)
                 _LOGGER.warning("No light times in datastore, using defaults 09:00-20:00")
                 
             self.islightON = self.data_store.getDeep("isPlantDay.islightON")

@@ -98,27 +98,48 @@ class OGBGrowPlanManager:
             _LOGGER.error(f"Fehler beim Speichern des Zustands: {e}")
 
     async def _start_daily_update_timer(self):
-        """Startet Timer für tägliche Aktualisierungen"""
+        """Startet Timer für tägliche Aktualisierungen (00:00 und 12:00)"""
         if self._daily_update_task:
             self._daily_update_task.cancel()
         
         self._daily_update_task = asyncio.create_task(self._daily_update_loop())
 
     async def _daily_update_loop(self):
-        """Tägliche Aktualisierung der aktuellen Woche"""
+        """Tägliche Aktualisierung der aktuellen Woche um 00:00 und 12:00"""
         while True:
             try:
-                # Warte bis zum nächsten Tag um Mitternacht
                 now = datetime.now(timezone.utc)
-                tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                sleep_seconds = (tomorrow - now).total_seconds()
+                
+                # Berechne nächsten Zeitpunkt (00:00 oder 12:00)
+                if now.hour < 12:
+                    # Nächster Zeitpunkt: 12:00 heute
+                    next_update = now.replace(hour=12, minute=0, second=0, microsecond=0)
+                else:
+                    # Nächster Zeitpunkt: 00:00 morgen
+                    next_update = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                # Berechne Sekunden bis zum nächsten Update
+                sleep_seconds = (next_update - now).total_seconds()
+                _LOGGER.info(f"🌱 {self.room} Nächstes API-Update um {next_update.strftime('%H:%M')} Uhr (in {sleep_seconds/3600:.1f} Stunden)")
                 
                 await asyncio.sleep(sleep_seconds)
                 
                 # Aktualisiere aktuelles Datum und Woche
                 self.currentDate = datetime.now(timezone.utc)
-                await self._update_current_week()
                 
+                # Nur aktualisieren wenn ein GrowPlan aktiv ist
+                if self.managerActive and self.active_grow_plan:
+                    _LOGGER.info(f"🌱 {self.room} Geplantes API-Update um {self.currentDate.strftime('%H:%M')} (Plan aktiv)")
+                    
+                    # Hole frische Daten vom Server
+                    if self.ws_client:
+                        await self.sync_with_api()
+                    
+                    # Aktualisiere lokale Woche
+                    await self._update_current_week()
+                else:
+                    _LOGGER.debug(f"🌱 {self.room} Geplantes Update übersprungen - kein aktiver Grow Plan")
+                    
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -126,18 +147,51 @@ class OGBGrowPlanManager:
                 await asyncio.sleep(3600)  # Warte 1 Stunde bei Fehlern
 
     def _on_new_grow_plans(self, data):
-        """Handle neue Grow Plans."""
+        """Handle neue Grow Plans from API or events.
+        
+        Processes the new API response format which includes:
+        - plans: List of all plans
+        - activePlan: Currently active plan
+        - currentWeekData: Data for the current week
+        """
         try:
-            # Prüfen, ob die Datenstruktur bereits die Pläne direkt enthält
-            if "grow_plans" in data:
-                grow_plans = data["grow_plans"]
+            _LOGGER.info(f"🌱 {self.room} Received new_grow_plans event with keys: {list(data.keys()) if isinstance(data, dict) else 'not dict'}")
+            
+            # NEW: Handle new API response format with currentWeekData
+            if "currentWeekData" in data:
+                current_week_data = data["currentWeekData"]
+                self.current_week_data = current_week_data
+                self.data_store.setDeep("growPlan.currentWeekData", current_week_data)
+                _LOGGER.info(f"🌱 {self.room} Received currentWeekData via event: week={current_week_data.get('week')}, stage={current_week_data.get('stage')}")
+                # Update entities when week data arrives via event
+                asyncio.create_task(self._update_entities_from_week_data())
             else:
-                grow_plans = data  # komplette Struktur ist bereits der GrowPlan-Container
-
-            self.grow_plans = grow_plans
-            self.grow_plans_private = grow_plans.get("private_plans", [])
-            self.grow_plans_public = grow_plans.get("public_plans", [])
-            self.active_grow_plan = grow_plans.get("active_plan", {})
+                _LOGGER.warning(f"🌱 {self.room} No currentWeekData in event. Available keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+            
+            # NEW: Handle activePlan from API response
+            if "activePlan" in data:
+                active_plan = data["activePlan"]
+                self.active_grow_plan = active_plan
+                if active_plan:
+                    self.active_grow_plan_id = active_plan.get("id")
+                    _LOGGER.info(f"🌱 {self.room} Received activePlan via event: {active_plan.get('name')} (ID: {self.active_grow_plan_id})")
+            
+            # Handle plans list
+            if "plans" in data:
+                plans = data["plans"]
+                self.grow_plans = plans
+                _LOGGER.info(f"🌱 {self.room} Received {len(plans)} plans via event")
+            
+            # Legacy format support
+            elif "grow_plans" in data:
+                grow_plans = data["grow_plans"]
+                self.grow_plans = grow_plans
+                self.grow_plans_private = grow_plans.get("private_plans", [])
+                self.grow_plans_public = grow_plans.get("public_plans", [])
+                self.active_grow_plan = grow_plans.get("active_plan", {})
+            else:
+                # Fallback: assume data is the complete structure
+                self.grow_plans = data
 
         except Exception as e:
             _LOGGER.exception(f"Fehler beim Verarbeiten neuer Grow Plans: {e}")
@@ -149,11 +203,6 @@ class OGBGrowPlanManager:
         Wird beim Aktivieren eines Plans oder täglichen Update ausgeführt.
         """
         try:
-            current_week_data = plan_data.get("weeks", [])
-            if not current_week_data:
-                _LOGGER.warning(f"{self.room}: Kein Wochenplan in {plan_data.get('plan_name')}")
-                return
-
             # Wähle aktuelle Woche aus
             week = self.current_week or 1
             week_settings = self.get_week_data_by_number(week)
@@ -224,17 +273,46 @@ class OGBGrowPlanManager:
     def _on_plan_activation(self, growPlan):
         """Handle Plan Aktivierung"""
         try:
-            all_plans = self.grow_plans.get('all_plans', [])
-            _LOGGER.error(f"ALL PLANS:{all_plans}")
+            # Validate growPlan data
+            if not growPlan:
+                _LOGGER.warning(f"{self.room}: Received empty growPlan data")
+                return
+            
+            # Handle both dict and object formats
+            if isinstance(growPlan, dict):
+                plan_id = growPlan.get("id")
+                plan_name = growPlan.get("name", "Unknown")
+            else:
+                plan_id = getattr(growPlan, "id", None)
+                plan_name = getattr(growPlan, "name", "Unknown")
+            
+            # Ensure plan_id is a string, not a dict
+            if isinstance(plan_id, dict):
+                _LOGGER.warning(f"{self.room}: plan_id is a dict, extracting id field")
+                plan_id = plan_id.get("id")
+            
+            _LOGGER.info(f"🌱 {self.room} Plan activation requested: {plan_name} (ID: {plan_id})")
+            
+            if not plan_id:
+                _LOGGER.warning(f"{self.room}: No plan_id in growPlan data, skipping activation")
+                return
 
-            plan_id = growPlan.get("id")
+            # Handle both list and dict formats
+            if isinstance(self.grow_plans, list):
+                all_plans = self.grow_plans
+            else:
+                all_plans = self.grow_plans.get('all_plans', [])
+            
+            _LOGGER.debug(f"ALL PLANS:{all_plans}")
 
             # Wenn der Plan schon in grow_plans steckt, nicht doppelt anhängen
-            if plan_id and not any(p.get("id") == plan_id for p in self.grow_plans.get("all_plans", [])):
-                self.grow_plans.setdefault("all_plans", []).append(growPlan)
+            if not any(p.get("id") == plan_id for p in all_plans if isinstance(p, dict)):
+                if isinstance(self.grow_plans, list):
+                    self.grow_plans.append(growPlan)
+                else:
+                    self.grow_plans.setdefault("all_plans", []).append(growPlan)
 
-            if plan_id:
-                asyncio.create_task(self.activate_grow_plan(plan_id))
+            asyncio.create_task(self.activate_grow_plan(plan_id))
 
         except Exception as e:
             _LOGGER.error(f"Fehler bei Plan-Aktivierung: {e}")
@@ -242,20 +320,35 @@ class OGBGrowPlanManager:
     async def activate_grow_plan(self, plan_id: str):
         """Aktiviert einen Grow Plan"""
         try:
+            # Validate plan_id - handle case where plan_id is a dict
+            if isinstance(plan_id, dict):
+                _LOGGER.warning(f"{self.room}: plan_id is a dict, extracting id field")
+                plan_id = plan_id.get("id")
+            
+            if not plan_id:
+                _LOGGER.warning(f"{self.room}: No plan_id provided for activation")
+                return False
+            
             # Finde den Plan
             plan = None
-            for p in self.grow_plans.get("all_plans"):
-                if p.get("id") == plan_id:
+            # Handle both list and dict formats
+            if isinstance(self.grow_plans, list):
+                all_plans = self.grow_plans
+            else:
+                all_plans = self.grow_plans.get("all_plans", [])
+            
+            for p in all_plans:
+                if isinstance(p, dict) and p.get("id") == plan_id:
                     plan = p
                     break
             
             if not plan:
-                _LOGGER.error(f"Grow Plan mit ID {plan_id} nicht gefunden")
+                _LOGGER.warning(f"{self.room}: Grow Plan mit ID {plan_id} nicht gefunden in {len(all_plans)} Plänen")
                 return False
             
             
             isValid = await self._eval_plan_settings(plan)
-                       
+                        
             
             # Aktiviere den Plan
             self.active_grow_plan = plan
@@ -300,54 +393,85 @@ class OGBGrowPlanManager:
                 break
 
     async def _update_current_week(self):
-        """Aktualisiert die aktuelle Woche basierend auf dem Startdatum"""
+        """Aktualisiert die aktuelle Woche basierend auf dem Startdatum.
+        
+        First checks for API-provided currentWeekData, then falls back to local plan data.
+        Also triggers API fetch if week data is missing.
+        """
         if not self.plan_start_date or not self.active_grow_plan:
             self.current_week = None
             self.current_week_data = None
             return
-        
-        # Prüfe ob Startdatum in der Zukunft liegt
-        if self.plan_start_date > self.currentDate:
+
+        # Prüfe ob Startdatum in der Zukunft liegt (aber nur wenn mehr als 1 Stunde in der Zukunft)
+        time_diff = self.plan_start_date - self.currentDate
+        if time_diff.total_seconds() > 3600:  # Nur wenn mehr als 1 Stunde in der Zukunft
             self.current_week = 0
             self.current_week_data = None
-            _LOGGER.warning(f"Grow Plan '{self.active_grow_plan.get('plan_name')}' ist vorgeplant. Start am {self.plan_start_date.isoformat()}")
+            plan_name = self.active_grow_plan.get('plan_name') or self.active_grow_plan.get('name') or 'Unknown'
+            _LOGGER.warning(f"Grow Plan '{plan_name}' ist vorgeplant. Start am {self.plan_start_date.isoformat()}")
             self.hass.bus.async_fire("grow_plan_week_update", {
                 "week": 0,
                 "week_data": None,
                 "plan_id": self.active_grow_plan_id,
-                "days_until_start": (self.plan_start_date - self.currentDate).days
+                "days_until_start": time_diff.days
             })
             return
-        
+
         # Berechne aktuelle Woche
         days_since_start = (self.currentDate - self.plan_start_date).days
         week_number = max(1, (days_since_start // 7) + 1)
         
-        # Finde Wochendaten im Plan
-        plan_data = self.active_grow_plan.get("weeks", [])
-        current_week_data = None
-        
-        for week_data in plan_data:
-            try:
-                week_idx = int(week_data.get("week", 0))
-                if week_idx == week_number:
-                    current_week_data = week_data
-                    break
-            except Exception:
-                continue
-        
-        # Falls keine spezifische Woche gefunden, nimm die letzte verfügbare
-        if not current_week_data and plan_data:
-            max_week = max(int(w.get("week", 0)) for w in plan_data)
-            if week_number > max_week:
-                for week_data in plan_data:
-                    if int(week_data.get("week", 0)) == max_week:
+        # NEW: First try to get week data from API-provided currentWeekData
+        api_week_data = self.data_store.getDeep("growPlan.currentWeekData")
+        if api_week_data and api_week_data.get("week") == week_number:
+            current_week_data = api_week_data
+            _LOGGER.info(f"🌱 {self.room} Using API-provided week data for week {week_number}")
+        else:
+            # Fallback: Find week data in local plan
+            plan_data_raw = self.active_grow_plan.get("weeks", [])
+            
+            # Handle JSON string format
+            plan_data = plan_data_raw
+            if isinstance(plan_data_raw, str):
+                try:
+                    parsed = json.loads(plan_data_raw)
+                    if isinstance(parsed, dict) and "weeks" in parsed:
+                        plan_data = parsed["weeks"]
+                    elif isinstance(parsed, list):
+                        plan_data = parsed
+                    else:
+                        plan_data = []
+                    _LOGGER.info(f"🌱 {self.room} Parsed weeks JSON string: {len(plan_data)} weeks")
+                except json.JSONDecodeError as e:
+                    _LOGGER.error(f"❌ {self.room} Failed to parse weeks JSON: {e}")
+                    plan_data = []
+            elif isinstance(plan_data_raw, dict):
+                plan_data = plan_data_raw.get("weeks", [])
+            
+            current_week_data = None
+            
+            for week_data in plan_data:
+                try:
+                    week_idx = int(week_data.get("week", 0))
+                    if week_idx == week_number:
                         current_week_data = week_data
                         break
-        
+                except Exception:
+                    continue
+            
+            # Falls keine spezifische Woche gefunden, nimm die letzte verfügbare
+            if not current_week_data and plan_data:
+                max_week = max(int(w.get("week", 0)) for w in plan_data)
+                if week_number > max_week:
+                    for week_data in plan_data:
+                        if int(week_data.get("week", 0)) == max_week:
+                            current_week_data = week_data
+                            break
+
         self.current_week = week_number
         self.current_week_data = current_week_data
-        
+
         if current_week_data:
             _LOGGER.warning(f"Aktuelle Woche: {week_number}, Daten: {current_week_data}")
             self.hass.bus.async_fire("grow_plan_week_update", {
@@ -356,31 +480,26 @@ class OGBGrowPlanManager:
                 "plan_id": self.active_grow_plan_id,
                 "days_since_start": days_since_start
             })
-        else:
-            _LOGGER.warning(f"Keine Daten für Woche {week_number} gefunden")
 
     def is_plan_active(self) -> bool:
         """Prüft ob ein Plan aktiv ist"""
         return self.active_grow_plan is not None and self.plan_start_date is not None
 
-    def get_current_week_number(self) -> Optional[int]:
-        """Gibt die aktuelle Wochennummer zurück"""
-        return self.current_week
-
     def get_current_week_data(self) -> Optional[Dict[str, Any]]:
-        """Gibt die Daten der aktuellen Woche zurück"""
-        return self.current_week_data
-
-    def get_plan_status(self) -> Dict[str, Any]:
-        """Gibt den aktuellen Status des Plans zurück"""
-        return {
-            "is_active": self.is_plan_active(),
-            "plan_id": self.active_grow_plan_id,
-            "start_date": self.plan_start_date.isoformat() if self.plan_start_date else None,
-            "current_week": self.current_week,
-            "current_week_data": self.current_week_data,
-            "days_since_start": (self.currentDate - self.plan_start_date).days if self.plan_start_date else None
-        }
+        """Gibt die Daten der aktuellen Woche zurück.
+        
+        First checks local cache, then falls back to data_store.
+        """
+        if self.current_week_data:
+            return self.current_week_data
+        
+        # Fallback to data_store (set by API sync)
+        stored_data = self.data_store.getDeep("growPlan.currentWeekData")
+        if stored_data:
+            self.current_week_data = stored_data
+            return stored_data
+        
+        return None
 
     async def deactivate_current_plan(self):
         """Deaktiviert den aktuellen Plan"""
@@ -421,78 +540,149 @@ class OGBGrowPlanManager:
         
         return None
 
-    def get_all_weeks_data(self) -> List[Dict[str, Any]]:
-        """Gibt alle Wochendaten des aktiven Plans zurück"""
-        if not self.active_grow_plan:
-            return []
-        
-        return self.active_grow_plan.get("weeks", [])
-
     async def force_week_update(self):
         """Forces an update of the current week"""
         self.currentDate = datetime.now(timezone.utc)
         await self._update_current_week()
 
-    def set_ws_client(self, ws_client):
-        """Set the WebSocket client for API communication"""
-        self.ws_client = ws_client
-        _LOGGER.debug(f"{self.room} - WebSocket client set for grow plan manager")
-
-    async def sync_with_api(self):
-        """Sync grow plans with the API"""
-        if not self.ws_client:
-            _LOGGER.warning(f"{self.room} - No WebSocket client available for grow plan sync")
-            return False
-
+    async def _update_entities_from_week_data(self):
+        """Update Home Assistant entities with current week data.
+        
+        This ensures all sensors and selects show the GrowPlan values.
+        Called after week data is fetched or changed.
+        """
         try:
-            # Request grow plans from API
-            result = await self.ws_client.prem_event("get_grow_plans", {
-                "event_id": "sync_request",
-                "room": self.room
-            })
-
-            if result:
-                _LOGGER.info(f"{self.room} - Successfully synced grow plans with API")
-                return True
-            else:
-                _LOGGER.warning(f"{self.room} - Failed to sync grow plans with API")
-                return False
-
+            week_data = self.data_store.getDeep("growPlan.currentWeekData")
+            if not week_data:
+                _LOGGER.debug(f"{self.room} - No week data available for entity update")
+                return
+            
+            env = week_data.get("environment", {})
+            light_cycle = env.get("lightCycle", {})
+            light_intensity = env.get("lightIntensity", {})
+            tent_mode = week_data.get("tentMode")
+            
+            _LOGGER.info(f"🌱 {self.room} Updating entities from week data...")
+            
+            # Update tentMode
+            if tent_mode:
+                await self._update_entity("ogb_tentmode", tent_mode)
+            
+            # Update temperature targets (handle both old and new format)
+            temp = env.get("temperature", {})
+            if isinstance(temp, dict):
+                day_temp = temp.get("day")
+                night_temp = temp.get("night")
+                
+                # Handle new format with min/max/optimal
+                if isinstance(day_temp, dict):
+                    if day_temp.get("max") is not None:
+                        await self._update_entity("ogb_current_temp_target", day_temp["max"])
+                    if day_temp.get("min") is not None:
+                        await self._update_entity("ogb_current_temp_target_min", day_temp["min"])
+                elif day_temp is not None:
+                    await self._update_entity("ogb_current_temp_target", day_temp)
+                    
+                if isinstance(night_temp, dict):
+                    if night_temp.get("min") is not None:
+                        await self._update_entity("ogb_current_temp_target_min", night_temp["min"])
+                elif night_temp is not None:
+                    await self._update_entity("ogb_current_temp_target_min", night_temp)
+            
+            # Update humidity targets
+            humidity = env.get("humidity", {})
+            if isinstance(humidity, dict):
+                if humidity.get("day") is not None:
+                    await self._update_entity("ogb_current_humidity_target", humidity["day"])
+                if humidity.get("night") is not None:
+                    await self._update_entity("ogb_current_humidity_target_min", humidity["night"])
+            
+            # Update VPD target
+            vpd = env.get("vpd", {})
+            if isinstance(vpd, dict) and vpd.get("target") is not None:
+                await self._update_entity("ogb_current_vpd_target", vpd["target"])
+            
+            # Update CO2 targets
+            co2 = env.get("co2", {})
+            if isinstance(co2, dict):
+                if co2.get("optimal") is not None:
+                    await self._update_entity("ogb_current_co2_target", co2["optimal"])
+                if co2.get("max") is not None:
+                    await self._update_entity("ogb_current_co2_target_max", co2["max"])
+                if co2.get("min") is not None:
+                    await self._update_entity("ogb_current_co2_target_min", co2["min"])
+                if co2.get("enabled") is not None:
+                    await self._update_entity("ogb_co2_control", co2["enabled"])
+            
+            # Update light times
+            if light_cycle:
+                start_hour = light_cycle.get("startTime")
+                on_hours = light_cycle.get("on")
+                if start_hour is not None:
+                    light_on = f"{int(start_hour):02d}:00:00"
+                    await self._update_entity("ogb_current_light_on", light_on)
+                if start_hour is not None and on_hours is not None:
+                    end_hour = (start_hour + on_hours) % 24
+                    light_off = f"{int(end_hour):02d}:00:00"
+                    await self._update_entity("ogb_current_light_off", light_off)
+                
+                # Update sunrise/sunset durations
+                sunrise_min = light_cycle.get("sunrise", 0)
+                sunset_min = light_cycle.get("sunset", 0)
+                if sunrise_min:
+                    await self._update_entity("ogb_current_sunrise_duration", sunrise_min)
+                if sunset_min:
+                    await self._update_entity("ogb_current_sunset_duration", sunset_min)
+            
+            # Update light intensity
+            if isinstance(light_intensity, dict):
+                if light_intensity.get("min") is not None:
+                    await self._update_entity("ogb_current_light_intensity_min", light_intensity["min"])
+                if light_intensity.get("max") is not None:
+                    await self._update_entity("ogb_current_light_intensity_max", light_intensity["max"])
+            elif isinstance(light_intensity, (int, float)):
+                await self._update_entity("ogb_current_light_intensity_max", light_intensity)
+            
+            # Update tent controls
+            tent_controls = week_data.get("tentControls", {})
+            if tent_controls:
+                night_vpd = tent_controls.get("nightVpdHold", {})
+                if night_vpd.get("enabled") is not None:
+                    await self._update_entity("ogb_night_vpd_hold", night_vpd["enabled"])
+                
+                device_damp = tent_controls.get("deviceDampening", {})
+                if device_damp.get("enabled") is not None:
+                    await self._update_entity("ogb_device_dampening", device_damp["enabled"])
+                
+                vpd_det = tent_controls.get("vpdDetermination", {})
+                if vpd_det.get("mode") is not None:
+                    await self._update_entity("ogb_vpd_determination_mode", vpd_det["mode"])
+                if vpd_det.get("enabled") is not None:
+                    await self._update_entity("ogb_vpd_determination", vpd_det["enabled"])
+                
+                drying = tent_controls.get("drying", {})
+                if drying.get("mode") is not None:
+                    await self._update_entity("ogb_drying_mode", drying["mode"])
+                if drying.get("enabled") is not None:
+                    await self._update_entity("ogb_drying", drying["enabled"])
+            
+            _LOGGER.info(f"🌱 {self.room} Entity update completed")
+            
         except Exception as e:
-            _LOGGER.error(f"{self.room} - Error syncing grow plans with API: {e}")
-            return False
-
-    def __del__(self):
-        """Cleanup when destroying the instance"""
-        if self._daily_update_task and not self._daily_update_task.done():
-            self._daily_update_task.cancel()
-
-    async def async_shutdown(self):
-        """Cleanup tasks and listeners to avoid restart-time leaks."""
-        if self._init_task and not self._init_task.done():
-            self._init_task.cancel()
-            try:
-                await self._init_task
-            except asyncio.CancelledError:
-                pass
-
-        if self._daily_update_task and not self._daily_update_task.done():
-            self._daily_update_task.cancel()
-            try:
-                await self._daily_update_task
-            except asyncio.CancelledError:
-                pass
-
-        for unsub in self._ha_unsubscribers:
-            try:
-                unsub()
-            except Exception:
-                pass
-        self._ha_unsubscribers.clear()
-
-        for event_name, callback in self._event_bindings:
-            try:
-                self.event_manager.remove(event_name, callback)
-            except Exception:
-                pass
-        self._event_bindings.clear()
+            _LOGGER.error(f"❌ {self.room} Error updating entities from week data: {e}")
+    
+    async def _update_entity(self, entity_prefix, value):
+        """Helper to update a specific entity."""
+        try:
+            from ...utils.sensorUpdater import _update_specific_sensor, _update_specific_select
+            
+            # Try sensor update first
+            if await _update_specific_sensor(entity_prefix, self.room, value, self.hass):
+                return
+            
+            # Try select update if sensor fails
+            if await _update_specific_select(entity_prefix, self.room, value, self.hass):
+                return
+                
+        except Exception as e:
+            _LOGGER.debug(f"{self.room} - Could not update entity {entity_prefix}: {e}")

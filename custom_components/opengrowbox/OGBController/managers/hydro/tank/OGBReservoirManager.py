@@ -204,7 +204,7 @@ class OGBReservoirManager:
                     break
             
             if not self.reservoir_sensor_entity and log_missing:
-                _LOGGER.warning(f"[{self.room}] No reservoir sensor found")
+                _LOGGER.debug(f"[{self.room}] No reservoir sensor found")
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error finding reservoir sensor: {e}")
@@ -285,7 +285,7 @@ class OGBReservoirManager:
                         return
             
             if not self.reservoir_pump_entity and log_missing:
-                _LOGGER.warning(f"[{self.room}] No reservoir pump found - auto-fill disabled")
+                _LOGGER.debug(f"[{self.room}] No reservoir pump found - auto-fill disabled")
                 _LOGGER.info(
                     f"[{self.room}] To enable auto-fill, add a device with label 'reservoir_pump' "
                     f"or deviceType 'ReservoirPump'"

@@ -718,6 +718,27 @@ class OGBWebSocketConManager:
             logging.error(f"❌ {self.ws_room} WebSocket connection error: {e}")
             return False
 
+    async def request_grow_plans(self):
+        """Request grow plans from server via V1 WebSocket"""
+        try:
+            if not self.sio.connected or not self.authenticated:
+                logging.warning(f"⚠️ {self.ws_room} Cannot request grow plans - not connected")
+                return False
+            
+            event_id = f"get-plans-{int(time.time())}"
+            request_data = {
+                "event_id": event_id,
+                "timestamp": time.time()
+            }
+            
+            logging.info(f"📤 {self.ws_room} Requesting grow plans from server")
+            await self.sio.emit("v1:management:get-plans", request_data, namespace=self._v1_namespace)
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error requesting grow plans: {e}")
+            return False
+
     async def _request_session_key(self, event_id: str = None, room_id: str = None):
         """Request new session key from server"""
         try:
@@ -1624,7 +1645,39 @@ class OGBWebSocketConManager:
                 
             except Exception as e:
                 logging.error(f"❌ {self.ws_room} Error handling connection_status: {e}")
-        
+
+        async def _handle_grow_plans_changed_event(data, event_name="plan_changed"):
+            """Handle plan change events from server and forward to PremiumIntegration."""
+            try:
+                plan_id = data.get("plan_id")
+                plan_name = data.get("plan_name")
+                action = data.get("action", "sync")
+                source = data.get("source", "unknown")
+                scheduled = data.get("scheduled", False)
+
+                logging.info(
+                    f"📊 {self.ws_room} {event_name}: plan_id={plan_id}, plan_name={plan_name}, "
+                    f"action={action}, source={source}, scheduled={scheduled}"
+                )
+
+                # connection_status will usually follow with full plan/features/limits snapshot.
+                # Forward explicit event immediately so PremiumIntegration can trigger notifications.
+                emit_data = {
+                    "plan_id": plan_id,
+                    "plan_name": plan_name,
+                    "action": action,
+                    "source": source,
+                    "scheduled": scheduled,
+                    "timestamp": data.get("timestamp", time.time()),
+                }
+
+                logging.info(f"📤 {self.ws_room} Emitting plan_changed event to event_manager: {emit_data}")
+                await self._safe_emit("plan_changed", emit_data, haEvent=True)
+                logging.info(f"✅ {self.ws_room} plan_changed event emitted successfully")
+
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling {event_name}: {e}")
+
         async def _handle_plan_changed_event(data, event_name="plan_changed"):
             """Handle plan change events from server and forward to PremiumIntegration."""
             try:
@@ -1664,7 +1717,48 @@ class OGBWebSocketConManager:
         @self.sio.on("v1:management:plan-changed", namespace=ns)
         async def on_v1_plan_changed(data):
             await _handle_plan_changed_event(data, "v1:management:plan-changed")
-        
+
+        @self.sio.on("v1:plans:get:response", namespace=ns)
+        async def on_v1_get_plans_response(data):
+            """Handle grow plans data response from server"""
+            try:
+                active_plan = data.get("activePlan")
+                current_week = data.get("currentWeek", 1)
+                week_data = data.get("weekData")
+                
+                if active_plan:
+                    logging.info(
+                        f"📊 {self.ws_room} Received grow plan data: "
+                        f"plan={active_plan.get('name')}, week={current_week}/{active_plan.get('totalWeeks')}"
+                    )
+                    
+                    # Store active grow plan
+                    self.active_grow_plan = {
+                        "id": active_plan.get("id"),
+                        "name": active_plan.get("name"),
+                        "strain": active_plan.get("strain"),
+                        "status": active_plan.get("status"),
+                        "current_week": current_week,
+                        "total_weeks": active_plan.get("totalWeeks"),
+                        "start_date": active_plan.get("startDate"),
+                        "week_data": week_data
+                    }
+                    
+                    # Emit to event manager for PremiumIntegration
+                    emit_data = {
+                        "type": "grow_plan_data",
+                        "plan": self.active_grow_plan,
+                        "timestamp": data.get("timestamp", time.time())
+                    }
+                    
+                    await self._safe_emit("grow_plan_data", emit_data, haEvent=True)
+                    logging.info(f"✅ {self.ws_room} Grow plan data emitted successfully")
+                else:
+                    logging.warning(f"⚠️ {self.ws_room} No active grow plan received")
+                    
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling grow plan data: {e}")
+
         @self.sio.on("storage_limit_reached", namespace=ns)
         async def on_storage_limit_reached(data):
             """Handle storage_limit_reached event from server"""
@@ -1839,12 +1933,13 @@ class OGBWebSocketConManager:
         try:
             logging.info(f"📊 {self.ws_room} Processing api_usage_update: {data}")
             
-            # New consistent API structure: { plan, features, limits, usage, timestamp, ... }
+            # New consistent API structure: { plan, features, limits, usage, activeGrowPlan, timestamp, ... }
             # API may send "plan" (snake_case) or "planName" (from API response)
             server_plan = data.get("plan") or data.get("plan_name")
             features = data.get("features", {})
             limits = data.get("limits", {})
             usage = data.get("usage", {})
+            active_grow_plan = data.get("activeGrowPlan")
             
             # Extract usage fields
             active_connections = usage.get("activeConnections", 0)
@@ -1905,18 +2000,29 @@ class OGBWebSocketConManager:
             self.subscription_data["usage"]["activeRooms"] = active_rooms
             self.subscription_data["usage"]["roomsUsed"] = len(active_rooms)
             
+            # Store active grow plan if present
+            if active_grow_plan:
+                logging.info(
+                    f"🌱 {self.ws_room} Active grow plan: "
+                    f"name={active_grow_plan.get('name')}, "
+                    f"strain={active_grow_plan.get('strainName')}, "
+                    f"week={active_grow_plan.get('elapsedWeeks')}/{active_grow_plan.get('maxWeeks')}"
+                )
+                self.subscription_data["active_grow_plan"] = active_grow_plan
+
             # Emit to Premium Integration with FULL structure
             emit_data = {
                 "plan": server_plan,
                 "features": features,
                 "limits": limits,
                 "usage": self.subscription_data.get("usage", {}),
+                "activeGrowPlan": active_grow_plan,
                 "timestamp": data.get("timestamp", time.time()),
                 "source": data.get("source", "WebSocket")
             }
-            
+
             await self._safe_emit("api_usage_update", emit_data, haEvent=True)
-            
+
             logging.info(
                 f"📊 {self.ws_room} Processed api_usage_update: "
                 f"plan={server_plan}, rooms={len(active_rooms)}, connections={active_connections}"
@@ -1943,7 +2049,7 @@ class OGBWebSocketConManager:
                     self.subscription_data["plan_name"] = server_plan
                     logging.info(f"📊 {self.ws_room} Updated plan_name in subscription_data: {server_plan}")
             
-            # Wrap in 'usage' object for frontend compatibility 
+            # Wrap in 'usage' object for frontend compatibility
             # Frontend expects: { usage: {...}, timestamp: ..., lastEndpoint: ..., lastMethod: ... }
             emit_data = {
                 "usage": {
@@ -1955,11 +2061,12 @@ class OGBWebSocketConManager:
                     "activeRooms": active_rooms if isinstance(active_rooms, list) else [],
                     "plan_name": server_plan
                 },
+                "activeGrowPlan": active_grow_plan,
                 "timestamp": data.get("timestamp", time.time()),
                 "lastEndpoint": data.get("lastEndpoint"),
                 "lastMethod": data.get("lastMethod"),
             }
-            
+
             # Emit to Home Assistant frontend
             await self._safe_emit("api_usage_update", emit_data, haEvent=True)
             logging.info(f"📊 {self.ws_room} Emitted api_usage_update to HA: plan={server_plan}, rooms={rooms_used}, activeConnections={active_connections}, apiCalls={emit_data['usage']['apiCallsThisMonth']}, storageGB={emit_data['usage']['storageUsedGB']}")

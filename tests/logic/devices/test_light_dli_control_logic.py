@@ -208,8 +208,8 @@ async def test_sunrise_with_user_minmax_active():
     
     # Should start from user min (25%) and go to user max (85%)
     assert len(brightness_values) == 10
-    # First step should be start + 1 step = 25 + 6 = 31
-    assert brightness_values[0] == 31.0
+    # First step should be exactly start_voltage (25%) - fixed to use start_voltage directly
+    assert brightness_values[0] == 25.0
     # Last step should be exactly target voltage
     assert brightness_values[-1] == 85.0
 
@@ -229,8 +229,8 @@ async def test_sunrise_with_plant_stage_minmax():
     
     # EarlyVeg: min=20%, max=35%
     assert len(brightness_values) == 10
-    # voltage_step = (35-20)/10 = 1.5, step 1 = 20 + 1.5*1 = 21.5, round(21.5) = 22
-    assert brightness_values[0] == 22.0
+    # First step should be exactly start_voltage (20%) - fixed to use start_voltage directly
+    assert brightness_values[0] == 20.0
     assert brightness_values[-1] == 35.0
 
 
@@ -250,7 +250,7 @@ async def test_sunrise_without_user_minmax_or_plant_stage():
     
     # Should start from default 20% and go to maxVoltage (100%)
     assert len(brightness_values) == 10
-    assert brightness_values[0] == 28.0  # 20 + (80/10) = 28
+    assert brightness_values[0] == 20.0  # First step is start_voltage directly
     assert brightness_values[-1] == 100.0
 
 
@@ -269,8 +269,8 @@ async def test_sunrise_with_flower_stage():
     
     # LateFlower: min=70%, max=100%
     assert len(brightness_values) == 10
-    # voltage_step = (100-70)/10 = 3, step 1 = 70 + 3*1 = 73
-    assert brightness_values[0] == 73.0
+    # First step is start_voltage directly (70%)
+    assert brightness_values[0] == 70.0
     assert brightness_values[-1] == 100.0
 
 
@@ -295,8 +295,8 @@ async def test_sunrise_respects_user_minmax_over_plant_stage():
     
     # Should use user minmax (30-90%), NOT plant stage (70-100%)
     assert len(brightness_values) == 10
-    # voltage_step = (90-30)/10 = 6, step 1 = 30 + 6*1 = 36
-    assert brightness_values[0] == 36.0
+    # First step is start_voltage directly (30%)
+    assert brightness_values[0] == 30.0
     assert brightness_values[-1] == 90.0
 
 
@@ -325,8 +325,8 @@ async def test_sunrise_light_turned_off():
     
     async def fake_turn_on(**kwargs):
         brightness_values.append(kwargs.get("brightness_pct"))
-        # Turn off light after first step
-        light.islightON = False
+        # Stop sunrise after first step by deactivating sunrise phase
+        light.sunrise_phase_active = False
     
     light.turn_on = fake_turn_on
     

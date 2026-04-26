@@ -231,6 +231,11 @@ class OGBDeviceManager:
                     currentCap["devEntities"].remove(deviceToRemove.deviceName)
                     currentCap["count"] = max(0, currentCap["count"] - 1)
                     currentCap["state"] = currentCap["count"] > 0
+
+                    # Remove from deviceData
+                    if "deviceData" in currentCap and deviceToRemove.deviceName in currentCap["deviceData"]:
+                        del currentCap["deviceData"][deviceToRemove.deviceName]
+
                     self.data_store.setDeep(capPath, currentCap)
                     _LOGGER.warning(
                         f"{self.room} - Updated capability '{cap}' after removing device {deviceToRemove.deviceName}"
@@ -583,7 +588,7 @@ class OGBDeviceManager:
         self.data_store.set("devices", [])
 
         for key in capabilities:
-            capabilities[key] = {"state": False, "count": 0, "devEntities": []}
+            capabilities[key] = {"state": False, "count": 0, "devEntities": [], "deviceData": {}}
 
         self.data_store.set("capabilities", capabilities)
         _LOGGER.debug(f"{self.room}: Cleared Caps and Devices")

@@ -246,12 +246,21 @@ class OGBModbusDevice(Device):
 
             for cap in capabilities:
                 if cap not in current_caps:
-                    current_caps[cap] = {"state": False, "count": 0, "devEntities": []}
+                    current_caps[cap] = {"state": False, "count": 0, "devEntities": [], "deviceData": {}}
 
                 if self.deviceName not in current_caps[cap]["devEntities"]:
                     current_caps[cap]["state"] = True
                     current_caps[cap]["count"] += 1
                     current_caps[cap]["devEntities"].append(self.deviceName)
+
+                # Add device data to deviceData
+                if "deviceData" not in current_caps[cap]:
+                    current_caps[cap]["deviceData"] = {}
+                current_caps[cap]["deviceData"][self.deviceName] = {
+                    "on_off": self.isRunning,
+                    "is_dimmable": self.isDimmable,
+                    "dimm_value": getattr(self, 'voltage', None) if self.deviceType.lower() == 'light' else getattr(self, 'dutyCycle', None)
+                }
 
             self.data_store.setDeep("capabilities", current_caps)
             _LOGGER.info(f"Registered Modbus device {self.deviceName} with capabilities: {capabilities}")

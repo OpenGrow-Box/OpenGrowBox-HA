@@ -273,9 +273,10 @@ class Device:
         self.identifySwitchesAndSensors(clean_entitys)
         self.identifyIfRunningState()
         self.identifyIfDimmable()
-        self.checkMinMax("Init")        
-        self.checkForControlValue()     
+        self.checkMinMax("Init")
+        self.checkForControlValue()
         self.identifyCapabilities()
+        self._update_deviceData_in_capabilities()
         if(self.initialization == True):
             self.initialization = False
             self.isInitialized = True
@@ -682,7 +683,7 @@ class Device:
         # Initialize capabilities in dataStore if not present
         if not self.dataStore.get("capabilities"):
             self.dataStore.setDeep("capabilities", {
-                cap: {"state": False, "count": 0, "devEntities": []} for cap in CAP_MAPPING
+                cap: {"state": False, "count": 0, "devEntities": [], "deviceData": {}} for cap in CAP_MAPPING
             })
 
         # Find matching capability for this device type
@@ -717,11 +718,37 @@ class Device:
                 currentCap["count"] += 1
                 currentCap["devEntities"].append(self.deviceName)
 
+                # Add device data to deviceData
+                if "deviceData" not in currentCap:
+                    currentCap["deviceData"] = {}
+                currentCap["deviceData"][self.deviceName] = {
+                    "on_off": self.isRunning,
+                    "is_dimmable": self.isDimmable,
+                    "dimm_value": getattr(self, 'voltage', None) if self.deviceType.lower() == 'light' else getattr(self, 'dutyCycle', None)
+                }
+
                 # Write updated data back to dataStore
                 self.dataStore.setDeep(capPath, currentCap)
 
         # Log final capabilities state
         _LOGGER.debug(f"{self.deviceName}: Final capabilities: {self.dataStore.get('capabilities')}")
+
+    def _update_deviceData_in_capabilities(self):
+        """Update deviceData in all capabilities this device belongs to."""
+        capabilities = self.dataStore.get("capabilities") or {}
+
+        for cap, deviceTypes in CAP_MAPPING.items():
+            if self.deviceType.lower() in (dt.lower() for dt in deviceTypes):
+                capPath = f"capabilities.{cap}"
+                currentCap = self.dataStore.getDeep(capPath)
+
+                if currentCap and "deviceData" in currentCap and self.deviceName in currentCap["deviceData"]:
+                    currentCap["deviceData"][self.deviceName] = {
+                        "on_off": self.isRunning,
+                        "is_dimmable": self.isDimmable,
+                        "dimm_value": getattr(self, 'voltage', None) if self.deviceType.lower() == 'light' else getattr(self, 'dutyCycle', None)
+                    }
+                    self.dataStore.setDeep(capPath, currentCap)
 
     def identifyIfRunningState(self):
 
@@ -2616,6 +2643,7 @@ class Device:
                 if updated:
                     try:
                         self.checkForControlValue(force_update=True)
+                        self._update_deviceData_in_capabilities()
                         _LOGGER.info(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Sensor-Update")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
@@ -2626,6 +2654,7 @@ class Device:
                 if updated:
                     try:
                         self.checkForControlValue(force_update=True)
+                        self._update_deviceData_in_capabilities()
                         _LOGGER.info(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Option-Update")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
@@ -2636,6 +2665,7 @@ class Device:
                 if updated:
                     try:
                         self.identifyIfRunningState()
+                        self._update_deviceData_in_capabilities()
                         _LOGGER.info(f"{self.deviceName}: Running state → {self.isRunning} nach {entity_id} = {new_state_value}")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler beim Aktualisieren des Running-State: {e}")

@@ -639,11 +639,15 @@ class OGBRegistryEvenListener:
                 # Remove device from capability
                 cap_data["devEntities"].remove(entry.entity_id)
                 cap_data["count"] = len(cap_data["devEntities"])
-                
+
+                # Remove from deviceData
+                if "deviceData" in cap_data and entry.entity_id in cap_data["deviceData"]:
+                    del cap_data["deviceData"][entry.entity_id]
+
                 # Update state if no devices left
                 if cap_data["count"] == 0:
                     cap_data["state"] = False
-                
+
                 # Update capabilities
                 self.data_store.setDeep(f"capabilities.{cap}", cap_data)
                 

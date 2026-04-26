@@ -275,7 +275,7 @@ class FridgeGrowDevice(Device):
         currentCap = self.dataStore.getDeep(capPath)
         
         if not currentCap:
-            currentCap = {"state": False, "count": 0, "devEntities": []}
+            currentCap = {"state": False, "count": 0, "devEntities": [], "deviceData": {}}
         
         # Check for duplicates
         if self.deviceName in currentCap.get("devEntities", []):
@@ -288,9 +288,18 @@ class FridgeGrowDevice(Device):
         currentCap["state"] = True
         currentCap["count"] = currentCap.get("count", 0) + 1
         currentCap["devEntities"].append(self.deviceName)
-        
+
+        # Add device data to deviceData
+        if "deviceData" not in currentCap:
+            currentCap["deviceData"] = {}
+        currentCap["deviceData"][self.deviceName] = {
+            "on_off": self.isRunning,
+            "is_dimmable": self.isDimmable,
+            "dimm_value": getattr(self, 'voltage', None) if self.deviceType.lower() == 'light' else getattr(self, 'dutyCycle', None)
+        }
+
         self.dataStore.setDeep(capPath, currentCap)
-        
+
         _LOGGER.info(
             f"FridgeGrow '{self.deviceName}' registered for capability '{capability}' "
             f"(count: {currentCap['count']})"

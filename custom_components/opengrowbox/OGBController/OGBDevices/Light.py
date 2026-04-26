@@ -286,10 +286,10 @@ class Light(Device):
                 return None
 
         self.lightOnTime = parse_to_time(
-            self.data_store.getDeep("isPlantDay.lightOnTime")
+            self.data_store.get_active_value("isPlantDay.lightOnTime")
         )
         self.lightOffTime = parse_to_time(
-            self.data_store.getDeep("isPlantDay.lightOffTime")
+            self.data_store.get_active_value("isPlantDay.lightOffTime")
         )
 
         sun_rise = self.data_store.getDeep("isPlantDay.sunRiseTime")
@@ -326,10 +326,10 @@ class Light(Device):
                 return None
 
         self.lightOnTime = parse_to_time(
-            self.data_store.getDeep("isPlantDay.lightOnTime")
+            self.data_store.get_active_value("isPlantDay.lightOnTime")
         )
         self.lightOffTime = parse_to_time(
-            self.data_store.getDeep("isPlantDay.lightOffTime")
+            self.data_store.get_active_value("isPlantDay.lightOffTime")
         )
 
     ## Helpers
@@ -476,18 +476,18 @@ class Light(Device):
                 # Normaler Fall (keine Überschreitung von Mitternacht)
                 return start_minutes <= current_minutes <= end_minutes
         else:
-            # Für SunRise: Fenster VOR der Zielzeit (Offset subtrahieren)
-            start_minutes = target_minutes - duration_minutes
-            end_minutes = target_minutes
+            # Für SunRise: Fenster NACH der Zielzeit (SunRise startet bei LightOnTime)
+            start_minutes = target_minutes
+            end_minutes = target_minutes + duration_minutes
 
             # Check normalen Fall (keine Überschreitung von Mitternacht)
-            if start_minutes >= 0:  # Starts after midnight
+            if end_minutes < 24 * 60:  # Ends before midnight
                 return start_minutes <= current_minutes <= end_minutes
             else:
-                # Time window crosses midnight into previous day
-                start_minutes_wrapped = start_minutes + (24 * 60)
-                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
-                    0 <= current_minutes <= end_minutes
+                # Time window crosses midnight into next day
+                end_minutes_wrapped = end_minutes - (24 * 60)
+                return (start_minutes <= current_minutes < 24 * 60) or (
+                    0 <= current_minutes <= end_minutes_wrapped
                 )
 
     # SunPhases
@@ -638,7 +638,7 @@ class Light(Device):
             plantStage = self.data_store.get("plantStage")
 
             # Start voltage: User Min (wenn aktiv) → Plant Stage Min → 20%
-            if self._has_user_defined_minmax() and self.minVoltage is not None and self.minVoltage > 0:
+            if self._has_user_defined_minmax() and self.minVoltage is not None:
                 start_voltage = float(self.minVoltage)
                 voltage_source_min = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
@@ -649,7 +649,7 @@ class Light(Device):
                 voltage_source_min = "Default 20%"
 
             # Target voltage: User Max (wenn aktiv) → Plant Stage Max → self.maxVoltage
-            if self._has_user_defined_minmax() and self.maxVoltage is not None and self.maxVoltage > 0:
+            if self._has_user_defined_minmax() and self.maxVoltage is not None:
                 target_voltage = float(self.maxVoltage)
                 voltage_source_max = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
@@ -660,14 +660,16 @@ class Light(Device):
                 voltage_source_max = "maxVoltage"
 
             step_duration = self.sunRiseDuration / 10
-            voltage_step = (target_voltage - start_voltage) / 10
+            # 9 intervals for 10 steps to reach target at step 10
+            voltage_step = (target_voltage - start_voltage) / 9
 
             self.sunPhaseActive = True
             _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% ({voltage_source_min}) bis {target_voltage}% ({voltage_source_max})")
 
             for i in range(1, 11):
-                if not self.islightON:
-                    _LOGGER.warning(f"{self.deviceName}: ⚠️ SunRise abgebrochen - islightON ist False! (Step {i}/10)")
+                # Check if SunRise phase is still active (instead of islightON to avoid race conditions)
+                if not self.sunrise_phase_active:
+                    _LOGGER.warning(f"{self.deviceName}: ⚠️ SunRise abgebrochen - sunrise_phase_active ist False! (Step {i}/10)")
                     break
 
                 if self.sun_phase_paused:
@@ -728,7 +730,7 @@ class Light(Device):
             plantStage = self.data_store.get("plantStage")
 
             # Start voltage: User Max (wenn aktiv) → Plant Stage Max → self.maxVoltage
-            if self._has_user_defined_minmax() and self.maxVoltage is not None and self.maxVoltage > 0:
+            if self._has_user_defined_minmax() and self.maxVoltage is not None:
                 start_voltage = float(self.maxVoltage)
                 voltage_source_start = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
@@ -739,7 +741,7 @@ class Light(Device):
                 voltage_source_start = "maxVoltage"
 
             # Target voltage: User Min (wenn aktiv) → Plant Stage Min → initVoltage
-            if self._has_user_defined_minmax() and self.minVoltage is not None and self.minVoltage > 0:
+            if self._has_user_defined_minmax() and self.minVoltage is not None:
                 target_voltage = float(self.minVoltage)
                 voltage_source_target = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
@@ -832,6 +834,15 @@ class Light(Device):
             target_state = target_state_raw.strip().lower() in {"1", "true", "on", "yes"}
         else:
             target_state = bool(target_state_raw)
+
+        # CRITICAL: During SunRise/Sunset phases, ignore toggleLight(OFF) to prevent race conditions
+        # The SunRise/Sunset sequence manages the light state during these transitions
+        if not target_state and (self.sunrise_phase_active or self.sunset_phase_active):
+            _LOGGER.debug(
+                f"{self.deviceName}: Ignoring toggleLight(OFF) during SunRise/Sunset phase - "
+                f"sunrise_active={self.sunrise_phase_active}, sunset_active={self.sunset_phase_active}"
+            )
+            return
 
         self.islightON = target_state
         self.ogbLightControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
@@ -1105,8 +1116,8 @@ class Light(Device):
             f"💡 {self.deviceName}: Current DLI: {dli}, Target DLI: {dli_target_week}"
         )
 
-        # Get light min max
-        device_minmax = self.data_store.getDeep("DeviceMinMax.Light")
+        # Get light min max - use get_active_value to support GrowPlan overrides
+        device_minmax = self.data_store.get_active_value("DeviceMinMax.Light")
         if not device_minmax:
             _LOGGER.warning(f"💡 {self.deviceName}: DeviceMinMax.Light not found in DataStore. Using defaults.")
             light_min_max_active = False
@@ -1129,10 +1140,10 @@ class Light(Device):
             light_max = 100.0
         else:
             light_min = float(
-                self.data_store.getDeep("DeviceMinMax.Light").get("minVoltage")
+                self.data_store.get_active_value("DeviceMinMax.Light").get("minVoltage")
             )
             light_max = float(
-                self.data_store.getDeep("DeviceMinMax.Light").get("maxVoltage")
+                self.data_store.get_active_value("DeviceMinMax.Light").get("maxVoltage")
             )
 
             # Validate voltage ranges - must be 0-100% for brightness control

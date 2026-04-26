@@ -262,7 +262,7 @@ class OGBWizardManager:
         """Re-emit current plant stage so listeners apply updated stage presets immediately."""
         current_stage = self.data_store.get("plantStage")
         if not current_stage:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "[%s] No current plantStage set after wizard %s apply; skipping reapply event",
                 self.room,
                 source,
