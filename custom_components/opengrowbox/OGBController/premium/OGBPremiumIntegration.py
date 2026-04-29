@@ -219,6 +219,10 @@ class OGBPremiumIntegration:
     async def init(self):
         """Initialize Premium Manager."""
 
+
+        if self.room.lower == "ambient":
+            return
+
         # Get or create room ID first
         await self._get_or_create_room_id()
 
@@ -816,7 +820,7 @@ class OGBPremiumIntegration:
 
             # Store active grow plan info if present
             if active_grow_plan:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🌱 {self.room} Active grow plan received: "
                     f"name={active_grow_plan.get('name')}, "
                     f"strain={active_grow_plan.get('strainName')}, "
@@ -824,16 +828,24 @@ class OGBPremiumIntegration:
                 )
                 if not self.subscription_data:
                     self.subscription_data = {}
+
                 self.subscription_data["active_grow_plan"] = active_grow_plan
                 # Also store in data_store for frontend access
                 self.data_store.set("activeGrowPlan", active_grow_plan)
 
+                _LOGGER.debug(f"{self.subscription_data}")
+
+
+                #self.growPlanManager.activate_grow_plan()
+
+
                 # Update GrowPlanManager with active plan info via dedicated method
                 if self.growPlanManager:
-                    self.growPlanManager.update_active_plan_from_api(active_grow_plan)
-                    _LOGGER.info(
+                   # self.growPlanManager.update_active_plan_from_api(active_grow_plan)
+                    _LOGGER.debug(
                         f"🌱 {self.room} Updated GrowPlanManager via API: "
                         f"plan_id={self.growPlanManager.active_grow_plan_id}, "
+                        f"week={self.growPlanManager.current_week}"
                         f"week={self.growPlanManager.current_week}"
                     )
 

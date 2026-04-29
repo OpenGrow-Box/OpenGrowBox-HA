@@ -52,7 +52,6 @@ class OGBGrowPlanManager:
     async def init(self):
         """Initialize Grow Plan Manager"""
         self._setup_event_listeners()
-        #await self._load_saved_state()
         await self._start_daily_update_timer()
         _LOGGER.debug(f"OGB Grow Plan Manager initialized for room: {self.room}")
 
@@ -69,34 +68,6 @@ class OGBGrowPlanManager:
         self.event_manager.on(event_name, callback)
         self._event_bindings.append((event_name, callback))        
             
-    async def _load_saved_state(self):
-        """Lade gespeicherten Zustand wenn vorhanden"""
-        try:
-            state = await _load_state_securely(f"grow_plan_state_{self.room}")
-            if state:
-                self.active_grow_plan_id = state.get("active_grow_plan_id")
-                self.plan_start_date = state.get("plan_start_date")
-                if self.plan_start_date:
-                    self.plan_start_date = datetime.fromisoformat(self.plan_start_date)
-                
-                # Lade aktiven Plan
-                if self.active_grow_plan_id:
-                    await self._load_active_plan()
-                    
-        except Exception as e:
-            _LOGGER.error(f"Fehler beim Laden des gespeicherten Zustands: {e}")
-
-    async def _save_current_state(self):
-        """Speichere aktuellen Zustand"""
-        try:
-            state = {
-                "active_grow_plan_id": self.active_grow_plan_id,
-                "plan_start_date": self.plan_start_date.isoformat() if self.plan_start_date else None
-            }
-            await _save_state_securely(f"grow_plan_state_{self.room}", state)
-        except Exception as e:
-            _LOGGER.error(f"Fehler beim Speichern des Zustands: {e}")
-
     async def _start_daily_update_timer(self):
         """Startet Timer für tägliche Aktualisierungen (00:00 und 12:00)"""
         if self._daily_update_task:
@@ -346,9 +317,7 @@ class OGBGrowPlanManager:
                 _LOGGER.warning(f"{self.room}: Grow Plan mit ID {plan_id} nicht gefunden in {len(all_plans)} Plänen")
                 return False
             
-            
             isValid = await self._eval_plan_settings(plan)
-                        
             
             # Aktiviere den Plan
             self.active_grow_plan = plan

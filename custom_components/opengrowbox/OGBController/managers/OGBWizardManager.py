@@ -63,7 +63,7 @@ class OGBWizardManager:
                 mode = "live"
             active_source = mode
 
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Wizard plant config request received | room=%s requested_room=%s mode=%s request_id=%s",
                 self.room,
                 requested_room,
@@ -72,7 +72,7 @@ class OGBWizardManager:
             )
 
             if requested_room and requested_room != str(self.room).lower():
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Ignoring wizard plant config request for room %s because current controller is %s",
                     requested_room,
                     self.room,
@@ -130,7 +130,7 @@ class OGBWizardManager:
                 plant_stages=plant_config,
                 light_plant_stages=light_plant_stages,
             )
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Wizard plant config response sent | room=%s mode=%s request_id=%s source=%s",
                 self.room,
                 mode,
