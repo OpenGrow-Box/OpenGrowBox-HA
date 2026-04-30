@@ -461,13 +461,22 @@ def extract_context_from_entity(entity_id, sensor_type=None):
     
     # Priorisierung: Manche Sensor-Typen haben IMMER einen festen Kontext
     FIXED_CONTEXT_SENSORS = {
+        # AIR CONTEXT
         "light": "air",
         "co2": "air",
         "dewpoint": "air",
         "vpd": "air",
         "humidity": "air",  # Luftfeuchtigkeit ist immer air
+        "temperature": "air",  # Air temperature sensors (default)
+        
+        # SOIL CONTEXT
         "moisture": "soil",  # Bodenfeuchtigkeit ist immer soil
         "weight": "soil",
+        "conductivity": "soil",  # Soil conductivity sensors
+        "battery": "soil",  # Battery status for soil sensors
+        "illuminance": "soil",  # Light sensors at plant level
+
+        # WATER CONTEXT
         "tds": "water",
         "salinity": "water",
         "oxidation": "water",
@@ -476,10 +485,7 @@ def extract_context_from_entity(entity_id, sensor_type=None):
         "tds": "water", # TDS sensors are water-based (reservoir)
         "orp": "water", # ORP sensors are water-based (reservoir)      
         "ph": "water",  # pH sensors are water-based (reservoir)
-        "conductivity": "soil",  # Soil conductivity sensors
-        "temperature": "soil",  # Substrate temperature sensors
-        "battery": "soil",  # Battery status for soil sensors
-        "illuminance": "soil",  # Light sensors at plant level
+
         # Energy sensors
         "power": "energy",
         "energy": "energy",

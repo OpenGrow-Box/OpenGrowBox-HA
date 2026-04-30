@@ -185,21 +185,7 @@ class Sensor:
             # Medium ermitteln
             medium_label = next((lid for lid in label_ids if "medium" in lid), None)
 
-            # Kontext bestimmen
-            if "soil" in label_ids or medium_label:
-                context = "soil"
-            elif "air" in label_ids:
-                context = "air"
-            elif "water" in label_ids:
-                context = "water"
-            elif "dli" in label_ids or "ppfd" in label_ids:
-                context = "light"
-            elif "energy" in label_ids:
-                context = "energy"
-            else:
-                context = extract_context_from_entity(entity_id) or "other"
-
-            # Sensor-Typen anhand Label + Translation + englischem Fallback bestimmen
+            # 1. Sensor-Typen zuerst bestimmen (für Kontext-Ermittlung benötigt)
             # Use merged labels (entity labels + device-level labels), not only entry labels.
             sensor_types = resolve_sensor_types(entity_id, entity_labels)
 
@@ -207,10 +193,29 @@ class Sensor:
                 suffix = entity_id.split("_")[-1].lower()
                 unrecognized_suffixes.append(suffix)
                 _LOGGER.warning(f"[{self.room}] ⚠️ UNRECOGNIZED sensor suffix: '{suffix}' from {entity_id}")
+                # Kontext trotzdem bestimmen für nicht erkannte Sensoren
+                context = extract_context_from_entity(entity_id) or "other"
             else:
                 _LOGGER.debug(
                     f"[{self.room}] Resolved sensor types {sensor_types} for {entity_id}"
                 )
+                
+                # 2. Kontext bestimmen (mit sensor_type wenn verfügbar)
+                primary_sensor_type = sensor_types[0] if sensor_types else None
+                
+                if "soil" in label_ids or medium_label:
+                    context = "soil"
+                elif "air" in label_ids:
+                    context = "air"
+                elif "water" in label_ids:
+                    context = "water"
+                elif "dli" in label_ids or "ppfd" in label_ids:
+                    context = "light"
+                elif "energy" in label_ids:
+                    context = "energy"
+                else:
+                    # WICHTIG: sensor_type an extract_context_from_entity übergeben!
+                    context = extract_context_from_entity(entity_id, primary_sensor_type) or "other"
 
             # Sensoren registrieren
             for sensor_type in sensor_types:
