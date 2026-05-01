@@ -40,6 +40,11 @@ class FakeDataStore:
         if isinstance(cur, dict) and parts[-1] in cur:
             del cur[parts[-1]]
 
+    def get_active_value(self, path, default=None):
+        """Smart getter: Returns grow plan values when active, else normal values."""
+        # For tests: simply delegate to getDeep
+        return self.getDeep(path, default)
+
 
 class FakeEventManager:
     def __init__(self):
