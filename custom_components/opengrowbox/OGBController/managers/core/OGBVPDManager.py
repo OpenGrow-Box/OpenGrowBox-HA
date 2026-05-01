@@ -49,6 +49,10 @@ class OGBVPDManager:
         self._weather_502_retry_count = 0
         self._weather_max_502_retries = 3
 
+        # Sensor failure notification tracking (30 minute cooldown)
+        self._sensor_failure_notifications = {}
+        self._sensor_failure_cooldown = 1800  # 30 minutes in seconds
+
         # Register event handlers
         self.event_manager.on("VPDCreation", self.handle_new_vpd)
 
@@ -86,6 +90,16 @@ class OGBVPDManager:
                             value = float(t.get("state"))
                             name = t.get("entity_id")
                             label = t.get("label")
+                            
+                            # Check for impossible temperature values
+                            if value <= 0 or value > 40:
+                                _LOGGER.warning(
+                                    f"CRITICAL: Sensor {name} reports impossible temperature "
+                                    f"of {value}°C - likely sensor failure!"
+                                )
+                                await self._notify_sensor_failure(name, "temperature", value)
+                                continue  # Skip this sensor
+                            
                             temperatures.append({"entity_id":name,"value":value,"label":label})
                         except (ValueError, TypeError):
                             _LOGGER.error(f"Ungültiger Temperaturwert in {t.get('entity_id')}: {t.get('state')}")
@@ -97,6 +111,16 @@ class OGBVPDManager:
                             value = float(h.get("state"))
                             name = h.get("entity_id")
                             label = h.get("label")
+                            
+                            # Check for impossible humidity values
+                            if value <= 0 or value > 100:
+                                _LOGGER.warning(
+                                    f"CRITICAL: Sensor {name} reports impossible humidity "
+                                    f"of {value}% - likely sensor failure!"
+                                )
+                                await self._notify_sensor_failure(name, "humidity", value)
+                                continue  # Skip this sensor
+                            
                             humidities.append({"entity_id":name,"value":value,"label":label})
                         except (ValueError, TypeError):
                             _LOGGER.error(f"Ungültiger Feuchtigkeitswert in {h.get('entity_id')}: {h.get('state')}")
@@ -180,6 +204,54 @@ class OGBVPDManager:
                 _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
 
+    async def _notify_sensor_failure(self, entity_id: str, sensor_type: str, value: float):
+        """Send critical notification for sensor with impossible values.
+        
+        Args:
+            entity_id: The sensor entity ID
+            sensor_type: "temperature" or "humidity"
+            value: The impossible value
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        
+        # Check cooldown (30 minutes)
+        last_notified = self._sensor_failure_notifications.get(entity_id, 0)
+        if now - last_notified < self._sensor_failure_cooldown:
+            return
+        
+        # Update last notification time
+        self._sensor_failure_notifications[entity_id] = now
+        
+        # Build notification message
+        if sensor_type == "temperature":
+            unit = "°C"
+            limit_text = "valid range: 0-40°C"
+        else:
+            unit = "%"
+            limit_text = "valid range: 0-100%"
+        
+        message = (
+            f"🚨 CRITICAL SENSOR FAILURE\n\n"
+            f"Sensor: {entity_id}\n"
+            f"Type: {sensor_type.title()}\n"
+            f"Value: {value}{unit} (IMPOSSIBLE)\n"
+            f"{limit_text}\n\n"
+            f"Please check sensor connection immediately!"
+        )
+        
+        try:
+            # Try to get notificator from main controller
+            if hasattr(self, 'notificator') and self.notificator:
+                await self.notificator.critical(
+                    message=message,
+                    title=f"OGB {self.room}: {sensor_type.title()} Sensor Failure"
+                )
+                _LOGGER.info(f"Sent critical notification for failed sensor {entity_id}")
+            else:
+                _LOGGER.warning(f"No notificator available for sensor failure alert: {entity_id}")
+        except Exception as e:
+            _LOGGER.error(f"Failed to send sensor failure notification: {e}")
+
     async def initialize_vpd_data(self, init_data):
         """Initialize VPD calculations from sensor data.
 
@@ -219,6 +291,16 @@ class OGBVPDManager:
                             value = float(t.get("state"))
                             name = t.get("entity_id")
                             label = t.get("label")
+                            
+                            # Check for impossible temperature values
+                            if value <= 0 or value > 40:
+                                _LOGGER.warning(
+                                    f"CRITICAL: Sensor {name} reports impossible temperature "
+                                    f"of {value}°C - likely sensor failure!"
+                                )
+                                await self._notify_sensor_failure(name, "temperature", value)
+                                continue
+                            
                             temperatures.append(
                                 {"entity_id": name, "value": value, "label": label}
                             )
@@ -234,6 +316,16 @@ class OGBVPDManager:
                             value = float(h.get("state"))
                             name = h.get("entity_id")
                             label = h.get("label")
+                            
+                            # Check for impossible humidity values
+                            if value <= 0 or value > 100:
+                                _LOGGER.warning(
+                                    f"CRITICAL: Sensor {name} reports impossible humidity "
+                                    f"of {value}% - likely sensor failure!"
+                                )
+                                await self._notify_sensor_failure(name, "humidity", value)
+                                continue
+                            
                             humidities.append(
                                 {"entity_id": name, "value": value, "label": label}
                             )
