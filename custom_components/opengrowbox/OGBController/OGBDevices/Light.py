@@ -286,10 +286,10 @@ class Light(Device):
                 return None
 
         self.lightOnTime = parse_to_time(
-            self.data_store.get_active_value("isPlantDay.lightOnTime")
+            self.data_store.getDeep("isPlantDay.lightOnTime")
         )
         self.lightOffTime = parse_to_time(
-            self.data_store.get_active_value("isPlantDay.lightOffTime")
+            self.data_store.getDeep("isPlantDay.lightOffTime")
         )
 
         sun_rise = self.data_store.getDeep("isPlantDay.sunRiseTime")
@@ -326,10 +326,10 @@ class Light(Device):
                 return None
 
         self.lightOnTime = parse_to_time(
-            self.data_store.get_active_value("isPlantDay.lightOnTime")
+            self.data_store.getDeep("isPlantDay.lightOnTime")
         )
         self.lightOffTime = parse_to_time(
-            self.data_store.get_active_value("isPlantDay.lightOffTime")
+            self.data_store.getDeep("isPlantDay.lightOffTime")
         )
 
     ## Helpers
@@ -476,18 +476,18 @@ class Light(Device):
                 # Normaler Fall (keine Überschreitung von Mitternacht)
                 return start_minutes <= current_minutes <= end_minutes
         else:
-            # Für SunRise: Fenster NACH der Zielzeit (SunRise startet bei LightOnTime)
-            start_minutes = target_minutes
-            end_minutes = target_minutes + duration_minutes
+            # Für SunRise: Fenster VOR der Zielzeit (SunRise startet vor LightOnTime)
+            start_minutes = target_minutes - duration_minutes
+            end_minutes = target_minutes
 
             # Check normalen Fall (keine Überschreitung von Mitternacht)
-            if end_minutes < 24 * 60:  # Ends before midnight
+            if start_minutes >= 0:  # Starts after midnight
                 return start_minutes <= current_minutes <= end_minutes
             else:
-                # Time window crosses midnight into next day
-                end_minutes_wrapped = end_minutes - (24 * 60)
-                return (start_minutes <= current_minutes < 24 * 60) or (
-                    0 <= current_minutes <= end_minutes_wrapped
+                # Time window crosses midnight into previous day
+                start_minutes_wrapped = start_minutes + (24 * 60)
+                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
+                    0 <= current_minutes <= end_minutes
                 )
 
     # SunPhases

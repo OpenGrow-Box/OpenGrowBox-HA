@@ -52,6 +52,7 @@ class Device:
         # Smart Deadband Events (Climate-Geräte)
         self.eventManager.on("SmartDeadbandEntered", self.on_smart_deadband_entered)
         self.eventManager.on("SmartDeadbandExited", self.on_smart_deadband_exited)
+        self.eventManager.on("SmartDeadbandCorrection", self.on_smart_deadband_correction)
 
         # Calibration events
         self.eventManager.on("CalibOff", self._on_calib_off)
@@ -64,6 +65,85 @@ class Device:
         self._pre_deadband_is_running = None  # Save running state for non-dimmable devices
 
         self.deviceInit(deviceData)
+
+    async def set_duty_cycle(self, target_value: int, log_action_callback=None):
+        """Set duty cycle to a specific value.
+        
+        Args:
+            target_value: Target duty cycle (0-100)
+            log_action_callback: Optional callback for logging the action
+        """
+        if not self.isDimmable:
+            _LOGGER.warning(f"{self.deviceName}: Cannot set duty cycle - device is not dimmable")
+            return
+            
+        clamped = self.clamp_duty_cycle(target_value)
+        self.dutyCycle = clamped
+        
+        if self.isSpecialDevice:
+            await self.turn_on(brightness_pct=clamped)
+        else:
+            await self.turn_on(percentage=clamped)
+            
+        _LOGGER.info(f"{self.deviceName}: Set duty cycle to {clamped}%")
+        if log_action_callback:
+            log_action_callback(f"DimTo {clamped}%")
+
+    def _extract_action_value(self, data):
+        """Extract action type and optional value from event data.
+        
+        Returns:
+            Tuple of (action_type, value) where value may be None
+        """
+        if isinstance(data, dict):
+            return data.get("action"), data.get("value")
+        return data, None
+
+    async def reduce_or_turn_off(self, log_action_callback=None):
+        """Reduce duty cycle or turn off if minimum is reached.
+        
+        For dimmable devices: reduces duty cycle by step size.
+        If new duty cycle is at or below minimum, turns device off instead.
+        For non-dimmable devices: turns device off.
+        
+        Args:
+            log_action_callback: Optional callback for logging the action
+        """
+        if self.isDimmable:
+            old_duty = self.dutyCycle
+            new_duty = self.change_duty_cycle(increase=False)
+            
+            # Check if we're at minimum (duty cycle didn't change or is at/below minDuty)
+            min_duty = float(self.minDuty) if self.minDuty is not None else 0
+            
+            if new_duty <= min_duty or new_duty == old_duty:
+                _LOGGER.info(
+                    f"{self.deviceName}: Minimum duty cycle ({new_duty}%) reached, turning OFF"
+                )
+                if log_action_callback:
+                    log_action_callback("TurnOFF (min reached)")
+                await self.turn_off()
+            else:
+                _LOGGER.info(
+                    f"{self.deviceName}: Reduced to {new_duty}%"
+                )
+                if log_action_callback:
+                    log_action_callback("ReduceAction")
+                if self.isSpecialDevice:
+                    await self.turn_on(brightness_pct=new_duty)
+                else:
+                    await self.turn_on(percentage=new_duty)
+        else:
+            # Non-dimmable: just turn off
+            if self.isRunning:
+                _LOGGER.info(f"{self.deviceName}: Turning OFF")
+                if log_action_callback:
+                    log_action_callback("TurnOFF")
+                await self.turn_off()
+            else:
+                _LOGGER.debug(f"{self.deviceName}: Already OFF")
+                if log_action_callback:
+                    log_action_callback("Already OFF")
 
     @property
     def option_count(self) -> int:
@@ -724,7 +804,10 @@ class Device:
                 currentCap["deviceData"][self.deviceName] = {
                     "on_off": self.isRunning,
                     "is_dimmable": self.isDimmable,
-                    "dimm_value": getattr(self, 'voltage', None) if self.deviceType.lower() == 'light' else getattr(self, 'dutyCycle', None)
+                    "dimm_value": getattr(self, 'dutyCycle', None),
+                    "min_duty": getattr(self, 'minDuty', None),
+                    "max_duty": getattr(self, 'maxDuty', None),
+                    "minmax_active": getattr(self, 'is_minmax_active', False)
                 }
 
                 # Write updated data back to dataStore
@@ -746,7 +829,10 @@ class Device:
                     currentCap["deviceData"][self.deviceName] = {
                         "on_off": self.isRunning,
                         "is_dimmable": self.isDimmable,
-                        "dimm_value": getattr(self, 'voltage', None) if self.deviceType.lower() == 'light' else getattr(self, 'dutyCycle', None)
+                        "dimm_value": getattr(self, 'dutyCycle', None),
+                        "min_duty": getattr(self, 'minDuty', None),
+                        "max_duty": getattr(self, 'maxDuty', None),
+                        "minmax_active": getattr(self, 'is_minmax_active', False)
                     }
                     self.dataStore.setDeep(capPath, currentCap)
 
@@ -1447,7 +1533,29 @@ class Device:
 
                 # Humidifier einschalten
                 elif self.deviceType == "Humidifier":
-                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                    if self.isSpecialDevice:
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Humidifier ON ({brightness_pct}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Humidifier ON (Switch).")
+                            return
+                    elif entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
                         await self.hass.services.async_call(
                             domain="fan",
                             service="set_percentage",
@@ -1485,7 +1593,29 @@ class Device:
 
                 # Dehumidifier einschalten
                 elif self.deviceType == "Dehumidifier":
-                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                    if self.isSpecialDevice:
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON ({brightness_pct}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON (Switch).")
+                            return
+                    elif entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
                         await self.hass.services.async_call(
                             domain="fan",
                             service="set_percentage",
@@ -1523,7 +1653,29 @@ class Device:
 
                 # Heater einschalten
                 elif self.deviceType == "Heater":
-                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                    if self.isSpecialDevice:
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Heater ON ({brightness_pct}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Heater ON (Switch).")
+                            return
+                    elif entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
                         await self.hass.services.async_call(
                             domain="fan",
                             service="set_percentage",
@@ -1559,7 +1711,29 @@ class Device:
 
                 # Cooler einschalten
                 elif self.deviceType == "Cooler":
-                    if entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
+                    if self.isSpecialDevice:
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_on",
+                                service_data={
+                                    "entity_id": entity_id,
+                                    "brightness_pct": brightness_pct,
+                                },
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Cooler ON ({brightness_pct}%).")
+                            return
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_on",
+                                service_data={"entity_id": entity_id},
+                            )
+                            self.isRunning = True
+                            _LOGGER.debug(f"{self.deviceName}: Cooler ON (Switch).")
+                            return
+                    elif entity_id.startswith("fan.") and self.isDimmable and percentage is not None:
                         await self.hass.services.async_call(
                             domain="fan",
                             service="set_percentage",
@@ -1707,6 +1881,15 @@ class Device:
 
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
+                    if self.isSpecialDevice:
+                        await self.hass.services.async_call(
+                            domain="light",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        _LOGGER.debug(f"{self.deviceName}: Humidifier OFF.")
+                        return
                     if self.isDimmable:
                         if self._has_power_and_number_control():
                             await self._set_power_control(False)
@@ -1741,6 +1924,15 @@ class Device:
 
                 # Dehumidifier ausschalten
                 elif self.deviceType == "Dehumidifier":
+                    if self.isSpecialDevice:
+                        await self.hass.services.async_call(
+                            domain="light",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        _LOGGER.debug(f"{self.deviceName}: Dehumidifier OFF.")
+                        return
                     if self.isDimmable:
                         if self._has_power_and_number_control():
                             await self._set_power_control(False)
@@ -1856,6 +2048,80 @@ class Device:
                     self.isRunning = False
                     _LOGGER.debug(f"{self.deviceName}: Ventilation OFF - {len(self.switches)} entities deactivated.")
                         
+                # Heater ausschalten
+                elif self.deviceType == "Heater":
+                    if self.isSpecialDevice:
+                        await self.hass.services.async_call(
+                            domain="light",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        _LOGGER.debug(f"{self.deviceName}: Heater OFF.")
+                        return
+                    if self.isDimmable:
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
+                        await self.set_value(0)
+                    if entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif entity_id.startswith("climate."):
+                        await self.hass.services.async_call(
+                            domain="climate",
+                            service="set_hvac_mode",
+                            service_data={"entity_id": entity_id, "hvac_mode": "off"},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    self.isRunning = False
+                    _LOGGER.debug(f"{self.deviceName}: Heater OFF.")
+                    return
+
+                # Cooler ausschalten
+                elif self.deviceType == "Cooler":
+                    if self.isSpecialDevice:
+                        await self.hass.services.async_call(
+                            domain="light",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                        self.isRunning = False
+                        _LOGGER.debug(f"{self.deviceName}: Cooler OFF.")
+                        return
+                    if self.isDimmable:
+                        if self._has_power_and_number_control():
+                            await self._set_power_control(False)
+                        await self.set_value(0)
+                    if entity_id.startswith("fan."):
+                        await self.hass.services.async_call(
+                            domain="fan",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    elif entity_id.startswith("climate."):
+                        await self.hass.services.async_call(
+                            domain="climate",
+                            service="set_hvac_mode",
+                            service_data={"entity_id": entity_id, "hvac_mode": "off"},
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            domain="switch",
+                            service="turn_off",
+                            service_data={"entity_id": entity_id},
+                        )
+                    self.isRunning = False
+                    _LOGGER.debug(f"{self.deviceName}: Cooler OFF.")
+                    return
+
                 # CO2 ausschalten
                 elif self.deviceType == "CO2":
                     if self.isDimmable:
@@ -2370,13 +2636,15 @@ class Device:
                 await self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
             else:
                 _LOGGER.debug(f"{self.deviceName}: Bounds geladen aber kein turn_on – noch nicht initialisiert")
-
+            
+            # Capabilities aktualisieren
+            self._update_deviceData_in_capabilities()
 
     async def on_minmax_control_enabled(self, data) -> None:
         # KEIN isInitialized check – gleiche Logik wie DeviceSetMinMax
         _LOGGER.debug(f"{self.deviceName}: === MINMAX CONTROL ENABLED START ===")
         
-        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
+        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}
         if self.deviceType not in minmax_device_types:
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlEnabled")
             return
@@ -2414,7 +2682,7 @@ class Device:
                         if self.isRunning:
                             await self.turn_on(brightness_pct=self.voltage)
 
-        elif self.deviceType in {"Exhaust", "Intake", "Ventilation"}:
+        elif self.deviceType in {"Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}:
             if "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
                 try:
                     old_min, old_max = self.minDuty, self.maxDuty
@@ -2437,6 +2705,9 @@ class Device:
                                 await self.turn_on(percentage=self.dutyCycle)
                 else:
                     _LOGGER.debug(f"{self.deviceName}: Bounds geladen aber kein turn_on – noch nicht initialisiert")
+            
+            # Capabilities aktualisieren
+            self._update_deviceData_in_capabilities()
 
 
     async def on_minmax_control_disabled(self, data) -> None:
@@ -2444,7 +2715,7 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: ignoring MinMaxControlDisabled – not yet initialized")
             return
 
-        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
+        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}
         if self.deviceType not in minmax_device_types:
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlDisabled")
             return
@@ -2492,7 +2763,7 @@ class Device:
                 except (ValueError, TypeError):
                     self.voltage = 20.0
 
-        elif self.deviceType in {"Exhaust", "Intake", "Ventilation"}:
+        elif self.deviceType in {"Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}:
             try:
                 minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
             except AttributeError:
@@ -2524,6 +2795,9 @@ class Device:
                             await self.turn_on(brightness_pct=float(self.dutyCycle))
                         else:
                             await self.turn_on(percentage=self.dutyCycle)
+            
+            # Capabilities aktualisieren
+            self._update_deviceData_in_capabilities()
 
 
     def clamp(self, value: int | float | str | None) -> float | int:
@@ -2778,6 +3052,20 @@ class Device:
             event_device_type = data.get("deviceType", "")
             if event_device_type and event_device_type.lower() != self.deviceType.lower():
                 return
+            
+            # NEW: Check if this device is actively correcting temp/humidity
+            # If yes, do NOT reduce to minimum - it's needed for correction!
+            correction_devices = data.get("correctionDevices", [])
+            exclude_correction = data.get("excludeCorrectionDevices", False)
+            
+            if exclude_correction and self.deviceType in correction_devices:
+                _LOGGER.info(
+                    f"{self.deviceName}: Smart Deadband ENTERED - but device is actively correcting "
+                    f"temp/humidity, keeping current state (NOT reduced to minimum)"
+                )
+                self._in_smart_deadband = True
+                # Don't save state or set to minimum - device stays as-is for correction
+                return
 
         if not self._in_smart_deadband:
             # WICHTIG: Zuerst aktuellen Status speichern, dann auf Minimum reduzieren!
@@ -2821,3 +3109,36 @@ class Device:
             _LOGGER.info(
                 f"{self.deviceName}: Smart Deadband EXITED - device restored to previous state"
             )
+
+    async def on_smart_deadband_correction(self, data) -> None:
+        """Wird aufgerufen wenn ein Gerät während Deadband für Temp/Humidity Korrektur aktiviert werden muss."""
+        if not self.isInitialized:
+            _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandCorrection – not yet initialized")
+            return
+
+        # Only respond if this device type matches the requested correction
+        if isinstance(data, dict):
+            event_device_type = data.get("deviceType", "")
+            if event_device_type and event_device_type.lower() != self.deviceType.lower():
+                return
+
+        # Only activate if we're currently in deadband
+        if not self._in_smart_deadband:
+            _LOGGER.debug(f"{self.deviceName}: Not in deadband, ignoring correction request")
+            return
+
+        _LOGGER.info(
+            f"{self.deviceName}: Smart Deadband CORRECTION - activating device for temp/humidity correction "
+            f"(previous state: duty={self._pre_deadband_duty_cycle}, running={self._pre_deadband_is_running})"
+        )
+
+        # Activate the device for correction
+        if self.isDimmable:
+            # For dimmable devices, set to a moderate level (not full power)
+            correction_duty = min(50, self.maxDuty or 100)  # 50% or max, whichever is lower
+            await self.set_duty_cycle(correction_duty)
+            _LOGGER.info(f"{self.deviceName}: Set to {correction_duty}% for correction")
+        else:
+            # For non-dimmable devices, turn on
+            await self.turn_on()
+            _LOGGER.info(f"{self.deviceName}: Turned on for correction")

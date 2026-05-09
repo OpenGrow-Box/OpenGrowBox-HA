@@ -49,55 +49,89 @@ class OGBVPDActions:
     async def increase_vpd(self, capabilities: Dict[str, Any]):
         """
         Increase VPD by adjusting appropriate devices.
-
-        Args:
-            capabilities: Device capabilities and states
+        
+        STAGED ACTIVATION: Based on VPD deviation magnitude
+        - Small deviation (< 0.10): Only 1 device (exhaust)
+        - Medium deviation (< 0.20): 2 devices (exhaust + heat)
+        - Large deviation (>= 0.20): All devices (original behavior)
         """
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
         is_light_on = self._is_light_on()
         action_message = "VPD-Increase Action"
+        
+        # Calculate deviation for staged activation
+        currentVPD = self.ogb.dataStore.getDeep("vpd.current")
+        perfectionVPD = self.ogb.dataStore.getDeep("vpd.perfection")
+        try:
+            deviation = abs(float(currentVPD) - float(perfectionVPD))
+        except (TypeError, ValueError):
+            deviation = 0.0
 
         action_map = []
 
-        # Build action map for VPD increase
-        if capabilities.get("canExhaust", {}).get("state", False):
-            action_map.append(
-                self._create_action("canExhaust", "Increase", action_message)
-            )
-        if capabilities.get("canIntake", {}).get("state", False):
-            action_map.append(
-                self._create_action("canIntake", "Reduce", action_message)
-            )
-        if capabilities.get("canVentilate", {}).get("state", False):
-            action_map.append(
-                self._create_action("canVentilate", "Increase", action_message)
-            )
-        if capabilities.get("canHumidify", {}).get("state", False):
-            action_map.append(
-                self._create_action("canHumidify", "Reduce", action_message)
-            )
-        if capabilities.get("canDehumidify", {}).get("state", False):
-            action_map.append(
-                self._create_action("canDehumidify", "Increase", action_message)
-            )
-        if capabilities.get("canHeat", {}).get("state", False):
-            action_map.append(
-                self._create_action("canHeat", "Increase", action_message)
-            )
-        if capabilities.get("canCool", {}).get("state", False):
-            action_map.append(self._create_action("canCool", "Reduce", action_message))
-        if capabilities.get("canClimate", {}).get("state", False):
-            action_map.append(self._create_action("canClimate", "Eval", action_message))
-        # Check CO2 control switch for VPD-based CO2 actions
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            if is_light_on:
-                action_map.append(self._create_action("canCO2", "Increase", action_message))
-            else:
-                action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                _LOGGER.debug(
-                    f"{self.ogb.room}: Night mode active - CO2 increase blocked, forcing CO2 off"
+        # STAGED ACTIVATION based on deviation
+        if deviation < 0.10:
+            # Stage 1: Small deviation - Only most effective device
+            _LOGGER.info(f"{self.ogb.room}: VPD increase - small deviation ({deviation:.3f}), using minimal correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canExhaust", "Increase", action_message)
                 )
+        
+        elif deviation < 0.20:
+            # Stage 2: Medium deviation - Two key devices
+            _LOGGER.info(f"{self.ogb.room}: VPD increase - medium deviation ({deviation:.3f}), using moderate correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canExhaust", "Increase", action_message)
+                )
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canHeat", "Increase", action_message)
+                )
+        
+        else:
+            # Stage 3: Large deviation - All devices (original behavior)
+            _LOGGER.info(f"{self.ogb.room}: VPD increase - large deviation ({deviation:.3f}), using full correction")
+            # Build action map for VPD increase
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canExhaust", "Increase", action_message)
+                )
+            if capabilities.get("canIntake", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canIntake", "Reduce", action_message)
+                )
+            if capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canVentilate", "Increase", action_message)
+                )
+            if capabilities.get("canHumidify", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canHumidify", "Reduce", action_message)
+                )
+            if capabilities.get("canDehumidify", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canDehumidify", "Increase", action_message)
+                )
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canHeat", "Increase", action_message)
+                )
+            if capabilities.get("canCool", {}).get("state", False):
+                action_map.append(self._create_action("canCool", "Reduce", action_message))
+            if capabilities.get("canClimate", {}).get("state", False):
+                action_map.append(self._create_action("canClimate", "Eval", action_message))
+            # Check CO2 control switch for VPD-based CO2 actions
+            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
+                if is_light_on:
+                    action_map.append(self._create_action("canCO2", "Increase", action_message))
+                else:
+                    action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                    _LOGGER.debug(
+                        f"{self.ogb.room}: Night mode active - CO2 increase blocked, forcing CO2 off"
+                    )
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
@@ -109,53 +143,87 @@ class OGBVPDActions:
     async def reduce_vpd(self, capabilities: Dict[str, Any]):
         """
         Reduce VPD by adjusting appropriate devices.
-
-        Args:
-            capabilities: Device capabilities and states
+        
+        STAGED ACTIVATION: Based on VPD deviation magnitude
+        - Small deviation (< 0.10): Only 1 device (exhaust)
+        - Medium deviation (< 0.20): 2 devices (exhaust + humidifier)
+        - Large deviation (>= 0.20): All devices (original behavior)
         """
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
         is_light_on = self._is_light_on()
         action_message = "VPD-Reduce Action"
+        
+        # Calculate deviation for staged activation
+        currentVPD = self.ogb.dataStore.getDeep("vpd.current")
+        perfectionVPD = self.ogb.dataStore.getDeep("vpd.perfection")
+        try:
+            deviation = abs(float(currentVPD) - float(perfectionVPD))
+        except (TypeError, ValueError):
+            deviation = 0.0
 
         action_map = []
 
-        # Build action map for VPD reduction
-        if capabilities.get("canExhaust", {}).get("state", False):
-            action_map.append(
-                self._create_action("canExhaust", "Reduce", action_message)
-            )
-        if capabilities.get("canIntake", {}).get("state", False):
-            action_map.append(
-                self._create_action("canIntake", "Increase", action_message)
-            )
-        if capabilities.get("canVentilate", {}).get("state", False):
-            action_map.append(
-                self._create_action("canVentilate", "Reduce", action_message)
-            )
-        if capabilities.get("canHumidify", {}).get("state", False):
-            action_map.append(
-                self._create_action("canHumidify", "Increase", action_message)
-            )
-        if capabilities.get("canDehumidify", {}).get("state", False):
-            action_map.append(
-                self._create_action("canDehumidify", "Reduce", action_message)
-            )
-        if capabilities.get("canHeat", {}).get("state", False):
-            action_map.append(self._create_action("canHeat", "Reduce", action_message))
-        if capabilities.get("canCool", {}).get("state", False):
-            action_map.append(
-                self._create_action("canCool", "Increase", action_message)
-            )
-        if capabilities.get("canClimate", {}).get("state", False):
-            action_map.append(self._create_action("canClimate", "Eval", action_message))
-        # Check CO2 control switch for VPD-based CO2 actions
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            action_map.append(self._create_action("canCO2", "Reduce", action_message))
-            if not is_light_on:
-                _LOGGER.debug(
-                    f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
+        # STAGED ACTIVATION based on deviation
+        if deviation < 0.10:
+            # Stage 1: Small deviation - Only most effective device
+            _LOGGER.info(f"{self.ogb.room}: VPD reduce - small deviation ({deviation:.3f}), using minimal correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canExhaust", "Reduce", action_message)
                 )
+        
+        elif deviation < 0.20:
+            # Stage 2: Medium deviation - Two key devices
+            _LOGGER.info(f"{self.ogb.room}: VPD reduce - medium deviation ({deviation:.3f}), using moderate correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canExhaust", "Reduce", action_message)
+                )
+            if capabilities.get("canHumidify", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canHumidify", "Increase", action_message)
+                )
+        
+        else:
+            # Stage 3: Large deviation - All devices (original behavior)
+            _LOGGER.info(f"{self.ogb.room}: VPD reduce - large deviation ({deviation:.3f}), using full correction")
+            # Build action map for VPD reduction
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canExhaust", "Reduce", action_message)
+                )
+            if capabilities.get("canIntake", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canIntake", "Increase", action_message)
+                )
+            if capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canVentilate", "Reduce", action_message)
+                )
+            if capabilities.get("canHumidify", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canHumidify", "Increase", action_message)
+                )
+            if capabilities.get("canDehumidify", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canDehumidify", "Reduce", action_message)
+                )
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(self._create_action("canHeat", "Reduce", action_message))
+            if capabilities.get("canCool", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canCool", "Increase", action_message)
+                )
+            if capabilities.get("canClimate", {}).get("state", False):
+                action_map.append(self._create_action("canClimate", "Eval", action_message))
+            # Check CO2 control switch for VPD-based CO2 actions
+            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
+                action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                if not is_light_on:
+                    _LOGGER.debug(
+                        f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
+                    )
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
@@ -165,39 +233,63 @@ class OGBVPDActions:
         await self.action_manager.checkLimitsAndPublicate(action_map)
 
     async def increase_vpd_target(self, capabilities: Dict[str, Any]):
-        """Increase VPD for VPD Target mode."""
+        """Increase VPD for VPD Target mode with staged activation."""
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
         is_light_on = self._is_light_on()
         action_message = "VPD-Target Increase Action"
 
+        # Calculate deviation for staged activation
+        currentVPD = self.ogb.dataStore.getDeep("vpd.current")
+        targetedVPD = self.ogb.dataStore.getDeep("vpd.targeted")
+        try:
+            deviation = abs(float(currentVPD) - float(targetedVPD))
+        except (TypeError, ValueError):
+            deviation = 0.0
+
         action_map = []
 
-        if capabilities.get("canExhaust", {}).get("state", False):
-            action_map.append(self._create_action("canExhaust", "Increase", action_message))
-        if capabilities.get("canIntake", {}).get("state", False):
-            action_map.append(self._create_action("canIntake", "Reduce", action_message))
-        if capabilities.get("canVentilate", {}).get("state", False):
-            action_map.append(self._create_action("canVentilate", "Increase", action_message))
-        if capabilities.get("canHumidify", {}).get("state", False):
-            action_map.append(self._create_action("canHumidify", "Reduce", action_message))
-        if capabilities.get("canDehumidify", {}).get("state", False):
-            action_map.append(self._create_action("canDehumidify", "Increase", action_message))
-        if capabilities.get("canHeat", {}).get("state", False):
-            action_map.append(self._create_action("canHeat", "Increase", action_message))
-        if capabilities.get("canCool", {}).get("state", False):
-            action_map.append(self._create_action("canCool", "Reduce", action_message))
-        if capabilities.get("canClimate", {}).get("state", False):
-            action_map.append(self._create_action("canClimate", "Eval", action_message))
+        # STAGED ACTIVATION based on deviation
+        if deviation < 0.10:
+            # Stage 1: Small deviation - Only most effective device
+            _LOGGER.info(f"{self.ogb.room}: VPD target increase - small deviation ({deviation:.3f}), using minimal correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Increase", action_message))
+        elif deviation < 0.20:
+            # Stage 2: Medium deviation - Two key devices
+            _LOGGER.info(f"{self.ogb.room}: VPD target increase - medium deviation ({deviation:.3f}), using moderate correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Increase", action_message))
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(self._create_action("canHeat", "Increase", action_message))
+        else:
+            # Stage 3: Large deviation - All devices (original behavior)
+            _LOGGER.info(f"{self.ogb.room}: VPD target increase - large deviation ({deviation:.3f}), using full correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Increase", action_message))
+            if capabilities.get("canIntake", {}).get("state", False):
+                action_map.append(self._create_action("canIntake", "Reduce", action_message))
+            if capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(self._create_action("canVentilate", "Increase", action_message))
+            if capabilities.get("canHumidify", {}).get("state", False):
+                action_map.append(self._create_action("canHumidify", "Reduce", action_message))
+            if capabilities.get("canDehumidify", {}).get("state", False):
+                action_map.append(self._create_action("canDehumidify", "Increase", action_message))
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(self._create_action("canHeat", "Increase", action_message))
+            if capabilities.get("canCool", {}).get("state", False):
+                action_map.append(self._create_action("canCool", "Reduce", action_message))
+            if capabilities.get("canClimate", {}).get("state", False):
+                action_map.append(self._create_action("canClimate", "Eval", action_message))
 
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            if is_light_on:
-                action_map.append(self._create_action("canCO2", "Increase", action_message))
-            else:
-                action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                _LOGGER.debug(
-                    f"{self.ogb.room}: Night mode active - CO2 target increase blocked, forcing CO2 off"
-                )
+            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
+                if is_light_on:
+                    action_map.append(self._create_action("canCO2", "Increase", action_message))
+                else:
+                    action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                    _LOGGER.debug(
+                        f"{self.ogb.room}: Night mode active - CO2 target increase blocked, forcing CO2 off"
+                    )
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Increase", action_message))
@@ -205,39 +297,63 @@ class OGBVPDActions:
         await self.action_manager.checkLimitsAndPublicateTarget(action_map)
 
     async def reduce_vpd_target(self, capabilities: Dict[str, Any]):
-        """Reduce VPD for VPD Target mode."""
+        """Reduce VPD for VPD Target mode with staged activation."""
         vpd_light_control = self.ogb.dataStore.getDeep("controlOptions.vpdLightControl")
         is_light_on = self._is_light_on()
         action_message = "VPD-Target Reduce Action"
 
+        # Calculate deviation for staged activation
+        currentVPD = self.ogb.dataStore.getDeep("vpd.current")
+        targetedVPD = self.ogb.dataStore.getDeep("vpd.targeted")
+        try:
+            deviation = abs(float(currentVPD) - float(targetedVPD))
+        except (TypeError, ValueError):
+            deviation = 0.0
+
         action_map = []
 
-        if capabilities.get("canExhaust", {}).get("state", False):
-            action_map.append(self._create_action("canExhaust", "Reduce", action_message))
-        if capabilities.get("canIntake", {}).get("state", False):
-            action_map.append(self._create_action("canIntake", "Increase", action_message))
-        if capabilities.get("canVentilate", {}).get("state", False):
-            action_map.append(self._create_action("canVentilate", "Reduce", action_message))
-        if capabilities.get("canHumidify", {}).get("state", False):
-            action_map.append(self._create_action("canHumidify", "Increase", action_message))
-        if capabilities.get("canDehumidify", {}).get("state", False):
-            action_map.append(self._create_action("canDehumidify", "Reduce", action_message))
-        if capabilities.get("canHeat", {}).get("state", False):
-            action_map.append(self._create_action("canHeat", "Reduce", action_message))
-        if capabilities.get("canCool", {}).get("state", False):
-            action_map.append(
-                self._create_action("canCool", "Increase", action_message)
-            )
-        if capabilities.get("canClimate", {}).get("state", False):
-            action_map.append(self._create_action("canClimate", "Eval", action_message))
-
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            action_map.append(self._create_action("canCO2", "Reduce", action_message))
-            if not is_light_on:
-                _LOGGER.debug(
-                    f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
+        # STAGED ACTIVATION based on deviation
+        if deviation < 0.10:
+            # Stage 1: Small deviation - Only most effective device
+            _LOGGER.info(f"{self.ogb.room}: VPD target reduce - small deviation ({deviation:.3f}), using minimal correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Reduce", action_message))
+        elif deviation < 0.20:
+            # Stage 2: Medium deviation - Two key devices
+            _LOGGER.info(f"{self.ogb.room}: VPD target reduce - medium deviation ({deviation:.3f}), using moderate correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Reduce", action_message))
+            if capabilities.get("canHumidify", {}).get("state", False):
+                action_map.append(self._create_action("canHumidify", "Increase", action_message))
+        else:
+            # Stage 3: Large deviation - All devices (original behavior)
+            _LOGGER.info(f"{self.ogb.room}: VPD target reduce - large deviation ({deviation:.3f}), using full correction")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Reduce", action_message))
+            if capabilities.get("canIntake", {}).get("state", False):
+                action_map.append(self._create_action("canIntake", "Increase", action_message))
+            if capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(self._create_action("canVentilate", "Reduce", action_message))
+            if capabilities.get("canHumidify", {}).get("state", False):
+                action_map.append(self._create_action("canHumidify", "Increase", action_message))
+            if capabilities.get("canDehumidify", {}).get("state", False):
+                action_map.append(self._create_action("canDehumidify", "Reduce", action_message))
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(self._create_action("canHeat", "Reduce", action_message))
+            if capabilities.get("canCool", {}).get("state", False):
+                action_map.append(
+                    self._create_action("canCool", "Increase", action_message)
                 )
+            if capabilities.get("canClimate", {}).get("state", False):
+                action_map.append(self._create_action("canClimate", "Eval", action_message))
+
+            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
+            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
+                action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                if not is_light_on:
+                    _LOGGER.debug(
+                        f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
+                    )
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Reduce", action_message))

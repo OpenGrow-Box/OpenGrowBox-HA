@@ -216,14 +216,14 @@ class Dehumidifier(Device):
             )
             return
         
+        action_type, target_value = self._extract_action_value(data)
+        
         if self.isDimmable:
-            newDuty = self.change_duty_cycle(increase=False)
-            self.log_action("ReduceAction")
-            if newDuty <= 0:
-                _LOGGER.info(f"{self.deviceName}: Duty cycle reached 0, turning OFF completely")
-                await self.turn_off()
+            if target_value is not None:
+                # Direkt auf Zielwert dimmen
+                await self.set_duty_cycle(target_value, log_action_callback=self.log_action)
             else:
-                await self.turn_on(percentage=newDuty)
+                await self.reduce_or_turn_off(log_action_callback=self.log_action)
         elif self.realHumidifierClass:
             if self.hasModes:
                 current_mode = self.get_current_mode()

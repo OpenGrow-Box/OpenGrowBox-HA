@@ -1091,8 +1091,9 @@ class OGBActionManager:
                 actionMap, weighted_temp_dev, weighted_hum_dev, tent_data
             )
         else:
-            # Fallback: Only resolve conflicts
-            enhanced_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
+            # Fallback: dampening_actions not available, pass through as-is
+            # Conflicts will be resolved in STEP 4
+            enhanced_actions = actionMap
 
         # STEP 2: DAMPENING FEATURES (only if enabled)
         # - Cooldown filtering (user-defined base cooldowns)
@@ -1420,40 +1421,44 @@ class OGBActionManager:
             _LOGGER.debug(f"{self.room}: {actionCap} - {actionType} - {actionMessage}")
 
             # Emit device-specific events with error handling
+            # Build event data with optional target value for dimmable devices
+            action_value = getattr(action, 'value', None)
+            event_data = actionType if action_value is None else {"action": actionType, "value": action_value}
+            
             try:
                 if actionCap == "canExhaust":
-                    await self.event_manager.emit(f"{actionType} Exhaust", actionType)
-                    _LOGGER.debug(f"{self.room}: {actionType} Exhaust executed.")
+                    await self.event_manager.emit(f"{actionType} Exhaust", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Exhaust executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canIntake":
-                    await self.event_manager.emit(f"{actionType} Intake", actionType)
-                    _LOGGER.debug(f"{self.room}: {actionType} Intake executed.")
+                    await self.event_manager.emit(f"{actionType} Intake", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Intake executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canVentilate":
-                    await self.event_manager.emit(f"{actionType} Ventilation", actionType)
+                    await self.event_manager.emit(f"{actionType} Ventilation", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Ventilation executed.")
                 elif actionCap == "canWindow":
-                    await self.event_manager.emit(f"{actionType} Ventilation", actionType)
+                    await self.event_manager.emit(f"{actionType} Ventilation", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Window (via Ventilation) executed.")
                 elif actionCap == "canHumidify":
-                    await self.event_manager.emit(f"{actionType} Humidifier", actionType)
-                    _LOGGER.debug(f"{self.room}: {actionType} Humidifier executed.")
+                    await self.event_manager.emit(f"{actionType} Humidifier", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Humidifier executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canDehumidify":
-                    await self.event_manager.emit(f"{actionType} Dehumidifier", actionType)
-                    _LOGGER.debug(f"{self.room}: {actionType} Dehumidifier executed.")
+                    await self.event_manager.emit(f"{actionType} Dehumidifier", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Dehumidifier executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canHeat":
-                    await self.event_manager.emit(f"{actionType} Heater", actionType)
-                    _LOGGER.debug(f"{self.room}: {actionType} Heater executed.")
+                    await self.event_manager.emit(f"{actionType} Heater", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Heater executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canCool":
-                    await self.event_manager.emit(f"{actionType} Cooler", actionType)
-                    _LOGGER.debug(f"{self.room}: {actionType} Cooler executed.")
+                    await self.event_manager.emit(f"{actionType} Cooler", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Cooler executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canClimate":
-                    await self.event_manager.emit(f"{actionType} Climate", actionType)
+                    await self.event_manager.emit(f"{actionType} Climate", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Climate executed.")
                 elif actionCap == "canCO2":
                     _LOGGER.warning(f"{self.room}: Emitting {actionType} CO2")
-                    await self.event_manager.emit(f"{actionType} CO2", actionType)
+                    await self.event_manager.emit(f"{actionType} CO2", event_data)
                     _LOGGER.warning(f"{self.room}: {actionType} CO2 executed.")
                 elif actionCap == "canLight":
-                    await self.event_manager.emit(f"{actionType} Light", actionType)
+                    await self.event_manager.emit(f"{actionType} Light", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Light executed.")
             except Exception as e:
                 _LOGGER.error(f"{self.room}: Failed to execute {actionCap} {actionType} action: {e}")

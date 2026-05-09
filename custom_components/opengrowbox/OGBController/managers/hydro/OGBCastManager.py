@@ -577,14 +577,34 @@ class OGBCastManager:
         # Search 1: Check OGB devices by labels
         ogb_devices = self.data_store.getDeep("devices", [])
         for device in ogb_devices:
-            device_labels = [lbl.get("name", "").lower() for lbl in device.get("labels", [])]
+            # Handle both dict-style and object-style devices
+            if isinstance(device, dict):
+                device_labels_raw = device.get("labels", [])
+                device_entities = device.get("entities", [])
+            else:
+                # Device is an object (e.g., Light, Device, Sensor)
+                device_labels_raw = getattr(device, "labels", []) or []
+                device_entities_raw = getattr(device, "entities", []) or getattr(device, "switches", []) or []
+                # Convert entities to dict-like if needed
+                device_entities = []
+                for ent in device_entities_raw:
+                    if isinstance(ent, dict):
+                        device_entities.append(ent)
+                    else:
+                        device_entities.append({"entity_id": getattr(ent, "entity_id", str(ent))})
+
+            device_labels = []
+            for lbl in device_labels_raw:
+                if isinstance(lbl, dict):
+                    device_labels.append(lbl.get("name", "").lower())
+                else:
+                    device_labels.append(str(lbl).lower())
             
             # Check if any device label matches retrieve labels
             for label in retrieve_labels:
                 if any(label.lower() == dl or label.lower() in dl for dl in device_labels):
                     # Found matching device, get its entity ID
-                    entities = device.get("entities", [])
-                    for entity in entities:
+                    for entity in device_entities:
                         entity_id = entity.get("entity_id", "")
                         if entity_id in devices:
                             active_pumps.append(entity_id)

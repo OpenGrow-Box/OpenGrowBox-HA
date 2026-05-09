@@ -115,6 +115,7 @@ class OGBActionPublication:
     capability: str
     action: str
     priority: str
+    value: Optional[int] = field(default=None)
 
 
 @dataclass(frozen=True)

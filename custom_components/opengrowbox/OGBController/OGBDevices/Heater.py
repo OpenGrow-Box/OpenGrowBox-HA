@@ -88,9 +88,14 @@ class Heater(Device):
         return self.dutyCycle
 
     async def increaseAction(self, data):
-        """Schaltet Befeuchter an"""
+        """Schaltet Heizung an oder erhöht Duty Cycle"""
+        action_type, target_value = self._extract_action_value(data)
+        
         if self.isDimmable:
-            if self.isAcInfinDev:
+            if target_value is not None:
+                # Direkt auf Zielwert dimmen
+                await self.set_duty_cycle(target_value, log_action_callback=self.log_action)
+            else:
                 newDuty = self.change_duty_cycle(increase=True)
                 self.log_action("IncreaseAction")
                 await self.turn_on(percentage=newDuty)
@@ -112,18 +117,13 @@ class Heater(Device):
             )
             return
         
-        if self.isDimmable:
-            if self.isAcInfinDev:
-                newDuty = self.change_duty_cycle(increase=False)
-                self.log_action("ReduceAction")
-                await self.turn_on(percentage=newDuty)
-
+        action_type, target_value = self._extract_action_value(data)
+        
+        if target_value is not None and self.isDimmable:
+            # Direkt auf Zielwert dimmen
+            await self.set_duty_cycle(target_value, log_action_callback=self.log_action)
         else:
-            if self.isRunning == True:
-                self.log_action("TurnOFF ")
-                await self.turn_off()
-            else:
-                self.log_action("Allready in Desired State ")
+            await self.reduce_or_turn_off(log_action_callback=self.log_action)
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""

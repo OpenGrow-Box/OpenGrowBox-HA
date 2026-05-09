@@ -170,6 +170,11 @@ class Sensor:
 
         for entry in self.deviceData:
             entity_id = entry.get("entity_id", "")
+            
+            # Defense-in-Depth: Nur sensor.* Entities verarbeiten
+            if not entity_id.startswith("sensor."):
+                continue
+                
             value = entry.get("value")
             platform = entry.get("platform", "unknown")
             platform_set.add(platform)
@@ -590,6 +595,15 @@ class Sensor:
                         elif "_ph" in entity_id:
                             self.data_store.setDeep("Hydro.ph_current", numeric_value)
                             updated = True
+                            
+                            # Recalculate ORP when pH changes (using current temperature)
+                            temp_current = self.data_store.getDeep("Hydro.current_temp")
+                            if temp_current is not None:
+                                newOrp = calculate_orp(numeric_value, temp_current)
+                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
+                                await _update_specific_sensor(
+                                    "ogb_waterorp_", self.room, newOrp, self.hass
+                                )
                         
                         # NEW: Handle ultrasonic/reservoir sensors
                         elif "_ultrasonic" in entity_id or "_reservoir" in entity_id or "_level" in entity_id:
@@ -616,15 +630,6 @@ class Sensor:
                                 f"[{self.room}] Reservoir/Ultrasonic sensor updated: {entity_id} = {numeric_value} {unit}"
                             )
                             updated = True
-
-                            # Recalculate ORP when pH changes (like DLI/PPFD recalculate on input changes)
-                            temp_current = self.data_store.getDeep("Hydro.current_temp")
-                            if temp_current is not None:
-                                newOrp = calculate_orp(numeric_value, temp_current)
-                                self.data_store.setDeep("Hydro.oxi_current", float(newOrp))
-                                await _update_specific_sensor(
-                                    "ogb_waterorp_", self.room, newOrp, self.hass
-                                )
                         elif "_sal" in entity_id:
                             self.data_store.setDeep("Hydro.sal_current", numeric_value)
                             updated = True

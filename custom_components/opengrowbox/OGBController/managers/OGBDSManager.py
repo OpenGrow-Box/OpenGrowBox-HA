@@ -40,12 +40,17 @@ PRESERVED_STATE_KEYS = {
 
     # Drying (Start-Timestamps und Phasen)
     "drying",
+
+    # Tent Mode (wird persistiert damit User-Auswahl über Restart erhalten bleibt)
+    "tentMode",
 }
 
 # Keys die NIEMALS aus State File geladen werden (Code-Defaults)
 IGNORED_STATE_KEYS = {
     # Steuerungs-Modi (werden durch HA Entities restored)
-    "tentMode", "mainControl",
+    # NOTE: tentMode wird jetzt persistiert, damit User-Auswahl (z.B. VPD Perfection)
+    # über Restart erhalten bleibt. Siehe GitHub Issue #...
+    "mainControl",
     
     # Pflanzen-Daten (werden durch HA Entities restored)
     "plantStage", "plantSpecies", "plantType", "strainName", "plantName",

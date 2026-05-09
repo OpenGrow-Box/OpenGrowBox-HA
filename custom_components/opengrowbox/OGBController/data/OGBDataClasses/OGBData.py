@@ -531,6 +531,14 @@ class OGBConf:
             "usage": {},
         }
     )
+    growPlan: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "id": None,
+            "currentWeekData": None,
+            "currentWeek": None,
+            "totalWeeks": None,
+        }
+    )
     weather: Dict[str, Any] = field(
         default_factory=lambda: {
             "temperature": None,
@@ -651,6 +659,30 @@ class OGBConf:
                 "minVoltage": 0,
                 "maxVoltage": 0,
                 "Default": {"min": 20, "max": 50},
+            },
+            "Heater": {
+                "active": False,
+                "minDuty": None,
+                "maxDuty": None,
+                "Default": {"min": 0, "max": 100},
+            },
+            "Cooler": {
+                "active": False,
+                "minDuty": None,
+                "maxDuty": None,
+                "Default": {"min": 0, "max": 100},
+            },
+            "Humidifier": {
+                "active": False,
+                "minDuty": None,
+                "maxDuty": None,
+                "Default": {"min": 0, "max": 100},
+            },
+            "Dehumidifier": {
+                "active": False,
+                "minDuty": None,
+                "maxDuty": None,
+                "Default": {"min": 0, "max": 100},
             },
         }
     )

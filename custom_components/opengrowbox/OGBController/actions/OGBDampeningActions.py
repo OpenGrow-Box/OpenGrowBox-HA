@@ -1053,6 +1053,10 @@ class OGBDampeningActions:
         is_reduce_vpd = False
         is_increase_vpd = False
         
+        # NEW: Check if humidifier needs to increase (humidity too low)
+        # If yes, don't change exhaust to increase - they fight each other!
+        has_humidifier_increase = False
+        
         for action in action_map:
             cap = getattr(action, 'capability', '')
             act = getattr(action, 'action', '')
@@ -1060,6 +1064,8 @@ class OGBDampeningActions:
                 is_reduce_vpd = True
             elif cap == 'canExhaust' and act == 'Increase':
                 is_increase_vpd = True
+            elif cap == 'canHumidify' and act == 'Increase':
+                has_humidifier_increase = True
         
         if not is_reduce_vpd and not is_increase_vpd:
             # No VPD fan actions to modify
@@ -1084,6 +1090,17 @@ class OGBDampeningActions:
                     # Temperature is high or near max - COOLING takes priority over VPD reduction
                     if cap == 'canExhaust':
                         if act == 'Reduce':
+                            # CRITICAL: Check if humidifier is trying to increase
+                            # If yes, don't change exhaust to increase - they fight each other!
+                            if has_humidifier_increase:
+                                _LOGGER.info(
+                                    f"{self.ogb.room}: DynamicFan - Keeping exhaust at Reduce because "
+                                    f"humidifier needs to increase (humidity too low). "
+                                    f"Temp {current_temp}°C >= {max_temp - FAN_TEMP_BUFFER}°C but humidity correction takes priority."
+                                )
+                                modified_actions.append(action)
+                                continue
+                            
                             # CRITICAL: Don't reduce exhaust when temp is high!
                             # If no intake exists, reducing exhaust would trap heat
                             new_action = self._create_modified_action(

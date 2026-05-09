@@ -98,6 +98,8 @@ class CustomSensor(RestoreEntity):
             return "Days"
         elif self._device_class == "minutes":
             return "Minutes"
+        elif self._device_class == "mV":
+            return "mV"
         return None
 
     @property

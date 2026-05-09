@@ -165,6 +165,22 @@ class OGBConfigurationManager:
             f"ogb_ventilation_minmax_{self.room.lower()}": self._device_self_min_max,
             f"ogb_ventilation_duty_min_{self.room.lower()}": self._device_min_max_setter,
             f"ogb_ventilation_duty_max_{self.room.lower()}": self._device_min_max_setter,
+            # Heater
+            f"ogb_heater_minmax_{self.room.lower()}": self._device_self_min_max,
+            f"ogb_heater_duty_min_{self.room.lower()}": self._device_min_max_setter,
+            f"ogb_heater_duty_max_{self.room.lower()}": self._device_min_max_setter,
+            # Cooler
+            f"ogb_cooler_minmax_{self.room.lower()}": self._device_self_min_max,
+            f"ogb_cooler_duty_min_{self.room.lower()}": self._device_min_max_setter,
+            f"ogb_cooler_duty_max_{self.room.lower()}": self._device_min_max_setter,
+            # Humidifier
+            f"ogb_humidifier_minmax_{self.room.lower()}": self._device_self_min_max,
+            f"ogb_humidifier_duty_min_{self.room.lower()}": self._device_min_max_setter,
+            f"ogb_humidifier_duty_max_{self.room.lower()}": self._device_min_max_setter,
+            # Dehumidifier
+            f"ogb_dehumidifier_minmax_{self.room.lower()}": self._device_self_min_max,
+            f"ogb_dehumidifier_duty_min_{self.room.lower()}": self._device_min_max_setter,
+            f"ogb_dehumidifier_duty_max_{self.room.lower()}": self._device_min_max_setter,
             # WorkMode
             f"ogb_workmode_{self.room.lower()}": self._update_work_mode_control,
             # Strain Data
@@ -555,7 +571,7 @@ class OGBConfigurationManager:
             _LOGGER.error(
                 f"Unknown tent-mode check your Select Options: {type(data)} - Data: {data}"
             )
-
+            
     async def _update_leaf_temp_offset(self, data):
         """Update leaf temperature offset."""
         value = data.newState[0]
@@ -727,6 +743,7 @@ class OGBConfigurationManager:
 
             # Check if GrowPlan is active - if so, don't overwrite tentData values
             grow_plan_active = self.data_store.get("growManagerActive")
+            
             if grow_plan_active:
                 _LOGGER.info(
                     f"{self.room}: GrowPlan is active, skipping tentData overwrite. "
@@ -1286,6 +1303,18 @@ class OGBConfigurationManager:
         elif "light" in name:
             device_type = "Light"
             active_path = "DeviceMinMax.Light.active"
+        elif "heater" in name:
+            device_type = "Heater"
+            active_path = "DeviceMinMax.Heater.active"
+        elif "cooler" in name:
+            device_type = "Cooler"
+            active_path = "DeviceMinMax.Cooler.active"
+        elif "humidifier" in name:
+            device_type = "Humidifier"
+            active_path = "DeviceMinMax.Humidifier.active"
+        elif "dehumidifier" in name:
+            device_type = "Dehumidifier"
+            active_path = "DeviceMinMax.Dehumidifier.active"
         else:
             _LOGGER.error(f"{self.room}: Unknown device type for min/max control: {name}")
             return
@@ -1335,6 +1364,22 @@ class OGBConfigurationManager:
             device_type = "Light"
             min_path = "DeviceMinMax.Light.minVoltage"
             max_path = "DeviceMinMax.Light.maxVoltage"
+        elif "heater" in name:
+            device_type = "Heater"
+            min_path = "DeviceMinMax.Heater.minDuty"
+            max_path = "DeviceMinMax.Heater.maxDuty"
+        elif "cooler" in name:
+            device_type = "Cooler"
+            min_path = "DeviceMinMax.Cooler.minDuty"
+            max_path = "DeviceMinMax.Cooler.maxDuty"
+        elif "humidifier" in name:
+            device_type = "Humidifier"
+            min_path = "DeviceMinMax.Humidifier.minDuty"
+            max_path = "DeviceMinMax.Humidifier.maxDuty"
+        elif "dehumidifier" in name:
+            device_type = "Dehumidifier"
+            min_path = "DeviceMinMax.Dehumidifier.minDuty"
+            max_path = "DeviceMinMax.Dehumidifier.maxDuty"
         else:
             _LOGGER.error(f"{self.room}: Unknown device limit control: {name}")
             return

@@ -127,7 +127,8 @@ class OGBMainController:
             self.hass, self.data_store, self.event_manager, self.room
         )
 
-        # Pass action_manager to closedEnvironmentManager after both are created
+        # Pass action_manager to mode_manager and closedEnvironmentManager after both are created
+        self.mode_manager.action_manager = self.action_manager
         if hasattr(self.mode_manager, 'closedEnvironmentManager'):
             self.mode_manager.closedEnvironmentManager.action_manager = self.action_manager
 
@@ -250,32 +251,10 @@ class OGBMainController:
         await self.event_manager.emit("HydroModeRetrieveChange", True)
         await self.event_manager.emit("PlantTimeChange", True)
 
-        # Handle premium features if available
-        # TODO: Implement premium manager integration
-        # if (self.premium_manager.grow_plan_manager.manager_active and
-        #     self.premium_manager.grow_plan_manager.manager_active is True):
-        #     strain_name = self.data_store.get("strainName")
-        #     plan_request_data = {"event_id": "grow_plans_on_start", "strain_name": strain_name}
-        #     success = await self.premium_manager.ogb_ws.prem_event("get_grow_plans", plan_request_data)
-        #     if success and self.premium_manager.grow_plan_manager.manager_active:
-        #         asyncio.create_task(self._delayed_plan_activation())
-
         _LOGGER.debug(
             f"OpenGrowBox for {self.room} started successfully. State: {self.data_store}"
         )
         return True
-
-    async def _delayed_plan_activation(self):
-        """Activate grow plan after 30-second delay."""
-        await asyncio.sleep(30)
-
-        # TODO: Implement premium manager integration
-        # if self.premium_manager.grow_plan_manager.manager_active:
-        #     await self.event_manager.emit("plan_activation", self.premium_manager.grow_plan_manager.active_grow_plan)
-        #     _LOGGER.info(f"Delayed plan activation executed for {self.room}")
-        # else:
-        #     _LOGGER.debug(f"Delayed plan activation skipped (manager inactive) for {self.room}")
-        _LOGGER.debug(f"Delayed plan activation placeholder for {self.room}")
 
     async def _get_starting_vpd(self, init_data):
         """Initialize VPD calculations from sensor data."""

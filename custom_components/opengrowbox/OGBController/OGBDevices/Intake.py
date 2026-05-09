@@ -163,18 +163,13 @@ class Intake(Device):
             )
             return
         
-        if self.isDimmable:
-            if self.isSpecialDevice:
-                newDuty = self.change_duty_cycle(increase=False)
-                self.log_action("ReduceAction")
-                await self.turn_on(brightness_pct=newDuty)
-            else:
-                newDuty = self.change_duty_cycle(increase=False)
-                self.log_action("ReduceAction")
-                await self.turn_on(percentage=newDuty)
+        action_type, target_value = self._extract_action_value(data)
+        
+        if target_value is not None and self.isDimmable:
+            # Direkt auf Zielwert dimmen
+            await self.set_duty_cycle(target_value, log_action_callback=self.log_action)
         else:
-            self.log_action("TurnOff")
-            await self.turn_off()
+            await self.reduce_or_turn_off(log_action_callback=self.log_action)
 
     def log_action(self, action_name):
         """Protokolliert die ausgeführte Aktion."""

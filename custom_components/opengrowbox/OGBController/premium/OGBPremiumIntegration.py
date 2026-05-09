@@ -245,9 +245,9 @@ class OGBPremiumIntegration:
         self._initialization_blocked = False  # Track if initialization was blocked by limits
         _LOGGER.info(f"🔗 {self.room} Created independent WebSocket client")
 
-        # Initialize grow plan manager
+        # Initialize grow plan manager with WebSocket client
         self.growPlanManager = OGBGrowPlanManager(
-            self.hass, self.data_store, self.event_manager, self.room
+            self.hass, self.data_store, self.event_manager, self.room, self.ogb_ws
         )
 
         # Initialize analytics modules
@@ -304,10 +304,6 @@ class OGBPremiumIntegration:
         self._register_event_listener("SubscriptionExpiringSoon", self._on_subscription_expiring_soon)
         self._register_event_listener("SubscriptionExpired", self._on_subscription_expired)
 
-        # Grow Plan events from WebSocket
-        self._register_event_listener("new_grow_plans", self._on_new_grow_plans)
-        self._register_event_listener("plan_activation", self._on_plan_activated)
-
         # API Usage updates from WebSocket - CRITICAL for browser refresh to show current values
         self._register_event_listener("api_usage_update", self._on_api_usage_update)
         self._register_event_listener("plan_changed", self._on_plan_changed)
@@ -325,6 +321,9 @@ class OGBPremiumIntegration:
 
         # Camera plant view events - send image and plant data to Premium API
         self._register_event_listener("HasPlantViewed", self._handle_has_plant_viewed)
+
+        # Grow plan week data from API - CRITICAL for week data loading
+        self._register_event_listener("new_grow_plans", self._on_new_grow_plans)
 
         # Cross-room authentication
         self._register_bus_listener("isAuthenticated", self._handle_authenticated)
@@ -618,7 +617,7 @@ class OGBPremiumIntegration:
             self._update_feature_manager()
             
             # Check if current mode requires premium
-            current_mode = self.data_store.getDeep("tentMode")
+            current_mode = self.data_store.get("tentMode")
             premium_modes = ["AI Control", "MPC Control", "PID Control"]
             
             if current_mode in premium_modes:
@@ -809,6 +808,8 @@ class OGBPremiumIntegration:
         instead of the stale values from the initial login.
         """
         try:
+            _LOGGER.debug(f"🔍 {self.room} _on_api_usage_update CALLED with keys: {list(data.keys()) if isinstance(data, dict) else 'not dict'}")
+            
             # New consistent API structure: { plan, features, limits, usage, activeGrowPlan, timestamp, ... }
             server_plan = data.get("plan")
             features = data.get("features", {})
@@ -816,38 +817,55 @@ class OGBPremiumIntegration:
             usage = data.get("usage", {})
             active_grow_plan = data.get("activeGrowPlan")
 
-            _LOGGER.debug(f"📊 {self.room} API usage update received: plan={server_plan}")
+            _LOGGER.debug(f"📊 {self.room} API usage update received: plan={server_plan}, active_grow_plan={'YES' if active_grow_plan else 'NO'}")
 
             # Store active grow plan info if present
             if active_grow_plan:
-                _LOGGER.debug(
-                    f"🌱 {self.room} Active grow plan received: "
-                    f"name={active_grow_plan.get('name')}, "
-                    f"strain={active_grow_plan.get('strainName')}, "
-                    f"week={active_grow_plan.get('elapsedWeeks')}/{active_grow_plan.get('maxWeeks')}"
-                )
-                if not self.subscription_data:
-                    self.subscription_data = {}
 
                 self.subscription_data["active_grow_plan"] = active_grow_plan
+                plan_id = active_grow_plan.get('id')
+                _LOGGER.warning(
+                    f"🌱 {self.room} ACTIVE GROW PLAN RECEIVED: "
+                    f"name={active_grow_plan.get('name')}, "
+                    f"strain={active_grow_plan.get('strainName')}, "
+                    f"startDate={active_grow_plan.get('startDate')}"
+                    f"elapsedWeeks={active_grow_plan.get('elapsedWeeks')}, "
+                    f"weeksTotal={active_grow_plan.get('maxWeeks')}, "
+                    f"tentMode={active_grow_plan.get('tentMode')}, "
+                    f"plan_id={active_grow_plan.get('id')}"
+                )
+
                 # Also store in data_store for frontend access
-                self.data_store.set("activeGrowPlan", active_grow_plan)
+                self.data_store.setDeep("growPlan.id", active_grow_plan.get('id'))
+                self.data_store.setDeep("growPlan.totalWeeks", active_grow_plan.get('maxWeeks'))
+                
+                _LOGGER.warning(
+                    f"🌱 {self.room} FULL GROW PLAN. "
+                    f"Grow_Plan={active_grow_plan}, "
+                )
 
-                _LOGGER.debug(f"{self.subscription_data}")
-
-
-                #self.growPlanManager.activate_grow_plan()
-
-
-                # Update GrowPlanManager with active plan info via dedicated method
+                # Activate grow plan if not already active
                 if self.growPlanManager:
-                   # self.growPlanManager.update_active_plan_from_api(active_grow_plan)
-                    _LOGGER.debug(
-                        f"🌱 {self.room} Updated GrowPlanManager via API: "
-                        f"plan_id={self.growPlanManager.active_grow_plan_id}, "
-                        f"week={self.growPlanManager.current_week}"
-                        f"week={self.growPlanManager.current_week}"
-                    )
+
+                    #if self.growPlanManager.active_grow_plan_id == plan_id:
+                    #    await self.growPlanManager.get_current_week_data(plan_id)
+
+                    #else:
+                    #    _LOGGER.warning(
+                    #        f"🌱 {self.room} GrowPlanManager detected other growPlan Switching Plans. "
+                    #        f"plan_id={plan_id}, "
+                    #        f"managerActive={self.growPlanManager.managerActive}, "
+                    #    )                       
+                    #    await self.growPlanManager.activate_grow_plan_by_id(plan_id)
+
+                    if plan_id and not self.growPlanManager.managerActive:                       
+                        _LOGGER.warning(
+                            f"🌱 {self.room} ACTIVATING GROW PLAN: "
+                            f"plan_id={plan_id}, "
+                            f"name={active_grow_plan.get('name')}"
+                        )
+                        await self.growPlanManager.activate_grow_plan_by_id(plan_id, active_grow_plan)
+
 
             # Get active connections from usage
             active_connections = usage.get("activeConnections", 0)
@@ -1272,65 +1290,53 @@ class OGBPremiumIntegration:
             _LOGGER.error(f"❌ {self.room} Error handling grow completion: {e}", exc_info=True)
 
     async def _on_new_grow_plans(self, data):
-        """Handle new grow plans received from Premium API."""
+        """Handle new grow plan week data from API.
+        
+        CRITICAL: This receives week data from the API and stores it in the data_store
+        so that climate controllers can read min/max temperature, humidity, etc.
+        """
         try:
-            plans = data.get("plans", [])
-            _LOGGER.info(f"📅 {self.room} Received {len(plans)} grow plans from API")
-
-            # Forward to grow plan manager
-            if self.growPlanManager:
-                await self.growPlanManager.update_available_plans(plans)
-
-                # Fire HA event for UI update
-                self.hass.bus.async_fire("ogb_premium_growplans_updated", {
-                    "room": self.room,
-                    "plan_count": len(plans),
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                })
-            else:
-                _LOGGER.warning(f"⚠️ {self.room} GrowPlanManager not initialized, cannot update plans")
-
-        except Exception as e:
-            _LOGGER.error(f"❌ {self.room} New grow plans error: {e}")
-
-    async def _on_plan_activated(self, growPlan):
-        """Handle grow plan activation from Premium API."""
-        try:
-            # Handle both dict and object formats
-            if isinstance(growPlan, dict):
-                plan_id = growPlan.get("plan_id")
-                plan_name = growPlan.get("plan_name", "Unknown")
-            else:
-                plan_id = getattr(growPlan, "plan_id", None)
-                plan_name = getattr(growPlan, "plan_name", "Unknown")
-
-            _LOGGER.info(f"✅ {self.room} Grow plan activated: {plan_name} (ID: {plan_id})")
-
-            # Forward to grow plan manager
-            if self.growPlanManager:
-                # Handle both dict and object formats
-                if isinstance(growPlan, dict):
-                    plan_id = growPlan.get("id") or growPlan.get("plan_id")
-                else:
-                    plan_id = getattr(growPlan, "id", None) or getattr(growPlan, "plan_id", None)
+            _LOGGER.info(f"🌱 {self.room} Received new_grow_plans event with keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+            
+            if not isinstance(data, dict):
+                _LOGGER.warning(f"🌱 {self.room} new_grow_plans data is not a dict: {type(data)}")
+                return
+            
+            # Extract week data from the event
+            current_week_data = data.get("currentWeekData")
+            current_week = data.get("currentWeek")
+            active_plan = data.get("activePlan")
+            
+            if current_week_data:
+                _LOGGER.info(f"🌱 {self.room} Storing currentWeekData in data_store")
+                self.data_store.setDeep("growPlan.currentWeekData", current_week_data)
                 
-                if plan_id:
-                    await self.growPlanManager.activate_grow_plan(plan_id)
-                else:
-                    _LOGGER.warning(f"⚠️ {self.room} Could not extract plan_id from growPlan: {growPlan}")
-
-                # Fire HA event
-                self.hass.bus.async_fire("ogb_premium_growplan_activated", {
-                    "room": self.room,
-                    "plan_id": plan_id,
-                    "plan_name": plan_name,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                })
+                if current_week:
+                    self.data_store.setDeep("growPlan.currentWeek", current_week)
+                
+                # Also update the grow plan manager if available
+                if self.growPlanManager:
+                    self.growPlanManager.current_week_data = current_week_data
+                    if current_week:
+                        self.growPlanManager.current_week = current_week
+                    
+                    # Trigger entity updates from week data
+                    await self.growPlanManager._update_entities_from_week_data()
+                    _LOGGER.info(f"🌱 {self.room} Updated entities from week data")
+                
+                # Persist to disk
+                await self.event_manager.emit("SaveState", {"source": "PremiumIntegration", "action": "grow_plan_week_data"})
+                
+            elif active_plan:
+                _LOGGER.info(f"🌱 {self.room} Received activePlan without week data")
+                # Store basic plan info
+                self.data_store.setDeep("growPlan.id", active_plan.get("id"))
+                self.data_store.setDeep("growPlan.name", active_plan.get("name"))
             else:
-                _LOGGER.warning(f"⚠️ {self.room} GrowPlanManager not initialized, cannot activate plan")
-
+                _LOGGER.warning(f"🌱 {self.room} new_grow_plans event has no currentWeekData or activePlan")
+                
         except Exception as e:
-            _LOGGER.error(f"❌ {self.room} Plan activation error: {e}")
+            _LOGGER.error(f"❌ {self.room} Error handling new_grow_plans: {e}", exc_info=True)
 
     async def _handle_has_plant_viewed(self, data):
         """Handle HasPlantViewed from Camera and send encrypted to API."""
@@ -2197,14 +2203,26 @@ class OGBPremiumIntegration:
             available_modes = self._get_available_premium_modes()
             current_mode = self.data_store.get("tentMode")
 
-            if desired_mode in available_modes and current_mode != desired_mode:
+            # Nur restoren wenn:
+            # 1. Der gewünschte Mode verfügbar ist
+            # 2. Der aktuelle Mode "Disabled" oder None ist
+            #    (d.h. der User hat explizit keinen Mode gewählt)
+            # WICHTIG: Wenn der User einen Mode gewählt hat (egal welchen),
+            # respektieren wir das und überschreiben nicht.
+            should_restore = (
+                desired_mode in available_modes 
+                and current_mode != desired_mode
+                and current_mode in ["Disabled", None]
+            )
+
+            if should_restore:
                 _LOGGER.info(
                     f"🔄 {self.room} Restoring tent mode after premium restore: {current_mode} -> {desired_mode}"
                 )
                 await self._change_ctrl_values(tentmode=desired_mode)
             else:
                 _LOGGER.debug(
-                    f"ℹ️ {self.room} Tent mode restore check: desired={desired_mode}, "
+                    f"ℹ️ {self.room} Tent mode restore skipped: desired={desired_mode}, "
                     f"current={current_mode}, available={available_modes}"
                 )
         except Exception as mode_restore_error:
@@ -2920,11 +2938,10 @@ class OGBPremiumIntegration:
         TentMode = self.data_store.get("tentMode")
         StrainName = self.data_store.get("strainName")
 
-        # Persist the last premium controller mode even when runtime temporarily
-        # falls back to VPD during startup before premium options are restored.
-        saved_last_tent_mode = self.lastTentMode
-        if TentMode in self.PREMIUM_CONTROLLER_MODES:
-            saved_last_tent_mode = TentMode
+        # Persist the last selected tent mode so it survives restarts.
+        # Always save the current mode (including VPD Perfection, Disabled, etc.)
+        # - lastTentMode is only a fallback if tentMode is not set.
+        saved_last_tent_mode = TentMode or self.lastTentMode
 
         try:
             ws_backup = self.ogb_ws.get_session_backup_data() if self.ogb_ws else {}
@@ -3327,10 +3344,14 @@ class OGBPremiumIntegration:
         # auto-overwritten by lastTentMode on startup/reconnect.
         if effective_current_mode == "Disabled":
             restore_mode = "Disabled"
-        elif effective_current_mode in [None, "VPD Perfection"] and self.lastTentMode in available_modes:
-            restore_mode = self.lastTentMode
         elif effective_current_mode in available_modes or effective_current_mode not in all_premium_modes:
+            # User hat einen gültigen Mode ausgewählt (inkl. "VPD Perfection")
+            # Da tentMode jetzt persistiert wird (nicht mehr in IGNORED_STATE_KEYS),
+            # vertrauen wir dem restored Wert aus dem data_store.
             restore_mode = effective_current_mode or "VPD Perfection"
+        elif effective_current_mode is None and self.lastTentMode in available_modes:
+            # Nur als Fallback wenn gar kein Mode restored wurde
+            restore_mode = self.lastTentMode
         else:
             restore_mode = "VPD Perfection"
 

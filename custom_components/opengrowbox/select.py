@@ -212,7 +212,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_TentMode_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            options=["VPD Perfection", "VPD Target", "Closed Environment","Script Mode","Drying", "Disabled"],
+            options=["VPD Perfection", "VPD Target","Script Mode","Drying", "Disabled"],
             initial_value="Disabled",
         ),
         CustomSelect(
@@ -439,6 +439,38 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         ),
         CustomSelect(
             f"OGB_Intake_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # Heater
+        CustomSelect(
+            f"OGB_Heater_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # Cooler
+        CustomSelect(
+            f"OGB_Cooler_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # Humidifier
+        CustomSelect(
+            f"OGB_Humidifier_MinMax_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        # Dehumidifier
+        CustomSelect(
+            f"OGB_Dehumidifier_MinMax_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             options=["YES", "NO"],

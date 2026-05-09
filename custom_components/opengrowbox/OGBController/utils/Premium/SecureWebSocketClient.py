@@ -718,11 +718,22 @@ class OGBWebSocketConManager:
             logging.error(f"❌ {self.ws_room} WebSocket connection error: {e}")
             return False
 
-    async def request_grow_plans(self):
+    async def request_grow_plans_week(self):
         """Request grow plans from server via V1 WebSocket"""
         try:
-            if not self.sio.connected or not self.authenticated:
-                logging.warning(f"⚠️ {self.ws_room} Cannot request grow plans - not connected")
+            # More detailed connection check
+            is_connected = getattr(self.sio, 'connected', False)
+            is_authenticated = getattr(self, 'authenticated', False)
+            ws_connected = getattr(self, 'ws_connected', False)
+            
+            logging.info(f"🌱 {self.ws_room} request_grow_plans_week check: sio.connected={is_connected}, authenticated={is_authenticated}, ws_connected={ws_connected}")
+            
+            if not is_connected:
+                logging.warning(f"⚠️ {self.ws_room} Cannot request grow plans - WebSocket not connected")
+                return False
+            
+            if not is_authenticated and not ws_connected:
+                logging.warning(f"⚠️ {self.ws_room} Cannot request grow plans - not authenticated (sio={is_connected}, auth={is_authenticated}, ws={ws_connected})")
                 return False
             
             event_id = f"get-plans-{int(time.time())}"
@@ -731,12 +742,15 @@ class OGBWebSocketConManager:
                 "timestamp": time.time()
             }
             
-            logging.info(f"📤 {self.ws_room} Requesting grow plans from server")
-            await self.sio.emit("v1:management:get-plans", request_data, namespace=self._v1_namespace)
+            logging.info(f"📤 {self.ws_room} Sending v1:management:get-grow-week-plan request (event_id={event_id})")
+            await self.sio.emit("v1:management:get-grow-week-plan", request_data, namespace=self._v1_namespace)
+            logging.info(f"📤 {self.ws_room} Emit sent successfully")
             return True
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error requesting grow plans: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
             return False
 
     async def _request_session_key(self, event_id: str = None, room_id: str = None):
@@ -1326,6 +1340,68 @@ class OGBWebSocketConManager:
             logging.debug(f"🏓 {self.ws_room} V1 Pong received: {data}")
 
         # =================================================================
+        # GROW PLAN RESPONSE HANDLER
+        # Server responds to v1:management:get-plans with week data
+        # =================================================================
+        
+        @self.sio.on("v1:plans:get:response", namespace=ns)
+        async def on_v1_plans_get_response(data):
+            """Handle V1 grow plan response with current week data"""
+            try:
+                logging.info(f"🌱 {self.ws_room} Received v1:plans:get:response: {data}")
+                
+                # Check if response is encrypted
+                if isinstance(data, dict) and ('iv' in data or 'data' in data):
+                    # Decrypt encrypted response
+                    decrypted = self._decrypt_message(data)
+                    if decrypted:
+                        data = decrypted.get("data", decrypted)
+                        logging.info(f"🌱 {self.ws_room} Decrypted plan response")
+                
+                active_plan = data.get("activePlan")
+                current_week = data.get("currentWeek")
+                week_data = data.get("weekData")
+                
+                if active_plan:
+                    logging.info(
+                        f"🌱 {self.ws_room} Plan data received: "
+                        f"plan={active_plan.get('name') if active_plan else 'none'}, "
+                        f"week={current_week}, has_week_data={week_data is not None}"
+                    )
+                else:
+                    logging.warning(f"🌱 {self.ws_room} No activePlan in response! Data keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+                
+                # Forward to GrowPlanManager via event manager
+                emit_data = {
+                    "activePlan": active_plan,
+                    "currentWeek": current_week,
+                    "currentWeekData": week_data,
+                    "plans": [active_plan] if active_plan else [],
+                    "timestamp": data.get("timestamp", time.time())
+                }
+                
+                await self._safe_emit("new_grow_plans", emit_data, haEvent=True)
+                logging.info(f"🌱 {self.ws_room} Emitted new_grow_plans event (haEvent=True)")
+                
+                # Also emit via event_manager for internal handlers
+                if self.ogbevents:
+                    self.ogbevents.emit("new_grow_plans", emit_data)
+                    logging.info(f"🌱 {self.ws_room} Also emitted via ogbevents.emit()")
+                
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling v1:plans:get:response: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
+        
+        # Fallback handler - legacy event name
+        @self.sio.on("get_grow_plans", namespace=ns)
+        async def on_get_grow_plans(data):
+            """Fallback handler for legacy get_grow_plans response"""
+            logging.info(f"🌱 {self.ws_room} Received legacy get_grow_plans response: {data}")
+            # Reuse the main handler logic
+            await on_v1_plans_get_response(data)
+
+        # =================================================================
         # INCOMING ENCRYPTED MESSAGE HANDLERS
         # Server sends encrypted messages for: api_usage_update, grow_plans, etc.
         # =================================================================
@@ -1545,6 +1621,12 @@ class OGBWebSocketConManager:
             logging.info(f"🌱 {self.ws_room} Plant stage change from webapp: {data}")
             await self._handle_plant_stage_change(data)
 
+        @self.sio.on("grow_plan_status_change", namespace=ns)
+        async def on_grow_plan_status_change(data):
+            """Handle grow plan status change from webapp (activate/pause/resume/stop/switch)"""
+            logging.info(f"🌱 {self.ws_room} Grow plan status change from webapp: {data}")
+            await self._handle_grow_plan_status_change(data)
+
         @self.sio.on("plant_view_need", namespace=ns)
         async def plant_view_need(data):
             """Handle plant view need from webapp"""
@@ -1718,46 +1800,9 @@ class OGBWebSocketConManager:
         async def on_v1_plan_changed(data):
             await _handle_plan_changed_event(data, "v1:management:plan-changed")
 
-        @self.sio.on("v1:plans:get:response", namespace=ns)
-        async def on_v1_get_plans_response(data):
-            """Handle grow plans data response from server"""
-            try:
-                active_plan = data.get("activePlan")
-                current_week = data.get("currentWeek", 1)
-                week_data = data.get("weekData")
-                
-                if active_plan:
-                    logging.info(
-                        f"📊 {self.ws_room} Received grow plan data: "
-                        f"plan={active_plan.get('name')}, week={current_week}/{active_plan.get('totalWeeks')}"
-                    )
-                    
-                    # Store active grow plan
-                    self.active_grow_plan = {
-                        "id": active_plan.get("id"),
-                        "name": active_plan.get("name"),
-                        "strain": active_plan.get("strain"),
-                        "status": active_plan.get("status"),
-                        "current_week": current_week,
-                        "total_weeks": active_plan.get("totalWeeks"),
-                        "start_date": active_plan.get("startDate"),
-                        "week_data": week_data
-                    }
-                    
-                    # Emit to event manager for PremiumIntegration
-                    emit_data = {
-                        "type": "grow_plan_data",
-                        "plan": self.active_grow_plan,
-                        "timestamp": data.get("timestamp", time.time())
-                    }
-                    
-                    await self._safe_emit("grow_plan_data", emit_data, haEvent=True)
-                    logging.info(f"✅ {self.ws_room} Grow plan data emitted successfully")
-                else:
-                    logging.warning(f"⚠️ {self.ws_room} No active grow plan received")
-                    
-            except Exception as e:
-                logging.error(f"❌ {self.ws_room} Error handling grow plan data: {e}")
+
+
+
 
         @self.sio.on("storage_limit_reached", namespace=ns)
         async def on_storage_limit_reached(data):
@@ -2361,6 +2406,49 @@ class OGBWebSocketConManager:
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling plant_stage_change: {e}")
+
+    async def _handle_grow_plan_status_change(self, data: dict):
+        """Handle grow plan status change from webapp (activate/pause/resume/stop/switch)"""
+        try:
+            action = data.get("action")
+            plan_id = data.get("plan_id")
+            plan_name = data.get("plan_name")
+            room_id = data.get("room_id")
+            status = data.get("status")
+            current_week = data.get("current_week", 0)
+            total_weeks = data.get("total_weeks", 0)
+
+            logging.info(f"🌱 {self.ws_room} Grow plan {action}: {plan_name} (week {current_week}/{total_weeks})")
+
+            # Update active grow plan tracking
+            if action in ["activated", "resumed"]:
+                self.active_grow_plan = {
+                    "id": plan_id,
+                    "name": plan_name,
+                    "room_id": room_id,
+                    "status": status,
+                    "current_week": current_week,
+                    "total_weeks": total_weeks
+                }
+            elif action in ["paused", "stopped"]:
+                if self.active_grow_plan and self.active_grow_plan.get("id") == plan_id:
+                    self.active_grow_plan["status"] = status
+
+            # Emit to HA for grow plan manager to handle
+            await self._safe_emit("WebappGrowPlanStatusChange", {
+                "room": self.ws_room,
+                "action": action,
+                "plan_id": plan_id,
+                "plan_name": plan_name,
+                "room_id": room_id,
+                "status": status,
+                "current_week": current_week,
+                "total_weeks": total_weeks,
+                "source": "webapp"
+            }, haEvent=True)
+
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling grow_plan_status_change: {e}")
 
     async def _handle_prem_actions(self, data: dict):
         """Handle premium actions from webapp"""

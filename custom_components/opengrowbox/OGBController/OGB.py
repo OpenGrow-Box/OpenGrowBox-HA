@@ -179,19 +179,6 @@ class OpenGrowBox:
                 _LOGGER.debug(f"OGB-Manager {self.room}: No action found for {entity_key}")
             return False
 
-    async def _delayed_plan_activation(self):
-        """Activate grow plan after 30 second delay in background."""
-        await asyncio.sleep(30)
-
-        if hasattr(self, 'premium_manager') and self.premium_manager:
-            try:
-                if hasattr(self.premium_manager, 'growPlanManager') and self.premium_manager.growPlanManager.managerActive:
-                    await self.event_manager.emit("plan_activation", self.premium_manager.growPlanManager.active_grow_plan)
-                    _LOGGER.info(f"Delayed plan activation executed for {self.room}")
-                else:
-                    _LOGGER.debug(f"Delayed plan activation skipped (manager inactive) for {self.room}")
-            except Exception as e:
-                _LOGGER.error(f"Error in delayed plan activation: {e}")
 
     async def _vpd_update_loop(self, interval: int, vpdPublication):
         """Periodic VPD calculation at set interval."""
@@ -244,9 +231,6 @@ class OpenGrowBox:
                     if hasattr(self.premium_manager, 'ogb_ws'):
                         # success = await self.premium_manager.ogb_ws.prem_event("get_grow_plans", planRequestData)
                         
-                        # If grow plan manager is active → start background task
-                        if self.premium_manager.growPlanManager.managerActive:
-                            asyncio.create_task(self._delayed_plan_activation())
             except Exception as e:
                 _LOGGER.warning(f"Error in premium grow plan activation: {e}")
 

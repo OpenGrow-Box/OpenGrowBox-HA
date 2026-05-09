@@ -66,7 +66,7 @@ class OGBVPDManager:
         devices = self.data_store.get("devices")
 
         if devices is None or len(devices) == 0:
-            _LOGGER.warning(f"NO Sensors Found to calc VPD in {self.room}")
+            _LOGGER.debug(f"NO Sensors Found to calc VPD in {self.room}")
             return
 
         temperatures = []

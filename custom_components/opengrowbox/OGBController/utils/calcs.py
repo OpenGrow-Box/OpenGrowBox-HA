@@ -282,8 +282,19 @@ def calculate_orp(ph, temperature_c, e0_calibration=591.6):
         e0_calibration (float): Kalibrierter E0-Wert (Default: 591.6 mV für dein Wasser)
 
     Returns:
-        float: ORP in Millivolt (mV)
+        float: ORP in Millivolt (mV) oder None bei ungültigen Eingaben
     """
+    try:
+        ph = float(ph)
+        temperature_c = float(temperature_c)
+    except (ValueError, TypeError):
+        return None
+
+    if not (0 <= ph <= 14):
+        return None
+
+    if not (-10 <= temperature_c <= 60):
+        return None
 
     # Kalibriertes Elektrodenpotential
     E0_reference = e0_calibration
@@ -295,39 +306,6 @@ def calculate_orp(ph, temperature_c, e0_calibration=591.6):
     nernst_constant = 59.16
 
     # Temperaturabhängige Nernst-Konstante anpassen
-    temp_factor = (temperature_c + 273.15) / 298.15
-    adjusted_nernst = nernst_constant * temp_factor
-
-    # Temperaturkompensation für das Referenzpotential
-    temp_compensation = temp_coefficient * (temperature_c - 25)
-
-    # ORP berechnen
-    orp = E0_reference + temp_compensation - (adjusted_nernst * ph)
-
-    return round(orp, 2)
-    """
-    Berechnet den ORP (Oxidation-Reduction Potential) in mV
-    basierend auf pH und Temperatur des Wassers.
-    
-    Args:
-        ph (float): pH-Wert des Wassers (0-14)
-        temperature_c (float): Temperatur in Celsius
-    
-    Returns:
-        float: ORP in Millivolt (mV)
-    """
-
-    # Standard Elektrodenpotential bei 25°C
-    E0_reference = 800  # mV (Standard für Wasser bei 25°C)
-
-    # Temperaturkoeffizient (typisch -0.73 mV/°C für pH-Elektroden)
-    temp_coefficient = -0.73
-
-    # Nernst-Konstante bei 25°C: 59.16 mV
-    nernst_constant = 59.16
-
-    # Temperaturabhängige Nernst-Konstante anpassen
-    # Faktor = (T + 273.15) / 298.15 (wobei 298.15 K = 25°C)
     temp_factor = (temperature_c + 273.15) / 298.15
     adjusted_nernst = nernst_constant * temp_factor
 
