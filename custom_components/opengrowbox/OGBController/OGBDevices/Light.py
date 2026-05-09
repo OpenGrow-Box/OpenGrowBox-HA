@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import math
 from datetime import datetime, time
 
 from ..data.OGBDataClasses.OGBPublications import OGBLightAction
@@ -679,9 +680,9 @@ class Light(Device):
 
                     # First step → use start_voltage, subsequent steps → calculate increment
                     if i == 1:
-                        self.voltage = round(start_voltage)
+                        self.voltage = math.ceil(start_voltage)
                     else:
-                        self.voltage = round(start_voltage + (voltage_step * (i - 1)))
+                        self.voltage = math.ceil(start_voltage + (voltage_step * (i - 1)))
 
                     message = f"{self.deviceName}: SunRise Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
@@ -768,9 +769,9 @@ class Light(Device):
 
                     # Letzter Schritt → exakt target_voltage, kein Rundungsfehler
                     if i == 10:
-                        self.voltage = round(target_voltage)
+                        self.voltage = math.ceil(target_voltage)
                     else:
-                        self.voltage = round(start_voltage - (voltage_step * i))
+                        self.voltage = math.ceil(start_voltage - (voltage_step * i))
 
                     message = f"{self.deviceName}: SunSet Step {i}: {self.voltage}%"
                     lightAction = OGBLightAction(
