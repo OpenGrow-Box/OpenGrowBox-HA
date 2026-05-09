@@ -17,7 +17,7 @@ class TestDeadbandHysteresis:
     
     @pytest.mark.asyncio
     async def test_deadband_exit_requires_311_percent_hysteresis_vpd_perfection(self):
-        """VPD Perfection: Exit requires deviation > deadband * 3.11"""
+        """VPD Perfection: Exit requires deviation > deadband * 1.5"""
         from custom_components.opengrowbox.OGBController.managers.OGBModeManager import OGBModeManager
 
         data_store = FakeDataStore({
@@ -32,7 +32,7 @@ class TestDeadbandHysteresis:
         manager = OGBModeManager(None, data_store, event_manager, "test_room")
 
         # Initialize hysteresis parameters
-        assert manager._deadband_hysteresis_factor == 3.11
+        assert manager._deadband_hysteresis_factor == 1.5
         assert manager._deadband_min_hold_after_exit == 120
 
         # First call - enter deadband
@@ -42,18 +42,18 @@ class TestDeadbandHysteresis:
 
         # Verify entered deadband and return value
         assert manager._is_in_deadband is True
-        assert result is True, "Expected True when deadband is active"
+        assert result[0] is True, "Expected True when deadband is active"
         assert data_store.getDeep("controlOptionData.deadband.active") is True
 
         # Second call - exit deadband (deviation exceeds hysteresis)
         # VPD = 1.26, target = 1.10, deadband = 0.05
-        # deviation = 0.16, exit_threshold = 0.05 * 3.11 = 0.1555
-        # 0.16 > 0.1555 = True → should exit
+        # deviation = 0.16, exit_threshold = 0.05 * 1.5 = 0.075
+        # 0.16 > 0.075 = True → should exit
         result = await manager._handle_smart_deadband(1.26, 1.10, 0.05, "VPD Perfection")
 
         # Should be out of deadband
         assert manager._is_in_deadband is False
-        assert result is False, "Expected False when deadband is NOT active (exited)"
+        assert result[0] is False, "Expected False when deadband is NOT active (exited)"
         deadband_active = data_store.getDeep("controlOptionData.deadband.active")
         assert deadband_active is False, "Deadband should be inactive after exit"
     
@@ -74,13 +74,13 @@ class TestDeadbandHysteresis:
         manager = OGBModeManager(None, data_store, event_manager, "test_room")
 
         # VPD = 1.14, target = 1.10, deadband = 0.05
-        # deviation = 0.04, exit_threshold = 0.1555
-        # 0.04 < 0.1555 → should stay in deadband
+        # deviation = 0.04, exit_threshold = 0.075
+        # 0.04 < 0.075 → should stay in deadband
         result = await manager._handle_smart_deadband(1.14, 1.10, 0.05, "VPD Perfection")
 
         # Should be in deadband
         assert manager._is_in_deadband is True
-        assert result is True, "Expected True when deadband is active (stays in)"
+        assert result[0] is True, "Expected True when deadband is active (stays in)"
         assert manager._deadband_exit_threshold > 0
     
     @pytest.mark.asyncio
@@ -103,7 +103,7 @@ class TestDeadbandHysteresis:
         # First call - enters deadband
         result = await manager._handle_smart_deadband(1.10, 1.10, 0.05, "VPD Perfection")
         assert manager._is_in_deadband is True
-        assert result is True, "Expected True when deadband is active"
+        assert result[0] is True, "Expected True when deadband is active"
 
         # Simulate exit by setting last_exit_time to 30 seconds ago (less than 120s)
         manager._deadband_last_exit_time = time.time() - 30
@@ -113,7 +113,7 @@ class TestDeadbandHysteresis:
         result = await manager._handle_smart_deadband(1.08, 1.10, 0.05, "VPD Perfection")
 
         # Should NOT re-enter (still blocked)
-        assert result is False, "Expected False when deadband is NOT active (blocked by re-entry cooldown)"
+        assert result[0] is False, "Expected False when deadband is NOT active (blocked by re-entry cooldown)"
         assert manager._is_in_deadband is False, "Should NOT be in deadband (blocked)"
 
 
@@ -281,7 +281,7 @@ class TestNightHoldVPDFalse:
         result = await manager._handle_smart_deadband(1.10, 1.10, 0.05, "VPD Perfection")
 
         # Should return False (deadband blocked)
-        assert result is False, "Expected False when deadband is NOT active (blocked by night mode)"
+        assert result[0] is False, "Expected False when deadband is NOT active (blocked by night mode)"
         assert manager._is_in_deadband is False, "Should NOT be in deadband"
 
     @pytest.mark.asyncio
@@ -304,7 +304,7 @@ class TestNightHoldVPDFalse:
         result = await manager._handle_smart_deadband(1.10, 1.10, 0.05, "VPD Perfection")
 
         # Should return True (deadband active)
-        assert result is True, "Expected True when deadband is active"
+        assert result[0] is True, "Expected True when deadband is active"
         assert manager._is_in_deadband is True, "Should be in deadband"
 
     @pytest.mark.asyncio
@@ -326,7 +326,7 @@ class TestNightHoldVPDFalse:
 
         # Enter deadband
         result = await manager._handle_smart_deadband(1.10, 1.10, 0.05, "VPD Perfection")
-        assert result is True
+        assert result[0] is True
 
         # Simulate hold time elapsed
         manager._deadband_hold_start = time.time() - 350
@@ -345,7 +345,7 @@ class TestNightHoldVPDFalse:
         result = await manager._handle_smart_deadband(1.10, 1.10, 0.05, "VPD Perfection")
 
         # Should return True (extended) and state should still be in deadband
-        assert result is True, "Expected True when trend is good (towards_target)"
+        assert result[0] is True, "Expected True when trend is good (towards_target)"
         assert manager._is_in_deadband is True, "Should still be in deadband after good trend"
 
 
@@ -452,10 +452,10 @@ class TestHysteresisInAllModes:
         assert manager._is_in_deadband is True
 
         # Check that exitThreshold is calculated correctly
-        assert manager._deadband_exit_threshold == pytest.approx(0.1555, rel=0.01)
+        assert manager._deadband_exit_threshold == pytest.approx(0.075, rel=0.01)
 
         # Also check datastore has the value
-        assert data_store.getDeep("controlOptionData.deadband.exit_threshold") == pytest.approx(0.1555, rel=0.01)
+        assert data_store.getDeep("controlOptionData.deadband.exit_threshold") == pytest.approx(0.075, rel=0.01)
     
     @pytest.mark.asyncio
     async def test_hysteresis_exit_threshold_logged_closed_environment(self):
@@ -480,4 +480,4 @@ class TestHysteresisInAllModes:
 
         log_data = log_events[-1].get("data", {})
         assert "exitThreshold" in log_data
-        assert log_data["exitThreshold"] == pytest.approx(0.1555, rel=0.01)
+        assert log_data["exitThreshold"] == pytest.approx(0.12, rel=0.01)
