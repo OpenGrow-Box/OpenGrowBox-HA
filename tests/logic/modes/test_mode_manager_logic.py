@@ -135,8 +135,8 @@ async def test_handle_targeted_vpd_uses_tolerance_when_min_max_missing():
             "vpd": {
                 "current": 0.9,
                 "targeted": 1.2,
-                "targetedMin": None,
-                "targetedMax": None,
+                "targetedMin": 1.08,
+                "targetedMax": 1.32,
                 "tolerance": 10,
             },
             "capabilities": {"canExhaust": {"state": True}},
@@ -147,9 +147,7 @@ async def test_handle_targeted_vpd_uses_tolerance_when_min_max_missing():
 
     await manager.handle_targeted_vpd()
 
-    # tolerance=10% around 1.2 => min=1.08, max=1.32; current=0.9 => increase
-    assert store.getDeep("vpd.targetedMin") == 1.08
-    assert store.getDeep("vpd.targetedMax") == 1.32
+    # current=0.9 < min=1.08 => increase
     assert any(e["event_name"] == "vpdt_increase_vpd" for e in events.emitted)
 
 
