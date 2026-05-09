@@ -230,6 +230,7 @@ class OpenGrowBox:
                     # Grow plans werden nicht mehr angefordert - nur noch empfangen
                     if hasattr(self.premium_manager, 'ogb_ws'):
                         # success = await self.premium_manager.ogb_ws.prem_event("get_grow_plans", planRequestData)
+                        pass
                         
             except Exception as e:
                 _LOGGER.warning(f"Error in premium grow plan activation: {e}")
