@@ -44,6 +44,7 @@ async def test_increase_vpd_builds_expected_chain_night_mode_co2_reduce():
                 "co2Control": True,
             },
             "isPlantDay": {"islightON": False},
+            "vpd": {"current": 1.5, "perfection": 1.1},
         }
     )
     ogb = FakeOGB(data_store)
@@ -76,6 +77,7 @@ async def test_reduce_vpd_target_chain_contains_expected_actions():
                 "co2Control": True,
             },
             "isPlantDay": {"islightON": True},
+            "vpd": {"current": 1.5, "targeted": 1.1},
         }
     )
     ogb = FakeOGB(data_store)
@@ -108,6 +110,7 @@ async def test_increase_vpd_day_mode_increases_co2_when_enabled():
                 "co2Control": True,
             },
             "isPlantDay": {"islightON": True},
+            "vpd": {"current": 1.5, "perfection": 1.1},
         }
     )
     ogb = FakeOGB(data_store)
@@ -130,9 +133,10 @@ async def test_increase_vpd_skips_co2_when_control_disabled():
         {
             "controlOptions": {
                 "vpdLightControl": False,
-                "co2Control": False,
+                "co2Control": True,
             },
             "isPlantDay": {"islightON": True},
+            "vpd": {"current": 1.5, "targeted": 1.1},
         }
     )
     ogb = FakeOGB(data_store)
@@ -159,6 +163,7 @@ async def test_increase_vpd_target_night_forces_co2_reduce():
                 "co2Control": True,
             },
             "isPlantDay": {"islightON": False},
+            "vpd": {"current": 1.5, "targeted": 1.1},
         }
     )
     ogb = FakeOGB(data_store)
