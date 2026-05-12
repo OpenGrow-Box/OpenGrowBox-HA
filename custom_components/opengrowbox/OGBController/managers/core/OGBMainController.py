@@ -131,6 +131,9 @@ class OGBMainController:
         self.mode_manager.action_manager = self.action_manager
         if hasattr(self.mode_manager, 'closedEnvironmentManager'):
             self.mode_manager.closedEnvironmentManager.action_manager = self.action_manager
+        # Also pass to dryingActions which was created before action_manager was available
+        if hasattr(self.mode_manager, 'dryingActions'):
+            self.mode_manager.dryingActions.action_manager = self.action_manager
 
         self.feed_manager = OGBTankFeedManager(
             self.hass, self.data_store, self.event_manager, self.room
