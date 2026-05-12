@@ -74,7 +74,7 @@ class ClosedControlLogic:
 
     def calculate_temperature_deviation(self) -> Dict[str, Any]:
         """
-        Calculate temperature deviation from limits.
+        Calculate temperature deviation from limits with ambient influence.
 
         Returns deviation and direction for control decisions.
 
@@ -91,6 +91,19 @@ class ClosedControlLogic:
             current = float(current)
             min_temp = float(limits["minTemp"])
             max_temp = float(limits["maxTemp"])
+
+            # Apply ambient influence if available
+            ambient_temp = self.get_ambient_temperature()
+            if ambient_temp is not None and hasattr(self, 'ambient_temp_influence'):
+                ambient_temp = float(ambient_temp)
+                influence = self.ambient_temp_influence
+                # Adjust limits based on ambient temperature
+                # If ambient is cooler, we can afford to let temp go slightly higher (cooling is easier)
+                # If ambient is warmer, we need to be more conservative
+                temp_diff = ambient_temp - ((min_temp + max_temp) / 2)
+                adjustment = temp_diff * influence
+                min_temp += adjustment
+                max_temp += adjustment
 
             if current < min_temp:
                 deviation = current - min_temp
@@ -114,7 +127,7 @@ class ClosedControlLogic:
 
     def calculate_humidity_deviation(self) -> Dict[str, Any]:
         """
-        Calculate humidity deviation from limits.
+        Calculate humidity deviation from limits with ambient influence.
 
         Returns deviation and direction for control decisions.
 
@@ -131,6 +144,17 @@ class ClosedControlLogic:
             current = float(current)
             min_hum = float(limits["minHumidity"])
             max_hum = float(limits["maxHumidity"])
+
+            # Apply ambient influence if available
+            ambient_hum = self.get_ambient_humidity()
+            if ambient_hum is not None and hasattr(self, 'ambient_humidity_influence'):
+                ambient_hum = float(ambient_hum)
+                influence = self.ambient_humidity_influence
+                # Adjust limits based on ambient humidity
+                hum_diff = ambient_hum - ((min_hum + max_hum) / 2)
+                adjustment = hum_diff * influence
+                min_hum += adjustment
+                max_hum += adjustment
 
             if current < min_hum:
                 deviation = current - min_hum
@@ -161,15 +185,14 @@ class ClosedControlLogic:
         """
         return self.data_store.getDeep("tentData.AmbientTemp")
 
-
-    def get_ambient_temperature(self) -> Optional[float]:
+    def get_ambient_humidity(self) -> Optional[float]:
         """
-        Get ambient temperature for decision making.
+        Get ambient humidity for decision making.
 
         Returns:
-            Ambient temperature from tentData.AmbientTemp or None
+            Ambient humidity from tentData.AmbientHum or None
         """
-        return self.data_store.getDeep("tentData.AmbientTemp")
+        return self.data_store.getDeep("tentData.AmbientHum")
 
     def _get_plant_stage_data(self, plant_stage: str) -> Optional[dict]:
         """

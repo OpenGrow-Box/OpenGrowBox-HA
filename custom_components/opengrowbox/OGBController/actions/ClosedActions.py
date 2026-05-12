@@ -136,14 +136,16 @@ class ClosedActions:
         """Reduce CO2 through air exchange or recirculation."""
         action_map = []
 
-        # Prefer internal air movement first. If that is not enough, use exhaust.
-        if self._can_control_air_movement(capabilities):
-            action_map.append(
-                self._create_action("canVentilate", "Increase", action_message)
-            )
+        # Use exhaust first to actually remove CO2-laden air.
+        # Ventilation only mixes air internally and cannot reduce total CO2.
         if capabilities.get("canExhaust", {}).get("state", False):
             action_map.append(
                 self._create_action("canExhaust", "Increase", action_message)
+            )
+        elif self._can_control_air_movement(capabilities):
+            # Fallback to internal air movement if exhaust is not available
+            action_map.append(
+                self._create_action("canVentilate", "Increase", action_message)
             )
 
         return action_map
@@ -288,6 +290,10 @@ class ClosedActions:
                 action_map.append(
                     self._create_action("canVentilate", "Increase", f"{action_message}: distribute humidity")
                 )
+        elif capabilities.get("canClimate", {}).get("state", False):
+            action_map.append(
+                self._create_action("canClimate", "Increase", action_message)
+            )
         elif self._can_control_air_movement(capabilities):
             action_map.append(
                 self._create_action("canVentilate", "Increase", f"{action_message}: air mixing fallback")
@@ -482,18 +488,7 @@ class ClosedActions:
 
     async def _increase_humidity(self, capabilities: Dict[str, Any], action_message: str) -> List[Dict[str, Any]]:
         """Increase humidity using available humidification devices."""
-        action_map = []
-
-        if capabilities.get("canHumidify", {}).get("state", False):
-            action_map.append(
-                self._create_action("canHumidify", "Increase", action_message)
-            )
-            if self._can_control_air_movement(capabilities):
-                action_map.append(
-                    self._create_action("canVentilate", "Increase", f"{action_message}: distribute humidity")
-                )
-
-        return action_map
+        return await self._humidify(capabilities, action_message)
 
     async def _decrease_humidity(self, capabilities: Dict[str, Any], action_message: str) -> List[Dict[str, Any]]:
         """Decrease humidity using available dehumidification devices."""
@@ -625,12 +620,10 @@ class ClosedActions:
             hum_status = f"stabil (deadband ±{hum_dev:.1f}%)"
             _LOGGER.debug(f"{self.ogb.room}: Humidity in deadband ({hum_dev:.1f}% deviation) - skipping humidity actions")
         
-        # Air Recirculation (only if neither temp nor humidity in deadband)
-        if not temp_in_db and not hum_in_db:
-            air_actions = await self.optimize_air_recirculation(capabilities)
-            all_actions.extend(air_actions)
-        else:
-            _LOGGER.debug(f"{self.ogb.room}: Skipping air recirculation (deadband active)")
+        # Air Recirculation - always evaluate, independent of temp/humidity deadband
+        # CO2 distribution needs air movement even when temp/humidity is stable
+        air_actions = await self.optimize_air_recirculation(capabilities)
+        all_actions.extend(air_actions)
 
         # Execute all collected actions at once
         if all_actions:
@@ -754,16 +747,11 @@ class ClosedActions:
         Get reference temperature target for Closed Environment.
 
         Returns the midpoint of min/max limits (for display/logging only).
-        Control decisions use min/max limits directly, NOT this target.
+        Uses tentData directly to match get_control_limits() in ClosedControlLogic.
         """
-        limits = self.ogb.dataStore.getDeep("controlOptionData.temperature")
-        if limits is None:
-            # Try tentData as fallback
-            min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
-            max_temp = self.ogb.dataStore.getDeep("tentData.maxTemp")
-        else:
-            min_temp = limits.get("min")
-            max_temp = limits.get("max")
+        # Use tentData directly to ensure consistency with ClosedControlLogic
+        min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
+        max_temp = self.ogb.dataStore.getDeep("tentData.maxTemp")
 
         if min_temp is None or max_temp is None:
             return None
@@ -778,16 +766,11 @@ class ClosedActions:
         Get reference humidity target for Closed Environment.
 
         Returns the midpoint of min/max limits (for display/logging only).
-        Control decisions use min/max limits directly, NOT this target.
+        Uses tentData directly to match get_control_limits() in ClosedControlLogic.
         """
-        limits = self.ogb.dataStore.getDeep("controlOptionData.humidity")
-        if limits is None:
-            # Try tentData as fallback
-            min_hum = self.ogb.dataStore.getDeep("tentData.minHumidity")
-            max_hum = self.ogb.dataStore.getDeep("tentData.maxHumidity")
-        else:
-            min_hum = limits.get("min")
-            max_hum = limits.get("max")
+        # Use tentData directly to ensure consistency with ClosedControlLogic
+        min_hum = self.ogb.dataStore.getDeep("tentData.minHumidity")
+        max_hum = self.ogb.dataStore.getDeep("tentData.maxHumidity")
 
         if min_hum is None or max_hum is None:
             return None
@@ -1073,6 +1056,15 @@ class ClosedActions:
         # Get VPD for informational purposes only (NOT for control!)
         current_vpd = self.ogb.dataStore.getDeep("vpd.current")
 
+        # Get CO2 limits for logging
+        co2_limits = self.ogb.dataStore.getDeep("controlOptionData.co2ppm")
+        if co2_limits:
+            co2_min = co2_limits.get("minPPM")
+            co2_max = co2_limits.get("maxPPM")
+        else:
+            co2_min = None
+            co2_max = None
+
         # Collect actions
         all_actions = []
 
@@ -1084,7 +1076,7 @@ class ClosedActions:
                 all_actions.append(self._create_action(cap, "Reduce", action_message))
 
         # Ventilation devices that should be actively controlled
-        ventilation_caps = ["canExhaust", "canVentilate", "Intake"]
+        ventilation_caps = ["canExhaust", "canVentilate", "canIntake"]
 
         # Always increase Exhaust and Ventilation for air exchange (prevent mold)
         if capabilities.get("canExhaust", {}).get("state", False):

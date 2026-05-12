@@ -1882,11 +1882,18 @@ class Device:
                 # Humidifier ausschalten
                 elif self.deviceType == "Humidifier":
                     if self.isSpecialDevice:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
                         self.isRunning = False
                         _LOGGER.debug(f"{self.deviceName}: Humidifier OFF.")
                         return
@@ -1925,11 +1932,18 @@ class Device:
                 # Dehumidifier ausschalten
                 elif self.deviceType == "Dehumidifier":
                     if self.isSpecialDevice:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
                         self.isRunning = False
                         _LOGGER.debug(f"{self.deviceName}: Dehumidifier OFF.")
                         return

@@ -37,7 +37,7 @@ class OGBModeManager:
         self.closedEnvironmentManager = ClosedEnvironmentManager(dataStore, self.event_manager, room, hass)
 
         # Drying Actions for drying mode handling
-        self.dryingActions = DryingActions(dataStore, self.event_manager, room)
+        self.dryingActions = DryingActions(dataStore, self.event_manager, self.action_manager, room)
 
         # Script Mode Manager for custom user scripts
         self.scriptModeManager: OGBScriptMode | None = None
@@ -918,15 +918,15 @@ class OGBModeManager:
                 # Außerhalb Deadband - Reset Deadband State
                 self._reset_deadband_state()
 
-            # VPD steuern basierend auf der Toleranz (nur außerhalb Deadband)
-            if currentVPD < min_vpd:
+            # VPD steuern basierend auf dem Target (nicht den Bounds) - wie VPD Perfection
+            if currentVPD < targetedVPD:
                 _LOGGER.debug(
-                    f"{self.room}: Current VPD ({currentVPD}) is below minimum ({min_vpd}). Increasing VPD."
+                    f"{self.room}: Current VPD ({currentVPD}) is below target ({targetedVPD}). Increasing VPD."
                 )
                 await self.event_manager.emit("vpdt_increase_vpd", capabilities)
-            elif currentVPD > max_vpd:
+            elif currentVPD > targetedVPD:
                 _LOGGER.debug(
-                    f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD."
+                    f"{self.room}: Current VPD ({currentVPD}) is above target ({targetedVPD}). Reducing VPD."
                 )
                 await self.event_manager.emit("vpdt_reduce_vpd", capabilities)
 

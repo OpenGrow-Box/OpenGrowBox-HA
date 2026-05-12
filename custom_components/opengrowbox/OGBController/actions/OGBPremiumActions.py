@@ -131,6 +131,45 @@ class OGBPremiumActions:
             device = str(action.get("device", "")).lower()
             device_actions.setdefault(device, []).append(action)
 
+        # 🚨 Handle missing devices and notifications from backend
+        missing_devices = control_data.get("missingDevices", [])
+        notifications = control_data.get("notifications", [])
+        
+        if missing_devices:
+            _LOGGER.warning(
+                f"{self.ogb.room}: Missing devices reported by backend: {', '.join(missing_devices)}"
+            )
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "Type": controller_type,
+                    "Message": f"Missing devices: {', '.join(missing_devices)}",
+                    "ControllerType": controller_type,
+                    "MissingDevices": missing_devices,
+                },
+                haEvent=True,
+                debug_type="WARNING",
+            )
+        
+        if notifications:
+            for notification in notifications:
+                _LOGGER.error(
+                    f"{self.ogb.room}: Backend notification: {notification}"
+                )
+            await self.ogb.eventManager.emit(
+                "LogForClient",
+                {
+                    "Name": self.ogb.room,
+                    "Type": controller_type,
+                    "Message": f"System limit reached: {' | '.join(notifications)}",
+                    "ControllerType": controller_type,
+                    "Notifications": notifications,
+                },
+                haEvent=True,
+                debug_type="ERROR",
+            )
+        
         await self.ogb.eventManager.emit("LogForClient", control_data, haEvent=True, debug_type="DEBUG")
 
         priority_order = {"high": 1, "medium": 2, "low": 3}

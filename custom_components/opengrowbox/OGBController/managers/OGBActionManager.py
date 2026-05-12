@@ -1276,9 +1276,26 @@ class OGBActionManager:
         if self.dampening_actions:
             final_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
 
-        # Apply cooldown filtering if dampening is enabled
-        dampened_actions, blocked_actions = await self._process_actions_with_cooldown_filter(final_actions)
-        final_actions = await self._apply_environment_guard(dampened_actions)
+        # Remove duplicate actions to prevent duplicate commands in the same cycle
+        final_actions = self._remove_duplicate_actions(final_actions)
+
+        # Separate emergency actions from normal actions
+        # Emergency actions (CO2/O2 safety) should bypass cooldown filtering
+        emergency_actions = []
+        normal_actions = []
+        for action in final_actions:
+            message = getattr(action, 'message', '')
+            if "emergency" in message.lower() or "critical" in message.lower() or "safety" in message.lower():
+                emergency_actions.append(action)
+            else:
+                normal_actions.append(action)
+
+        # Apply cooldown filtering only to normal actions
+        dampened_actions, blocked_actions = await self._process_actions_with_cooldown_filter(normal_actions)
+        
+        # Combine emergency actions (unfiltered) with dampened normal actions
+        final_actions = dampened_actions + emergency_actions
+        final_actions = await self._apply_environment_guard(final_actions)
         await self.publicationActionHandler(final_actions)
 
     async def checkLimitsAndPublicateWithDampening(self, actionMap: List):

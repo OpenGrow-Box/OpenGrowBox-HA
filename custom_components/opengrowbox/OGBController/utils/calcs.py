@@ -135,7 +135,7 @@ def calc_dew_vpd(air_temp, dew_point):
         }
 
     sdp_luft = 0.6108 * math.exp((17.27 * air_temp) / (air_temp + 237.3))
-    adp = 0.6108 * math.exp((17. * dew_point) / (dew_point + 237.3))
+    adp = 0.6108 * math.exp((17.27 * dew_point) / (dew_point + 237.3))
     dew_vpd = sdp_luft - adp
 
     vapor_pressure_actual = 6.11 * (10 ** ((7.5 * dew_point) / (237.3 + dew_point)))
@@ -145,19 +145,6 @@ def calc_dew_vpd(air_temp, dew_point):
     # All VPD values must be consistent: max 2 decimal places
     return {
         "dewpoint_vpd": round(dew_vpd, 2),
-        "vapor_pressure_actual": round(vapor_pressure_actual, 2),
-        "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
-    }
-
-    sdp_luft = 0.6108 * math.exp((17.27 * air_temp) / (air_temp + 237.3))
-    adp = 0.6108 * math.exp((17.27 * dew_point) / (dew_point + 237.3))
-    dew_vpd = sdp_luft - adp
-
-    vapor_pressure_actual = 6.11 * (10 ** ((7.5 * dew_point) / (237.3 + dew_point)))
-    vapor_pressure_saturation = 6.11 * (10 ** ((7.5 * air_temp) / (237.3 + air_temp)))
-
-    return {
-        "dewpoint_vpd": round(dew_vpd, 3),
         "vapor_pressure_actual": round(vapor_pressure_actual, 2),
         "vapor_pressure_saturation": round(vapor_pressure_saturation, 2),
     }

@@ -980,7 +980,17 @@ class OGBConfigurationManager:
         value = data.newState[0]
         current_mode = self.data_store.getDeep("drying.currentDryMode")
         if current_mode != value:
+            # If switching from a drying mode to NO-Dry, cleanup devices first
+            if value == "NO-Dry" and current_mode and current_mode != "NO-Dry":
+                await self.event_manager.emit("drying_cleanup", {"room": self.room, "from_mode": current_mode})
+            
             self.data_store.setDeep("drying.currentDryMode", value)
+            # Reset mode_start_time when switching modes to ensure proper phase calculation
+            if value == "NO-Dry":
+                self.data_store.setDeep("drying.mode_start_time", None)
+            else:
+                from datetime import datetime
+                self.data_store.setDeep("drying.mode_start_time", datetime.now().isoformat())
 
     async def _update_min_max_control(self, data):
         """

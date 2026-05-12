@@ -454,8 +454,11 @@ def extract_context_from_entity(entity_id, sensor_type=None):
     """
     entity_lower = entity_id.lower()
     
-    # WICHTIG: Prüfe zuerst auf Device-Namen (watertester, wasstertester)
+    # WICHTIG: Prüfe zuerst auf Reservoir/Water-Devices
     # Diese haben Vorrang vor Sensor-Typ-spezifischen Kontexten
+    if any(keyword in entity_lower for keyword in ["waterreservoir", "water_reservoir", "reservoir"]):
+        return "water"
+    
     if "watertester" in entity_lower or "wasstertester" in entity_lower:
         return "water"
     

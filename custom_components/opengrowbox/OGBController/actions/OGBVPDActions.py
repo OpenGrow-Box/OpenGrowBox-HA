@@ -42,6 +42,50 @@ class OGBVPDActions:
         """Return True only when plant day/light is active."""
         return bool(self.ogb.dataStore.getDeep("isPlantDay.islightON", False))
 
+    def _add_bounds_correction_actions(self, action_map, capabilities, context=""):
+        """
+        Prüft Temp/Humidity Bounds und fügt Korrektur-Actions hinzu.
+        Wird aufgerufen NACH der normalen VPD Logik.
+        """
+        current_temp = self.ogb.dataStore.getDeep("tentData.temperature")
+        current_hum = self.ogb.dataStore.getDeep("tentData.humidity")
+        min_temp = self.ogb.dataStore.getDeep("tentData.minTemp")
+        max_temp = self.ogb.dataStore.getDeep("tentData.maxTemp")
+        min_hum = self.ogb.dataStore.getDeep("tentData.minHumidity")
+        max_hum = self.ogb.dataStore.getDeep("tentData.maxHumidity")
+        
+        # Hysterese-Puffer
+        TEMP_BUFFER = 1.5
+        HUM_BUFFER = 3.0
+        
+        correction_actions = []
+        
+        # Temp zu niedrig
+        if current_temp is not None and min_temp is not None:
+            if current_temp < (min_temp + TEMP_BUFFER):
+                if capabilities.get("canHeat", {}).get("state", False):
+                    correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})"))
+        
+        # Temp zu hoch
+        if current_temp is not None and max_temp is not None:
+            if current_temp > (max_temp - TEMP_BUFFER):
+                if capabilities.get("canCool", {}).get("state", False):
+                    correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})"))
+        
+        # Humidity zu niedrig
+        if current_hum is not None and min_hum is not None:
+            if current_hum < (min_hum + HUM_BUFFER):
+                if capabilities.get("canHumidify", {}).get("state", False):
+                    correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})"))
+        
+        # Humidity zu hoch
+        if current_hum is not None and max_hum is not None:
+            if current_hum > (max_hum - HUM_BUFFER):
+                if capabilities.get("canDehumidify", {}).get("state", False):
+                    correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})"))
+        
+        return action_map + correction_actions
+
     # =================================================================
     # Basic VPD Control Actions
     # =================================================================
@@ -294,6 +338,9 @@ class OGBVPDActions:
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Increase", action_message))
 
+        # Bounds-Korrektur hinzufügen
+        action_map = self._add_bounds_correction_actions(action_map, capabilities, "Target-")
+
         await self.action_manager.checkLimitsAndPublicateTarget(action_map)
 
     async def reduce_vpd_target(self, capabilities: Dict[str, Any]):
@@ -357,6 +404,9 @@ class OGBVPDActions:
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Reduce", action_message))
+
+        # Bounds-Korrektur hinzufügen
+        action_map = self._add_bounds_correction_actions(action_map, capabilities, "Target-")
 
         await self.action_manager.checkLimitsAndPublicateTarget(action_map)
 
