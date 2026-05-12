@@ -145,6 +145,11 @@ class DryingActions:
 
         _LOGGER.warning(f"{self.name}: current_phase={current_phase}")
 
+        # Guard against missing sensor data
+        if tentData.get("temperature") is None or tentData.get("humidity") is None:
+            _LOGGER.warning(f"{self.name}: Missing temperature or humidity data, skipping control")
+            return
+
         # Check temperature independently
         temp_ok = (
             abs(tentData["temperature"] - current_phase["targetTemp"]) <= tempTolerance
@@ -344,6 +349,11 @@ class DryingActions:
         tentData = self.data_store.get("tentData")
         currentDewPoint = tentData.get("dewpoint")
         currenTemperature = tentData.get("temperature")
+
+        # Guard against missing sensor data
+        if currenTemperature is None or tentData.get("humidity") is None:
+            _LOGGER.warning(f"{self.name}: Missing temperature or humidity data, skipping control")
+            return
 
         current_phase = self.get_current_phase(phaseConfig)
 
