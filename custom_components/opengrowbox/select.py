@@ -307,7 +307,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_DryingModes_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            options=["ElClassico", "DewBased", "5DayDry", "NO-Dry"],
+            options=["ElClassico", "DewBased", "5DayDry", "OwnDry", "NO-Dry"],
             initial_value="NO-Dry",
         ),
         CustomSelect(
