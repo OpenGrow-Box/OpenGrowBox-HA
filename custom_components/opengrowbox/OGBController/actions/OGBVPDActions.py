@@ -42,10 +42,40 @@ class OGBVPDActions:
         """Return True only when plant day/light is active."""
         return bool(self.ogb.dataStore.getDeep("isPlantDay.islightON", False))
 
+    def _calculate_dynamic_priority(self, deviation: float, is_weighted: bool = False) -> str:
+        """
+        Berechnet Priorität basierend auf (gewichteter) Abweichung.
+        
+        Args:
+            deviation: Absolute Abweichung (oder gewichtete Abweichung wenn ownWeights aktiv)
+            is_weighted: True wenn ownWeights aktiv sind
+            
+        Returns:
+            Priorität: "emergency", "high", "medium", "low"
+        """
+        if is_weighted:
+            # Mit Own Weights: Gewichtete Abweichung bestimmt Priorität
+            if deviation >= 8.0:
+                return "emergency"
+            elif deviation >= 5.0:
+                return "high"
+            elif deviation >= 2.0:
+                return "medium"
+            else:
+                return "low"
+        else:
+            # Ohne Own Weights: Reale Abweichung bestimmt Priorität
+            if deviation >= 3.0:
+                return "high"
+            elif deviation >= 1.0:
+                return "medium"
+            else:
+                return "low"
+
     def _add_bounds_correction_actions(self, action_map, capabilities, context=""):
         """
         Prüft Temp/Humidity Bounds und fügt Korrektur-Actions hinzu.
-        Wird aufgerufen NACH der normalen VPD Logik.
+        BEACHTET ownWeights für dynamische Priorisierung!
         """
         current_temp = self.ogb.dataStore.getDeep("tentData.temperature")
         current_hum = self.ogb.dataStore.getDeep("tentData.humidity")
@@ -54,35 +84,87 @@ class OGBVPDActions:
         min_hum = self.ogb.dataStore.getDeep("tentData.minHumidity")
         max_hum = self.ogb.dataStore.getDeep("tentData.maxHumidity")
         
+        # Prüfe ob ownWeights aktiv
+        own_weights = self.ogb.dataStore.getDeep("controlOptions.ownWeights", False)
+        
         # Hysterese-Puffer
         TEMP_BUFFER = 1.5
         HUM_BUFFER = 3.0
         
         correction_actions = []
         
+        # Berechne gewichtete Abweichungen wenn ownWeights aktiv
+        if own_weights:
+            temp_weight = self.ogb.dataStore.getDeep("controlOptionData.weights.temp", 1.0)
+            hum_weight = self.ogb.dataStore.getDeep("controlOptionData.weights.hum", 1.0)
+            
+            # Target ist der Mittelwert zwischen Min und Max
+            target_temp = (min_temp + max_temp) / 2 if min_temp is not None and max_temp is not None else None
+            target_hum = (min_hum + max_hum) / 2 if min_hum is not None and max_hum is not None else None
+            
+            # Abweichung ist der Abstand vom Target (nicht vom Limit!)
+            temp_dev = abs(current_temp - target_temp) if current_temp is not None and target_temp is not None else 0
+            hum_dev = abs(current_hum - target_hum) if current_hum is not None and target_hum is not None else 0
+            
+            weighted_temp_dev = temp_dev * temp_weight
+            weighted_hum_dev = hum_dev * hum_weight
+        else:
+            weighted_temp_dev = 0
+            weighted_hum_dev = 0
+        
         # Temp zu niedrig
         if current_temp is not None and min_temp is not None:
             if current_temp < (min_temp + TEMP_BUFFER):
+                if own_weights:
+                    # Mit Own Weights: Berechne Priorität basierend auf gewichteter Abweichung
+                    deviation = weighted_temp_dev
+                    priority = self._calculate_dynamic_priority(deviation, True)
+                else:
+                    # Ohne Own Weights: Berechne Priorität basierend auf realer Abweichung vom Limit
+                    deviation = abs(current_temp - min_temp)
+                    priority = self._calculate_dynamic_priority(deviation, False)
+                
                 if capabilities.get("canHeat", {}).get("state", False):
-                    correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})"))
+                    correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})", priority))
         
         # Temp zu hoch
         if current_temp is not None and max_temp is not None:
             if current_temp > (max_temp - TEMP_BUFFER):
+                if own_weights:
+                    deviation = weighted_temp_dev
+                    priority = self._calculate_dynamic_priority(deviation, True)
+                else:
+                    deviation = abs(current_temp - max_temp)
+                    priority = self._calculate_dynamic_priority(deviation, False)
+                
                 if capabilities.get("canCool", {}).get("state", False):
-                    correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})"))
+                    correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})", priority))
         
         # Humidity zu niedrig
         if current_hum is not None and min_hum is not None:
             if current_hum < (min_hum + HUM_BUFFER):
+                if own_weights:
+                    deviation = weighted_hum_dev
+                    priority = self._calculate_dynamic_priority(deviation, True)
+                else:
+                    deviation = abs(current_hum - min_hum)
+                    priority = self._calculate_dynamic_priority(deviation, False)
+                
                 if capabilities.get("canHumidify", {}).get("state", False):
-                    correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})"))
+                    correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})", priority))
         
         # Humidity zu hoch
         if current_hum is not None and max_hum is not None:
             if current_hum > (max_hum - HUM_BUFFER):
+                if own_weights:
+                    deviation = weighted_hum_dev
+                    priority = self._calculate_dynamic_priority(deviation, True)
+                else:
+                    deviation = abs(current_hum - max_hum)
+                    priority = self._calculate_dynamic_priority(deviation, False)
+                
                 if capabilities.get("canDehumidify", {}).get("state", False):
-                    correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})"))
+                    correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})", priority))
         
         return action_map + correction_actions
 
@@ -610,14 +692,15 @@ class OGBVPDActions:
     # Helper Methods
     # =================================================================
 
-    def _create_action(self, capability: str, action: str, message: str):
+    def _create_action(self, capability: str, action: str, message: str, priority: str = ""):
         """
-        Create an action publication.
+        Create an action publication with optional priority.
 
         Args:
             capability: Device capability
             action: Action to perform
             message: Action message
+            priority: Action priority (optional)
 
         Returns:
             Action publication object
@@ -629,7 +712,7 @@ class OGBVPDActions:
             action=action,
             Name=self.ogb.room,
             message=message,
-            priority="",
+            priority=priority,
         )
 
     def _is_humidity_critical(self, tent_data: dict) -> bool:

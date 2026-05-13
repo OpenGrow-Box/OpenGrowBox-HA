@@ -1070,10 +1070,6 @@ class OGBDampeningActions:
         if not is_reduce_vpd and not is_increase_vpd:
             # No VPD fan actions to modify
             return action_map
-
-        FAN_TEMP_BUFFER = 1.0  # 1°C buffer zone
-        FAN_HUM_BUFFER = 5.0  # 5% humidity buffer zone
-        
         # Read humidity values
         current_humidity = tent_data.get("humidity")
         max_humidity = tent_data.get("maxHumidity")
@@ -1088,20 +1084,19 @@ class OGBDampeningActions:
                 max_humidity = float(max_humidity)
                 min_humidity = float(min_humidity)
                 
-                # Check if humidity is critically high (above max + buffer)
-                if current_humidity > (max_humidity + FAN_HUM_BUFFER):
+                # Check if humidity is outside limits (no buffer - react immediately)
+                if current_humidity > max_humidity:
                     humidity_critical_high = True
                     _LOGGER.warning(
                         f"{self.ogb.room}: CRITICAL HIGH HUMIDITY detected! "
-                        f"Current: {current_humidity}% > Max+Buffer: {max_humidity + FAN_HUM_BUFFER}%. "
+                        f"Current: {current_humidity}% > Max: {max_humidity}%. "
                         f"Exhaust MUST increase to remove moisture!"
                     )
-                # Check if humidity is critically low (below min - buffer)
-                elif current_humidity < (min_humidity - FAN_HUM_BUFFER):
+                elif current_humidity < min_humidity:
                     humidity_critical_low = True
                     _LOGGER.warning(
                         f"{self.ogb.room}: CRITICAL LOW HUMIDITY detected! "
-                        f"Current: {current_humidity}% < Min-Buffer: {min_humidity - FAN_HUM_BUFFER}%. "
+                        f"Current: {current_humidity}% < Min: {min_humidity}%. "
                         f"Exhaust MUST reduce to retain moisture!"
                     )
             except (TypeError, ValueError):
@@ -1126,7 +1121,7 @@ class OGBDampeningActions:
                     if act == 'Reduce':
                         new_action = self._create_modified_action(
                             action, 'Increase',
-                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}% > {max_humidity + FAN_HUM_BUFFER}%, exhaust INCREASED to remove moisture]"
+                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}% > {max_humidity}%, exhaust INCREASED to remove moisture]"
                         )
                         modified_actions.append(new_action)
                         changes_made.append(f"canExhaust: Reduce -> Increase (humidity critical high)")
@@ -1155,7 +1150,7 @@ class OGBDampeningActions:
                     if act == 'Increase':
                         new_action = self._create_modified_action(
                             action, 'Reduce',
-                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}% < {min_humidity - FAN_HUM_BUFFER}%, exhaust REDUCED to retain moisture]"
+                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}% < {min_humidity}%, exhaust REDUCED to retain moisture]"
                         )
                         modified_actions.append(new_action)
                         changes_made.append(f"canExhaust: Increase -> Reduce (humidity critical low)")
@@ -1176,7 +1171,7 @@ class OGBDampeningActions:
             
             # === reduce_vpd context: VPD is too high ===
             if is_reduce_vpd:
-                if current_temp >= (max_temp - FAN_TEMP_BUFFER):
+                if current_temp >= max_temp:
                     # Temperature is high or near max - COOLING takes priority over VPD reduction
                     if cap == 'canExhaust':
                         if act == 'Reduce':
@@ -1186,7 +1181,7 @@ class OGBDampeningActions:
                                 _LOGGER.info(
                                     f"{self.ogb.room}: DynamicFan - Keeping exhaust at Reduce because "
                                     f"humidifier needs to increase (humidity too low). "
-                                    f"Temp {current_temp}°C >= {max_temp - FAN_TEMP_BUFFER}°C but humidity correction takes priority."
+                                    f"Temp {current_temp}°C >= {max_temp}°C but humidity correction takes priority."
                                 )
                                 modified_actions.append(action)
                                 continue
@@ -1195,7 +1190,7 @@ class OGBDampeningActions:
                             # If no intake exists, reducing exhaust would trap heat
                             new_action = self._create_modified_action(
                                 action, 'Increase',
-                                f"{msg} [DynamicFan: temp {current_temp}°C >= {max_temp - FAN_TEMP_BUFFER}°C, exhaust INCREASED for cooling instead of reduced]"
+                                f"{msg} [DynamicFan: temp {current_temp}°C >= {max_temp}°C, exhaust INCREASED for cooling instead of reduced]"
                             )
                             modified_actions.append(new_action)
                             changes_made.append(f"canExhaust: Reduce -> Increase (temp high)")
@@ -1209,7 +1204,7 @@ class OGBDampeningActions:
                         if act == 'Reduce':
                             new_action = self._create_modified_action(
                                 action, 'Increase',
-                                f"{msg} [DynamicFan: temp {current_temp}°C >= {max_temp - FAN_TEMP_BUFFER}°C, ventilation INCREASED for cooling]"
+                                f"{msg} [DynamicFan: temp {current_temp}°C >= {max_temp}°C, ventilation INCREASED for cooling]"
                             )
                             modified_actions.append(new_action)
                             changes_made.append(f"canVentilate: Reduce -> Increase (temp high)")
@@ -1227,7 +1222,7 @@ class OGBDampeningActions:
             
             # === increase_vpd context: VPD is too low ===
             elif is_increase_vpd:
-                if current_temp <= (min_temp + FAN_TEMP_BUFFER):
+                if current_temp <= min_temp:
                     # Temperature is low or near min - HEATING retention takes priority
                     if cap == 'canExhaust':
                         if act == 'Increase':
@@ -1235,7 +1230,7 @@ class OGBDampeningActions:
                             # If no intake exists, increasing exhaust would suck out heat
                             new_action = self._create_modified_action(
                                 action, 'Reduce',
-                                f"{msg} [DynamicFan: temp {current_temp}°C <= {min_temp + FAN_TEMP_BUFFER}°C, exhaust REDUCED to retain heat instead of increased]"
+                                f"{msg} [DynamicFan: temp {current_temp}°C <= {min_temp}°C, exhaust REDUCED to retain heat instead of increased]"
                             )
                             modified_actions.append(new_action)
                             changes_made.append(f"canExhaust: Increase -> Reduce (temp low)")
@@ -1249,7 +1244,7 @@ class OGBDampeningActions:
                         if act == 'Increase':
                             new_action = self._create_modified_action(
                                 action, 'Reduce',
-                                f"{msg} [DynamicFan: temp {current_temp}°C <= {min_temp + FAN_TEMP_BUFFER}°C, ventilation REDUCED to retain heat]"
+                                f"{msg} [DynamicFan: temp {current_temp}°C <= {min_temp}°C, ventilation REDUCED to retain heat]"
                             )
                             modified_actions.append(new_action)
                             changes_made.append(f"canVentilate: Increase -> Reduce (temp low)")

@@ -60,7 +60,7 @@ class TestDynamicFanLogic:
     def test_reduce_vpd_temp_high_only_exhaust_switches_to_increase(self, dampening):
         dampening.ogb.dataStore.data["capabilities"]["canIntake"]["state"] = False
         actions = [make_action("canExhaust", "Reduce")]
-        tent_data = {"temperature": 27.5, "minTemp": 20, "maxTemp": 28}
+        tent_data = {"temperature": 28.5, "minTemp": 20, "maxTemp": 28}
         result = dampening._apply_dynamic_fan_logic(actions, tent_data)
         assert action_names(result) == {("canExhaust", "Increase")}
         assert "DynamicFan" in result[0].message
@@ -70,7 +70,7 @@ class TestDynamicFanLogic:
             make_action("canExhaust", "Reduce"),
             make_action("canIntake", "Increase"),
         ]
-        tent_data = {"temperature": 27.5, "minTemp": 20, "maxTemp": 28}
+        tent_data = {"temperature": 28.5, "minTemp": 20, "maxTemp": 28}
         result = dampening._apply_dynamic_fan_logic(actions, tent_data)
         assert action_names(result) == {("canExhaust", "Increase"), ("canIntake", "Increase")}
 
@@ -84,7 +84,7 @@ class TestDynamicFanLogic:
     def test_increase_vpd_temp_low_only_exhaust_switches_to_reduce(self, dampening):
         dampening.ogb.dataStore.data["capabilities"]["canIntake"]["state"] = False
         actions = [make_action("canExhaust", "Increase")]
-        tent_data = {"temperature": 20.5, "minTemp": 20, "maxTemp": 28}
+        tent_data = {"temperature": 19.5, "minTemp": 20, "maxTemp": 28}
         result = dampening._apply_dynamic_fan_logic(actions, tent_data)
         assert action_names(result) == {("canExhaust", "Reduce")}
         assert "DynamicFan" in result[0].message
@@ -94,7 +94,7 @@ class TestDynamicFanLogic:
             make_action("canExhaust", "Increase"),
             make_action("canIntake", "Reduce"),
         ]
-        tent_data = {"temperature": 20.5, "minTemp": 20, "maxTemp": 28}
+        tent_data = {"temperature": 19.5, "minTemp": 20, "maxTemp": 28}
         result = dampening._apply_dynamic_fan_logic(actions, tent_data)
         assert action_names(result) == {("canExhaust", "Reduce"), ("canIntake", "Reduce")}
 
@@ -104,7 +104,7 @@ class TestDynamicFanLogic:
             make_action("canExhaust", "Reduce"),
             make_action("canVentilate", "Reduce"),
         ]
-        tent_data = {"temperature": 27.5, "minTemp": 20, "maxTemp": 28}
+        tent_data = {"temperature": 28.5, "minTemp": 20, "maxTemp": 28}
         result = dampening._apply_dynamic_fan_logic(actions, tent_data)
         assert action_names(result) == {("canExhaust", "Increase"), ("canVentilate", "Increase")}
 
