@@ -59,7 +59,7 @@ class OGBActionManager:
         self.isInitialized = False
 
         # Cooldown manager (centralized cooldown handling)
-        self.cooldown_manager = OGBgcdManager(hass, data_store, room)
+        self.cooldown_manager = OGBgcdManager(hass, data_store, event_manager, room)
 
         # Initialize specialized action modules
         self.vpd_actions = None

@@ -319,7 +319,7 @@ class OGBConsoleManager:
         if len(params) == 0:
             # Show all current GCDs from datastore
             response = "📊 Current Global Cooldowns:\n" + "=" * 50 + "\n"
-            stored_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
+            stored_cooldowns = self.data_store.get("deviceCooldowns")
             current_cooldowns = stored_cooldowns if stored_cooldowns else DEFAULT_DEVICE_COOLDOWNS
             for cap, minutes in current_cooldowns.items():
                 response += f"  {cap:<15} : {minutes} min\n"

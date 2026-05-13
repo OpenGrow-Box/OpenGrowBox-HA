@@ -7,10 +7,9 @@ Handles all drying mode operations including ElClassico, 5DayDry, and DewBased a
 import math
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 from ..utils.calcs import calc_Dry5Days_vpd, calc_dew_vpd
-from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,11 +17,10 @@ _LOGGER = logging.getLogger(__name__)
 class DryingActions:
     """Handles drying mode operations and algorithms."""
 
-    def __init__(self, data_store, event_manager, action_manager, room: str):
+    def __init__(self, data_store, event_manager, room: str):
         """Initialize drying actions."""
         self.data_store = data_store
         self.event_manager = event_manager
-        self.action_manager = action_manager
         self.room = room
         self.name = f"DryingActions-{room}"
         
@@ -75,215 +73,34 @@ class DryingActions:
     async def cleanup_drying_devices(self) -> None:
         """
         Turn off all drying-related devices when switching to NO-Dry.
-        Uses ActionManager for proper cleanup.
         """
         _LOGGER.info(f"{self.name}: Cleaning up drying devices")
         
-        action_map = [
-            OGBActionPublication(
-                Name=self.room, capability="canHeat", action="Reduce",
-                message="Drying cleanup: Stop heater", priority="medium"
-            ),
-            OGBActionPublication(
-                Name=self.room, capability="canCool", action="Reduce",
-                message="Drying cleanup: Stop cooler", priority="medium"
-            ),
-            OGBActionPublication(
-                Name=self.room, capability="canHumidify", action="Reduce",
-                message="Drying cleanup: Stop humidifier", priority="medium"
-            ),
-            OGBActionPublication(
-                Name=self.room, capability="canDehumidify", action="Reduce",
-                message="Drying cleanup: Stop dehumidifier", priority="medium"
-            ),
-            OGBActionPublication(
-                Name=self.room, capability="canExhaust", action="Reduce",
-                message="Drying cleanup: Reduce exhaust", priority="low"
-            ),
-            OGBActionPublication(
-                Name=self.room, capability="canVentilate", action="Reduce",
-                message="Drying cleanup: Reduce ventilation", priority="low"
-            ),
-        ]
+        # Direct event emission for cleanup (no cooldowns needed for cleanup)
+        await self.event_manager.emit("Reduce Heater", None)
+        await self.event_manager.emit("Reduce Cooler", None)
+        await self.event_manager.emit("Reduce Humidifier", None)
+        await self.event_manager.emit("Reduce Dehumidifier", None)
+        await self.event_manager.emit("Reduce Exhaust", None)
+        await self.event_manager.emit("Reduce Ventilation", None)
         
-        if self.action_manager:
-            await self.action_manager.checkLimitsAndPublicateNoVPD(action_map)
-        else:
-            # Fallback to direct events if no action_manager available
-            for action in ["Reduce Heater", "Reduce Cooler", "Reduce Humidifier", 
-                          "Reduce Dehumidifier", "Reduce Exhaust", "Reduce Ventilation"]:
-                await self.event_manager.emit(action, None)
-    
+        _LOGGER.info(f"{self.name}: All drying devices turned off")
+
     def start_drying_mode(self, mode_name: str) -> None:
         """
         Initialize a drying mode and store the start timestamp.
         """
-        self.data_store.setDeep("drying.mode_start_time", datetime.now())
+        self.data_store.setDeep("drying.mode_start_time", datetime.now().isoformat())
         self.data_store.setDeep("drying.currentDryMode", mode_name)
         self.data_store.setDeep("drying.isRunning", True)
         _LOGGER.warning(
             f"{self.name}: Started drying mode '{mode_name}' at {datetime.now()}"
         )
 
-    async def handle_OwnDry(self) -> None:
-        """
-        Custom drying mode using tentData min/max values.
-        Continuous control without phases. Uses capabilities to determine available devices.
-        """
-        _LOGGER.debug(f"{self.name} Run Drying 'OwnDry'")
-        
-        tentData = self.data_store.get("tentData")
-        capabilities = self.data_store.getDeep("capabilities") or {}
-        
-        # Guard against missing sensor data
-        if tentData.get("temperature") is None or tentData.get("humidity") is None:
-            _LOGGER.warning(f"{self.name}: Missing temperature or humidity data, skipping control")
-            return
-        
-        # Read limits from tentData
-        min_temp = tentData.get("minTemp")
-        max_temp = tentData.get("maxTemp")
-        min_hum = tentData.get("minHumidity")
-        max_hum = tentData.get("maxHumidity")
-        
-        current_temp = tentData.get("temperature")
-        current_hum = tentData.get("humidity")
-        
-        action_map = []
-        needs_action = False
-        
-        # Calculate targets as midpoint between min and max
-        target_temp = (min_temp + max_temp) / 2 if min_temp is not None and max_temp is not None else None
-        target_hum = (min_hum + max_hum) / 2 if min_hum is not None and max_hum is not None else None
-        
-        # Temperature control - maintain midpoint between min and max
-        if current_temp is not None and target_temp is not None:
-            tempTolerance = 1.0
-            if current_temp < (target_temp - tempTolerance):
-                _LOGGER.debug(f"{self.room}: OwnDry Temp {current_temp}°C < Target {target_temp}°C → Increase Heat, Reduce Cool")
-                if capabilities.get("canHeat", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHeat", action="Increase",
-                        message="OwnDry: Temp below target", priority="high"
-                    ))
-                    needs_action = True
-                # Always turn off opposite device
-                if capabilities.get("canCool", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canCool", action="Reduce",
-                        message="OwnDry: Stop cooling", priority="high"
-                    ))
-                if capabilities.get("canExhaust", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canExhaust", action="Reduce",
-                        message="OwnDry: Reduce exhaust to retain heat", priority="medium"
-                    ))
-            elif current_temp > (target_temp + tempTolerance):
-                _LOGGER.debug(f"{self.room}: OwnDry Temp {current_temp}°C > Target {target_temp}°C → Increase Cool, Reduce Heat")
-                if capabilities.get("canCool", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canCool", action="Increase",
-                        message="OwnDry: Temp above target", priority="high"
-                    ))
-                    needs_action = True
-                # Always turn off opposite device
-                if capabilities.get("canHeat", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHeat", action="Reduce",
-                        message="OwnDry: Stop heating", priority="high"
-                    ))
-                if capabilities.get("canExhaust", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canExhaust", action="Increase",
-                        message="OwnDry: Increase exhaust to remove heat", priority="high"
-                    ))
-        
-        # Humidity control - maintain midpoint between min and max
-        if current_hum is not None and target_hum is not None:
-            humTolerance = 2.0
-            if current_hum < (target_hum - humTolerance):
-                _LOGGER.debug(f"{self.room}: OwnDry Humidity {current_hum}% < Target {target_hum}% → Increase Humidify, Reduce Dehumidify")
-                if capabilities.get("canHumidify", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHumidify", action="Increase",
-                        message="OwnDry: Humidity below target", priority="medium"
-                    ))
-                    needs_action = True
-                # Always turn off opposite device
-                if capabilities.get("canDehumidify", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canDehumidify", action="Reduce",
-                        message="OwnDry: Stop dehumidifying", priority="medium"
-                    ))
-                if capabilities.get("canExhaust", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canExhaust", action="Reduce",
-                        message="OwnDry: Reduce exhaust to retain moisture", priority="low"
-                    ))
-            elif current_hum > (target_hum + humTolerance):
-                _LOGGER.debug(f"{self.room}: OwnDry Humidity {current_hum}% > Target {target_hum}% → Increase Dehumidify, Reduce Humidify")
-                if capabilities.get("canDehumidify", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canDehumidify", action="Increase",
-                        message="OwnDry: Humidity above target", priority="medium"
-                    ))
-                    needs_action = True
-                # Always turn off opposite device
-                if capabilities.get("canHumidify", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHumidify", action="Reduce",
-                        message="OwnDry: Stop humidifying", priority="medium"
-                    ))
-                if capabilities.get("canExhaust", {}).get("state", False):
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canExhaust", action="Increase",
-                        message="OwnDry: Increase exhaust to remove moisture", priority="high"
-                    ))
-        
-        # If within target tolerance, reduce all devices (idle/cleanup)
-        if not needs_action:
-            _LOGGER.debug(f"{self.room}: OwnDry - All values near target, reducing devices")
-            if capabilities.get("canHeat", {}).get("state", False):
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHeat", action="Reduce",
-                    message="OwnDry: Near target - stop heating", priority="low"
-                ))
-            if capabilities.get("canCool", {}).get("state", False):
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canCool", action="Reduce",
-                    message="OwnDry: Near target - stop cooling", priority="low"
-                ))
-            if capabilities.get("canHumidify", {}).get("state", False):
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHumidify", action="Reduce",
-                    message="OwnDry: Near target - stop humidifying", priority="low"
-                ))
-            if capabilities.get("canDehumidify", {}).get("state", False):
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canDehumidify", action="Reduce",
-                    message="OwnDry: Near target - stop dehumidifying", priority="low"
-                ))
-            if capabilities.get("canExhaust", {}).get("state", False):
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Reduce",
-                    message="OwnDry: Near target - reduce exhaust", priority="low"
-                ))
-            if capabilities.get("canVentilate", {}).get("state", False):
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Reduce",
-                    message="OwnDry: Near target - reduce ventilation", priority="low"
-                ))
-        
-        # Execute via ActionManager
-        if action_map and self.action_manager:
-            await self.action_manager.checkLimitsAndPublicateNoVPD(action_map)
-        elif not action_map:
-            _LOGGER.debug(f"{self.name}: OwnDry - No actions to execute")
-
     async def handle_ElClassico(self, phaseConfig: Dict[str, Any]) -> None:
         """
         Classic drying algorithm with temperature and humidity control.
-        Uses ActionManager for proper action processing (conflict resolution, cooldown, etc.)
+        Direct event emission - no cooldowns or VPD logic interference.
         """
         _LOGGER.warning(f"{self.name} Run Drying 'El Classico'")
         tentData = self.data_store.get("tentData")
@@ -292,7 +109,7 @@ class DryingActions:
 
         tempTolerance = 1
         humTolerance = 2
-        action_map: List[OGBActionPublication] = []
+        finalActionMap = {}
 
         current_phase = self.get_current_phase(phaseConfig)
 
@@ -303,237 +120,129 @@ class DryingActions:
         _LOGGER.warning(f"{self.name}: current_phase={current_phase}")
 
         # Guard against missing sensor data
-        if tentData.get("temperature") is None or tentData.get("humidity") is None:
+        raw_temp = tentData.get("temperature")
+        raw_hum = tentData.get("humidity")
+        if raw_temp is None or raw_hum is None:
             _LOGGER.warning(f"{self.name}: Missing temperature or humidity data, skipping control")
             return
+        
+        # CRITICAL FIX: Ensure numeric types for comparisons
+        try:
+            current_temp = float(raw_temp)
+            current_hum = float(raw_hum)
+        except (ValueError, TypeError) as e:
+            _LOGGER.error(f"{self.name}: Invalid sensor data - temp={raw_temp} (type={type(raw_temp).__name__}), hum={raw_hum} (type={type(raw_hum).__name__}): {e}")
+            return
+        
+        target_temp = current_phase.get("targetTemp")
+        target_hum = current_phase.get("targetHumidity")
+        
+        if target_temp is None or target_hum is None:
+            _LOGGER.error(f"{self.name}: Phase missing targetTemp or targetHumidity: {current_phase}")
+            return
+        
+        try:
+            target_temp = float(target_temp)
+            target_hum = float(target_hum)
+        except (ValueError, TypeError) as e:
+            _LOGGER.error(f"{self.name}: Invalid phase targets - targetTemp={target_temp}, targetHumidity={target_hum}: {e}")
+            return
+
+        _LOGGER.warning(f"{self.name}: ElClassico CHECK - Current: {current_temp}°C / {current_hum}% | Phase targets: {target_temp}°C / {target_hum}%")
 
         # Check temperature independently
-        temp_ok = (
-            abs(tentData["temperature"] - current_phase["targetTemp"]) <= tempTolerance
-        )
+        temp_ok = abs(current_temp - target_temp) <= tempTolerance
 
         if not temp_ok:
-            if tentData["temperature"] < current_phase["targetTemp"]:
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHeat", action="Increase",
-                    message="ElClassico: Temp too low", priority="high"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Reduce",
-                    message="ElClassico: Retain heat", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canCool", action="Reduce",
-                    message="ElClassico: Stop cooling", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Increase",
-                    message="ElClassico: Circulate warm air", priority="low"
-                ))
+            if current_temp < target_temp:
+                _LOGGER.warning(f"{self.name}: ElClassico TEMP LOW - {current_temp}°C < {target_temp}°C → Heater ON, Cooler OFF")
+                finalActionMap["Increase Heater"] = True
+                finalActionMap["Reduce Exhaust"] = True
+                finalActionMap["Reduce Cooler"] = True
+                finalActionMap["Increase Ventilation"] = True
             else:
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canCool", action="Increase",
-                    message="ElClassico: Temp too high", priority="high"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Increase",
-                    message="ElClassico: Remove hot air", priority="high"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHeat", action="Reduce",
-                    message="ElClassico: Stop heating", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Reduce",
-                    message="ElClassico: Reduce circulation", priority="low"
-                ))
+                _LOGGER.warning(f"{self.name}: ElClassico TEMP HIGH - {current_temp}°C > {target_temp}°C → Cooler ON, Heater OFF")
+                finalActionMap["Increase Cooler"] = True
+                finalActionMap["Increase Exhaust"] = True
+                finalActionMap["Reduce Heater"] = True
+                finalActionMap["Reduce Ventilation"] = True
 
-        # Check humidity independently (not nested under temperature check)
-        if (
-            abs(tentData["humidity"] - current_phase["targetHumidity"])
-            > humTolerance
-        ):
-            if tentData["humidity"] < current_phase["targetHumidity"]:
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHumidify", action="Increase",
-                    message="ElClassico: Humidity too low", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canDehumidify", action="Reduce",
-                    message="ElClassico: Stop dehumidifying", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Increase",
-                    message="ElClassico: Distribute humidity", priority="low"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Reduce",
-                    message="ElClassico: Retain moisture", priority="low"
-                ))
+        # Check humidity independently
+        hum_ok = abs(current_hum - target_hum) <= humTolerance
+
+        if not hum_ok:
+            if current_hum < target_hum:
+                _LOGGER.warning(f"{self.name}: ElClassico HUM LOW - {current_hum}% < {target_hum}% → Humidify ON")
+                finalActionMap["Increase Humidifier"] = True
+                finalActionMap["Reduce Dehumidifier"] = True
+                finalActionMap["Reduce Exhaust"] = True
+                finalActionMap["Increase Ventilation"] = True
             else:
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canDehumidify", action="Increase",
-                    message="ElClassico: Humidity too high", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHumidify", action="Reduce",
-                    message="ElClassico: Stop humidifying", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Increase",
-                    message="ElClassico: Remove moist air", priority="high"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Increase",
-                    message="ElClassico: Air exchange", priority="medium"
-                ))
+                _LOGGER.warning(f"{self.name}: ElClassico HUM HIGH - {current_hum}% > {target_hum}% → Dehumidify ON")
+                finalActionMap["Increase Dehumidifier"] = True
+                finalActionMap["Reduce Humidifier"] = True
+                finalActionMap["Increase Exhaust"] = True
+                finalActionMap["Increase Ventilation"] = True
 
-        _LOGGER.warning(f"{self.name}: ElClassico action_map={len(action_map)} actions")
+        # CRITICAL FIX: Prevent conflicting actions (cannot increase and reduce same device)
+        conflict_pairs = [
+            ("Increase Heater", "Reduce Heater"),
+            ("Increase Cooler", "Reduce Cooler"),
+            ("Increase Humidifier", "Reduce Humidifier"),
+            ("Increase Dehumidifier", "Reduce Dehumidifier"),
+            ("Increase Exhaust", "Reduce Exhaust"),
+            ("Increase Ventilation", "Reduce Ventilation"),
+        ]
+        
+        for increase_key, reduce_key in conflict_pairs:
+            if increase_key in finalActionMap and reduce_key in finalActionMap:
+                # Remove both - let the next cycle decide
+                del finalActionMap[increase_key]
+                del finalActionMap[reduce_key]
+                _LOGGER.warning(f"{self.name}: Removed conflicting actions: {increase_key} + {reduce_key}")
 
-        # Use ActionManager for proper processing (conflicts, cooldown, Environment Guard)
-        if action_map and self.action_manager:
-            await self.action_manager.checkLimitsAndPublicateNoVPD(action_map)
-        elif not action_map:
-            _LOGGER.debug(f"{self.name}: ElClassico - No actions needed, conditions within tolerance")
+        # Emit all actions directly
+        if finalActionMap:
+            _LOGGER.warning(f"{self.name}: ElClassico executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
+            for action_name in finalActionMap:
+                await self.event_manager.emit(action_name, None)
+        else:
+            _LOGGER.warning(f"{self.name}: ElClassico - No actions needed, conditions within tolerance")
 
     async def handle_5DayDry(self, phaseConfig: Dict[str, Any]) -> None:
         """
         Structured 5-day drying program with VPD-based control.
-        Uses ActionManager for proper action processing.
+        Direct event emission - no cooldowns or VPD logic interference.
         """
-        _LOGGER.debug(f"{self.name} Run Drying '5 Day Dry'")
-
+        _LOGGER.warning(f"{self.name}: Run Drying '5DayDry'")
         tentData = self.data_store.get("tentData")
-        vpdTolerance = float(self.data_store.getDeep("vpd.tolerance") or 3) / 100.0
-        capabilities = self.data_store.getDeep("capabilities")
+        capabilities = self.data_store.get("capabilities")
+        vpdPub = self.data_store.get("vpd")
 
-        _LOGGER.debug(f"{self.name}: 5DayDry phaseConfig keys = {list(phaseConfig.keys()) if phaseConfig else None}")
+        currentVPD = vpdPub.get("current") if vpdPub else None
 
-        current_phase = self.get_current_phase(phaseConfig)
-
-        _LOGGER.debug(f"{self.name}: 5DayDry current_phase = {current_phase}")
-
-        if current_phase is None:
-            mode_start_time = self.data_store.getDeep("drying.mode_start_time")
-            phase_data = self.data_store.getDeep(f"drying.modes.5DayDry")
-            _LOGGER.error(f"{self.name}: Could not determine current phase - mode_start_time={mode_start_time}, phaseConfig={phaseConfig}, 5DayDry_config={phase_data}")
+        if currentVPD is None:
+            _LOGGER.warning(f"{self.name}: No current VPD data available")
             return
 
-        current_temp = tentData["temperature"] if "temperature" in tentData else None
-        current_humidity = tentData["humidity"] if "humidity" in tentData else None
-
+        current_temp = tentData.get("temperature")
+        current_humidity = tentData.get("humidity")
+        
         if current_temp is None or current_humidity is None:
-            _LOGGER.warning(f"{self.room}: Missing tentData values for VPD calculation")
+            _LOGGER.warning(f"{self.name}: Missing sensor data for 5DayDry VPD calculation")
             return
 
-        if isinstance(tentData["temperature"], (list, tuple)):
-            temp_value = sum(tentData["temperature"]) / len(tentData["temperature"])
-        else:
-            temp_value = tentData["temperature"]
-
-        Dry5DaysVPD = calc_Dry5Days_vpd(temp_value, current_humidity)
-        self.data_store.setDeep("drying.5DayDryVPD", Dry5DaysVPD)
-
-        target_vpd = current_phase.get("targetVPD")
-        if target_vpd is None:
-            _LOGGER.error(f"{self.room}: Current phase has no targetVPD key")
+        try:
+            current_temp = float(current_temp)
+            current_humidity = float(current_humidity)
+        except (ValueError, TypeError):
+            _LOGGER.error(f"{self.name}: Invalid sensor data types for 5DayDry")
             return
 
-        delta = Dry5DaysVPD - target_vpd
+        phaseVPD = calc_Dry5Days_vpd(current_temp, current_humidity)
 
-        # Get temperature and humidity targets from phase config
-        target_temp = current_phase.get("targetTemp")
-        target_humidity = current_phase.get("targetHumidity")
-        max_temp = current_phase.get("maxTemp")
-        
-        tempTolerance = 1.0
-        humTolerance = 2.0
-        
-        action_map: List[OGBActionPublication] = []
-        
-        # Check VPD control (use semantic events which route through ActionManager)
-        if abs(delta) > vpdTolerance:
-            if delta < 0:
-                _LOGGER.debug(
-                    f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} < Target {target_vpd:.2f} → Increase VPD"
-                )
-                await self.event_manager.emit("increase_vpd", capabilities)
-            else:
-                _LOGGER.debug(
-                    f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} > Target {target_vpd:.2f} → Reduce VPD"
-                )
-                await self.event_manager.emit("reduce_vpd", capabilities)
-        
-        # Check temperature control independently
-        if target_temp is not None and current_temp is not None:
-            if abs(current_temp - target_temp) > tempTolerance:
-                if current_temp < target_temp:
-                    _LOGGER.debug(f"{self.room}: 5DayDry Temp {current_temp}°C < Target {target_temp}°C → Increase Heat, Reduce Cool")
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHeat", action="Increase",
-                        message="5DayDry: Temp too low", priority="high"
-                    ))
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canCool", action="Reduce",
-                        message="5DayDry: Stop cooling", priority="high"
-                    ))
-                elif max_temp is not None and current_temp > max_temp:
-                    _LOGGER.debug(f"{self.room}: 5DayDry Temp {current_temp}°C > Max {max_temp}°C → Increase Cooler, Reduce Heat")
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canCool", action="Increase",
-                        message="5DayDry: Temp too high", priority="high"
-                    ))
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHeat", action="Reduce",
-                        message="5DayDry: Stop heating", priority="high"
-                    ))
-        
-        # Check humidity control independently
-        if target_humidity is not None and current_humidity is not None:
-            if abs(current_humidity - target_humidity) > humTolerance:
-                if current_humidity < target_humidity:
-                    _LOGGER.debug(f"{self.room}: 5DayDry Humidity {current_humidity}% < Target {target_humidity}% → Increase Humidifier, Reduce Dehumidifier")
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHumidify", action="Increase",
-                        message="5DayDry: Humidity too low", priority="medium"
-                    ))
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canDehumidify", action="Reduce",
-                        message="5DayDry: Stop dehumidifying", priority="medium"
-                    ))
-                else:
-                    _LOGGER.debug(f"{self.room}: 5DayDry Humidity {current_humidity}% > Target {target_humidity}% → Increase Dehumidifier, Reduce Humidifier")
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canDehumidify", action="Increase",
-                        message="5DayDry: Humidity too high", priority="medium"
-                    ))
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHumidify", action="Reduce",
-                        message="5DayDry: Stop humidifying", priority="medium"
-                    ))
-        
-        # Use ActionManager for proper processing
-        if action_map and self.action_manager:
-            await self.action_manager.checkLimitsAndPublicateNoVPD(action_map)
-        elif not action_map and abs(delta) <= vpdTolerance:
-            _LOGGER.debug(
-                f"{self.room}: Dry5Days VPD {Dry5DaysVPD:.2f} within tolerance (±{vpdTolerance*100:.1f}%) → No action"
-            )
-
-    async def handle_DewBased(self, phaseConfig: Dict[str, Any]) -> None:
-        """
-        Dew point based drying algorithm.
-        Uses ActionManager for proper action processing.
-        """
-        _LOGGER.debug(f"{self.name}: Run Drying 'Dew Based'")
-
-        tentData = self.data_store.get("tentData")
-        currentDewPoint = tentData.get("dewpoint")
-        currenTemperature = tentData.get("temperature")
-
-        # Guard against missing sensor data
-        if currenTemperature is None or tentData.get("humidity") is None:
-            _LOGGER.warning(f"{self.name}: Missing temperature or humidity data, skipping control")
+        if phaseVPD is None:
+            _LOGGER.warning(f"{self.name}: Could not calculate phase VPD")
             return
 
         current_phase = self.get_current_phase(phaseConfig)
@@ -542,139 +251,303 @@ class DryingActions:
             _LOGGER.error(f"{self.name}: Could not determine current phase")
             return
 
-        action_map: List[OGBActionPublication] = []
-
-        # Check temperature control independently
         target_temp = current_phase.get("targetTemp")
-        tempTolerance = 1.0
+        target_humidity = current_phase.get("targetHumidity")
+
+        if target_temp is None or target_humidity is None:
+            _LOGGER.error(f"{self.name}: Phase missing targetTemp or targetHumidity")
+            return
+
+        current_temp = tentData.get("temperature")
+        current_humidity = tentData.get("humidity")
         
-        if target_temp is not None and currenTemperature is not None:
-            if abs(currenTemperature - target_temp) > tempTolerance:
-                if currenTemperature < target_temp:
-                    _LOGGER.debug(f"{self.room}: DewBased Temp {currenTemperature}°C < Target {target_temp}°C → Increase Heater, Reduce Cooler")
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHeat", action="Increase",
-                        message="DewBased: Temp too low", priority="high"
-                    ))
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canCool", action="Reduce",
-                        message="DewBased: Stop cooling", priority="high"
-                    ))
-                else:
-                    _LOGGER.debug(f"{self.room}: DewBased Temp {currenTemperature}°C > Target {target_temp}°C → Increase Cooler, Reduce Heater")
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canCool", action="Increase",
-                        message="DewBased: Temp too high", priority="high"
-                    ))
-                    action_map.append(OGBActionPublication(
-                        Name=self.room, capability="canHeat", action="Reduce",
-                        message="DewBased: Stop heating", priority="high"
-                    ))
-
-        dewPointTolerance = 0.5
-        dew_vps = calc_dew_vpd(currenTemperature, currentDewPoint)
-
-        vaporPressureActual = dew_vps.get("vapor_pressure_actual")
-        vaporPressureSaturation = dew_vps.get("vapor_pressure_saturation")
-
-        self.data_store.setDeep("drying.vaporPressureActual", vaporPressureActual)
-        self.data_store.setDeep(
-            "drying.vaporPressureSaturation", vaporPressureSaturation
-        )
-
-        if (
-            currentDewPoint is None
-            or not isinstance(currentDewPoint, (int, float))
-            or math.isnan(currentDewPoint)
-        ):
-            _LOGGER.warning(
-                f"{self.name}: Current Dew Point is unavailable or invalid."
-            )
+        if current_temp is None or current_humidity is None:
+            _LOGGER.warning(f"{self.name}: Missing sensor data")
+            return
+            
+        try:
+            current_temp = float(current_temp)
+            current_humidity = float(current_humidity)
+            target_temp = float(target_temp)
+            target_humidity = float(target_humidity)
+            currentVPD = float(currentVPD)
+            phaseVPD = float(phaseVPD)
+        except (ValueError, TypeError):
+            _LOGGER.error(f"{self.name}: Invalid numeric data for 5DayDry")
             return
 
-        targetDewPoint = current_phase.get("targetDewPoint")
-        if targetDewPoint is None:
-            _LOGGER.error(f"{self.name}: Current phase has no targetDewPoint key")
+        tempTolerance = 1
+        humTolerance = 2
+        vpdTolerance = 0.1
+        finalActionMap = {}
+
+        _LOGGER.warning(f"{self.name}: 5DayDry CHECK - Temp: {current_temp}°C vs {target_temp}°C | Hum: {current_humidity}% vs {target_humidity}% | VPD: {currentVPD:.2f} vs {phaseVPD:.2f}")
+
+        temp_ok = abs(current_temp - target_temp) <= tempTolerance
+        hum_ok = abs(current_humidity - target_humidity) <= humTolerance
+        vpd_ok = abs(currentVPD - phaseVPD) <= vpdTolerance
+
+        if not temp_ok:
+            if current_temp < target_temp:
+                _LOGGER.warning(f"{self.name}: 5DayDry TEMP LOW")
+                finalActionMap["Increase Heater"] = True
+                finalActionMap["Reduce Cooler"] = True
+            else:
+                _LOGGER.warning(f"{self.name}: 5DayDry TEMP HIGH")
+                finalActionMap["Increase Cooler"] = True
+                finalActionMap["Reduce Heater"] = True
+
+        if not hum_ok:
+            if current_humidity < target_humidity:
+                _LOGGER.warning(f"{self.name}: 5DayDry HUM LOW")
+                finalActionMap["Increase Humidifier"] = True
+                finalActionMap["Reduce Dehumidifier"] = True
+            else:
+                _LOGGER.warning(f"{self.name}: 5DayDry HUM HIGH")
+                finalActionMap["Increase Dehumidifier"] = True
+                finalActionMap["Reduce Humidifier"] = True
+
+        if not vpd_ok:
+            if currentVPD < phaseVPD:
+                _LOGGER.warning(f"{self.name}: 5DayDry VPD LOW")
+                finalActionMap["Increase Heater"] = True
+                finalActionMap["Reduce Exhaust"] = True
+            else:
+                _LOGGER.warning(f"{self.name}: 5DayDry VPD HIGH")
+                finalActionMap["Increase Cooler"] = True
+                finalActionMap["Increase Exhaust"] = True
+
+        # CRITICAL FIX: Prevent conflicting actions
+        conflict_pairs = [
+            ("Increase Heater", "Reduce Heater"),
+            ("Increase Cooler", "Reduce Cooler"),
+            ("Increase Humidifier", "Reduce Humidifier"),
+            ("Increase Dehumidifier", "Reduce Dehumidifier"),
+            ("Increase Exhaust", "Reduce Exhaust"),
+            ("Increase Ventilation", "Reduce Ventilation"),
+        ]
+        
+        for increase_key, reduce_key in conflict_pairs:
+            if increase_key in finalActionMap and reduce_key in finalActionMap:
+                del finalActionMap[increase_key]
+                del finalActionMap[reduce_key]
+                _LOGGER.warning(f"{self.name}: Removed conflicting actions: {increase_key} + {reduce_key}")
+
+        if finalActionMap:
+            _LOGGER.warning(f"{self.name}: 5DayDry executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
+            for action_name in finalActionMap:
+                await self.event_manager.emit(action_name, None)
+        else:
+            _LOGGER.warning(f"{self.name}: 5DayDry - All conditions within tolerance")
+
+    async def handle_DewBased(self, phaseConfig: Dict[str, Any]) -> None:
+        """
+        Dew point-based drying with precise moisture control.
+        Direct event emission - no cooldowns or VPD logic interference.
+        """
+        _LOGGER.warning(f"{self.name}: Run Drying 'DewBased'")
+        tentData = self.data_store.get("tentData")
+
+        # Get current sensor values with type safety
+        raw_temp = tentData.get("temperature")
+        raw_hum = tentData.get("humidity")
+        raw_dew = tentData.get("dewpoint")
+
+        if raw_temp is None or raw_hum is None or raw_dew is None:
+            _LOGGER.warning(f"{self.name}: Missing sensor data for DewBased drying")
             return
 
-        dew_diff = currentDewPoint - targetDewPoint
-        vp_low = (
-            vaporPressureActual < 0.9 * vaporPressureSaturation
-            if vaporPressureActual and vaporPressureSaturation
-            else False
-        )
-        vp_high = (
-            vaporPressureActual > 1.1 * vaporPressureSaturation
-            if vaporPressureActual and vaporPressureSaturation
-            else False
-        )
+        try:
+            currenTemperature = float(raw_temp)
+            currenHumidity = float(raw_hum)
+            currentDewPoint = float(raw_dew)
+        except (ValueError, TypeError):
+            _LOGGER.error(f"{self.name}: Invalid sensor data types for DewBased")
+            return
+
+        current_phase = self.get_current_phase(phaseConfig)
+
+        if current_phase is None:
+            _LOGGER.error(f"{self.name}: Could not determine current phase")
+            return
+
+        target_temp = current_phase.get("targetTemp")
+        target_humidity = current_phase.get("targetHumidity")
+
+        if target_temp is None or target_humidity is None:
+            _LOGGER.error(f"{self.name}: Phase missing targetTemp or targetHumidity")
+            return
+
+        try:
+            target_temp = float(target_temp)
+            target_humidity = float(target_humidity)
+        except (ValueError, TypeError):
+            _LOGGER.error(f"{self.name}: Invalid phase targets for DewBased")
+            return
+
+        tempTolerance = 1
+        humTolerance = 2
+        dewPointTolerance = 1.5
+        finalActionMap = {}
+
+        _LOGGER.warning(f"{self.name}: DewBased CHECK - Temp: {currenTemperature}°C vs {target_temp}°C | Hum: {currenHumidity}% vs {target_humidity}% | Dew: {currentDewPoint:.1f}°C")
+
+        temp_ok = abs(currenTemperature - target_temp) <= tempTolerance
+        hum_ok = abs(currenHumidity - target_humidity) <= humTolerance
+
+        # Dew point calculation
+        dew_vpd_result = calc_dew_vpd(currenTemperature, currentDewPoint)
+        dewpoint_vpd = dew_vpd_result.get("dewpoint_vpd")
+        
+        if dewpoint_vpd is None:
+            _LOGGER.warning(f"{self.name}: Could not calculate dew point VPD")
+            return
+        
+        # Calculate dew point difference (target dew point vs actual)
+        target_dew_point = current_phase.get("targetDewPoint")
+        if target_dew_point is not None:
+            try:
+                target_dew_point = float(target_dew_point)
+                dew_diff = currentDewPoint - target_dew_point
+            except (ValueError, TypeError):
+                dew_diff = 0
+        else:
+            # Fallback: use VPD-based dew point logic
+            dew_diff = dewpoint_vpd
+        vp_low = currenHumidity < target_humidity - humTolerance
+        vp_high = currenHumidity > target_humidity + humTolerance
+
+        if not temp_ok:
+            if currenTemperature < target_temp:
+                _LOGGER.warning(f"{self.name}: DewBased TEMP LOW - {currenTemperature}°C < {target_temp}°C → Increase Heater")
+                finalActionMap["Increase Heater"] = True
+                finalActionMap["Reduce Cooler"] = True
+            else:
+                _LOGGER.warning(f"{self.name}: DewBased TEMP HIGH - {currenTemperature}°C > {target_temp}°C → Increase Cooler")
+                finalActionMap["Increase Cooler"] = True
+                finalActionMap["Reduce Heater"] = True
 
         if abs(dew_diff) > dewPointTolerance or vp_low or vp_high:
             if dew_diff < -dewPointTolerance or vp_low:
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHumidify", action="Increase",
-                    message="DewBased: Too dry", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canDehumidify", action="Reduce",
-                    message="DewBased: Too dry", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Reduce",
-                    message="DewBased: Too dry - retain moisture", priority="low"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Increase",
-                    message="DewBased: Too dry - circulate air", priority="low"
-                ))
-                _LOGGER.debug(
-                    f"{self.room}: Too dry. Humidify ↑, Dehumidifier ↓, Exhaust ↓, Ventilation ↑"
-                )
+                _LOGGER.warning(f"{self.name}: DewBased DEW LOW - Too dry → Humidify")
+                finalActionMap["Increase Humidifier"] = True
+                finalActionMap["Reduce Dehumidifier"] = True
+                finalActionMap["Reduce Exhaust"] = True
+                finalActionMap["Increase Ventilation"] = True
             elif dew_diff > dewPointTolerance or vp_high:
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canDehumidify", action="Increase",
-                    message="DewBased: Too humid", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canHumidify", action="Reduce",
-                    message="DewBased: Too humid", priority="medium"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canExhaust", action="Increase",
-                    message="DewBased: Too humid - remove moist air", priority="high"
-                ))
-                action_map.append(OGBActionPublication(
-                    Name=self.room, capability="canVentilate", action="Increase",
-                    message="DewBased: Too humid - air exchange", priority="medium"
-                ))
-                _LOGGER.debug(
-                    f"{self.room}: Too humid. Dehumidify ↑, Humidifier ↓, Exhaust ↑, Ventilation ↑"
-                )
-        else:
-            # Within tolerance - reduce all devices (cleanup)
-            action_map.append(OGBActionPublication(
-                Name=self.room, capability="canHumidify", action="Reduce",
-                message="DewBased: Within tolerance", priority="low"
-            ))
-            action_map.append(OGBActionPublication(
-                Name=self.room, capability="canDehumidify", action="Reduce",
-                message="DewBased: Within tolerance", priority="low"
-            ))
-            action_map.append(OGBActionPublication(
-                Name=self.room, capability="canExhaust", action="Reduce",
-                message="DewBased: Within tolerance", priority="low"
-            ))
-            action_map.append(OGBActionPublication(
-                Name=self.room, capability="canVentilate", action="Reduce",
-                message="DewBased: Within tolerance", priority="low"
-            ))
-            _LOGGER.debug(
-                f"{self.room}: Dew Point {currentDewPoint:.2f} within ±{dewPointTolerance} → All systems idle"
-            )
+                _LOGGER.warning(f"{self.name}: DewBased DEW HIGH - Too humid → Dehumidify")
+                finalActionMap["Increase Dehumidifier"] = True
+                finalActionMap["Reduce Humidifier"] = True
+                finalActionMap["Increase Exhaust"] = True
+                finalActionMap["Increase Ventilation"] = True
+
+        # CRITICAL FIX: Prevent conflicting actions
+        conflict_pairs = [
+            ("Increase Heater", "Reduce Heater"),
+            ("Increase Cooler", "Reduce Cooler"),
+            ("Increase Humidifier", "Reduce Humidifier"),
+            ("Increase Dehumidifier", "Reduce Dehumidifier"),
+            ("Increase Exhaust", "Reduce Exhaust"),
+            ("Increase Ventilation", "Reduce Ventilation"),
+        ]
         
-        # Use ActionManager for proper processing
-        if action_map and self.action_manager:
-            await self.action_manager.checkLimitsAndPublicateNoVPD(action_map)
+        for increase_key, reduce_key in conflict_pairs:
+            if increase_key in finalActionMap and reduce_key in finalActionMap:
+                del finalActionMap[increase_key]
+                del finalActionMap[reduce_key]
+                _LOGGER.warning(f"{self.name}: Removed conflicting actions: {increase_key} + {reduce_key}")
+
+        if finalActionMap:
+            _LOGGER.warning(f"{self.name}: DewBased executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
+            for action_name in finalActionMap:
+                await self.event_manager.emit(action_name, None)
+        else:
+            _LOGGER.warning(f"{self.name}: DewBased - All conditions within tolerance")
+
+    async def handle_OwnDry(self) -> None:
+        """
+        OwnDry mode - continuous min/max control.
+        Uses min/max values from controlOptionData.minmax.
+        Direct event emission - no cooldowns or VPD logic interference.
+        """
+        _LOGGER.warning(f"{self.name}: Run Drying 'OwnDry'")
+        tentData = self.data_store.get("tentData")
+        
+        # Get min/max values from controlOptionData.minmax
+        minmax_data = self.data_store.getDeep("controlOptionData.minmax") or {}
+        
+        min_temp = minmax_data.get("minTemp")
+        max_temp = minmax_data.get("maxTemp")
+        min_hum = minmax_data.get("minHum")
+        max_hum = minmax_data.get("maxHum")
+        
+        if None in (min_temp, max_temp, min_hum, max_hum):
+            _LOGGER.error(f"{self.name}: OwnDry missing min/max values: {minmax_data}")
+            return
+        
+        try:
+            min_temp = float(min_temp)
+            max_temp = float(max_temp)
+            min_hum = float(min_hum)
+            max_hum = float(max_hum)
+            current_temp = float(tentData.get("temperature", 0))
+            current_hum = float(tentData.get("humidity", 0))
+        except (ValueError, TypeError):
+            _LOGGER.error(f"{self.name}: OwnDry invalid numeric values")
+            return
+        
+        target_temp = (min_temp + max_temp) / 2
+        target_hum = (min_hum + max_hum) / 2
+        tempTolerance = 1
+        humTolerance = 2
+        finalActionMap = {}
+
+        _LOGGER.warning(f"{self.name}: OwnDry CHECK - Current: {current_temp}°C / {current_hum}% | Midpoints: {target_temp}°C / {target_hum}% | Limits: Temp {min_temp}-{max_temp}°C | Hum {min_hum}-{max_hum}%")
+
+        # Temperature control
+        if abs(current_temp - target_temp) > tempTolerance:
+            if current_temp < target_temp:
+                _LOGGER.warning(f"{self.name}: OwnDry TEMP LOW → Heater ON")
+                finalActionMap["Increase Heater"] = True
+                finalActionMap["Reduce Cooler"] = True
+            else:
+                _LOGGER.warning(f"{self.name}: OwnDry TEMP HIGH → Cooler ON")
+                finalActionMap["Increase Cooler"] = True
+                finalActionMap["Reduce Heater"] = True
+
+        # Humidity control
+        if abs(current_hum - target_hum) > humTolerance:
+            if current_hum < target_hum:
+                _LOGGER.warning(f"{self.name}: OwnDry HUM LOW → Humidify ON")
+                finalActionMap["Increase Humidifier"] = True
+                finalActionMap["Reduce Dehumidifier"] = True
+            else:
+                _LOGGER.warning(f"{self.name}: OwnDry HUM HIGH → Dehumidify ON")
+                finalActionMap["Increase Dehumidifier"] = True
+                finalActionMap["Reduce Humidifier"] = True
+
+        # CRITICAL FIX: Prevent conflicting actions
+        conflict_pairs = [
+            ("Increase Heater", "Reduce Heater"),
+            ("Increase Cooler", "Reduce Cooler"),
+            ("Increase Humidifier", "Reduce Humidifier"),
+            ("Increase Dehumidifier", "Reduce Dehumidifier"),
+            ("Increase Exhaust", "Reduce Exhaust"),
+            ("Increase Ventilation", "Reduce Ventilation"),
+        ]
+        
+        for increase_key, reduce_key in conflict_pairs:
+            if increase_key in finalActionMap and reduce_key in finalActionMap:
+                del finalActionMap[increase_key]
+                del finalActionMap[reduce_key]
+                _LOGGER.warning(f"{self.name}: Removed conflicting actions: {increase_key} + {reduce_key}")
+
+        if finalActionMap:
+            _LOGGER.warning(f"{self.name}: OwnDry executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
+            for action_name in finalActionMap:
+                await self.event_manager.emit(action_name, None)
+        else:
+            _LOGGER.warning(f"{self.name}: OwnDry - Conditions within tolerance")
 
     def get_current_phase(self, phaseConfig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -714,8 +587,6 @@ class DryingActions:
         # New structure: phases are "start", "halfTime", "endTime" with durationHours
         phase_order = ["start", "halfTime", "endTime"]
         accumulated_time = 0
-        last_phase = None
-        last_phase_name = None
 
         for phase_name in phase_order:
             if phase_name not in phases_dict:
@@ -731,15 +602,5 @@ class DryingActions:
                 return phase
 
             accumulated_time += duration_seconds
-            last_phase = phase
-            last_phase_name = phase_name
-
-        # If elapsed time exceeds all phases, stay in the final phase indefinitely
-        if last_phase is not None:
-            last_phase["phase_name"] = last_phase_name
-            _LOGGER.info(
-                f"{self.name}: Drying mode duration exceeded, staying in final phase '{last_phase_name}'"
-            )
-            return last_phase
 
         return None

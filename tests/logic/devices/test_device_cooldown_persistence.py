@@ -24,9 +24,8 @@ class TestCooldownPersistenceImplementation:
         }
         
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": user_cooldowns
-            }
+            "deviceCooldowns": user_cooldowns
+            
         })
         event_manager = FakeEventManager()
         
@@ -49,9 +48,8 @@ class TestCooldownPersistenceImplementation:
         }
         
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": user_cooldowns
-            }
+            "deviceCooldowns": user_cooldowns
+            
         })
         event_manager = FakeEventManager()
         
@@ -79,7 +77,8 @@ class TestCooldownPersistenceImplementation:
         # Should have all defaults
         assert manager.cooldown_manager.cooldowns == DEFAULT_DEVICE_COOLDOWNS
     
-    def test_save_cooldowns_to_datastore(self):
+    @pytest.mark.asyncio
+    async def test_save_cooldowns_to_datastore(self):
         """Test saving cooldowns to datastore."""
         data_store = FakeDataStore({})
         event_manager = FakeEventManager()
@@ -90,10 +89,10 @@ class TestCooldownPersistenceImplementation:
         manager.cooldown_manager.cooldowns["canHeat"] = 20
         
         # Save to datastore
-        manager.cooldown_manager.save_to_datastore()
+        await manager.cooldown_manager.save_to_datastore()
         
         # Check that it was saved
-        saved_cooldowns = data_store.getDeep("controlOptions.deviceCooldowns")
+        saved_cooldowns = data_store.get("deviceCooldowns")
         assert saved_cooldowns is not None
         assert saved_cooldowns["canHeat"] == 20
     
@@ -110,26 +109,25 @@ class TestCooldownPersistenceImplementation:
         await manager.adjustDeviceGCD(adjustment_data)
         
         # Check that it was saved to datastore
-        saved_cooldowns = data_store.getDeep("controlOptions.deviceCooldowns")
+        saved_cooldowns = data_store.get("deviceCooldowns")
         assert saved_cooldowns is not None
         assert saved_cooldowns["canHeat"] == 25
         
         # Check that it was also updated in memory
         assert manager.cooldown_manager.cooldowns["canHeat"] == 25
     
-    def test_load_and_save_roundtrip(self):
+    @pytest.mark.asyncio
+    async def test_load_and_save_roundtrip(self):
         """Test that cooldowns survive a load/save roundtrip."""
-        # Initial setup with user cooldowns
-        user_cooldowns = {
-            "canHeat": 18,
-            "canCool": 14,
-            "canDehumidify": 10,
-        }
-        
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": user_cooldowns
+            "deviceCooldowns": {
+                
+                    "canHeat": 18,
+                    "canCool": 14,
+                    "canDehumidify": 10,
+                
             }
+            
         })
         event_manager = FakeEventManager()
         
@@ -142,7 +140,7 @@ class TestCooldownPersistenceImplementation:
         
         # Modify and save
         manager1.cooldown_manager.cooldowns["canHeat"] = 22
-        manager1.cooldown_manager.save_to_datastore()
+        await manager1.cooldown_manager.save_to_datastore()
         
         # Create second manager (simulating restart)
         manager2 = OGBActionManager(None, data_store, event_manager, "test_room")
@@ -159,11 +157,10 @@ class TestCooldownWithDifferentDataTypes:
     def test_cooldown_with_string_minutes_in_datastore(self):
         """Test that string minutes in datastore are converted to float."""
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": {
+            "deviceCooldowns": {
                     "canHeat": "15",  # String instead of int
                     "canCool": 12.5,  # Float
-                }
+                
             }
         })
         event_manager = FakeEventManager()
@@ -177,11 +174,10 @@ class TestCooldownWithDifferentDataTypes:
     def test_cooldown_with_invalid_value_in_datastore(self):
         """Test that invalid values in datastore are handled gracefully."""
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": {
+            "deviceCooldowns": {
                     "canHeat": "invalid",  # Invalid string
                     "canCool": None,  # None value
-                }
+                
             }
         })
         event_manager = FakeEventManager()
@@ -203,12 +199,11 @@ class TestCooldownWithPartialData:
     def test_partial_user_cooldowns(self):
         """Test that partial user cooldowns mix with defaults."""
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": {
+            "deviceCooldowns": {
                     "canHeat": 20,
                     "canCool": 15,
                     # Others not specified
-                }
+                
             }
         })
         event_manager = FakeEventManager()
@@ -227,10 +222,9 @@ class TestCooldownWithPartialData:
     def test_all_capabilities_present_after_load(self):
         """Test that all default capabilities are present after loading user values."""
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": {
+            "deviceCooldowns": {
                     "canHeat": 20,
-                }
+                
             }
         })
         event_manager = FakeEventManager()
@@ -250,16 +244,15 @@ class TestCooldownIntegrationWithDampening:
     async def test_dampening_uses_loaded_cooldowns(self):
         """Test that dampening logic uses the loaded cooldown values."""
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": {
+            "deviceCooldowns": {
                     "canDehumidify": 10,  # Custom: 10 min
-                }
+                
             }
         })
         event_manager = FakeEventManager()
 
         # Verify data is in datastore
-        stored = data_store.getDeep("controlOptions.deviceCooldowns")
+        stored = data_store.get("deviceCooldowns")
         assert stored is not None, "User cooldowns should be in datastore"
         assert stored["canDehumidify"] == 10, "canDehumidify should be 10 in datastore"
 
@@ -281,14 +274,15 @@ class TestCooldownIntegrationWithDampening:
         time_diff = abs((cooldown_until - expected_cooldown).total_seconds())
         assert time_diff < 1.0, f"Should use 10 min cooldown (user-defined, no adaptive), got {time_diff}s difference (actual cooldown: {(cooldown_until - datetime.now()).total_seconds()/60:.1f} min)"
     
-    def test_multiple_adjustments_persist_correctly(self):
+    @pytest.mark.asyncio
+    async def test_multiple_adjustments_persist_correctly(self):
         """Test that multiple cooldown adjustments persist correctly."""
         data_store = FakeDataStore({
-            "controlOptions": {
-                "deviceCooldowns": {
+            "deviceCooldowns": {
+                
                     "canHeat": 15,
                     "canCool": 12,
-                }
+                
             }
         })
         event_manager = FakeEventManager()
@@ -301,10 +295,10 @@ class TestCooldownIntegrationWithDampening:
         
         # Adjust canHeat
         manager.cooldown_manager.cooldowns["canHeat"] = 25
-        manager.cooldown_manager.save_to_datastore()
+        await manager.cooldown_manager.save_to_datastore()
         
         # Verify in datastore
-        saved = data_store.getDeep("controlOptions.deviceCooldowns")
+        saved = data_store.get("deviceCooldowns")
         assert saved["canHeat"] == 25
         assert saved["canCool"] == 12  # Should preserve other values
         

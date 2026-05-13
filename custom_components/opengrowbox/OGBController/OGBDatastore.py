@@ -464,6 +464,20 @@ class DataStore(SimpleEventEmitter):
                     try:
                         value = getattr(self.state, field.name)
                         
+                        # CRITICAL FIX: Skip dataclass Field objects that somehow ended up as values
+                        # This prevents corruption like: "deviceCooldowns": ["Field(name=None...)"]
+                        if isinstance(value, dataclasses.Field):
+                            _LOGGER.warning(
+                                f"⚠️ Field '{field.name}' contains a dataclass.Field object, using default instead"
+                            )
+                            # Get the default value from the field definition
+                            if field.default_factory is not dataclasses.MISSING:
+                                value = field.default_factory()
+                            elif field.default is not dataclasses.MISSING:
+                                value = field.default
+                            else:
+                                value = None
+                        
                         # Special handling for CropSteering - filter runtime data
                         if field.name == "CropSteering" and isinstance(value, dict):
                             value = self._filter_cropsteering_for_save(value)

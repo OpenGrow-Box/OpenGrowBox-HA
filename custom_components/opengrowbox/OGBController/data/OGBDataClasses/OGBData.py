@@ -759,6 +759,7 @@ class OGBConf:
             "results": {}
         }
     ),
+    deviceCooldowns: Dict[str, float] = field(default_factory=dict),
     logType: str = ""
     def __post_init__(self):
         """Wird nach der Initialisierung aufgerufen, um hass zu setzen"""

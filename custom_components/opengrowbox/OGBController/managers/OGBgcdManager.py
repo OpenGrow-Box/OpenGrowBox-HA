@@ -32,17 +32,19 @@ class OGBgcdManager:
     - Emergency mode support
     """
 
-    def __init__(self, hass, data_store: 'OGBDataStore', room: str):
+    def __init__(self, hass, data_store: 'OGBDataStore', event_manager, room: str):
         """
         Initialize the cooldown manager.
 
         Args:
             hass: Home Assistant instance
             data_store: Data store instance
+            event_manager: Event manager instance
             room: Room identifier
         """
         self.hass = hass
         self.data_store = data_store
+        self.event_manager = event_manager
         self.room = room
 
         self.cooldowns: Dict[str, float] = self.load_from_datastore()
@@ -139,7 +141,18 @@ class OGBgcdManager:
         cooldowns = DEFAULT_DEVICE_COOLDOWNS.copy()
 
         try:
-            user_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
+            # Try new top-level location first
+            user_cooldowns = self.data_store.get("deviceCooldowns")
+            
+            # Fallback to old nested location for migration
+            if not user_cooldowns:
+                user_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
+                if user_cooldowns:
+                    _LOGGER.info(
+                        f"{self.room}: Migrated cooldowns from controlOptions.deviceCooldowns to top-level deviceCooldowns"
+                    )
+                    # Migrate to new location
+                    self.data_store.set("deviceCooldowns", user_cooldowns)
 
             if user_cooldowns and isinstance(user_cooldowns, dict):
                 updated_count = 0
@@ -167,15 +180,20 @@ class OGBgcdManager:
 
         return cooldowns
 
-    def save_to_datastore(self):
+    async def save_to_datastore(self):
         """
         Save current cooldowns to datastore for persistence.
         """
         try:
-            self.data_store.setDeep("controlOptions.deviceCooldowns", self.cooldowns)
+            # Save to top-level key for persistence
+            self.data_store.set("deviceCooldowns", self.cooldowns)
             _LOGGER.info(
                 f"{self.room}: Saved {len(self.cooldowns)} cooldown(s) to datastore"
             )
+            
+            # Trigger state save to disk
+            if self.event_manager:
+                await self.event_manager.emit("SaveState", {"source": "OGBgcdManager"})
         except Exception as e:
             _LOGGER.error(
                 f"{self.room}: Failed to save cooldowns to datastore: {e}"
@@ -353,7 +371,7 @@ class OGBgcdManager:
             _LOGGER.warning(
                 f"Cooldown for {capability} set to {minutes} minutes. GCDS: {self.cooldowns}"
             )
-            self.save_to_datastore()
+            await self.save_to_datastore()
         else:
             _LOGGER.error(f"Unknown capability: {capability}")
 

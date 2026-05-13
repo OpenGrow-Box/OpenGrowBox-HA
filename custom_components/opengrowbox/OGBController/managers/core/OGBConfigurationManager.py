@@ -1003,16 +1003,33 @@ class OGBConfigurationManager:
         if current_value != value:
             bool_value = self._string_to_bool(value)
             self.data_store.setDeep("controlOptions.minMaxControl", bool_value)
+            
+            if bool_value:
+                # Min/Max Control wurde aktiviert -> gespeicherte Werte in tentData schreiben
+                minmax_data = self.data_store.getDeep("controlOptionData.minmax") or {}
+                
+                min_temp = minmax_data.get("minTemp")
+                max_temp = minmax_data.get("maxTemp")
+                min_hum = minmax_data.get("minHum")
+                max_hum = minmax_data.get("maxHum")
+                
+                if min_temp is not None:
+                    self.data_store.setDeep("tentData.minTemp", float(min_temp))
+                    _LOGGER.info(f"{self.room}: Min/Max Control aktiviert -> tentData.minTemp = {min_temp}")
+                if max_temp is not None:
+                    self.data_store.setDeep("tentData.maxTemp", float(max_temp))
+                    _LOGGER.info(f"{self.room}: Min/Max Control aktiviert -> tentData.maxTemp = {max_temp}")
+                if min_hum is not None:
+                    self.data_store.setDeep("tentData.minHumidity", float(min_hum))
+                    _LOGGER.info(f"{self.room}: Min/Max Control aktiviert -> tentData.minHumidity = {min_hum}")
+                if max_hum is not None:
+                    self.data_store.setDeep("tentData.maxHumidity", float(max_hum))
+                    _LOGGER.info(f"{self.room}: Min/Max Control aktiviert -> tentData.maxHumidity = {max_hum}")
 
     async def _update_min_temp(self, data):
         """
         Update min temperature
         """
-        min_max_control = self._string_to_bool(
-            self.data_store.getDeep("controlOptions.minMaxControl")
-        )
-        if min_max_control == False:
-            return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.minTemp")
         if current_value is None:
@@ -1020,17 +1037,17 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update min temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minTemp", float(value))
-            self.data_store.setDeep("tentData.minTemp", float(value))
+            # Only update tentData if Min/Max Control is active
+            min_max_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.minMaxControl")
+            )
+            if min_max_control:
+                self.data_store.setDeep("tentData.minTemp", float(value))
 
     async def _update_min_humidity(self, data):
         """
         Update min humidity
         """
-        min_max_control = self._string_to_bool(
-            self.data_store.getDeep("controlOptions.minMaxControl")
-        )
-        if min_max_control == False:
-            return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.minHum")
         if current_value is None:
@@ -1038,17 +1055,17 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update min humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minHum", float(value))
-            self.data_store.setDeep("tentData.minHumidity", float(value))
+            # Only update tentData if Min/Max Control is active
+            min_max_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.minMaxControl")
+            )
+            if min_max_control:
+                self.data_store.setDeep("tentData.minHumidity", float(value))
 
     async def _update_max_temp(self, data):
         """
         Update max temperature
         """
-        min_max_control = self._string_to_bool(
-            self.data_store.getDeep("controlOptions.minMaxControl")
-        )
-        if min_max_control == False:
-            return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.maxTemp")
         if current_value is None:
@@ -1056,17 +1073,17 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update max temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxTemp", float(value))
-            self.data_store.setDeep("tentData.maxTemp", float(value))
+            # Only update tentData if Min/Max Control is active
+            min_max_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.minMaxControl")
+            )
+            if min_max_control:
+                self.data_store.setDeep("tentData.maxTemp", float(value))
 
     async def _update_max_humidity(self, data):
         """
         Update max humidity
         """
-        min_max_control = self._string_to_bool(
-            self.data_store.getDeep("controlOptions.minMaxControl")
-        )
-        if min_max_control == False:
-            return
         value = data.newState[0]
         current_value = self.data_store.getDeep("controlOptionData.minmax.maxHum")
         if current_value is None:
@@ -1074,7 +1091,12 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.info(f"{self.room}: Update max humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxHum", float(value))
-            self.data_store.setDeep("tentData.maxHumidity", float(value))
+            # Only update tentData if Min/Max Control is active
+            min_max_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.minMaxControl")
+            )
+            if min_max_control:
+                self.data_store.setDeep("tentData.maxHumidity", float(value))
 
     # Hydroponics methods
     async def _update_hydro_mode(self, data):

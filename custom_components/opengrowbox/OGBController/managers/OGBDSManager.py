@@ -43,6 +43,9 @@ PRESERVED_STATE_KEYS = {
 
     # Tent Mode (wird persistiert damit User-Auswahl über Restart erhalten bleibt)
     "tentMode",
+    
+    # Device Cooldowns (GCDs - müssen persistiert werden)
+    "deviceCooldowns",
 }
 
 # Keys die NIEMALS aus State File geladen werden (Code-Defaults)
@@ -125,6 +128,35 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
                 )
                 # Remove entirely - these are runtime metadata, not user data
                 data.pop("DeviceProfiles", None)
+    
+    # CRITICAL FIX: Remove corrupted deviceCooldowns with dataclass Field objects
+    if "deviceCooldowns" in data:
+        dc = data["deviceCooldowns"]
+        # Check if corrupted (list with Field object string representation)
+        if isinstance(dc, list) and len(dc) > 0:
+            first_item = dc[0]
+            if isinstance(first_item, str) and "Field(name=" in first_item:
+                _LOGGER.warning(
+                    f"[{room}] Found corrupted deviceCooldowns with Field objects, resetting to empty dict!"
+                )
+                data["deviceCooldowns"] = {}
+        # Also check if it's a dict with Field object values
+        elif isinstance(dc, dict):
+            cleaned_dc = {}
+            for key, value in dc.items():
+                if isinstance(value, str) and "Field(name=" in value:
+                    _LOGGER.warning(
+                        f"[{room}] Found corrupted deviceCooldowns value for '{key}', skipping"
+                    )
+                    continue
+                try:
+                    cleaned_dc[key] = float(value)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        f"[{room}] Invalid deviceCooldowns value for '{key}': {value}, using default"
+                    )
+                    continue
+            data["deviceCooldowns"] = cleaned_dc
     
     # Clean growMediums
     if "growMediums" in data and isinstance(data["growMediums"], list):
