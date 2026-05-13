@@ -152,14 +152,19 @@ class DryingActions:
         action_map = []
         needs_action = False
         
-        # Temperature control - check if outside bounds
-        if current_temp is not None and min_temp is not None and max_temp is not None:
-            if current_temp < min_temp:
-                _LOGGER.debug(f"{self.room}: OwnDry Temp {current_temp}°C < Min {min_temp}°C → Increase Heat, Reduce Cool")
+        # Calculate targets as midpoint between min and max
+        target_temp = (min_temp + max_temp) / 2 if min_temp is not None and max_temp is not None else None
+        target_hum = (min_hum + max_hum) / 2 if min_hum is not None and max_hum is not None else None
+        
+        # Temperature control - maintain midpoint between min and max
+        if current_temp is not None and target_temp is not None:
+            tempTolerance = 1.0
+            if current_temp < (target_temp - tempTolerance):
+                _LOGGER.debug(f"{self.room}: OwnDry Temp {current_temp}°C < Target {target_temp}°C → Increase Heat, Reduce Cool")
                 if capabilities.get("canHeat", {}).get("state", False):
                     action_map.append(OGBActionPublication(
                         Name=self.room, capability="canHeat", action="Increase",
-                        message="OwnDry: Temp below minimum", priority="high"
+                        message="OwnDry: Temp below target", priority="high"
                     ))
                     needs_action = True
                 # Always turn off opposite device
@@ -173,12 +178,12 @@ class DryingActions:
                         Name=self.room, capability="canExhaust", action="Reduce",
                         message="OwnDry: Reduce exhaust to retain heat", priority="medium"
                     ))
-            elif current_temp > max_temp:
-                _LOGGER.debug(f"{self.room}: OwnDry Temp {current_temp}°C > Max {max_temp}°C → Increase Cool, Reduce Heat")
+            elif current_temp > (target_temp + tempTolerance):
+                _LOGGER.debug(f"{self.room}: OwnDry Temp {current_temp}°C > Target {target_temp}°C → Increase Cool, Reduce Heat")
                 if capabilities.get("canCool", {}).get("state", False):
                     action_map.append(OGBActionPublication(
                         Name=self.room, capability="canCool", action="Increase",
-                        message="OwnDry: Temp above maximum", priority="high"
+                        message="OwnDry: Temp above target", priority="high"
                     ))
                     needs_action = True
                 # Always turn off opposite device
@@ -193,14 +198,15 @@ class DryingActions:
                         message="OwnDry: Increase exhaust to remove heat", priority="high"
                     ))
         
-        # Humidity control - check if outside bounds
-        if current_hum is not None and min_hum is not None and max_hum is not None:
-            if current_hum < min_hum:
-                _LOGGER.debug(f"{self.room}: OwnDry Humidity {current_hum}% < Min {min_hum}% → Increase Humidify, Reduce Dehumidify")
+        # Humidity control - maintain midpoint between min and max
+        if current_hum is not None and target_hum is not None:
+            humTolerance = 2.0
+            if current_hum < (target_hum - humTolerance):
+                _LOGGER.debug(f"{self.room}: OwnDry Humidity {current_hum}% < Target {target_hum}% → Increase Humidify, Reduce Dehumidify")
                 if capabilities.get("canHumidify", {}).get("state", False):
                     action_map.append(OGBActionPublication(
                         Name=self.room, capability="canHumidify", action="Increase",
-                        message="OwnDry: Humidity below minimum", priority="medium"
+                        message="OwnDry: Humidity below target", priority="medium"
                     ))
                     needs_action = True
                 # Always turn off opposite device
@@ -214,12 +220,12 @@ class DryingActions:
                         Name=self.room, capability="canExhaust", action="Reduce",
                         message="OwnDry: Reduce exhaust to retain moisture", priority="low"
                     ))
-            elif current_hum > max_hum:
-                _LOGGER.debug(f"{self.room}: OwnDry Humidity {current_hum}% > Max {max_hum}% → Increase Dehumidify, Reduce Humidify")
+            elif current_hum > (target_hum + humTolerance):
+                _LOGGER.debug(f"{self.room}: OwnDry Humidity {current_hum}% > Target {target_hum}% → Increase Dehumidify, Reduce Humidify")
                 if capabilities.get("canDehumidify", {}).get("state", False):
                     action_map.append(OGBActionPublication(
                         Name=self.room, capability="canDehumidify", action="Increase",
-                        message="OwnDry: Humidity above maximum", priority="medium"
+                        message="OwnDry: Humidity above target", priority="medium"
                     ))
                     needs_action = True
                 # Always turn off opposite device
@@ -234,38 +240,38 @@ class DryingActions:
                         message="OwnDry: Increase exhaust to remove moisture", priority="high"
                     ))
         
-        # If within all limits, reduce all devices (idle/cleanup)
+        # If within target tolerance, reduce all devices (idle/cleanup)
         if not needs_action:
-            _LOGGER.debug(f"{self.room}: OwnDry - All values within limits, reducing devices")
+            _LOGGER.debug(f"{self.room}: OwnDry - All values near target, reducing devices")
             if capabilities.get("canHeat", {}).get("state", False):
                 action_map.append(OGBActionPublication(
                     Name=self.room, capability="canHeat", action="Reduce",
-                    message="OwnDry: Within limits - stop heating", priority="low"
+                    message="OwnDry: Near target - stop heating", priority="low"
                 ))
             if capabilities.get("canCool", {}).get("state", False):
                 action_map.append(OGBActionPublication(
                     Name=self.room, capability="canCool", action="Reduce",
-                    message="OwnDry: Within limits - stop cooling", priority="low"
+                    message="OwnDry: Near target - stop cooling", priority="low"
                 ))
             if capabilities.get("canHumidify", {}).get("state", False):
                 action_map.append(OGBActionPublication(
                     Name=self.room, capability="canHumidify", action="Reduce",
-                    message="OwnDry: Within limits - stop humidifying", priority="low"
+                    message="OwnDry: Near target - stop humidifying", priority="low"
                 ))
             if capabilities.get("canDehumidify", {}).get("state", False):
                 action_map.append(OGBActionPublication(
                     Name=self.room, capability="canDehumidify", action="Reduce",
-                    message="OwnDry: Within limits - stop dehumidifying", priority="low"
+                    message="OwnDry: Near target - stop dehumidifying", priority="low"
                 ))
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(OGBActionPublication(
                     Name=self.room, capability="canExhaust", action="Reduce",
-                    message="OwnDry: Within limits - reduce exhaust", priority="low"
+                    message="OwnDry: Near target - reduce exhaust", priority="low"
                 ))
             if capabilities.get("canVentilate", {}).get("state", False):
                 action_map.append(OGBActionPublication(
                     Name=self.room, capability="canVentilate", action="Reduce",
-                    message="OwnDry: Within limits - reduce ventilation", priority="low"
+                    message="OwnDry: Near target - reduce ventilation", priority="low"
                 ))
         
         # Execute via ActionManager
