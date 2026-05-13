@@ -182,6 +182,9 @@ class OGBVPDActions:
                 self._create_action("canLight", "Increase", action_message)
             )
 
+        # Bounds-Korrektur hinzufügen (wie bei VPD Target)
+        action_map = self._add_bounds_correction_actions(action_map, capabilities, "Perfection-")
+
         await self.action_manager.checkLimitsAndPublicate(action_map)
 
     async def reduce_vpd(self, capabilities: Dict[str, Any]):
@@ -273,6 +276,9 @@ class OGBVPDActions:
             action_map.append(
                 self._create_action("canLight", "Reduce", action_message)
             )
+
+        # Bounds-Korrektur hinzufügen (wie bei VPD Target)
+        action_map = self._add_bounds_correction_actions(action_map, capabilities, "Perfection-")
 
         await self.action_manager.checkLimitsAndPublicate(action_map)
 

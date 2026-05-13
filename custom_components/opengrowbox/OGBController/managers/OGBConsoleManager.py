@@ -159,6 +159,14 @@ class OGBConsoleManager:
             ["cap_cal_stop"],
         )
 
+        self.register_command(
+            "get_tentdata",
+            self.cmd_get_tentdata,
+            "Shows current tentData and VPD values",
+            "get_tentdata",
+            ["get_tentdata"],
+        )
+
     def register_command(
         self,
         name: str,
@@ -857,6 +865,58 @@ class OGBConsoleManager:
         self.hass.bus.async_fire(event_type, event_data)
 
         await self._send_response("🛑 Stop signal sent for active calibration.")
+
+    async def cmd_get_tentdata(self, params: List[str]):
+        """Shows current tentData and VPD values."""
+        tent_data = self.data_store.get("tentData") or {}
+        vpd_data = self.data_store.get("vpd") or {}
+        
+        # Format the data nicely for console output
+        lines = [
+            "📊 Current Tent Data:",
+            "━━━━━━━━━━━━━━━━━━━━━━━",
+            f"🌡️  Temperature: {tent_data.get('temperature', 'N/A')}°C",
+            f"💧 Humidity: {tent_data.get('humidity', 'N/A')}%",
+            f"🌫️  Dew Point: {tent_data.get('dewpoint', 'N/A')}°C",
+            "",
+            "📏 Limits:",
+            f"   Temp: {tent_data.get('minTemp', 'N/A')}°C - {tent_data.get('maxTemp', 'N/A')}°C",
+            f"   Humidity: {tent_data.get('minHumidity', 'N/A')}% - {tent_data.get('maxHumidity', 'N/A')}%",
+            "",
+            "📈 VPD Data:",
+            "━━━━━━━━━━━━━━━━━━━━━━━",
+            f"   Current: {vpd_data.get('current', 'N/A')} kPa",
+            f"   Target: {vpd_data.get('targeted', 'N/A')} kPa",
+            f"   Target Range: {vpd_data.get('targetedMin', 'N/A')} - {vpd_data.get('targetedMax', 'N/A')} kPa",
+            f"   Perfection: {vpd_data.get('perfection', 'N/A')} kPa",
+            f"   Perfect Range: {vpd_data.get('perfectMin', 'N/A')} - {vpd_data.get('perfectMax', 'N/A')} kPa",
+            f"   Tolerance: {vpd_data.get('tolerance', 'N/A')}%",
+        ]
+        
+        # Add CO2 if available
+        co2_level = tent_data.get('co2Level')
+        if co2_level is not None:
+            lines.extend([
+                "",
+                "💨 CO2:",
+                f"   Level: {co2_level} ppm",
+            ])
+        
+        # Add light data if available
+        ppfd = tent_data.get('PPFD')
+        dli = tent_data.get('DLI')
+        if ppfd is not None or dli is not None:
+            lines.extend([
+                "",
+                "💡 Light:",
+            ])
+            if ppfd is not None:
+                lines.append(f"   PPFD: {ppfd} µmol/m²/s")
+            if dli is not None:
+                lines.append(f"   DLI: {dli} mol/m²/day")
+        
+        response = "\n".join(lines)
+        await self._send_response(response)
 
     async def cmd_calibrate_all_caps(self, params: List[str]):
         """Calibrates all capabilities in sequence: humidify → dehumidify → heat → cool → light."""

@@ -1072,6 +1072,41 @@ class OGBDampeningActions:
             return action_map
 
         FAN_TEMP_BUFFER = 1.0  # 1°C buffer zone
+        FAN_HUM_BUFFER = 5.0  # 5% humidity buffer zone
+        
+        # Read humidity values
+        current_humidity = tent_data.get("humidity")
+        max_humidity = tent_data.get("maxHumidity")
+        min_humidity = tent_data.get("minHumidity")
+        
+        humidity_critical_high = False
+        humidity_critical_low = False
+        
+        if current_humidity is not None and max_humidity is not None and min_humidity is not None:
+            try:
+                current_humidity = float(current_humidity)
+                max_humidity = float(max_humidity)
+                min_humidity = float(min_humidity)
+                
+                # Check if humidity is critically high (above max + buffer)
+                if current_humidity > (max_humidity + FAN_HUM_BUFFER):
+                    humidity_critical_high = True
+                    _LOGGER.warning(
+                        f"{self.ogb.room}: CRITICAL HIGH HUMIDITY detected! "
+                        f"Current: {current_humidity}% > Max+Buffer: {max_humidity + FAN_HUM_BUFFER}%. "
+                        f"Exhaust MUST increase to remove moisture!"
+                    )
+                # Check if humidity is critically low (below min - buffer)
+                elif current_humidity < (min_humidity - FAN_HUM_BUFFER):
+                    humidity_critical_low = True
+                    _LOGGER.warning(
+                        f"{self.ogb.room}: CRITICAL LOW HUMIDITY detected! "
+                        f"Current: {current_humidity}% < Min-Buffer: {min_humidity - FAN_HUM_BUFFER}%. "
+                        f"Exhaust MUST reduce to retain moisture!"
+                    )
+            except (TypeError, ValueError):
+                pass
+        
         modified_actions = []
         changes_made = []
         
@@ -1083,6 +1118,61 @@ class OGBDampeningActions:
             if cap not in ('canExhaust', 'canIntake', 'canVentilate'):
                 modified_actions.append(action)
                 continue
+            
+            # === HUMIDITY PRIORITY: Check humidity extremes FIRST (before temperature) ===
+            # Humidity extremes are dangerous and take priority over temperature considerations
+            if humidity_critical_high:
+                if cap == 'canExhaust':
+                    if act == 'Reduce':
+                        new_action = self._create_modified_action(
+                            action, 'Increase',
+                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}% > {max_humidity + FAN_HUM_BUFFER}%, exhaust INCREASED to remove moisture]"
+                        )
+                        modified_actions.append(new_action)
+                        changes_made.append(f"canExhaust: Reduce -> Increase (humidity critical high)")
+                        continue
+                    elif act == 'Increase':
+                        # Already correct - keep it
+                        modified_actions.append(action)
+                        continue
+                elif cap == 'canVentilate':
+                    if act == 'Reduce':
+                        new_action = self._create_modified_action(
+                            action, 'Increase',
+                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}%, ventilation INCREASED]"
+                        )
+                        modified_actions.append(new_action)
+                        changes_made.append(f"canVentilate: Reduce -> Increase (humidity critical high)")
+                        continue
+                elif cap == 'canIntake':
+                    if act == 'Reduce':
+                        # Keep intake reduced to avoid bringing in more moisture
+                        modified_actions.append(action)
+                        continue
+            
+            elif humidity_critical_low:
+                if cap == 'canExhaust':
+                    if act == 'Increase':
+                        new_action = self._create_modified_action(
+                            action, 'Reduce',
+                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}% < {min_humidity - FAN_HUM_BUFFER}%, exhaust REDUCED to retain moisture]"
+                        )
+                        modified_actions.append(new_action)
+                        changes_made.append(f"canExhaust: Increase -> Reduce (humidity critical low)")
+                        continue
+                    elif act == 'Reduce':
+                        # Already correct - keep it
+                        modified_actions.append(action)
+                        continue
+                elif cap == 'canVentilate':
+                    if act == 'Increase':
+                        new_action = self._create_modified_action(
+                            action, 'Reduce',
+                            f"{msg} [DynamicFan: HUMIDITY CRITICAL {current_humidity}%, ventilation REDUCED]"
+                        )
+                        modified_actions.append(new_action)
+                        changes_made.append(f"canVentilate: Increase -> Reduce (humidity critical low)")
+                        continue
             
             # === reduce_vpd context: VPD is too high ===
             if is_reduce_vpd:
