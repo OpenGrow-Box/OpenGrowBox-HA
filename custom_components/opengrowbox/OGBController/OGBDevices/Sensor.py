@@ -49,7 +49,7 @@ class Sensor:
         self.labelMap = allLabels
 
         # NEUE STRUKTUR: Gruppiert nach Kontext, dann nach Sensor-Typ
-        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "other": {}}
+        self.sensorReadings = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "leaf": {}, "other": {}}
 
         # Entity-ID zu Sensor-Config Mapping für schnellen Zugriff
         self._entity_to_config = {}
@@ -106,7 +106,7 @@ class Sensor:
         ]
 
         # Nach Kontext gruppieren
-        for context in ["air", "water", "soil", "light", "energy", "other"]:
+        for context in ["air", "water", "soil", "light", "energy", "leaf", "other"]:
             context_sensors = self.sensorReadings[context]
 
             if not context_sensors:
@@ -164,7 +164,7 @@ class Sensor:
             _LOGGER.warning("Keine deviceData vorhanden.")
             return None
 
-        sensor_map = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "other": {}}
+        sensor_map = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "leaf": {}, "other": {}}
         platform_set = set()
         unrecognized_suffixes = []
 
@@ -208,7 +208,9 @@ class Sensor:
                 # 2. Kontext bestimmen (mit sensor_type wenn verfügbar)
                 primary_sensor_type = sensor_types[0] if sensor_types else None
                 
-                if "soil" in label_ids or medium_label:
+                if "leaf" in label_ids:
+                    context = "leaf"
+                elif "soil" in label_ids or medium_label:
                     context = "soil"
                 elif "air" in label_ids:
                     context = "air"
@@ -257,7 +259,7 @@ class Sensor:
                 return
 
             # Initialisiere jeden Kontext
-            for context in ["air", "water", "soil", "light", "energy", "other"]:
+            for context in ["air", "water", "soil", "light", "energy", "leaf", "other"]:
                 context_sensors = self.sensorMap["sensors"][context]
 
                 for sensor_type, sensor_entries in context_sensors.items():
@@ -324,6 +326,26 @@ class Sensor:
             context: Der Kontext (air/water/soil/light/energy)
         """
         entity_id = sensor_entry["entity_id"]
+        raw_value = sensor_entry.get("value")
+
+        # Fahrenheit to Celsius conversion
+        if sensor_type == "temperature" and self.hass:
+            try:
+                ha_state = self.hass.states.get(entity_id)
+                if ha_state and ha_state.attributes.get("unit_of_measurement") == "°F":
+                    _LOGGER.info(
+                        f"[{self.room}] 🌡️ Fahrenheit sensor detected: {entity_id}, "
+                        f"converting {raw_value}°F to Celsius"
+                    )
+                    # Convert °F to °C: (°F - 32) * 5/9
+                    raw_value = round((float(raw_value) - 32) * 5 / 9, 1)
+                    _LOGGER.info(
+                        f"[{self.room}] 🌡️ Converted: {raw_value}°C"
+                    )
+            except (ValueError, TypeError) as e:
+                _LOGGER.warning(
+                    f"[{self.room}] Failed to convert Fahrenheit to Celsius for {entity_id}: {e}"
+                )
 
         # Kontext-spezifische Konfiguration laden
         config = get_sensor_config(sensor_type, context)
@@ -361,7 +383,7 @@ class Sensor:
             "threshold_max": None,
             "last_reading": None,
             "last_update": None,
-            "state": sensor_entry.get("value"),
+            "state": raw_value,
             "medium_label": self.medium_label,  # For MediumSensorUpdate routing
             "room": self.room,  # For room filtering in MediumManager
         }
@@ -816,7 +838,7 @@ class Sensor:
             list: Liste der Kontexte die Sensoren haben
         """
         contexts = []
-        for context in ["air", "water", "soil", "light", "energy", "other"]:
+        for context in ["air", "water", "soil", "light", "energy", "leaf", "other"]:
             if self.sensorReadings[context]:
                 contexts.append(context)
         return contexts
@@ -1086,7 +1108,7 @@ class Sensor:
 
         all_readings = {}
 
-        for context in ["air", "water", "soil", "light", "energy", "other"]:
+        for context in ["air", "water", "soil", "light", "energy", "leaf", "other"]:
             context_readings = {}
 
             for sensor_type, sensors in self.sensorReadings[context].items():
@@ -1123,7 +1145,7 @@ class Sensor:
 
         # Zähle Sensoren pro Kontext
         context_counts = {}
-        for context in ["air", "water", "soil", "light", "energy", "other"]:
+        for context in ["air", "water", "soil", "light", "energy", "leaf", "other"]:
             count = sum(
                 len(sensors) for sensors in self.sensorReadings[context].values()
             )

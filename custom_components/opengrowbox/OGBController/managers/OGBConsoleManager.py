@@ -876,8 +876,11 @@ class OGBConsoleManager:
             "📊 Current Tent Data:",
             "━━━━━━━━━━━━━━━━━━━━━━━",
             f"🌡️  Temperature: {tent_data.get('temperature', 'N/A')}°C",
+            f"🍃 Leaf Temp: {tent_data.get('leafTemperature', 'N/A')}°C",
+            f"🍃 Leaf Temp Offset: {tent_data.get('leafTempOffset', 'N/A')}°C",
             f"💧 Humidity: {tent_data.get('humidity', 'N/A')}%",
             f"🌫️  Dew Point: {tent_data.get('dewpoint', 'N/A')}°C",
+            f"📈  CO2 Level: {tent_data.get('co2Level', 'N/A')}PPM",
             "",
             "📏 Limits:",
             f"   Temp: {tent_data.get('minTemp', 'N/A')}°C - {tent_data.get('maxTemp', 'N/A')}°C",
@@ -891,6 +894,13 @@ class OGBConsoleManager:
             f"   Perfection: {vpd_data.get('perfection', 'N/A')} kPa",
             f"   Perfect Range: {vpd_data.get('perfectMin', 'N/A')} - {vpd_data.get('perfectMax', 'N/A')} kPa",
             f"   Tolerance: {vpd_data.get('tolerance', 'N/A')}%",
+            "",
+            "🌡️  Environment:",
+            "━━━━━━━━━━━━━━━━━━━━━━━",
+            f"   Ambient Temp: {tent_data.get('AmbientTemp', 'N/A')}°C",
+            f"   Ambient Hum: {tent_data.get('AmbientHum', 'N/A')}%",
+            f"   Outside Temp: {tent_data.get('OutsiteTemp', 'N/A')}°C",
+            f"   Outside Hum: {tent_data.get('OutsiteHum', 'N/A')}%",
         ]
         
         # Add CO2 if available

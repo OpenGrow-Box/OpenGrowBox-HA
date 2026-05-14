@@ -408,6 +408,20 @@ class OGBNotificator:
             title=f"OGB {self.room}: Power Failure",
         )
 
+    async def alert_device_unreliable(self, device_name: str, expected_state: str, retry_count: int):
+        """Alert when a device cannot reliably turn on/off."""
+        message = (
+            f"Device '{device_name}' could not reliably turn {expected_state.upper()}.\n\n"
+            f"Retries attempted: {retry_count}\n\n"
+            f"The device likely has a hardware defect or API issue. "
+            f"We temporarily bypassed it, but the device should be replaced."
+        )
+
+        await self.warning(
+            message=message,
+            title=f"OGB {self.room}: Device Reliability Issue",
+        )
+
     async def critical(
         self,
         message: str,

@@ -2,14 +2,12 @@ import asyncio
 import logging
 import math
 from datetime import datetime, timezone
-from ...utils.calcs import calculate_current_vpd, calculate_avg_value, calculate_dew_point
-from ...utils.sensorUpdater import update_sensor_via_service
-from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
-from ...data.OGBDataClasses.OGBPublications import OGBVPDPublication, OGBModeRunPublication, OGBInitData
 from ...utils.calcs import (calculate_avg_value, calculate_current_vpd,
-                          calculate_dew_point)
-from ...utils.sensorUpdater import (_update_specific_sensor,
+                          calculate_current_vpd_with_leaf_temp, calculate_dew_point)
+from ...utils.sensorUpdater import (_update_specific_number,
+                                  _update_specific_sensor,
                                   update_sensor_via_service)
+from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,20 +127,113 @@ class OGBVPDManager:
 
         self.data_store.setDeep("workData.temperature",temperatures)
         self.data_store.setDeep("workData.humidity",humidities)
-        leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
-
-        # Durchschnittswerte asynchron berechnen
+        
+        # Durchschnittswerte asynchron berechnen (VOR Leaf Sensor Logik!)
         avgTemp = calculate_avg_value(temperatures)
         self.data_store.setDeep("tentData.temperature", avgTemp)
         avgHum = calculate_avg_value(humidities)
         self.data_store.setDeep("tentData.humidity", avgHum)
+        
+        # NEW: Read leaf temperature sensors
+        leafTemperatures = []
+        for dev in devices:
+            if hasattr(dev, 'sensorReadings') and dev.isInitialized:
+                leaf_context = dev.getSensorsByContext("leaf")
+                if leaf_context:
+                    _LOGGER.warning(
+                        f"{self.room}: 🍃 DEBUG getSensorsByContext('leaf') for {dev.deviceName}: "
+                        f"{leaf_context}"
+                    )
+                if "temperature" in leaf_context:
+                    _LOGGER.warning(
+                        f"{self.room}: 🍃 FOUND temperature in leaf context: "
+                        f"{leaf_context['temperature']}"
+                    )
+                    for t in leaf_context["temperature"]:
+                        try:
+                            value = float(t.get("state"))
+                            name = t.get("entity_id")
+                            _LOGGER.warning(
+                                f"{self.room}: 🍃 Reading leaf sensor {name}: {value}°C"
+                            )
+                            if value > 0 and value <= 40:
+                                leafTemperatures.append({"entity_id":name,"value":value})
+                        except (ValueError, TypeError):
+                            pass
+        
+        # Calculate leaf temperature average if sensors available
+        # Skip for ambient room - leaf sensors only make sense for grow rooms
+        if self.room.lower() != "ambient":
+            leafTemp = None
+            if leafTemperatures:
+                leafTemp = calculate_avg_value(leafTemperatures)
+                self.data_store.setDeep("tentData.leafTemperature", leafTemp)
+                _LOGGER.warning(
+                    f"{self.room}: 🍃 Leaf sensor detected | "
+                    f"Sensors: {len(leafTemperatures)} | Leaf: {leafTemp}°C"
+                )
+                
+                # NEW: Calculate and update leaf temperature offset automatically
+                if avgTemp != "unavailable" and avgTemp is not None:
+                    calculated_offset = round(leafTemp - avgTemp, 1)
+                    current_offset = self.data_store.getDeep("tentData.leafTempOffset")
+                    
+                    # Hysteresis: only update if offset changed by more than 0.2°C
+                    if current_offset is None or abs(calculated_offset - float(current_offset)) > 0.2:
+                        _LOGGER.warning(
+                            f"{self.room}: 🍃 Auto offset | "
+                            f"Air: {avgTemp}°C | Leaf: {leafTemp}°C | "
+                            f"Offset: {calculated_offset}°C | "
+                            f"Previous: {current_offset}°C"
+                        )
+                        
+                        try:
+                            await _update_specific_number(
+                                "ogb_leaftemp_offset_",
+                                self.room,
+                                calculated_offset,
+                                self.hass
+                            )
+                            _LOGGER.warning(
+                                f"{self.room}: 🍃 Updated number.ogb_leaftemp_offset_ "
+                                f"to {calculated_offset}°C"
+                            )
+                        except Exception as e:
+                            _LOGGER.warning(
+                                f"{self.room}: 🍃 Failed to update leaf offset number: {e}"
+                            )
+                    else:
+                        _LOGGER.debug(
+                            f"{self.room}: 🍃 Offset unchanged ({calculated_offset}°C), "
+                            f"skipping number update (hysteresis: 0.2°C)"
+                        )
+                else:
+                    _LOGGER.warning(
+                        f"{self.room}: 🍃 Cannot calculate offset - air temp unavailable"
+                    )
+            else:
+                self.data_store.setDeep("tentData.leafTemperature", None)
+                current_offset = self.data_store.getDeep("tentData.leafTempOffset")
+                if current_offset is not None:
+                    _LOGGER.debug(
+                        f"{self.room}: 🍃 No leaf sensor, using manual offset: {current_offset}°C"
+                    )
 
         # Taupunkt asynchron berechnen
         avgDew = calculate_dew_point(avgTemp, avgHum) if avgTemp != "unavailable" and avgHum != "unavailable" else None
         self.data_store.setDeep("tentData.dewpoint", avgDew if avgDew else "unavailable")
 
         lastVpd = self.data_store.getDeep("vpd.current")
-        currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
+        
+        # For ambient room, always use manual offset (no leaf sensor support)
+        if self.room.lower() == "ambient":
+            leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
+            currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
+        elif leafTemp is not None:
+            currentVPD = calculate_current_vpd_with_leaf_temp(avgTemp, avgHum, leafTemp)
+        else:
+            leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
+            currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
 
         # Convert "unavailable" to None for publications
         def convert_value(val):
@@ -337,14 +428,87 @@ class OGBVPDManager:
         # Store work data
         self.data_store.setDeep("workData.temperature", temperatures)
         self.data_store.setDeep("workData.humidity", humidities)
-
-        # Calculate averages
-        leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
+        
+        # Calculate averages FIRST (needed for leaf offset calculation)
         avgTemp = calculate_avg_value(temperatures)
         self.data_store.setDeep("tentData.temperature", avgTemp)
 
         avgHum = calculate_avg_value(humidities)
         self.data_store.setDeep("tentData.humidity", avgHum)
+        
+        # NEW: Read leaf temperature sensors (second path)
+        leafTemperatures = []
+        for dev in devices:
+            if hasattr(dev, 'sensorReadings') and dev.isInitialized:
+                leaf_context = dev.getSensorsByContext("leaf")
+                if "temperature" in leaf_context:
+                    for t in leaf_context["temperature"]:
+                        try:
+                            value = float(t.get("state"))
+                            if value > 0 and value <= 40:
+                                leafTemperatures.append({"entity_id": t.get("entity_id"), "value": value})
+                        except (ValueError, TypeError):
+                            pass
+        
+        # Calculate leaf temperature average if sensors available
+        # Skip for ambient room - leaf sensors only make sense for grow rooms
+        leafTemp = None
+        if self.room.lower() != "ambient":
+            if leafTemperatures:
+                leafTemp = calculate_avg_value(leafTemperatures)
+                self.data_store.setDeep("tentData.leafTemperature", leafTemp)
+                _LOGGER.warning(
+                    f"{self.room}: 🍃 Leaf sensor detected | "
+                    f"Sensors: {len(leafTemperatures)} | Leaf: {leafTemp}°C"
+                )
+                
+                # NEW: Calculate and update leaf temperature offset automatically
+                if avgTemp != "unavailable" and avgTemp is not None:
+                    calculated_offset = round(leafTemp - avgTemp, 1)
+                    current_offset = self.data_store.getDeep("tentData.leafTempOffset")
+                    
+                    # Hysteresis: only update if offset changed by more than 0.2°C
+                    if current_offset is None or abs(calculated_offset - float(current_offset)) > 0.2:
+                        _LOGGER.warning(
+                            f"{self.room}: 🍃 Auto offset | "
+                            f"Air: {avgTemp}°C | Leaf: {leafTemp}°C | "
+                            f"Offset: {calculated_offset}°C | "
+                            f"Previous: {current_offset}°C"
+                        )
+                        
+                        try:
+                            await _update_specific_number(
+                                "ogb_leaftemp_offset_",
+                                self.room,
+                                calculated_offset,
+                                self.hass
+                            )
+                            _LOGGER.warning(
+                                f"{self.room}: 🍃 Updated number.ogb_leaftemp_offset_ "
+                                f"to {calculated_offset}°C"
+                            )
+                        except Exception as e:
+                            _LOGGER.warning(
+                                f"{self.room}: 🍃 Failed to update leaf offset number: {e}"
+                            )
+                    else:
+                        _LOGGER.debug(
+                            f"{self.room}: 🍃 Offset unchanged ({calculated_offset}°C), "
+                            f"skipping number update (hysteresis: 0.2°C)"
+                        )
+                else:
+                    _LOGGER.warning(
+                        f"{self.room}: 🍃 Cannot calculate offset - air temp unavailable"
+                    )
+            else:
+                self.data_store.setDeep("tentData.leafTemperature", None)
+                current_offset = self.data_store.getDeep("tentData.leafTempOffset")
+                if current_offset is not None:
+                    _LOGGER.debug(
+                        f"{self.room}: 🍃 No leaf sensor, using manual offset: {current_offset}°C"
+                    )
+        else:
+            self.data_store.setDeep("tentData.leafTemperature", None)
 
         avgDew = (
             calculate_dew_point(avgTemp, avgHum)
@@ -355,7 +519,16 @@ class OGBVPDManager:
 
         # Calculate VPD
         lastVpd = self.data_store.getDeep("vpd.current")
-        currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
+        
+        # For ambient room, always use manual offset (no leaf sensor support)
+        if self.room.lower() == "ambient":
+            leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
+            currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
+        elif leafTemp is not None:
+            currentVPD = calculate_current_vpd_with_leaf_temp(avgTemp, avgHum, leafTemp)
+        else:
+            leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
+            currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
 
         # Validate VPD value - must be positive and within reasonable range
         if currentVPD is None:

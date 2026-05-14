@@ -41,6 +41,19 @@ class MonitoredEntityState:
     notification_sent: bool = False
 
 
+@dataclass
+class DeviceReliabilityState:
+    """State tracking for device reliability monitoring."""
+
+    device_name: str
+    last_power_before_action: Optional[float] = None
+    action_type: Optional[str] = None  # "on" or "off"
+    retry_count: int = 0
+    is_reliable: bool = True
+    last_check_time: Optional[datetime] = None
+    notification_sent: bool = False
+
+
 class OGBFallBackManager:
     """
     Fallback Manager - monitors sensor and device health.
@@ -52,6 +65,13 @@ class OGBFallBackManager:
     STALE_THRESHOLD_MINUTES = 30  # Global threshold
     CHECK_INTERVAL_SECONDS = 60  # Check every minute
     NOTIFICATION_COOLDOWN_MINUTES = 60  # Don't spam same sensor
+
+    # Device Reliability constants
+    RELIABILITY_CHECK_DELAY_SECONDS = 5  # Wait after turn_on/off before checking
+    RELIABILITY_RETRY_INTERVAL_SECONDS = 15  # Wait between retries
+    RELIABILITY_MAX_RETRIES = 3  # Max retry attempts
+    RELIABILITY_POWER_OFF_THRESHOLD = 0.3  # Power must drop below 30% of previous
+    RELIABILITY_POWER_ON_THRESHOLD_WATTS = 5  # Minimum power when "on"
 
     def __init__(self, hass, dataStore, eventManager, room, regListener, notificator):
         """
@@ -77,6 +97,9 @@ class OGBFallBackManager:
         self._monitored_entities: Dict[str, MonitoredEntityState] = {}
         self._stale_entities: Set[str] = set()
         self._last_notification: Dict[str, datetime] = {}
+
+        # Device reliability tracking
+        self._device_reliability: Dict[str, DeviceReliabilityState] = {}
 
         # Task management
         self._check_task: Optional[asyncio.Task] = None
@@ -319,6 +342,156 @@ class OGBFallBackManager:
 
         except Exception as e:
             _LOGGER.error(f"Error handling entity removal: {e}", exc_info=True)
+
+    # =================================================================
+    # Device Reliability Methods
+    # =================================================================
+
+    async def validate_device_state(self, device_name: str, device_ref, expected_state: str):
+        """
+        Validate if device actually reached expected state after turn_on/off.
+        If not, perform retrigger with notification.
+        """
+        try:
+            # Get or create reliability state
+            if device_name not in self._device_reliability:
+                self._device_reliability[device_name] = DeviceReliabilityState(device_name=device_name)
+
+            state = self._device_reliability[device_name]
+
+            # Wait before checking
+            await asyncio.sleep(self.RELIABILITY_CHECK_DELAY_SECONDS)
+
+            # Find power sensor for device
+            power_sensor = self._find_power_sensor(device_name)
+            if not power_sensor:
+                _LOGGER.debug(f"{self.room}: No power sensor for {device_name}, skipping validation")
+                return True
+
+            # Read current power
+            current_power = await self._get_power_value(power_sensor)
+            if current_power is None:
+                _LOGGER.debug(f"{self.room}: Could not read power for {device_name}, skipping validation")
+                return True
+
+            # Validate based on expected state
+            is_valid = False
+            if expected_state == "off":
+                # Power should have dropped significantly
+                threshold = (state.last_power_before_action or 0) * self.RELIABILITY_POWER_OFF_THRESHOLD
+                is_valid = current_power <= threshold or current_power < 2  # < 2W considered off
+                if not is_valid:
+                    _LOGGER.warning(
+                        f"{self.room}: ⚠️ {device_name} OFF validation FAILED - "
+                        f"Power: {current_power}W (threshold: {threshold:.1f}W)"
+                    )
+            elif expected_state == "on":
+                # Power should have increased
+                prev_power = state.last_power_before_action or 0
+                is_valid = current_power > prev_power * 1.5 or current_power > self.RELIABILITY_POWER_ON_THRESHOLD_WATTS
+                if not is_valid:
+                    _LOGGER.warning(
+                        f"{self.room}: ⚠️ {device_name} ON validation FAILED - "
+                        f"Power: {current_power}W (expected > {prev_power * 1.5:.1f}W or > {self.RELIABILITY_POWER_ON_THRESHOLD_WATTS}W)"
+                    )
+
+            if is_valid:
+                _LOGGER.info(f"{self.room}: ✅ {device_name} {expected_state.upper()} validation passed ({current_power}W)")
+                state.retry_count = 0
+                state.is_reliable = True
+                return True
+
+            # Validation failed - attempt retrigger
+            if state.retry_count < self.RELIABILITY_MAX_RETRIES:
+                state.retry_count += 1
+                _LOGGER.warning(
+                    f"{self.room}: 🔄 Retriggering {device_name} ({state.retry_count}/{self.RELIABILITY_MAX_RETRIES})"
+                )
+
+                await self._execute_retrigger(device_ref, expected_state)
+
+                # Wait and re-check
+                await asyncio.sleep(self.RELIABILITY_RETRY_INTERVAL_SECONDS)
+                return await self.validate_device_state(device_name, device_ref, expected_state)
+            else:
+                # Max retries reached - notify user
+                _LOGGER.error(
+                    f"{self.room}: ❌ {device_name} failed validation after {self.RELIABILITY_MAX_RETRIES} retries"
+                )
+                await self._notify_device_unreliable(device_name, expected_state, state.retry_count)
+                state.is_reliable = False
+                return False
+
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Error validating {device_name}: {e}", exc_info=True)
+            return True  # Assume OK on error to avoid blocking
+
+    async def _execute_retrigger(self, device_ref, expected_state: str):
+        """Execute retrigger sequence for unreliable device."""
+        try:
+            if expected_state == "off":
+                # Turn on briefly then off again
+                _LOGGER.info(f"{self.room}: Retrigger OFF - turning ON then OFF")
+                await device_ref.turn_on()
+                await asyncio.sleep(3)
+                await device_ref.turn_off()
+            elif expected_state == "on":
+                # Turn off briefly then on again
+                _LOGGER.info(f"{self.room}: Retrigger ON - turning OFF then ON")
+                await device_ref.turn_off()
+                await asyncio.sleep(3)
+                await device_ref.turn_on()
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Error during retrigger: {e}", exc_info=True)
+
+    async def _notify_device_unreliable(self, device_name: str, expected_state: str, retry_count: int):
+        """Notify user about unreliable device."""
+        try:
+            message = (
+                f"Device '{device_name}' could not reliably turn {expected_state.upper()}.\n\n"
+                f"Retries attempted: {retry_count}\n\n"
+                f"The device likely has a hardware defect or API issue. "
+                f"We temporarily bypassed it, but the device should be replaced."
+            )
+
+            await self.notificator.warning(
+                message=message,
+                title=f"OGB {self.room}: Device Reliability Issue",
+            )
+
+            _LOGGER.warning(f"{self.room}: 🚨 Sent reliability alert for {device_name}")
+
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Failed to send reliability notification: {e}")
+
+    def _find_power_sensor(self, device_name: str) -> Optional[str]:
+        """Find associated power sensor for device."""
+        # Try common patterns
+        patterns = [
+            f"sensor.{device_name.lower()}_power",
+            f"sensor.{device_name.lower()}_energy",
+            f"sensor.{device_name.lower()}_watt",
+        ]
+
+        for pattern in patterns:
+            if self.hass and self.hass.states.get(pattern):
+                return pattern
+
+        # Search in energy context of device
+        # (This would need device reference to check its sensors)
+        return None
+
+    async def _get_power_value(self, entity_id: str) -> Optional[float]:
+        """Get current power value from sensor."""
+        try:
+            if not self.hass:
+                return None
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in [None, "unknown", "unavailable", "", "None"]:
+                return float(state.state)
+        except (ValueError, TypeError):
+            pass
+        return None
 
     # =================================================================
     # Notification Methods

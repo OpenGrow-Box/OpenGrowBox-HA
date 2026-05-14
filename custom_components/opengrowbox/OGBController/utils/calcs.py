@@ -45,7 +45,7 @@ def calculate_current_vpd(temp, humidity, leaf_offset):
     try:
         temp = float(temp)
         humidity = float(humidity)
-        leaf_temp = temp - float(leaf_offset)
+        leaf_temp = temp + float(leaf_offset)
     except (ValueError, TypeError):
         return None
 
@@ -62,6 +62,41 @@ def calculate_current_vpd(temp, humidity, leaf_offset):
     rounded_vpd = round(vpd, 2)
 
     _LOGGER.debug(f"VPD-Calculation got {rounded_vpd}")
+    return rounded_vpd
+
+
+def calculate_current_vpd_with_leaf_temp(air_temp, humidity, leaf_temp):
+    """
+    Berechne VPD mit direkter Leaf Temperatur vom Sensor.
+    
+    Args:
+        air_temp: Lufttemperatur (°C)
+        humidity: Luftfeuchtigkeit (%)
+        leaf_temp: Direkte Blatttemperatur vom Leaf Sensor (°C)
+    
+    Returns:
+        VPD Wert (kPa) oder None bei Fehler
+    """
+    try:
+        air_temp = float(air_temp)
+        humidity = float(humidity)
+        leaf_temp = float(leaf_temp)
+    except (ValueError, TypeError):
+        return None
+
+    if air_temp is None or humidity is None or leaf_temp is None:
+        return None
+
+    # Luft-Sättigungsdampfdruck
+    sdp_luft = 0.6108 * math.exp((17.27 * air_temp) / (air_temp + 237.3))
+    # Blatt-Sättigungsdampfdruck (mit direkter Leaf Temp)
+    sdp_blatt = 0.6108 * math.exp((17.27 * leaf_temp) / (leaf_temp + 237.3))
+    # Aktueller Dampfdruck
+    adp = (humidity / 100) * sdp_luft
+    vpd = sdp_blatt - adp
+
+    rounded_vpd = round(vpd, 2)
+    _LOGGER.debug(f"VPD-Calculation with leaf sensor: air={air_temp}°C, leaf={leaf_temp}°C, hum={humidity}% -> VPD={rounded_vpd}")
     return rounded_vpd
 
 

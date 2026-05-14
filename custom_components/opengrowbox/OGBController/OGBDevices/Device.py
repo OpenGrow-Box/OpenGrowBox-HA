@@ -32,6 +32,7 @@ class Device:
         self.initialization = False
         self.inWorkMode = False
         self.isInitialized = False
+        self.reliability_manager = None  # Will be set by main controller
         
         # Additional attributes for compatibility with modular code
         self.voltage = None
@@ -1197,6 +1198,13 @@ class Device:
         """Schaltet das Gerät ein."""
         import time
         
+        # Store power before action for reliability validation
+        power_before = await self._get_current_power()
+        if self.reliability_manager:
+            state = self.reliability_manager._device_reliability.get(self.deviceName)
+            if state:
+                state.last_power_before_action = power_before
+        
         # Flag to prevent sensor from overwriting our control value
         self._in_active_control = True
         
@@ -1807,9 +1815,19 @@ class Device:
             _LOGGER.error(f"Error TurnON -> {self.deviceName}: {e}")
         finally:
             self._in_active_control = False
+            # Start reliability validation (non-blocking)
+            if self.reliability_manager:
+                asyncio.create_task(
+                    self.reliability_manager.validate_device_state(
+                        self.deviceName, self, "on"
+                    )
+                )
 
     async def turn_off(self, **kwargs):
         """Schaltet das Gerät aus."""
+        # Store power before action for reliability validation
+        power_before = await self._get_current_power()
+        
         try:
             # === Sonderfall: AcInfinity Geräte ===
             if self.isAcInfinDev:
@@ -2163,6 +2181,14 @@ class Device:
 
         except Exception as e:
             _LOGGER.error(f"Fehler beim Ausschalten von {self.deviceName}: {e}")
+        finally:
+            # Start reliability validation (non-blocking)
+            if self.reliability_manager:
+                asyncio.create_task(
+                    self.reliability_manager.validate_device_state(
+                        self.deviceName, self, "off"
+                    )
+                )
 
     async def hard_turn_off(self):
         """Forcefully turn off the device by directly calling services on all entities."""
@@ -3156,3 +3182,42 @@ class Device:
             # For non-dimmable devices, turn on
             await self.turn_on()
             _LOGGER.info(f"{self.deviceName}: Turned on for correction")
+
+    async def _get_current_power(self) -> Optional[float]:
+        """Read current power consumption of device."""
+        try:
+            # Find power sensor
+            power_sensor = self._find_power_sensor()
+            if power_sensor:
+                state = self.hass.states.get(power_sensor)
+                if state and state.state not in [None, "unknown", "unavailable", "", "None"]:
+                    return float(state.state)
+
+            # Fallback: check switch entity attributes
+            if self.switches:
+                for switch in self.switches:
+                    entity_id = switch["entity_id"]
+                    state = self.hass.states.get(entity_id)
+                    if state and hasattr(state, 'attributes'):
+                        power = state.attributes.get('current_power_w')
+                        if power is not None:
+                            return float(power)
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _find_power_sensor(self) -> Optional[str]:
+        """Find associated power sensor for this device."""
+        if not self.hass:
+            return None
+
+        patterns = [
+            f"sensor.{self.deviceName.lower()}_power",
+            f"sensor.{self.deviceName.lower()}_energy",
+            f"sensor.{self.deviceName.lower()}_watt",
+        ]
+
+        for pattern in patterns:
+            if self.hass.states.get(pattern):
+                return pattern
+        return None

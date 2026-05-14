@@ -13,7 +13,7 @@ from custom_components.opengrowbox.OGBController.utils.calcs import (
 def test_calculate_current_vpd_valid_values():
     result = calculate_current_vpd(25.0, 60.0, 2.0)
     assert isinstance(result, float)
-    assert result == 0.91
+    assert result == 1.66
 
 
 def test_calculate_current_vpd_with_zero_leaf_offset():
@@ -25,7 +25,7 @@ def test_calculate_current_vpd_with_zero_leaf_offset():
 def test_calculate_current_vpd_with_leaf_offset_two():
     result = calculate_current_vpd(25.0, 60.0, 2.0)
     assert isinstance(result, float)
-    assert result == 0.91
+    assert result == 1.66
 
 
 def test_calculate_current_vpd_invalid_input_returns_none():

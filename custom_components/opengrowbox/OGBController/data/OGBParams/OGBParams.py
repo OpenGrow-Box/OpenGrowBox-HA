@@ -1,3 +1,5 @@
+import re
+
 ## INT DATA
 RELEVANT_PREFIXES = (
     "number.",
@@ -68,6 +70,7 @@ DEVICE_TYPE_MAPPING = {
         "watertester",
         "wasstertester",
         "reservoir",
+        "leaf",
     ],
     "Exhaust": ["exhaust", "abluft"],
     "Intake": ["intake", "zuluft"],
@@ -137,13 +140,13 @@ SENSOR_CONTEXTS = {
         "name": "Air/Ambient",
         "description": "Luftbasierte Sensoren (Umgebung, Growbox)",
         "icon": "mdi:weather-partly-cloudy",
-        "suffixes": ["", "air", "luft", "umgebung", "temperature", "humidity", "co2", "dewpoint"],
+        "suffixes": ["air", "luft", "umgebung", "temperature", "humidity", "co2", "dewpoint"],
     },
     "leaf": {
         "name": "Leaf/Blatt",
         "description": "Blattbasierte Sensoren (Plant, Growbox)",
         "icon": "mdi:weather-partly-cloudy",
-        "suffixes": ["", "leaf", "blatt"],
+        "suffixes": ["leaf", "blatt"],
     },
     "water": {
         "name": "Water/Hydro",
@@ -220,7 +223,7 @@ SENSOR_TYPES = {
             },
             "leaf": {
                 "min_value": -5,
-                "max_value": 40,
+                "max_value": 7,
                 "optimal_min": 0,
                 "optimal_max": 2,
                 "name": "Soil Temperature",
@@ -454,7 +457,16 @@ def extract_context_from_entity(entity_id, sensor_type=None):
     """
     entity_lower = entity_id.lower()
     
-    # WICHTIG: Prüfe zuerst auf Reservoir/Water-Devices
+    # WICHTIG: Prüfe zuerst auf Leaf Sensoren (vor fixed context!)
+    # Leaf Sensoren haben spezielle Behandlung für VPD
+    # Regex matches: leaf, leaf1, leaf2, blatt, blatt1, etc. as separate tokens
+    # But NOT as part of longer words (e.g., "leaflet", "underleaf")
+    is_leaf = bool(re.search(r'(?:^|[^a-z])(leaf|blatt)\d*(?:[^a-z]|$)', entity_lower))
+    is_temp = bool(re.search(r'(?:^|[^a-z])(temp|temperature|temperatur)\d*(?:[^a-z]|$)', entity_lower))
+    if is_leaf and is_temp:
+        return "leaf"
+    
+    # WICHTIG: Prüfe auf Reservoir/Water-Devices
     # Diese haben Vorrang vor Sensor-Typ-spezifischen Kontexten
     if any(keyword in entity_lower for keyword in ["waterreservoir", "water_reservoir", "reservoir"]):
         return "water"

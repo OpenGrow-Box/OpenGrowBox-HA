@@ -113,7 +113,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_LeafTemp_Offset_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            min_value=0.0,
+            min_value=-5.0,
             max_value=5.0,
             step=0.1,
             unit="°C",

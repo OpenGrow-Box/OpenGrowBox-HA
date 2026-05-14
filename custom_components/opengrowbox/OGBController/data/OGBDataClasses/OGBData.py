@@ -239,6 +239,7 @@ class OGBConf:
     tentData: Dict[str, Optional[Any]] = field(
         default_factory=lambda: {
             "leafTempOffset": None,
+            "leafTemperature": None,
             "temperature": None,
             "humidity": None,
             "dewpoint": None,

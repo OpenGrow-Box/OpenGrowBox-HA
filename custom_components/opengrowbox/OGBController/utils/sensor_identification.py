@@ -11,6 +11,7 @@ ENGLISH_SENSOR_FALLBACKS = {
     "_dew_point": "dewpoint",
     "_co2": "co2",
     "_carbondioxide": "co2",
+    "_leaf": "temperature",
 }
 
 
@@ -137,5 +138,6 @@ def resolve_remappable_sensor_type(entity_id, labels=None):
         return "dewpoint"
     if "_co2" in object_id or object_id.endswith("co2"):
         return "co2"
-
+    if "_leaf" in object_id or object_id.endswith("leaf"):
+        return "temperature"
     return None
