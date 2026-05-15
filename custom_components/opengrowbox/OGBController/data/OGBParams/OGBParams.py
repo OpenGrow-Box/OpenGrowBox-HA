@@ -474,6 +474,11 @@ def extract_context_from_entity(entity_id, sensor_type=None):
     if "watertester" in entity_lower or "wasstertester" in entity_lower:
         return "water"
     
+    # WICHTIG: Prüfe auf Boden/Soil-Sensoren (vor FIXED_CONTEXT!)
+    # Wenn Entity-ID explizit "boden" oder "soil" enthält -> soil
+    if "boden" in entity_lower or "soil" in entity_lower:
+        return "soil"
+    
     # Priorisierung: Manche Sensor-Typen haben IMMER einen festen Kontext
     FIXED_CONTEXT_SENSORS = {
         # AIR CONTEXT
