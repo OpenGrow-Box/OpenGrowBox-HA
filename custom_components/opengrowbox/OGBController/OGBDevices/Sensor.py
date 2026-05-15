@@ -208,7 +208,11 @@ class Sensor:
                 # 2. Kontext bestimmen (mit sensor_type wenn verfügbar)
                 primary_sensor_type = sensor_types[0] if sensor_types else None
                 
-                if "leaf" in label_ids:
+                # WICHTIG: Energy/Power Sensoren haben immer Kontext "energy"
+                # Unabhängig von Labels!
+                if primary_sensor_type in ("power", "energy"):
+                    context = "energy"
+                elif "leaf" in label_ids:
                     context = "leaf"
                 elif "soil" in label_ids or medium_label:
                     context = "soil"
