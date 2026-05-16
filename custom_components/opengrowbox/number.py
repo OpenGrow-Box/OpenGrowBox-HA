@@ -117,7 +117,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             max_value=5.0,
             step=0.1,
             unit="°C",
-            initial_value=2.0,
+            initial_value=0.0,
         ),
         CustomNumber(
             f"OGB_VPDTarget_{coordinator.room_name}",
@@ -133,9 +133,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_VPDTolerance_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            min_value=2.5,
+            min_value=0,
             max_value=25,
-            step=0.1,
+            step=0.5,
             unit="%",
             initial_value=10,
         ),
@@ -165,7 +165,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             coordinator,
             min_value=0.0,
             max_value=2.0,
-            step=0.05,
+            step=0.1,
             unit="X",
             initial_value=1.0,
         ),
@@ -1298,6 +1298,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             step=15,
             unit="min",
             initial_value=60,
+        ),
+        # Energy Price
+        CustomNumber(
+            f"OGB_Energy_Price_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            min_value=0.0,
+            max_value=2.0,
+            step=0.01,
+            unit="EUR/kWh",
+            initial_value=0.29,
         ),
 
     ]

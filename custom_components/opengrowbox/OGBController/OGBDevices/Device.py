@@ -695,7 +695,8 @@ class Device:
             "_humidity", "humidity",
             "_dewpoint", "_dew_point", "dewpoint",
             "_co2", "co2",
-            "_duty", "_moisture", "_intensity", "_ph", "_ec", "_tds", "_conductivity"
+            "_duty", "_moisture", "_intensity", "_ph", "_ec", "_tds", "_conductivity",
+            "_power", "_energy", "_voltage", "_current", "_apparentpower", "_reactivepower", "_factor"
         )
         return any(keyword in sensor_id for keyword in interested_mapping)
 
@@ -2961,6 +2962,19 @@ class Device:
                         _LOGGER.info(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Sensor-Update")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
+                    
+                    # Emit power sensor update for energy tracking
+                    if any(suffix in entity_id for suffix in ["_power", "_energy_power", "_apparentpower"]):
+                        try:
+                            import asyncio
+                            asyncio.create_task(self.eventManager.emit("PowerSensorUpdate", {
+                                "device_name": self.deviceName,
+                                "entity_id": entity_id,
+                                "power_watts": new_state_value,
+                                "room": self.inRoom,
+                            }))
+                        except Exception as e:
+                            _LOGGER.debug(f"{self.deviceName}: Fehler PowerSensorUpdate Event: {e}")
 
             # Number/Option Entitäten → Wert updaten dann checkForControlValue
             elif any(prefix in entity_id for prefix in ["number.", "text.", "time.", "date."]):
@@ -2981,6 +2995,18 @@ class Device:
                         self.identifyIfRunningState()
                         self._update_deviceData_in_capabilities()
                         _LOGGER.info(f"{self.deviceName}: Running state → {self.isRunning} nach {entity_id} = {new_state_value}")
+                        
+                        # Emit device state change for energy tracking
+                        try:
+                            import asyncio
+                            asyncio.create_task(self.eventManager.emit("DeviceStateChange", {
+                                "device_name": self.deviceName,
+                                "is_running": self.isRunning,
+                                "entity_id": entity_id,
+                                "room": self.inRoom,
+                            }))
+                        except Exception as e:
+                            _LOGGER.debug(f"{self.deviceName}: Fehler DeviceStateChange Event: {e}")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler beim Aktualisieren des Running-State: {e}")
 
@@ -3211,8 +3237,10 @@ class Device:
         if not self.hass:
             return None
 
+        # Check known naming patterns
         patterns = [
             f"sensor.{self.deviceName.lower()}_power",
+            f"sensor.{self.deviceName.lower()}_energy_power",
             f"sensor.{self.deviceName.lower()}_energy",
             f"sensor.{self.deviceName.lower()}_watt",
         ]
@@ -3220,4 +3248,12 @@ class Device:
         for pattern in patterns:
             if self.hass.states.get(pattern):
                 return pattern
+
+        # Fallback: search in self.sensors for power/energy sensors
+        for sensor in self.sensors:
+            entity_id = sensor.get("entity_id", "")
+            if any(suffix in entity_id for suffix in ["_power", "_energy_power", "_apparentpower"]):
+                if self.hass.states.get(entity_id):
+                    return entity_id
+
         return None

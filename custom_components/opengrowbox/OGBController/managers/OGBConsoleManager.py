@@ -167,6 +167,22 @@ class OGBConsoleManager:
             ["get_tentdata"],
         )
 
+        self.register_command(
+            "get_costs",
+            self.cmd_get_costs,
+            "Shows energy consumption and costs for today, week, and month",
+            "get_costs",
+            ["get_costs"],
+        )
+
+        self.register_command(
+            "reset_costs",
+            self.cmd_reset_costs,
+            "Resets all energy consumption data (daily, weekly, monthly)",
+            "reset_costs [today|week|month|all]",
+            ["reset_costs", "reset_costs today", "reset_costs all"],
+        )
+
     def register_command(
         self,
         name: str,
@@ -926,6 +942,204 @@ class OGBConsoleManager:
                 lines.append(f"   DLI: {dli} mol/m²/day")
         
         response = "\n".join(lines)
+        await self._send_response(response)
+
+    async def cmd_get_costs(self, params: List[str]):
+        """Shows detailed energy consumption, costs, and device statistics."""
+        from datetime import datetime, timedelta
+        
+        energy_data = self.data_store.getDeep("Energy", {})
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        week_str = datetime.now().strftime("%Y-W%W")
+        month_str = datetime.now().strftime("%Y-%m")
+        
+        daily = energy_data.get("daily", {}).get(today_str, {})
+        yesterday = energy_data.get("daily", {}).get(yesterday_str, {})
+        weekly = energy_data.get("weekly", {}).get(week_str, {})
+        monthly = energy_data.get("monthly", {}).get(month_str, {})
+        price = energy_data.get("price_per_kwh", 0.35)
+        currency = energy_data.get("currency", "EUR")
+        
+        today_kwh = daily.get('kwh', 0.0)
+        yesterday_kwh = yesterday.get('kwh', 0.0)
+        
+        lines = [
+            f"💡 Energy Dashboard - {self.room}",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"📅 Today ({today_str}):",
+            f"   ⚡ Energy: {today_kwh:.3f} kWh",
+            f"   💰 Cost: {daily.get('cost', 0.0):.2f} {currency}",
+        ]
+        
+        # Compare with yesterday
+        if yesterday_kwh > 0:
+            diff = today_kwh - yesterday_kwh
+            diff_pct = (diff / yesterday_kwh) * 100
+            arrow = "📈" if diff >= 0 else "📉"
+            lines.append(f"   {arrow} vs Yesterday: {abs(diff):.3f} kWh ({abs(diff_pct):.1f}%)")
+        
+        # Runtime stats
+        runtime = daily.get("runtime", {})
+        if runtime:
+            total_runtime = sum(runtime.values())
+            avg_runtime = total_runtime / len(runtime) if runtime else 0
+            lines.append(f"   ⏱️  Total Runtime: {total_runtime:.1f}h (avg: {avg_runtime:.1f}h/device)")
+        
+        lines.extend([
+            "",
+            f"📊 This Week ({week_str}):",
+            f"   ⚡ Energy: {weekly.get('kwh', 0.0):.3f} kWh",
+            f"   💰 Cost: {weekly.get('cost', 0.0):.2f} {currency}",
+            "",
+            f"📊 This Month ({month_str}):",
+            f"   ⚡ Energy: {monthly.get('kwh', 0.0):.3f} kWh",
+            f"   💰 Cost: {monthly.get('cost', 0.0):.2f} {currency}",
+            "",
+            f"⚙️  Price: {price:.2f} {currency}/kWh",
+        ])
+        
+        # Device Ranking & Statistics
+        if runtime and today_kwh > 0:
+            lines.extend(["", "🏆 Device Ranking (Today):"])
+            
+            # Calculate per-device energy from runtime proportion
+            device_stats = []
+            for device_name, hours in runtime.items():
+                device_kwh = today_kwh * (hours / max(total_runtime, 0.01))
+                pct = (device_kwh / max(today_kwh, 0.001)) * 100
+                avg_power = (device_kwh / max(hours, 0.01)) * 1000  # Watts
+                device_stats.append({
+                    'name': device_name,
+                    'kwh': device_kwh,
+                    'hours': hours,
+                    'pct': pct,
+                    'avg_power': avg_power,
+                })
+            
+            # Sort by energy consumption (descending)
+            device_stats.sort(key=lambda x: x['kwh'], reverse=True)
+            
+            # Top consumer highlight
+            if device_stats:
+                top = device_stats[0]
+                lines.append(f"   👑 Top Consumer: {top['name']} ({top['pct']:.1f}%)")
+                lines.append("")
+            
+            # All devices table
+            lines.append("   Device          kWh     %    Hours  Avg W")
+            lines.append("   ─────────────────────────────────────────")
+            for stat in device_stats:
+                lines.append(
+                    f"   {stat['name']:<14} {stat['kwh']:>6.3f} {stat['pct']:>5.1f}% "
+                    f"{stat['hours']:>5.1f}h {stat['avg_power']:>6.1f}W"
+                )
+        
+        # Currently Active Devices with Real-Time Power
+        try:
+            main_controller = None
+            for entry_id, coord in self.hass.data.get("opengrowbox", {}).items():
+                if entry_id != "sensors" and hasattr(coord, 'room_name'):
+                    if coord.room_name == self.room and hasattr(coord, 'OGB'):
+                        main_controller = coord.OGB
+                        break
+            
+            if main_controller and hasattr(main_controller, 'energy_manager'):
+                energy_mgr = main_controller.energy_manager
+                active_devices = energy_mgr._device_tracking
+                
+                if active_devices:
+                    lines.extend(["", "⚡ Currently Active:"])
+                    
+                    # Sort by power consumption
+                    sorted_active = sorted(
+                        active_devices.items(),
+                        key=lambda x: x[1].get('power_watts', 0),
+                        reverse=True
+                    )
+                    
+                    total_power = sum(t.get('power_watts', 0) for t in active_devices.values())
+                    lines.append(f"   Total Power Draw: {total_power:.1f}W")
+                    lines.append("")
+                    lines.append("   Device          Power   Type    Session kWh")
+                    lines.append("   ───────────────────────────────────────────")
+                    
+                    for device_name, tracking in sorted_active:
+                        power = tracking.get("power_watts", 0.0)
+                        is_estimated = tracking.get("is_estimated", True)
+                        session_kwh = tracking.get("session_kwh", 0.0)
+                        source = "EST" if is_estimated else "SNS"
+                        lines.append(
+                            f"   {device_name:<14} {power:>6.1f}W {source:>6} {session_kwh:>9.4f}"
+                        )
+        except Exception as e:
+            _LOGGER.debug(f"[{self.room}] Could not get active device info: {e}")
+        
+        response = "\n".join(lines)
+        await self._send_response(response)
+
+    async def cmd_reset_costs(self, params: List[str]):
+        """Reset energy consumption data."""
+        scope = params[0].lower() if params else "all"
+        valid_scopes = ["today", "week", "month", "all"]
+        
+        if scope not in valid_scopes:
+            await self._send_response(
+                f"⚠️ Invalid scope: '{scope}'\n"
+                f"Usage: reset_costs [today|week|month|all]\n"
+                f"Examples: reset_costs, reset_costs today, reset_costs all"
+            )
+            return
+        
+        energy_data = self.data_store.getDeep("Energy", {})
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        week_str = datetime.now().strftime("%Y-W%W")
+        month_str = datetime.now().strftime("%Y-%m")
+        
+        reset_items = []
+        
+        if scope in ["today", "all"]:
+            if today_str in energy_data.get("daily", {}):
+                energy_data["daily"][today_str] = {"kwh": 0.0, "cost": 0.0, "runtime": {}}
+                reset_items.append("Today's data")
+        
+        if scope in ["week", "all"]:
+            if week_str in energy_data.get("weekly", {}):
+                energy_data["weekly"][week_str] = {"kwh": 0.0, "cost": 0.0}
+                reset_items.append("This week's data")
+        
+        if scope in ["month", "all"]:
+            if month_str in energy_data.get("monthly", {}):
+                energy_data["monthly"][month_str] = {"kwh": 0.0, "cost": 0.0}
+                reset_items.append("This month's data")
+        
+        # Reset active device session tracking
+        if scope == "all":
+            try:
+                main_controller = None
+                for entry_id, coord in self.hass.data.get("opengrowbox", {}).items():
+                    if entry_id != "sensors" and hasattr(coord, 'room_name'):
+                        if coord.room_name == self.room and hasattr(coord, 'OGB'):
+                            main_controller = coord.OGB
+                            break
+                
+                if main_controller and hasattr(main_controller, 'energy_manager'):
+                    energy_mgr = main_controller.energy_manager
+                    for device_name in list(energy_mgr._device_tracking.keys()):
+                        energy_mgr._device_tracking[device_name]["session_kwh"] = 0.0
+                    reset_items.append("Active device sessions")
+            except Exception as e:
+                _LOGGER.debug(f"[{self.room}] Could not reset active sessions: {e}")
+        
+        # Save back to datastore
+        self.data_store.setDeep("Energy", energy_data)
+        
+        if reset_items:
+            response = f"✅ Reset {scope} energy data:\n"
+            response += "\n".join(f"   • {item}" for item in reset_items)
+        else:
+            response = f"ℹ️ No {scope} energy data found to reset"
+        
         await self._send_response(response)
 
     async def cmd_calibrate_all_caps(self, params: List[str]):

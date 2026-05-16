@@ -46,6 +46,9 @@ PRESERVED_STATE_KEYS = {
     
     # Device Cooldowns (GCDs - müssen persistiert werden)
     "deviceCooldowns",
+    
+    # Energy consumption data (daily/weekly/monthly tracking)
+    "Energy",
 }
 
 # Keys die NIEMALS aus State File geladen werden (Code-Defaults)

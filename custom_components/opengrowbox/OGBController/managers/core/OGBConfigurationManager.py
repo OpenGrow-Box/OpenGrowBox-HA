@@ -91,6 +91,8 @@ class OGBConfigurationManager:
             f"ogb_leaftemp_offset_{self.room.lower()}": self._update_leaf_temp_offset,
             f"ogb_vpdtarget_{self.room.lower()}": self._update_vpd_target,
             f"ogb_vpd_devicedampening_{self.room.lower()}": self._update_vpd_device_dampening,
+            # Energy
+            f"ogb_energy_price_{self.room.lower()}": self._update_energy_price,
             # Light Times
             f"ogb_lightontime_{self.room.lower()}": self._update_light_on_time,
             f"ogb_lightofftime_{self.room.lower()}": self._update_light_off_time,
@@ -625,6 +627,43 @@ class OGBConfigurationManager:
             await _update_specific_sensor(
                 "ogb_current_vpd_target_max_", self.room, max_vpd, self.hass
             )
+
+    async def _update_energy_price(self, data):
+        """Update energy price per kWh."""
+        if not data or not hasattr(data, 'newState') or not data.newState or len(data.newState) == 0:
+            _LOGGER.error(f"{self.room}: Invalid data for energy price update")
+            return
+        
+        try:
+            value = float(data.newState[0])
+        except (ValueError, TypeError) as e:
+            _LOGGER.error(f"{self.room}: Failed to convert energy price value: {data.newState[0]} - {e}")
+            return
+        
+        if value < 0:
+            _LOGGER.error(f"{self.room}: Invalid negative energy price: {value}")
+            return
+        
+        current_value = self.data_store.getDeep("Energy.price_per_kwh")
+        
+        if current_value != value:
+            _LOGGER.info(f"{self.room}: Update Energy Price to {value} EUR/kWh")
+            
+            # Update datastore
+            energy_data = self.data_store.getDeep("Energy", {})
+            energy_data["price_per_kwh"] = round(value, 4)
+            self.data_store.setDeep("Energy", energy_data)
+            
+            # Notify energy manager to recalculate
+            try:
+                if hasattr(self, 'energy_manager') and self.energy_manager:
+                    await self.energy_manager.set_price_per_kwh(value)
+                else:
+                    # Try to find energy manager through main controller
+                    # This handles the case where energy_manager is not directly attached
+                    _LOGGER.debug(f"{self.room}: Energy manager not directly available, datastore updated only")
+            except Exception as e:
+                _LOGGER.error(f"{self.room}: Error notifying energy manager: {e}")
 
     # Light configuration methods
     async def _update_light_on_time(self, data):

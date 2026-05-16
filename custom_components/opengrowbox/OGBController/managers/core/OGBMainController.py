@@ -22,6 +22,7 @@ from ...premium.OGBPremiumIntegration import OGBPremiumIntegration
 from ..hydro.OGBCastManager import OGBCastManager
 from ..medium.OGBMediumManager import OGBMediumManager
 from ..hydro.tank.OGBTankFeedManager import OGBTankFeedManager
+from ..OGBEnergyManager import OGBEnergyManager
 from ...RegistryListener import OGBRegistryEvenListener
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,6 +199,14 @@ class OGBMainController:
             self.data_store,
             self.room,
             retention_days=7,  # Keep 7 days of raw sensor data
+        )
+
+        # Energy management
+        self.energy_manager = OGBEnergyManager(
+            self.hass,
+            self.data_store,
+            self.event_manager,
+            self.room,
         )
 
         # Premium features - using new modular integration

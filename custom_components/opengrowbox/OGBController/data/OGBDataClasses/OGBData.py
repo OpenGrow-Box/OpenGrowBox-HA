@@ -332,6 +332,18 @@ class OGBConf:
             },
         }
     )
+    Energy: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "price_per_kwh": 0.35,
+            "currency": "EUR",
+            "last_update": None,
+            "current_day": None,
+            "devices": {},
+            "daily": {},
+            "weekly": {},
+            "monthly": {},
+        }
+    )
     isPlantDay: Dict[str, Any] = field(
         default_factory=lambda: {
             "islightON": False,

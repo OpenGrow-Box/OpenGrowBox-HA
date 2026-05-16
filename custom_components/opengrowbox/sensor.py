@@ -100,6 +100,12 @@ class CustomSensor(RestoreEntity):
             return "Minutes"
         elif self._device_class == "mV":
             return "mV"
+        elif self._device_class == "energy":
+            return "kWh"
+        elif self._device_class == "monetary":
+            return "EUR"
+        elif self._device_class == "duration":
+            return "h"
         return None
 
     @property
@@ -345,6 +351,42 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             initial_value=0,
             device_class="mV",
         ),
+        # Energy Sensors
+        CustomSensor(
+            f"OGB_Energy_Today_kWh_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class="energy",
+        ),
+        CustomSensor(
+            f"OGB_Energy_Today_Cost_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class="monetary",
+        ),
+        CustomSensor(
+            f"OGB_Energy_Runtime_Today_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class="duration",
+        ),
+        CustomSensor(
+            f"OGB_Energy_Week_kWh_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class="energy",
+        ),
+        CustomSensor(
+            f"OGB_Energy_Month_kWh_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class="energy",
+        ),
     ]
 
     # Register the sensors globally in hass.data
@@ -548,3 +590,42 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             }, extra=vol.ALLOW_EXTRA),
         )
         _LOGGER.info(f"✅ Registered {DOMAIN}.finish_grow service")
+
+    # Register EnergyUpdate event listener to update energy sensors
+    async def handle_energy_update(event_data):
+        """Handle EnergyUpdate events from OGBEnergyManager."""
+        try:
+            room = event_data.get("room")
+            if not room:
+                return
+
+            # Find sensors for this room
+            for sensor in hass.data[DOMAIN].get("sensors", []):
+                if sensor.room_name != room:
+                    continue
+
+                # Update Today kWh
+                if "Energy_Today_kWh" in sensor._name:
+                    sensor.update_state(event_data.get("today_kwh", 0.0))
+                # Update Today Cost
+                elif "Energy_Today_Cost" in sensor._name:
+                    sensor.update_state(event_data.get("today_cost", 0.0))
+                # Update Today Runtime
+                elif "Energy_Runtime_Today" in sensor._name:
+                    sensor.update_state(event_data.get("today_runtime_hours", 0.0))
+                # Update Week kWh
+                elif "Energy_Week_kWh" in sensor._name:
+                    sensor.update_state(event_data.get("week_kwh", 0.0))
+                # Update Month kWh
+                elif "Energy_Month_kWh" in sensor._name:
+                    sensor.update_state(event_data.get("month_kwh", 0.0))
+
+        except Exception as e:
+            _LOGGER.error(f"❌ Error handling EnergyUpdate event: {e}")
+
+    # Register event listener with coordinator's event manager
+    try:
+        coordinator.OGB.eventManager.on("EnergyUpdate", handle_energy_update)
+        _LOGGER.info(f"✅ Registered EnergyUpdate event listener for room: {coordinator.room_name}")
+    except Exception as e:
+        _LOGGER.error(f"❌ Failed to register EnergyUpdate event listener: {e}")
