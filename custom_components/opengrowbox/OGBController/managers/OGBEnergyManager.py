@@ -90,8 +90,12 @@ class OGBEnergyManager:
         # Initial scan for already-running devices
         await self._scan_initial_devices()
         
+        _LOGGER.info(f"[{self.room}] Energy background loop started")
+        
         while not self._shutdown:
             try:
+                _LOGGER.debug(f"[{self.room}] Energy loop iteration starting")
+                
                 # Check for day rollover
                 await self._check_day_rollover()
                 
@@ -104,10 +108,17 @@ class OGBEnergyManager:
                 # Update HA sensor entities
                 await self._update_sensor_entities()
                 
+                _LOGGER.debug(f"[{self.room}] Energy loop iteration complete, sleeping 5min")
+                
                 await asyncio.sleep(300)  # 5 minutes
+            except asyncio.CancelledError:
+                _LOGGER.info(f"[{self.room}] Energy background loop cancelled")
+                break
             except Exception as e:
                 _LOGGER.error(f"[{self.room}] Energy background loop error: {e}")
                 await asyncio.sleep(60)  # Retry after 1 minute on error
+        
+        _LOGGER.info(f"[{self.room}] Energy background loop ended")
 
     async def _scan_initial_devices(self):
         """Scan all devices and start tracking for those already running."""
@@ -266,6 +277,11 @@ class OGBEnergyManager:
                         f"{session_kwh:.4f} kWh in {hours:.1f}h"
                     )
                     
+                    # CRITICAL FIX: Save runtime to daily data BEFORE removing from tracking
+                    # This ensures short sessions (like mistpump) are recorded
+                    if session_kwh > 0 or hours > 0:
+                        await self._save_session_to_daily(device_name, session_kwh, hours)
+                    
                     # Remove from active tracking
                     del self._device_tracking[device_name]
                     
@@ -307,11 +323,55 @@ class OGBEnergyManager:
             f"at {power}W (estimated, device not found)"
         )
 
+    async def _save_session_to_daily(self, device_name: str, session_kwh: float, hours: float):
+        """Save a completed session directly to daily data.
+        
+        This ensures short sessions (like mistpump) are not lost.
+        """
+        try:
+            energy_data = self.data_store.getDeep("Energy", {})
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            price_per_kwh = energy_data.get("price_per_kwh", 0.35)
+            
+            if "daily" not in energy_data:
+                energy_data["daily"] = {}
+            if today_str not in energy_data["daily"]:
+                energy_data["daily"][today_str] = {
+                    "kwh": 0.0,
+                    "cost": 0.0,
+                    "runtime": {},
+                }
+            
+            daily_data = energy_data["daily"][today_str]
+            
+            # Add session energy to today's total
+            daily_data["kwh"] = round(daily_data.get("kwh", 0.0) + session_kwh, 4)
+            daily_data["cost"] = round(daily_data["kwh"] * price_per_kwh, 4)
+            
+            # Update runtime
+            runtime = daily_data.get("runtime", {})
+            if device_name in runtime:
+                runtime[device_name] = round(runtime[device_name] + hours, 2)
+            else:
+                runtime[device_name] = round(hours, 2)
+            daily_data["runtime"] = runtime
+            
+            energy_data["daily"][today_str] = daily_data
+            self.data_store.setDeep("Energy", energy_data)
+            
+            _LOGGER.debug(
+                f"[{self.room}] Saved session for {device_name}: "
+                f"{session_kwh:.6f} kWh, {hours:.2f}h"
+            )
+            
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error saving session to daily: {e}")
+
     async def _on_power_sensor_update(self, event_data):
         """Handle power sensor updates from devices.
         
-        Only updates the power reading. Energy calculation happens
-        in periodic aggregation to avoid double-counting.
+        CRITICAL FIX: If power > 0 but device not in tracking, start tracking!
+        This handles devices that are on but we missed the startup event.
         """
         try:
             device_name = event_data.get("device_name")
@@ -321,11 +381,26 @@ class OGBEnergyManager:
                 return
 
             if device_name not in self._device_tracking:
-                # Device might be on but we missed the startup
-                # Check if device is running and start tracking
-                device = self._find_device_by_name(device_name)
-                if device and getattr(device, 'isRunning', False):
-                    await self._start_device_tracking(device)
+                # CRITICAL FIX: If power > 0, device is obviously running!
+                try:
+                    power = float(power_watts)
+                    if power > 0:
+                        device = self._find_device_by_name(device_name)
+                        if device:
+                            await self._start_device_tracking(device)
+                            _LOGGER.info(
+                                f"[{self.room}] Auto-started tracking for {device_name} "
+                                f"due to power reading: {power}W"
+                            )
+                        else:
+                            await self._start_tracking_with_estimate(device_name)
+                            # Update power to actual reading
+                            self._device_tracking[device_name]["power_watts"] = power
+                    else:
+                        # Power is 0, device is probably off - ignore
+                        pass
+                except (ValueError, TypeError):
+                    pass
                 return
 
             tracking = self._device_tracking[device_name]
