@@ -414,15 +414,21 @@ class OGBEnergyManager:
             )
 
     async def _aggregate_and_persist(self):
-        """Aggregate tracking data and persist to data store."""
+        """Aggregate tracking data and persist to data store.
+        
+        CRITICAL: Preserves existing energy data from disk - only adds new session energy.
+        """
         try:
             energy_data = self.data_store.getDeep("Energy", {})
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             
-            # Ensure today's data structure exists
+            # Ensure today's data structure exists - preserve existing data!
             if "daily" not in energy_data:
                 energy_data["daily"] = {}
+            
+            # CRITICAL FIX: Check if today's data already exists (loaded from disk)
             if today_str not in energy_data["daily"]:
+                _LOGGER.info(f"[{self.room}] Creating new daily energy entry for {today_str}")
                 energy_data["daily"][today_str] = {
                     "kwh": 0.0,
                     "cost": 0.0,
@@ -432,30 +438,43 @@ class OGBEnergyManager:
             daily_data = energy_data["daily"][today_str]
             price_per_kwh = energy_data.get("price_per_kwh", 0.35)
 
-            # Aggregate from all tracked devices
+            # CRITICAL FIX: Load EXISTING values from datastore (preserved from disk)
+            # Do NOT start from 0 - add to existing values
             total_today_kwh = daily_data.get("kwh", 0.0)
-            total_runtime = daily_data.get("runtime", {})
+            total_runtime = daily_data.get("runtime", {}).copy()
 
-            for device_name, tracking in self._device_tracking.items():
-                session_kwh = tracking.get("session_kwh", 0.0)
-                
-                # Add session energy to today's total
-                # Use device name as key to accumulate across sessions
-                device_key = f"{device_name}_today"
-                current_device_kwh = daily_data.get(device_key, 0.0)
-                daily_data[device_key] = current_device_kwh + session_kwh
-                
-                # Accumulate total
-                total_today_kwh += session_kwh
-                
-                # Reset session counter (we've accounted for it)
-                tracking["session_kwh"] = 0.0
-                
-                # Update runtime
-                start_time = tracking.get("start_time")
-                if start_time:
-                    runtime_hours = (datetime.now(timezone.utc) - start_time).total_seconds() / 3600.0
-                    total_runtime[device_name] = round(runtime_hours, 2)
+            # Only aggregate if we have active tracked devices
+            if self._device_tracking:
+                _LOGGER.debug(
+                    f"[{self.room}] Aggregating energy for {len(self._device_tracking)} "
+                    f"tracked devices (existing: {total_today_kwh:.4f} kWh)"
+                )
+
+                for device_name, tracking in self._device_tracking.items():
+                    session_kwh = tracking.get("session_kwh", 0.0)
+                    
+                    if session_kwh > 0:
+                        # Add session energy to today's total
+                        total_today_kwh += session_kwh
+                        
+                        _LOGGER.debug(
+                            f"[{self.room}] {device_name}: added {session_kwh:.6f} kWh "
+                            f"(total: {total_today_kwh:.4f})"
+                        )
+                    
+                    # Reset session counter (we've accounted for it)
+                    tracking["session_kwh"] = 0.0
+                    
+                    # Update runtime
+                    start_time = tracking.get("start_time")
+                    if start_time:
+                        runtime_hours = (datetime.now(timezone.utc) - start_time).total_seconds() / 3600.0
+                        total_runtime[device_name] = round(runtime_hours, 2)
+            else:
+                _LOGGER.debug(
+                    f"[{self.room}] No active devices to aggregate "
+                    f"(preserving {total_today_kwh:.4f} kWh)"
+                )
 
             # Update today's totals
             daily_data["kwh"] = round(total_today_kwh, 4)
@@ -473,6 +492,13 @@ class OGBEnergyManager:
             
             # Atomically persist
             self.data_store.setDeep("Energy", energy_data)
+            
+            # CRITICAL: Emit SaveState to ensure data is written to disk
+            # This prevents data loss on unexpected restarts
+            try:
+                await self.event_manager.emit("SaveState", {"source": "OGBEnergyManager", "room": self.room})
+            except Exception as e:
+                _LOGGER.debug(f"[{self.room}] SaveState emission failed: {e}")
 
             _LOGGER.debug(
                 f"[{self.room}] Energy persisted: {total_today_kwh:.4f} kWh today, "
