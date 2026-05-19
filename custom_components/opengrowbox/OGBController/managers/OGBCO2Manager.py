@@ -6,7 +6,7 @@ Includes CRITICAL SAFETY CHECKS for max CO2 limits.
 
 import asyncio
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
@@ -209,3 +209,167 @@ class OGBCO2Manager:
     def get_last_co2(self) -> float:
         """Get last aggregated CO2 value."""
         return self._last_co2_value
+
+    # =================================================================
+    # CENTRALIZED CO2 ACTION DECISION
+    # =================================================================
+
+    async def decide_co2_action(self, mode: str, capabilities: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Zentrale CO2-Aktions-Entscheidung.
+        
+        Alle CO2-Steuerungslogik (VPD Perfection + Closed Environment) 
+        wird hier zentral koordiniert.
+        
+        Args:
+            mode: "VPD" oder "CLOSED" 
+            capabilities: Alle verfuegbaren Capabilities
+            
+        Returns:
+            Liste von Action-Maps (leere Liste wenn keine Aktion noetig)
+        """
+        action_map = []
+        
+        try:
+            # 1. Pruefen ob CO2-Control aktiviert
+            co2_control_enabled = self.data_store.getDeep("controlOptions.co2Control", False)
+            if not co2_control_enabled:
+                _LOGGER.debug(f"{self.room}: CO2 control disabled, skipping")
+                return []
+            
+            # 2. Aktuellen CO2-Wert holen
+            current_co2 = self._last_co2_value
+            if current_co2 is None or current_co2 == 0:
+                _LOGGER.debug(f"{self.room}: No CO2 reading available")
+                return []
+            
+            # 3. Targets (min/max ppm) holen
+            co2_target_min = self.data_store.getDeep("controlOptionData.co2ppm.minPPM", 800)
+            co2_target_max = self.data_store.getDeep("controlOptionData.co2ppm.maxPPM", 1500)
+            
+            co2_target_min = float(co2_target_min) if co2_target_min else 800
+            co2_target_max = float(co2_target_max) if co2_target_max else 1500
+            
+            # 4. Licht-Status pruefen
+            is_light_on = bool(self.data_store.getDeep("isPlantDay.islightON", False))
+            
+            # 5. Safety-Checks durchfuehren (immer zuerst!)
+            if self._co2_emergency_active:
+                _LOGGER.warning(f"{self.room}: CO2 emergency active - blocking all CO2 injection")
+                return []
+            
+            # 6. Target-Logik basierend auf Modus
+            if mode == "CLOSED":
+                # Closed Environment: Target-basierte Steuerung
+                action_map = await self._decide_closed_environment_action(
+                    current_co2, co2_target_min, co2_target_max, 
+                    is_light_on, capabilities
+                )
+            elif mode == "VPD":
+                # VPD Perfection: Einfaches ein/aus basierend auf Licht
+                action_map = await self._decide_vpd_mode_action(
+                    current_co2, co2_target_min, co2_target_max,
+                    is_light_on, capabilities
+                )
+            else:
+                _LOGGER.warning(f"{self.room}: Unknown CO2 mode: {mode}")
+                return []
+            
+            if action_map:
+                _LOGGER.info(
+                    f"{self.room}: CO2 action decided - mode={mode}, "
+                    f"current={current_co2:.0f}ppm, min={co2_target_min:.0f}, max={co2_target_max:.0f}, "
+                    f"actions={[a.get('capability') + ':' + a.get('action') for a in action_map]}"
+                )
+            
+            return action_map
+            
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Error in decide_co2_action: {e}")
+            return []
+    
+    async def _decide_closed_environment_action(
+        self, current_co2: float, co2_target_min: float, co2_target_max: float,
+        is_light_on: bool, capabilities: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Entscheidet CO2-Action fuer Closed Environment Modus.
+        
+        Logic:
+        - CO2 < min und Licht an -> Injizieren
+        - CO2 > max -> Reduzieren (auch bei Licht aus - Safety)
+        - CO2 im Target-Bereich -> Nichts tun
+        """
+        action_map = []
+        action_message = "Closed Environment CO2 Maintenance"
+        
+        # Emergency high CO2 overrides normal reduction
+        co2_emergency_high = self.data_store.getDeep("controlOptionData.co2ppm.criticalPPM", 2000)
+        if current_co2 > float(co2_emergency_high):
+            _LOGGER.warning(f"CO2 emergency high: {current_co2} > {co2_emergency_high}, forcing ventilation")
+            # Use exhaust first to actually remove CO2-laden air
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Increase", action_message))
+            elif capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(self._create_action("canVentilate", "Increase", action_message))
+            return action_map
+        
+        # Only inject CO2 when lights are ON (photosynthesis active)
+        if current_co2 < co2_target_min:
+            if is_light_on:
+                _LOGGER.debug("CO2 below min, lights ON - injecting CO2")
+                if capabilities.get("canCO2", {}).get("state", False):
+                    action_map.append(self._create_action("canCO2", "Increase", action_message))
+            else:
+                _LOGGER.debug("CO2 below min but lights OFF - skipping CO2 injection")
+        
+        # Always reduce CO2 if too high, even at night (safety first)
+        elif current_co2 > co2_target_max:
+            _LOGGER.debug("CO2 above max - reducing")
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Increase", action_message))
+            elif capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(self._create_action("canVentilate", "Increase", action_message))
+        
+        return action_map
+    
+    async def _decide_vpd_mode_action(
+        self, current_co2: float, co2_target_min: float, co2_target_max: float,
+        is_light_on: bool, capabilities: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Entscheidet CO2-Action fuer VPD Perfection Modus.
+        
+        Logic:
+        - Licht an und CO2 unter max -> Injizieren (fuer Photosynthese)
+        - Licht aus oder CO2 ueber max -> Reduzieren/Ausschalten
+        """
+        action_map = []
+        action_message = "VPD Perfection CO2"
+        
+        if is_light_on:
+            if current_co2 < co2_target_max:
+                # Licht an und CO2 unter Max -> Injizieren
+                if capabilities.get("canCO2", {}).get("state", False):
+                    action_map.append(self._create_action("canCO2", "Increase", action_message))
+            else:
+                # Licht an aber CO2 ueber Max -> Reduzieren
+                _LOGGER.debug(f"CO2 above max ({current_co2} > {co2_target_max}) despite light on - reducing")
+                if capabilities.get("canCO2", {}).get("state", False):
+                    action_map.append(self._create_action("canCO2", "Reduce", action_message))
+        else:
+            # Licht aus -> CO2 ausschalten
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Reduce", action_message))
+                _LOGGER.debug(f"{self.room}: Night mode - CO2 off")
+        
+        return action_map
+    
+    def _create_action(self, capability: str, action: str, message: str) -> Dict[str, Any]:
+        """Erstellt eine Action-Map."""
+        return {
+            "capability": capability,
+            "action": action,
+            "message": message,
+            "room": self.room,
+        }

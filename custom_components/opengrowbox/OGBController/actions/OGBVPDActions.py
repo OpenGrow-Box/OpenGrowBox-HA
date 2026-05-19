@@ -248,16 +248,13 @@ class OGBVPDActions:
                 action_map.append(self._create_action("canCool", "Reduce", action_message))
             if capabilities.get("canClimate", {}).get("state", False):
                 action_map.append(self._create_action("canClimate", "Eval", action_message))
-            # Check CO2 control switch for VPD-based CO2 actions
-            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-                if is_light_on:
-                    action_map.append(self._create_action("canCO2", "Increase", action_message))
-                else:
-                    action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Night mode active - CO2 increase blocked, forcing CO2 off"
-                    )
+            # CO2-Steuerung ueber zentralen OGBCO2Manager
+            co2_actions = await self.ogb.co2_manager.decide_co2_action(
+                mode="VPD", 
+                capabilities=capabilities
+            )
+            if co2_actions:
+                action_map.extend(co2_actions)
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
@@ -345,14 +342,13 @@ class OGBVPDActions:
                 )
             if capabilities.get("canClimate", {}).get("state", False):
                 action_map.append(self._create_action("canClimate", "Eval", action_message))
-            # Check CO2 control switch for VPD-based CO2 actions
-            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-                action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                if not is_light_on:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
-                    )
+            # CO2-Steuerung ueber zentralen OGBCO2Manager
+            co2_actions = await self.ogb.co2_manager.decide_co2_action(
+                mode="VPD", 
+                capabilities=capabilities
+            )
+            if co2_actions:
+                action_map.extend(co2_actions)
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
@@ -413,15 +409,13 @@ class OGBVPDActions:
             if capabilities.get("canClimate", {}).get("state", False):
                 action_map.append(self._create_action("canClimate", "Eval", action_message))
 
-            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-                if is_light_on:
-                    action_map.append(self._create_action("canCO2", "Increase", action_message))
-                else:
-                    action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Night mode active - CO2 target increase blocked, forcing CO2 off"
-                    )
+            # CO2-Steuerung ueber zentralen OGBCO2Manager
+            co2_actions = await self.ogb.co2_manager.decide_co2_action(
+                mode="VPD", 
+                capabilities=capabilities
+            )
+            if co2_actions:
+                action_map.extend(co2_actions)
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Increase", action_message))
@@ -482,13 +476,13 @@ class OGBVPDActions:
             if capabilities.get("canClimate", {}).get("state", False):
                 action_map.append(self._create_action("canClimate", "Eval", action_message))
 
-            co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-            if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-                action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                if not is_light_on:
-                    _LOGGER.debug(
-                        f"{self.ogb.room}: Night mode active - keeping CO2 forced off"
-                    )
+            # CO2-Steuerung ueber zentralen OGBCO2Manager
+            co2_actions = await self.ogb.co2_manager.decide_co2_action(
+                mode="VPD", 
+                capabilities=capabilities
+            )
+            if co2_actions:
+                action_map.extend(co2_actions)
 
         if vpd_light_control is True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(self._create_action("canLight", "Reduce", action_message))
@@ -595,10 +589,13 @@ class OGBVPDActions:
             action_map.append(self._create_action("canCool", "Reduce", action_message))
         if capabilities.get("canClimate", {}).get("state", False):
             action_map.append(self._create_action("canClimate", "Eval", action_message))
-        # CO2 Control check (Bug #8 fix)
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            action_map.append(self._create_action("canCO2", "Increase", action_message))
+        # CO2-Steuerung ueber zentralen OGBCO2Manager
+        co2_actions = await self.ogb.co2_manager.decide_co2_action(
+            mode="VPD", 
+            capabilities=capabilities
+        )
+        if co2_actions:
+            action_map.extend(co2_actions)
 
         if vpd_light_control == True:
             if capabilities.get("canLight", {}).get("state", False):
@@ -649,10 +646,13 @@ class OGBVPDActions:
             )
         if capabilities.get("canClimate", {}).get("state", False):
             action_map.append(self._create_action("canClimate", "Eval", action_message))
-        # CO2 Control check (Bug #8 fix)
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if capabilities.get("canCO2", {}).get("state", False) and co2_control_enabled:
-            action_map.append(self._create_action("canCO2", "Reduce", action_message))
+        # CO2-Steuerung ueber zentralen OGBCO2Manager
+        co2_actions = await self.ogb.co2_manager.decide_co2_action(
+            mode="VPD", 
+            capabilities=capabilities
+        )
+        if co2_actions:
+            action_map.extend(co2_actions)
 
         if vpd_light_control == True:
             if capabilities.get("canLight", {}).get("state", False):

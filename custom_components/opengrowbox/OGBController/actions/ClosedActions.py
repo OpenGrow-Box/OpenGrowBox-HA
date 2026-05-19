@@ -70,6 +70,8 @@ class ClosedActions:
     async def maintain_co2(self, capabilities: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Maintain optimal CO2 levels for photosynthesis in closed environment.
+        
+        DELEGATED to OGBCO2Manager for centralized CO2 control.
 
         Args:
             capabilities: Device capabilities and states
@@ -77,97 +79,17 @@ class ClosedActions:
         Returns:
             List of action maps for CO2 control
         """
-        # Check CO2 control switch - skip if disabled
-        co2_control_enabled = self.ogb.dataStore.getDeep("controlOptions.co2Control", False)
-        if not co2_control_enabled:
-            return []
+        # Delegate to centralized CO2 manager
+        return await self.ogb.co2_manager.decide_co2_action(
+            mode="CLOSED",
+            capabilities=capabilities
+        )
 
-        # Load CO2 thresholds fresh from datastore (user may have changed them)
-        co2_target_min = self.ogb.dataStore.getDeep("controlOptionData.co2ppm.minPPM", 800)
-        co2_target_max = self.ogb.dataStore.getDeep("controlOptionData.co2ppm.maxPPM", 1500)
-
-        current_co2 = self.ogb.dataStore.getDeep("tentData.co2Level")
-        if current_co2 is None:
-            _LOGGER.warning(f"CO2 sensor not available for {self.ogb.room}")
-            return []
-
-        # Check if lights are on - don't inject CO2 at night (like VPD Perfection)
-        is_light_on = bool(self.ogb.dataStore.getDeep("isPlantDay.islightON", False))
-
-        action_message = "Closed Environment CO2 Maintenance"
-
-        # CO2 control logic for closed environment
-        _LOGGER.warning(f"Closed Environment CO2 maintenance: current={current_co2}, min={co2_target_min}, max={co2_target_max}, light_on={is_light_on}")
-
-        # Emergency high CO2 overrides normal reduction to avoid duplicate actions
-        if current_co2 > self.co2_emergency_high:
-            _LOGGER.warning(f"CO2 emergency high: {current_co2} > {self.co2_emergency_high}, forcing ventilation")
-            return await self._emergency_co2_ventilation(capabilities, action_message)
-
-        # Only inject CO2 when lights are ON (photosynthesis active)
-        elif current_co2 < co2_target_min:
-            if is_light_on:
-                _LOGGER.warning("CO2 below min, lights ON - injecting CO2")
-                return await self._inject_co2(capabilities, action_message)
-            else:
-                _LOGGER.warning("CO2 below min but lights OFF - skipping CO2 injection (like VPD)")
-                return []
-
-        # Always reduce CO2 if too high, even at night (safety first)
-        elif current_co2 > co2_target_max:
-            _LOGGER.warning("CO2 above max - reducing")
-            return await self._reduce_co2(capabilities, action_message)
-
-        return []
-
-    async def _inject_co2(self, capabilities: Dict[str, Any], action_message: str) -> List[Dict[str, Any]]:
-        """Inject CO2 to increase levels."""
-        action_map = []
-
-        _LOGGER.warning(f"Inject CO2: canCO2 state={capabilities.get('canCO2', {}).get('state')}")
-        if capabilities.get("canCO2", {}).get("state", False):
-            action_map.append(
-                self._create_action("canCO2", "Increase", action_message)
-            )
-
-        return action_map
-
-    async def _reduce_co2(self, capabilities: Dict[str, Any], action_message: str) -> List[Dict[str, Any]]:
-        """Reduce CO2 through air exchange or recirculation."""
-        action_map = []
-
-        # Use exhaust first to actually remove CO2-laden air.
-        # Ventilation only mixes air internally and cannot reduce total CO2.
-        if capabilities.get("canExhaust", {}).get("state", False):
-            action_map.append(
-                self._create_action("canExhaust", "Increase", action_message)
-            )
-        elif self._can_control_air_movement(capabilities):
-            # Fallback to internal air movement if exhaust is not available
-            action_map.append(
-                self._create_action("canVentilate", "Increase", action_message)
-            )
-
-        return action_map
-
-    async def _emergency_co2_ventilation(self, capabilities: Dict[str, Any], action_message: str) -> List[Dict[str, Any]]:
-        """Emergency CO2 ventilation for dangerously high levels."""
-        action_map = []
-
-        # Emergency = Maximum ventilation to quickly reduce CO2
-        # Use Increase since we want maximum air exchange
-        if capabilities.get("canVentilate", {}).get("state", False):
-            action_map.append(
-                self._create_action("canVentilate", "Increase", action_message)
-            )
-        if capabilities.get("canExhaust", {}).get("state", False):
-            action_map.append(
-                self._create_action("canExhaust", "Increase", action_message)
-            )
-        if capabilities.get("canIntake", {}).get("state", False):
-            action_map.append(
-                self._create_action("canIntake", "Increase", action_message)
-            )
+    # NOTE: CO2 action logic moved to OGBCO2Manager.decide_co2_action() for centralized control
+    # These methods are kept for reference but should not be called directly:
+    # - _inject_co2 -> handled by OGBCO2Manager._decide_closed_environment_action()
+    # - _reduce_co2 -> handled by OGBCO2Manager._decide_closed_environment_action()
+    # - _emergency_co2_ventilation -> handled by OGBCO2Manager._decide_closed_environment_action()
 
         return action_map
 

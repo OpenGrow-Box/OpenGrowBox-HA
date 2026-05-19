@@ -12,6 +12,7 @@ ENGLISH_SENSOR_FALLBACKS = {
     "_co2": "co2",
     "_carbondioxide": "co2",
     "_leaf": "temperature",
+    "_moisture": "moisture",
 }
 
 

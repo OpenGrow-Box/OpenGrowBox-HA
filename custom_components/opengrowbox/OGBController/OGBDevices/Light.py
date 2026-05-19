@@ -463,33 +463,21 @@ class Light(Device):
             # Für SunSet: Fenster VOR der Zielzeit (Offset subtrahieren)
             start_minutes = target_minutes - duration_minutes
             end_minutes = target_minutes
+        else:
+            # Für SunRise: Fenster NACH der Zielzeit (Start bei lightOnTime)
+            start_minutes = target_minutes
+            end_minutes = target_minutes + duration_minutes
 
-            # Handle wenn das SunSetsfenster über Mitternacht in den Vortag geht
-            if start_minutes < 0:
-                # Fenster überschreitet Mitternacht in den Vortag
-                start_minutes_wrapped = start_minutes + (
-                    24 * 60
-                )  # Konvertiere zu positiven Minuten des Vortags
-                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
-                    0 <= current_minutes <= end_minutes
+            # Handle wenn das Sunrise-Fenster über Mitternacht in den nächsten Tag geht
+            if end_minutes >= 24 * 60:
+                # Fenster überschreitet Mitternacht in den nächsten Tag
+                end_minutes_wrapped = end_minutes - (24 * 60)
+                return (start_minutes <= current_minutes < 24 * 60) or (
+                    0 <= current_minutes <= end_minutes_wrapped
                 )
             else:
                 # Normaler Fall (keine Überschreitung von Mitternacht)
                 return start_minutes <= current_minutes <= end_minutes
-        else:
-            # Für SunRise: Fenster VOR der Zielzeit (SunRise startet vor LightOnTime)
-            start_minutes = target_minutes - duration_minutes
-            end_minutes = target_minutes
-
-            # Check normalen Fall (keine Überschreitung von Mitternacht)
-            if start_minutes >= 0:  # Starts after midnight
-                return start_minutes <= current_minutes <= end_minutes
-            else:
-                # Time window crosses midnight into previous day
-                start_minutes_wrapped = start_minutes + (24 * 60)
-                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
-                    0 <= current_minutes <= end_minutes
-                )
 
     # SunPhases
     async def periodic_sun_phase_check(self):

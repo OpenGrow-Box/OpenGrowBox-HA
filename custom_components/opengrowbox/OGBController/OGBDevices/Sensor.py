@@ -199,7 +199,12 @@ class Sensor:
                 unrecognized_suffixes.append(suffix)
                 _LOGGER.warning(f"[{self.room}] ⚠️ UNRECOGNIZED sensor suffix: '{suffix}' from {entity_id}")
                 # Kontext trotzdem bestimmen für nicht erkannte Sensoren
-                context = extract_context_from_entity(entity_id) or "other"
+                # WICHTIG: Wenn medium_label vorhanden ist, ist es ein soil Sensor!
+                if medium_label:
+                    context = "soil"
+                    _LOGGER.info(f"[{self.room}] Sensor {entity_id} hat medium_label '{medium_label}' -> soil context (trotz unbekanntem Typ)")
+                else:
+                    context = extract_context_from_entity(entity_id) or "other"
             else:
                 _LOGGER.debug(
                     f"[{self.room}] Resolved sensor types {sensor_types} for {entity_id}"
@@ -277,10 +282,33 @@ class Sensor:
                 f"Sensor-Device {self.deviceName} erfolgreich initialisiert mit {len(self._entity_to_config)} Sensoren"
             )
             
-            # Initial ORP calculation: if both pH and water temp are available
+            # Store all water sensor values to datastore during initialization
             # This handles the case where sensors are initialized but never trigger state_changed
             water_sensors = self.sensorReadings.get("water", {})
             
+            # Store EC, TDS, Sal values to datastore
+            for sensor_type, datastore_key in [
+                ("ec", "Hydro.ec_current"),
+                ("tds", "Hydro.tds_current"),
+                ("salinity", "Hydro.sal_current"),
+            ]:
+                sensors = water_sensors.get(sensor_type, [])
+                if sensors:
+                    sensor_config = sensors[0]
+                    value = sensor_config.get("last_reading") or sensor_config.get("state")
+                    if value is not None:
+                        try:
+                            numeric_value = float(value)
+                            self.data_store.setDeep(datastore_key, numeric_value)
+                            _LOGGER.info(
+                                f"[{self.room}] Initial {sensor_type} stored: {numeric_value}"
+                            )
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.error(
+                                f"[{self.room}] Failed to store initial {sensor_type}: {e}"
+                            )
+            
+            # Initial ORP calculation: if both pH and water temp are available
             ph_sensors = water_sensors.get("ph", [])
             temp_sensors = water_sensors.get("temperature", [])
             

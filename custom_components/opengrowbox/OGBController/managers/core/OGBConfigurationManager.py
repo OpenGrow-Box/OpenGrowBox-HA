@@ -371,6 +371,9 @@ class OGBConfigurationManager:
                 "PremiumChange",
                 {"currentValue": value, "lastValue": current_main_control},
             )
+            # Send DataRelease when disabled so frontend knows the mode is off
+            if value == "Disabled":
+                await self.event_manager.emit("DataRelease", True)
 
     async def _update_notify_option(self, data):
         """Update notification option."""
@@ -560,6 +563,9 @@ class OGBConfigurationManager:
             tent_mode_pub = OGBModeRunPublication(currentMode=value)
             await self.event_manager.emit("selectActionMode", tent_mode_pub)
             await self.event_manager.emit("PremiumModeChange", value)
+            # Send DataRelease when disabled so frontend knows the mode is off
+            if value == "Disabled":
+                await self.event_manager.emit("DataRelease", True)
             _LOGGER.info(f"🔄 {self.room}: Tent mode set to '{value}' during initialization")
         elif hasattr(data, "newState"):  # OGBEventPublication
             if current_mode != value:
@@ -569,6 +575,9 @@ class OGBConfigurationManager:
                 self.data_store.set("tentMode", value)
                 await self.event_manager.emit("selectActionMode", tent_mode_pub)
                 await self.event_manager.emit("PremiumModeChange", value)
+                # Send DataRelease when disabled so frontend knows the mode is off
+                if value == "Disabled":
+                    await self.event_manager.emit("DataRelease", True)
         else:
             _LOGGER.error(
                 f"Unknown tent-mode check your Select Options: {type(data)} - Data: {data}"

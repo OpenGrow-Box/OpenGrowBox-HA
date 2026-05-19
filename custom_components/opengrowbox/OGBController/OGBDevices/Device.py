@@ -2084,11 +2084,18 @@ class Device:
                 # Heater ausschalten
                 elif self.deviceType == "Heater":
                     if self.isSpecialDevice:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
                         self.isRunning = False
                         _LOGGER.debug(f"{self.deviceName}: Heater OFF.")
                         return
@@ -2121,11 +2128,18 @@ class Device:
                 # Cooler ausschalten
                 elif self.deviceType == "Cooler":
                     if self.isSpecialDevice:
-                        await self.hass.services.async_call(
-                            domain="light",
-                            service="turn_off",
-                            service_data={"entity_id": entity_id},
-                        )
+                        if self.isDimmable:
+                            await self.hass.services.async_call(
+                                domain="light",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
+                        else:
+                            await self.hass.services.async_call(
+                                domain="switch",
+                                service="turn_off",
+                                service_data={"entity_id": entity_id},
+                            )
                         self.isRunning = False
                         _LOGGER.debug(f"{self.deviceName}: Cooler OFF.")
                         return
