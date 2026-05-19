@@ -286,11 +286,16 @@ class Sensor:
             # This handles the case where sensors are initialized but never trigger state_changed
             water_sensors = self.sensorReadings.get("water", {})
             
-            # Store EC, TDS, Sal values to datastore
+            # Store all water sensor values to datastore during initialization
+            # This handles the case where sensors are initialized but never trigger state_changed
+            water_sensors = self.sensorReadings.get("water", {})
+            
+            # Store EC, TDS, Sal, pH values to datastore independently
             for sensor_type, datastore_key in [
                 ("ec", "Hydro.ec_current"),
                 ("tds", "Hydro.tds_current"),
                 ("salinity", "Hydro.sal_current"),
+                ("ph", "Hydro.ph_current"),
             ]:
                 sensors = water_sensors.get(sensor_type, [])
                 if sensors:
@@ -308,9 +313,21 @@ class Sensor:
                                 f"[{self.room}] Failed to store initial {sensor_type}: {e}"
                             )
             
+            # Store temperature independently
+            temp_sensors = water_sensors.get("temperature", [])
+            if temp_sensors:
+                temp_sensor_config = temp_sensors[0]
+                temp_value = temp_sensor_config.get("last_reading") or temp_sensor_config.get("state")
+                if temp_value is not None:
+                    try:
+                        temp_numeric = float(temp_value)
+                        self.data_store.setDeep("Hydro.current_temp", temp_numeric)
+                        _LOGGER.info(f"[{self.room}] Initial temperature stored: {temp_numeric}")
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.error(f"[{self.room}] Failed to store initial temperature: {e}")
+            
             # Initial ORP calculation: if both pH and water temp are available
             ph_sensors = water_sensors.get("ph", [])
-            temp_sensors = water_sensors.get("temperature", [])
             
             if ph_sensors and temp_sensors:
                 ph_sensor_config = ph_sensors[0]
@@ -327,8 +344,6 @@ class Sensor:
                         
                         # Store calculated ORP to datastore
                         self.data_store.setDeep("Hydro.oxi_current", float(orp_value))
-                        self.data_store.setDeep("Hydro.ph_current", float(ph_numeric))
-                        self.data_store.setDeep("Hydro.current_temp", float(temp_numeric))
                         
                         # Update the ORP sensor entity
                         await _update_specific_sensor(

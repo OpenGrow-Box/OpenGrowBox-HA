@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import datetime
 
+from ...data.OGBDataClasses.OGBPublications import OGBInitData
 from ...utils.calcs import calculate_perfect_vpd
 from ...utils.sensorUpdater import _update_specific_number, _update_specific_sensor
 
@@ -364,14 +365,24 @@ class OGBConfigurationManager:
         """Update main control option."""
         value = data.newState[0]
         current_main_control = self.data_store.get("mainControl")
-        if current_main_control != value:
+        
+        if isinstance(data, OGBInitData):
             self.data_store.set("mainControl", value)
             await self.event_manager.emit("mainControlChange", value)
             await self.event_manager.emit(
                 "PremiumChange",
                 {"currentValue": value, "lastValue": current_main_control},
             )
-            # Send DataRelease when disabled so frontend knows the mode is off
+            if value == "Disabled":
+                await self.event_manager.emit("DataRelease", True)
+                _LOGGER.info(f"🔄 {self.room}: MainControl '{value}' during initialization - DataRelease sent")
+        elif current_main_control != value:
+            self.data_store.set("mainControl", value)
+            await self.event_manager.emit("mainControlChange", value)
+            await self.event_manager.emit(
+                "PremiumChange",
+                {"currentValue": value, "lastValue": current_main_control},
+            )
             if value == "Disabled":
                 await self.event_manager.emit("DataRelease", True)
 
@@ -555,7 +566,7 @@ class OGBConfigurationManager:
         value = data.newState[0]
         current_mode = self.data_store.get("tentMode")
 
-        if isinstance(data, dict) and "newState" in data:  # OGBInitData
+        if isinstance(data, OGBInitData):  # OGBInitData hat nur newState, kein oldState
             self.data_store.set("tentMode", value)
             # Emit event to activate mode - needed for proper initialization
             # Emit even during init so mode manager can properly set the mode
@@ -563,10 +574,12 @@ class OGBConfigurationManager:
             tent_mode_pub = OGBModeRunPublication(currentMode=value)
             await self.event_manager.emit("selectActionMode", tent_mode_pub)
             await self.event_manager.emit("PremiumModeChange", value)
-            # Send DataRelease when disabled so frontend knows the mode is off
+            # WICHTIG: Auch bei Init DataRelease senden wenn Disabled
             if value == "Disabled":
                 await self.event_manager.emit("DataRelease", True)
-            _LOGGER.info(f"🔄 {self.room}: Tent mode set to '{value}' during initialization")
+                _LOGGER.info(f"🔄 {self.room}: Tent mode '{value}' during initialization - DataRelease sent")
+            else:
+                _LOGGER.info(f"🔄 {self.room}: Tent mode set to '{value}' during initialization")
         elif hasattr(data, "newState"):  # OGBEventPublication
             if current_mode != value:
                 # Create proper mode publication for mode manager
@@ -575,9 +588,7 @@ class OGBConfigurationManager:
                 self.data_store.set("tentMode", value)
                 await self.event_manager.emit("selectActionMode", tent_mode_pub)
                 await self.event_manager.emit("PremiumModeChange", value)
-                # Send DataRelease when disabled so frontend knows the mode is off
-                if value == "Disabled":
-                    await self.event_manager.emit("DataRelease", True)
+                await self.event_manager.emit("DataRelease", True)
         else:
             _LOGGER.error(
                 f"Unknown tent-mode check your Select Options: {type(data)} - Data: {data}"

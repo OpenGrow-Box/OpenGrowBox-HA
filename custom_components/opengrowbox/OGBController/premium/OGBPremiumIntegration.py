@@ -2673,15 +2673,25 @@ class OGBPremiumIntegration:
         import time
         current_time = time.time()
         
+        # Check if this is a mode change to Disabled (always send immediately)
+        tentMode = self.data_store.get("tentMode")
+        mainControl = self.data_store.get("mainControl")
+        is_mode_disabled = (tentMode == "Disabled" or mainControl == "Disabled")
+        
         # Debounce: Skip if called too soon after last send
+        # BUT: Always send immediately when mode is Disabled
         time_since_last = current_time - self._last_datarelease_time
-        if time_since_last < self._datarelease_debounce_seconds:
+        if not is_mode_disabled and time_since_last < self._datarelease_debounce_seconds:
             _LOGGER.debug(f"⏳ {self.room} DataRelease debounced - only {time_since_last:.1f}s since last send (min: {self._datarelease_debounce_seconds}s)")
             return
         
         self._datarelease_counter += 1
         event_id = f"DR{self._datarelease_counter:03d}"
-        _LOGGER.debug(f"🚀 {self.room} DataRelease #{event_id} triggered - starting send process")
+        
+        if is_mode_disabled:
+            _LOGGER.info(f"🚨 {self.room} DataRelease #{event_id} triggered for DISABLED mode - sending immediately (no debounce)")
+        else:
+            _LOGGER.debug(f"🚀 {self.room} DataRelease #{event_id} triggered - starting send process")
 
         # Check all conditions
         if not self.is_logged_in:
@@ -2832,7 +2842,9 @@ class OGBPremiumIntegration:
             if tentmode in self.PREMIUM_CONTROLLER_MODES:
                 self.lastTentMode = tentmode
 
-            self.data_store.set("tentMode", tentmode)
+            # WICHTIG: Nicht den DataStore hier setzen!
+            # Der ConfigurationManager setzt den Wert beim State-Change Event
+            # Sonst entsteht eine Race Condition und DataRelease wird nicht gesendet
             await self.hass.services.async_call(
                 domain="select",
                 service="select_option",

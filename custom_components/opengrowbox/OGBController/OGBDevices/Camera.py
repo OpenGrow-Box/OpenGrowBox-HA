@@ -214,10 +214,31 @@ class Camera(Device):
         self.camera_entities = entitys if isinstance(entitys, list) else [entitys]
 
         # Store camera entity in options (like other devices)
+        # Support both: entity_id starting with "camera." OR having camera label
         if self.camera_entities:
             for entity in self.camera_entities:
-                if isinstance(entity, dict) and entity.get("entity_id", "").startswith("camera."):
-                    self.options.append(entity)
+                if isinstance(entity, dict):
+                    entity_id = entity.get("entity_id", "")
+                    labels = entity.get("labels", [])
+                    
+                    # Check 1: Entity-ID starts with "camera."
+                    is_camera_by_name = entity_id.startswith("camera.")
+                    
+                    # Check 2: Entity has camera-related label
+                    is_camera_by_label = any(
+                        lbl.get("id", "").lower() in ["camera", "cam", "webcam", "ipcam"]
+                        for lbl in labels
+                    )
+                    
+                    if is_camera_by_name or is_camera_by_label:
+                        self.options.append(entity)
+                        # Update camera_entity_id to actual entity ID
+                        if entity_id:
+                            self.camera_entity_id = entity_id
+                            _LOGGER.info(
+                                f"[{self.inRoom}] Camera '{self.deviceName}' mapped to entity: {entity_id} "
+                                f"(by_name={is_camera_by_name}, by_label={is_camera_by_label})"
+                            )
 
         self.identifyCapabilities()
 
