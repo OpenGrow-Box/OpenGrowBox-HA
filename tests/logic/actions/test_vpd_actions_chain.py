@@ -17,11 +17,47 @@ class FakeActionManager:
         self.target = action_map
 
 
+class FakeCO2Manager:
+    def __init__(self, data_store):
+        self.data_store = data_store
+    
+    async def decide_co2_action(self, mode, capabilities):
+        # Simulate CO2 actions based on conditions
+        is_light_on = self.data_store.getDeep("isPlantDay.islightON", False)
+        co2_control = self.data_store.getDeep("controlOptions.co2Control", False)
+        
+        if not co2_control:
+            return []
+        
+        from custom_components.opengrowbox.OGBController.data.OGBDataClasses.OGBPublications import OGBActionPublication
+        
+        actions = []
+        if is_light_on:
+            # Day mode - increase CO2
+            actions.append(OGBActionPublication(
+                Name="dev_room",
+                capability="canCO2",
+                action="Increase",
+                message="CO2 test",
+                priority="medium"
+            ))
+        else:
+            # Night mode - reduce CO2
+            actions.append(OGBActionPublication(
+                Name="dev_room",
+                capability="canCO2",
+                action="Reduce",
+                message="CO2 test night",
+                priority="medium"
+            ))
+        return actions
+
 class FakeOGB:
     def __init__(self, data_store):
         self.room = "dev_room"
         self.dataStore = data_store
         self.actionManager = FakeActionManager()
+        self.co2_manager = FakeCO2Manager(data_store)
 
 
 def test_is_light_on_reads_isplantday_state():
@@ -98,7 +134,8 @@ async def test_reduce_vpd_target_chain_contains_expected_actions():
     assert ("canIntake", "Increase") in generated
     assert ("canVentilate", "Reduce") in generated
     assert ("canCool", "Increase") in generated
-    assert ("canCO2", "Reduce") in generated
+    # CO2 is now managed autonomously by CO2Manager, not directly coupled to VPD
+    assert ("canCO2", "Increase") in generated  # Day mode = increase CO2
 
 
 @pytest.mark.asyncio

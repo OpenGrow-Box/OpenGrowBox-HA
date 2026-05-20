@@ -254,16 +254,20 @@ class OGBVPDActions:
                 capabilities=capabilities
             )
             if co2_actions:
+                _LOGGER.info(f"{self.ogb.room}: Adding {len(co2_actions)} CO2 actions to action_map: {[a.capability + ':' + a.action for a in co2_actions]}")
                 action_map.extend(co2_actions)
+            else:
+                _LOGGER.debug(f"{self.ogb.room}: No CO2 actions to add")
 
         if vpd_light_control == True and capabilities.get("canLight", {}).get("state", False):
             action_map.append(
                 self._create_action("canLight", "Increase", action_message)
             )
 
-        # Bounds-Korrektur hinzufügen (wie bei VPD Target)
+        # Bounds-Korrektur hinzufuegen (wie bei VPD Target)
         action_map = self._add_bounds_correction_actions(action_map, capabilities, "Perfection-")
 
+        _LOGGER.info(f"{self.ogb.room}: Final action_map before checkLimitsAndPublicate: {[a.capability + ':' + a.action for a in action_map]}")
         await self.action_manager.checkLimitsAndPublicate(action_map)
 
     async def reduce_vpd(self, capabilities: Dict[str, Any]):

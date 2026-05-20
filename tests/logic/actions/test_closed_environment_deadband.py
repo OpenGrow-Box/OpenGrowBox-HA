@@ -7,6 +7,12 @@ from tests.logic.helpers import FakeDataStore, FakeEventManager
 from custom_components.opengrowbox.OGBController.actions.ClosedActions import ClosedActions
 
 
+class FakeCO2Manager:
+    """Fake CO2 manager for tests."""
+    async def decide_co2_action(self, mode, capabilities):
+        return []
+
+
 @pytest.mark.asyncio
 async def test_closed_environment_night_mode_power_saving():
     """Test that Closed Environment uses power-saving mode at night when nightVPDHold=False."""
@@ -53,6 +59,7 @@ async def test_closed_environment_night_mode_power_saving():
             self.dataStore = data_store
             self.eventManager = event_manager
             self.actionManager = None
+            self.co2_manager = FakeCO2Manager()
 
     mock_ogb = MockOGB()
     closed_actions = ClosedActions(mock_ogb)
@@ -137,6 +144,7 @@ async def test_closed_environment_night_mode_with_night_vpd_hold():
             self.dataStore = data_store
             self.eventManager = event_manager
             self.actionManager = None
+            self.co2_manager = FakeCO2Manager()
 
     mock_ogb = MockOGB()
     closed_actions = ClosedActions(mock_ogb)
@@ -206,12 +214,17 @@ async def test_closed_environment_respects_smart_deadband():
     event_manager = FakeEventManager()
 
     # Create mock OGB object
+    class FakeCO2Manager:
+        async def decide_co2_action(self, mode, capabilities):
+            return []
+
     class MockOGB:
         def __init__(self):
             self.room = "test_room"
             self.dataStore = data_store
             self.eventManager = event_manager
-            self.actionManager = None  # Will be set after ClosedActions init
+            self.actionManager = None
+            self.co2_manager = FakeCO2Manager()
 
     mock_ogb = MockOGB()
     closed_actions = ClosedActions(mock_ogb)
@@ -282,12 +295,17 @@ async def test_closed_environment_normal_operation_without_deadband():
 
     event_manager = FakeEventManager()
 
+    class FakeCO2Manager:
+        async def decide_co2_action(self, mode, capabilities):
+            return []
+
     class MockOGB:
         def __init__(self):
             self.room = "test_room"
             self.dataStore = data_store
             self.eventManager = event_manager
-            self.actionManager = None  # Required by ClosedActions
+            self.actionManager = None
+            self.co2_manager = FakeCO2Manager()
 
     mock_ogb = MockOGB()
     closed_actions = ClosedActions(mock_ogb)
@@ -364,6 +382,7 @@ async def test_closed_environment_uses_own_targets_not_vpd():
             self.dataStore = data_store
             self.eventManager = event_manager
             self.actionManager = None
+            self.co2_manager = FakeCO2Manager()
 
     mock_ogb = MockOGB()
     closed_actions = ClosedActions(mock_ogb)
@@ -441,6 +460,7 @@ async def test_closed_environment_vpd_only_informational():
             self.dataStore = data_store
             self.eventManager = event_manager
             self.actionManager = None
+            self.co2_manager = FakeCO2Manager()
 
     mock_ogb = MockOGB()
     closed_actions = ClosedActions(mock_ogb)

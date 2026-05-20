@@ -2,12 +2,19 @@
 
 Handles CO2 sensor aggregation and writes averaged values to datastore.
 Includes CRITICAL SAFETY CHECKS for max CO2 limits.
+
+PID-like CO2 control with:
+- Rate-of-Change calculation (trend detection)
+- Predictive stopping (stop before overshoot)
+- Asymmetric hysteresis (faster stop than start)
+- Cooldown logic (prevent rapid switching)
 """
 
 import asyncio
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import deque
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,10 +47,89 @@ class OGBCO2Manager:
         self._last_co2_value = 0.0
         self._emergency_start_time = None
 
+        # History for rate-of-change calculation
+        self._co2_history = deque(maxlen=10)  # (timestamp, value) pairs
+        self._last_action_time = None
+        self._last_action = None  # 'Increase' or 'Reduce'
+        self._cooldown_seconds = 30  # Minimum time between actions
+        self._predictive_factor = 1.5  # How aggressive to stop before target
+        
+        # Asymmetric hysterese
+        self._increase_hysterese = 50  # Start below target
+        self._reduce_hysterese = 20    # Stop earlier (closer to target)
+        
         # Register for CO2 update events from sensors
         self.event_manager.on("CO2Check", self.handle_co2_update)
 
-        _LOGGER.info(f"{self.room}: OGBCO2Manager initialized with SAFETY CHECKS")
+    def _calculate_rate_of_change(self) -> float:
+        """
+        Calculate CO2 rate of change in ppm per minute.
+        
+        Returns:
+            Rate of change (positive = rising, negative = falling)
+        """
+        if len(self._co2_history) < 3:
+            return 0.0
+        
+        # Use last 3 readings for trend
+        recent = list(self._co2_history)[-3:]
+        
+        # Calculate average rate over these readings
+        total_rate = 0.0
+        count = 0
+        
+        for i in range(1, len(recent)):
+            time_diff = (recent[i][0] - recent[i-1][0]).total_seconds()
+            if time_diff > 0:
+                value_diff = recent[i][1] - recent[i-1][1]
+                rate = (value_diff / time_diff) * 60  # ppm per minute
+                total_rate += rate
+                count += 1
+        
+        return total_rate / count if count > 0 else 0.0
+
+    def _get_predictive_target(self, target: float, current_rate: float) -> float:
+        """
+        Calculate predictive target based on rate of change.
+        
+        If CO2 is rising fast, stop earlier to prevent overshoot.
+        
+        Args:
+            target: Target CO2 value
+            current_rate: Current rate of change (ppm/min)
+            
+        Returns:
+            Adjusted target value
+        """
+        if current_rate <= 0:
+            return target  # Not rising or falling, use normal target
+        
+        # Calculate how much CO2 will rise in the next cycle (15 seconds)
+        cycle_time = 15  # seconds
+        predicted_rise = (current_rate / 60) * cycle_time
+        
+        # Adjust target: stop earlier if rising fast
+        adjusted_target = target - (predicted_rise * self._predictive_factor)
+        
+        _LOGGER.debug(
+            f"{self.room}: Predictive control - rate={current_rate:.1f}ppm/min, "
+            f"predicted_rise={predicted_rise:.1f}ppm, "
+            f"adjusted_target={adjusted_target:.1f}ppm"
+        )
+        
+        return adjusted_target
+
+    def _is_cooldown_active(self) -> bool:
+        """Check if cooldown period is active."""
+        if self._last_action_time is None:
+            return False
+        
+        elapsed = (datetime.now() - self._last_action_time).total_seconds()
+        return elapsed < self._cooldown_seconds
+
+    def _update_history(self, value: float):
+        """Update CO2 history with timestamp."""
+        self._co2_history.append((datetime.now(), float(value)))
 
     def handle_co2_update(self, value: float):
         """
@@ -70,6 +156,9 @@ class OGBCO2Manager:
             # Calculate average
             avg_co2 = sum(self.co2_sensors) / len(self.co2_sensors)
             self._last_co2_value = avg_co2
+
+            # Update history for rate-of-change calculation
+            self._update_history(avg_co2)
 
             # Write to datastore (same path as hardcoded in Sensor.py)
             self.data_store.setDeep("tentData.co2Level", avg_co2)
@@ -198,9 +287,12 @@ class OGBCO2Manager:
     def reset_sensor_data(self):
         """Reset sensor data buffer."""
         self.co2_sensors = []
+        self._co2_history.clear()
         self._co2_emergency_active = False
         self._emergency_start_time = None
-        _LOGGER.debug(f"{self.room}: CO2 sensor data and emergency state reset")
+        self._last_action_time = None
+        self._last_action = None
+        _LOGGER.debug(f"{self.room}: CO2 sensor data and control state reset")
 
     def is_co2_emergency(self) -> bool:
         """Check if CO2 is currently in emergency state."""
@@ -214,12 +306,15 @@ class OGBCO2Manager:
     # CENTRALIZED CO2 ACTION DECISION
     # =================================================================
 
-    async def decide_co2_action(self, mode: str, capabilities: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def decide_co2_action(self, mode: str, capabilities: Dict[str, Any]) -> List[Any]:
         """
-        Zentrale CO2-Aktions-Entscheidung.
+        Zentrale CO2-Aktions-Entscheidung mit PID-ähnlicher Steuerung.
         
-        Alle CO2-Steuerungslogik (VPD Perfection + Closed Environment) 
-        wird hier zentral koordiniert.
+        Features:
+        - Rate-of-Change Berechnung (Trend)
+        - Predictive Stopping (früher stoppen bei schnellem Anstieg)
+        - Asymmetrische Hysterese (schneller stoppen als starten)
+        - Cooldown Logik (keine schnellen Schaltvorgänge)
         
         Args:
             mode: "VPD" oder "CLOSED" 
@@ -237,49 +332,82 @@ class OGBCO2Manager:
                 _LOGGER.debug(f"{self.room}: CO2 control disabled, skipping")
                 return []
             
-            # 2. Aktuellen CO2-Wert holen
-            current_co2 = self._last_co2_value
+            # 2. Aktuellen CO2-Wert aus DataStore holen (wie andere Manager auch)
+            current_co2 = self.data_store.getDeep("tentData.co2Level", 0)
             if current_co2 is None or current_co2 == 0:
                 _LOGGER.debug(f"{self.room}: No CO2 reading available")
                 return []
             
-            # 3. Targets (min/max ppm) holen
+            # Update history
+            self._update_history(current_co2)
+            
+            # 3. Calculate rate of change
+            rate = self._calculate_rate_of_change()
+            
+            # 4. Targets (min/max ppm) holen
             co2_target_min = self.data_store.getDeep("controlOptionData.co2ppm.minPPM", 800)
             co2_target_max = self.data_store.getDeep("controlOptionData.co2ppm.maxPPM", 1500)
+            co2_target = self.data_store.getDeep("controlOptionData.co2ppm.target", 800)
             
             co2_target_min = float(co2_target_min) if co2_target_min else 800
             co2_target_max = float(co2_target_max) if co2_target_max else 1500
+            co2_target = float(co2_target) if co2_target else 800
             
-            # 4. Licht-Status pruefen
+            # 5. Licht-Status pruefen
             is_light_on = bool(self.data_store.getDeep("isPlantDay.islightON", False))
             
-            # 5. Safety-Checks durchfuehren (immer zuerst!)
+            # 6. Safety-Checks durchfuehren (immer zuerst!)
             if self._co2_emergency_active:
                 _LOGGER.warning(f"{self.room}: CO2 emergency active - blocking all CO2 injection")
                 return []
             
-            # 6. Target-Logik basierend auf Modus
+            # 7. Cooldown check
+            if self._is_cooldown_active():
+                _LOGGER.debug(
+                    f"{self.room}: CO2 cooldown active ({self._cooldown_seconds}s), "
+                    f"skipping action decision"
+                )
+                return []
+            
+            # 8. Predictive target calculation
+            predictive_target = self._get_predictive_target(co2_target, rate)
+            
+            # Asymmetric hysterese limits
+            lower_limit = predictive_target - self._increase_hysterese
+            upper_limit = predictive_target + self._reduce_hysterese
+            
+            _LOGGER.info(
+                f"{self.room}: CO2 PRO control - current={current_co2:.0f}ppm, "
+                f"target={co2_target:.0f}ppm, predictive={predictive_target:.0f}ppm, "
+                f"rate={rate:.1f}ppm/min, zone=[{lower_limit:.0f}-{upper_limit:.0f}]"
+            )
+            
+            # 9. Target-Logik basierend auf Modus
             if mode == "CLOSED":
-                # Closed Environment: Target-basierte Steuerung
                 action_map = await self._decide_closed_environment_action(
-                    current_co2, co2_target_min, co2_target_max, 
-                    is_light_on, capabilities
+                    current_co2, co2_target_min, co2_target_max, co2_target,
+                    lower_limit, upper_limit, is_light_on, capabilities, rate
                 )
             elif mode == "VPD":
-                # VPD Perfection: Einfaches ein/aus basierend auf Licht
                 action_map = await self._decide_vpd_mode_action(
-                    current_co2, co2_target_min, co2_target_max,
-                    is_light_on, capabilities
+                    current_co2, co2_target_max, co2_target,
+                    lower_limit, upper_limit, is_light_on, capabilities, rate
                 )
             else:
                 _LOGGER.warning(f"{self.room}: Unknown CO2 mode: {mode}")
                 return []
             
+            # 10. Update action tracking
             if action_map:
+                for action in action_map:
+                    if action.capability == "canCO2":
+                        self._last_action_time = datetime.now()
+                        self._last_action = action.action
+                        break
+                
                 _LOGGER.info(
-                    f"{self.room}: CO2 action decided - mode={mode}, "
-                    f"current={current_co2:.0f}ppm, min={co2_target_min:.0f}, max={co2_target_max:.0f}, "
-                    f"actions={[a.get('capability') + ':' + a.get('action') for a in action_map]}"
+                    f"{self.room}: CO2 action executed - mode={mode}, "
+                    f"actions={[a.capability + ':' + a.action for a in action_map]}"
                 )
             
             return action_map
@@ -290,86 +418,136 @@ class OGBCO2Manager:
     
     async def _decide_closed_environment_action(
         self, current_co2: float, co2_target_min: float, co2_target_max: float,
-        is_light_on: bool, capabilities: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        co2_target: float, lower_limit: float, upper_limit: float,
+        is_light_on: bool, capabilities: Dict[str, Any], rate: float
+    ) -> List[Any]:
         """
         Entscheidet CO2-Action fuer Closed Environment Modus.
         
-        Logic:
-        - CO2 < min und Licht an -> Injizieren
-        - CO2 > max -> Reduzieren (auch bei Licht aus - Safety)
-        - CO2 im Target-Bereich -> Nichts tun
+        Logik:
+        - Predictive Stopping bei schnellem Anstieg
+        - Asymmetrische Hysterese
+        - Emergency Handling
         """
         action_map = []
-        action_message = "Closed Environment CO2 Maintenance"
+        action_message = "Closed Environment CO2 PRO"
         
-        # Emergency high CO2 overrides normal reduction
+        # Emergency high CO2 overrides everything
         co2_emergency_high = self.data_store.getDeep("controlOptionData.co2ppm.criticalPPM", 2000)
         if current_co2 > float(co2_emergency_high):
-            _LOGGER.warning(f"CO2 emergency high: {current_co2} > {co2_emergency_high}, forcing ventilation")
-            # Use exhaust first to actually remove CO2-laden air
+            _LOGGER.warning(f"{self.room}: CO2 EMERGENCY: {current_co2} > {co2_emergency_high}")
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Reduce", action_message + " [EMERGENCY]"))
             if capabilities.get("canExhaust", {}).get("state", False):
-                action_map.append(self._create_action("canExhaust", "Increase", action_message))
-            elif capabilities.get("canVentilate", {}).get("state", False):
-                action_map.append(self._create_action("canVentilate", "Increase", action_message))
+                action_map.append(self._create_action("canExhaust", "Increase", action_message + " [EMERGENCY]"))
             return action_map
         
-        # Only inject CO2 when lights are ON (photosynthesis active)
+        # Below minimum - must increase (if light is on)
         if current_co2 < co2_target_min:
             if is_light_on:
-                _LOGGER.debug("CO2 below min, lights ON - injecting CO2")
+                _LOGGER.info(f"{self.room}: CO2 {current_co2:.0f} < min {co2_target_min:.0f}, injecting")
                 if capabilities.get("canCO2", {}).get("state", False):
-                    action_map.append(self._create_action("canCO2", "Increase", action_message))
+                    action_map.append(self._create_action("canCO2", "Increase", action_message + " [Below Min]"))
             else:
-                _LOGGER.debug("CO2 below min but lights OFF - skipping CO2 injection")
+                _LOGGER.debug(f"{self.room}: CO2 below min but lights OFF")
+                if capabilities.get("canCO2", {}).get("state", False):
+                    action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Night]"))
+            return action_map
         
-        # Always reduce CO2 if too high, even at night (safety first)
-        elif current_co2 > co2_target_max:
-            _LOGGER.debug("CO2 above max - reducing")
+        # Above maximum - must reduce immediately
+        if current_co2 > co2_target_max:
+            _LOGGER.info(f"{self.room}: CO2 {current_co2:.0f} > max {co2_target_max:.0f}, reducing")
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Above Max]"))
             if capabilities.get("canExhaust", {}).get("state", False):
-                action_map.append(self._create_action("canExhaust", "Increase", action_message))
-            elif capabilities.get("canVentilate", {}).get("state", False):
-                action_map.append(self._create_action("canVentilate", "Increase", action_message))
+                action_map.append(self._create_action("canExhaust", "Increase", action_message + " [Above Max]"))
+            return action_map
+        
+        # TARGET ZONE LOGIC with predictive control
+        if current_co2 < lower_limit and is_light_on:
+            # Below predictive lower limit - increase
+            _LOGGER.info(
+                f"{self.room}: CO2 {current_co2:.0f} < {lower_limit:.0f} "
+                f"(predictive, rate={rate:.1f}), injecting"
+            )
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Increase", action_message + " [Target]"))
+                
+        elif current_co2 > upper_limit:
+            # Above predictive upper limit - reduce
+            _LOGGER.info(
+                f"{self.room}: CO2 {current_co2:.0f} > {upper_limit:.0f} "
+                f"(predictive, rate={rate:.1f}), reducing"
+            )
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Target]"))
+                
+        else:
+            # In target zone - maintain
+            _LOGGER.debug(
+                f"{self.room}: CO2 {current_co2:.0f} in zone [{lower_limit:.0f}-{upper_limit:.0f}] "
+                f"-> STABLE, rate={rate:.1f}ppm/min"
+            )
         
         return action_map
     
     async def _decide_vpd_mode_action(
-        self, current_co2: float, co2_target_min: float, co2_target_max: float,
-        is_light_on: bool, capabilities: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """
-        Entscheidet CO2-Action fuer VPD Perfection Modus.
-        
-        Logic:
-        - Licht an und CO2 unter max -> Injizieren (fuer Photosynthese)
-        - Licht aus oder CO2 ueber max -> Reduzieren/Ausschalten
-        """
+        self, current_co2: float, co2_target_max: float, co2_target: float,
+        lower_limit: float, upper_limit: float,
+        is_light_on: bool, capabilities: Dict[str, Any], rate: float
+    ) -> List[Any]:
         action_map = []
-        action_message = "VPD Perfection CO2"
+        action_message = "VPD Perfection CO2 PRO"
         
-        if is_light_on:
-            if current_co2 < co2_target_max:
-                # Licht an und CO2 unter Max -> Injizieren
-                if capabilities.get("canCO2", {}).get("state", False):
-                    action_map.append(self._create_action("canCO2", "Increase", action_message))
-            else:
-                # Licht an aber CO2 ueber Max -> Reduzieren
-                _LOGGER.debug(f"CO2 above max ({current_co2} > {co2_target_max}) despite light on - reducing")
-                if capabilities.get("canCO2", {}).get("state", False):
-                    action_map.append(self._create_action("canCO2", "Reduce", action_message))
-        else:
-            # Licht aus -> CO2 ausschalten
+        # Night mode - always off
+        if not is_light_on:
+            _LOGGER.info(f"{self.room}: Night mode - CO2 off")
             if capabilities.get("canCO2", {}).get("state", False):
-                action_map.append(self._create_action("canCO2", "Reduce", action_message))
-                _LOGGER.debug(f"{self.room}: Night mode - CO2 off")
+                action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Night]"))
+            return action_map
+        
+        # Above max - safety stop
+        if current_co2 > co2_target_max:
+            _LOGGER.warning(f"{self.room}: CO2 {current_co2:.0f} > max {co2_target_max:.0f}, stopping")
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Safety]"))
+            return action_map
+        
+        # Below predictive lower limit - increase
+        if current_co2 < lower_limit:
+            _LOGGER.info(
+                f"{self.room}: CO2 {current_co2:.0f} < {lower_limit:.0f} "
+                f"(predictive, rate={rate:.1f}), injecting"
+            )
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Increase", action_message + " [Target]"))
+                
+        # Above predictive upper limit - reduce
+        elif current_co2 > upper_limit:
+            _LOGGER.info(
+                f"{self.room}: CO2 {current_co2:.0f} > {upper_limit:.0f} "
+                f"(predictive, rate={rate:.1f}), reducing"
+            )
+            if capabilities.get("canCO2", {}).get("state", False):
+                action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Target]"))
+                
+        else:
+            # In target zone
+            _LOGGER.debug(
+                f"{self.room}: CO2 {current_co2:.0f} in zone [{lower_limit:.0f}-{upper_limit:.0f}] "
+                f"-> STABLE, rate={rate:.1f}ppm/min"
+            )
         
         return action_map
     
-    def _create_action(self, capability: str, action: str, message: str) -> Dict[str, Any]:
-        """Erstellt eine Action-Map."""
-        return {
-            "capability": capability,
-            "action": action,
-            "message": message,
-            "room": self.room,
-        }
+    def _create_action(self, capability: str, action: str, message: str):
+        """Erstellt eine Action-Publikation (konsistent mit VPDActions)."""
+        from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
+        
+        return OGBActionPublication(
+            Name=self.room,
+            capability=capability,
+            action=action,
+            message=message,
+            priority="medium"
+        )

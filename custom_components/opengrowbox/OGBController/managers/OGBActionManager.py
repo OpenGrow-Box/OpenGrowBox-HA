@@ -227,8 +227,8 @@ class OGBActionManager:
         blockedActions = []
 
         for action in actionMap:
-            capability = action.capability
-            actionType = action.action
+            capability = action.get('capability') if isinstance(action, dict) else getattr(action, 'capability', None)
+            actionType = action.get('action') if isinstance(action, dict) else getattr(action, 'action', None)
 
             # Determine relevant deviation for this capability
             deviation = 0
@@ -694,7 +694,10 @@ class OGBActionManager:
     async def _handle_maintain_co2(self, capabilities):
         """Handle CO2 maintenance requests."""
         if self.closed_actions:
-            await self.closed_actions.maintain_co2(capabilities)
+            co2_actions = await self.closed_actions.maintain_co2(capabilities)
+            if co2_actions:
+                _LOGGER.info(f"{self.room}: Executing {len(co2_actions)} CO2 actions")
+                await self.checkLimitsAndPublicateNoVPD(co2_actions)
         else:
             _LOGGER.warning(f"{self.room}: closed_actions not initialized, skipping CO2 maintenance")
 
@@ -972,11 +975,16 @@ class OGBActionManager:
             else:
                 vpd_status = "critical"
 
-        # Create action summary
-        action_summary = ", ".join([f"{a.capability}:{a.action}" for a in final_actions])
+        # Create action summary (support both dict and object)
+        def get_cap(a): 
+            return a.get('capability', '?') if isinstance(a, dict) else getattr(a, 'capability', '?')
+        def get_act(a): 
+            return a.get('action', '?') if isinstance(a, dict) else getattr(a, 'action', '?')
+        
+        action_summary = ", ".join([f"{get_cap(a)}:{get_act(a)}" for a in final_actions])
 
         # Build log message - Always show cooldown info
-        blocked_devices = ", ".join([f"{getattr(a, 'capability', '?')}" for a in blocked_actions]) if blocked_actions else ""
+        blocked_devices = ", ".join([f"{get_cap(a)}" for a in blocked_actions]) if blocked_actions else ""
         
         # Get cooldown status if dampening is enabled
         cooldown_status = {}
@@ -1226,7 +1234,7 @@ class OGBActionManager:
             {
                 "Name": self.room,
                 "message": f"VPD Target: {len(final_actions)} actions executed ({len(blocked_actions)} blocked by cooldown, {active_cooldown_count} active cooldowns)",
-                "actions": ", ".join([f"{a.capability}:{a.action}" for a in final_actions]),
+                "actions": ", ".join([f"{get_cap(a)}:{get_act(a)}" for a in final_actions]),
                 "actionCount": len(final_actions),
                 "blockedActions": len(blocked_actions),
                 "blockedDevices": blocked_devices,

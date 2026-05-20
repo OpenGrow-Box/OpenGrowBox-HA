@@ -455,6 +455,16 @@ class Sensor:
         
         self._entity_to_config[entity_id] = sensor_config
 
+        # WICHTIG: Initiale CO2-Werte direkt in DataStore schreiben
+        # Damit der CO2Manager sofort arbeiten kann (nicht nur bei Events)
+        if sensor_type == "co2" and raw_value is not None:
+            try:
+                co2_value = float(raw_value)
+                self.data_store.setDeep("tentData.co2Level", co2_value)
+                _LOGGER.info(f"[{self.room}] Initial CO2 value stored: {co2_value}")
+            except (ValueError, TypeError):
+                pass
+
         # Register sensors to mediums
         # Use per-entity medium_label from sensor_entry (priority) OR device-level self.medium_label
         entity_medium_label = sensor_entry.get("medium_label")
@@ -801,6 +811,11 @@ class Sensor:
 
                 sensor_config["last_reading"] = calibrated_value
                 sensor_config["last_update"] = datetime.now()
+
+                # WICHTIG: CO2-Wert direkt in DataStore schreiben
+                # Damit der CO2Manager ihn lesen kann (wie andere Manager auch)
+                if sensor_config.get("sensor_type") == "co2":
+                    self.data_store.setDeep("tentData.co2Level", calibrated_value)
 
                 # Schwellwert-Prüfung
                 self._checkThresholdsForSensor(calibrated_value, sensor_config)
