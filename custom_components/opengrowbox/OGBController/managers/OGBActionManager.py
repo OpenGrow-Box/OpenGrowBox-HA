@@ -27,6 +27,16 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _get_cap(a):
+    """Get capability from dict or object."""
+    return a.get("capability", "?") if isinstance(a, dict) else getattr(a, "capability", "?")
+
+
+def _get_act(a):
+    """Get action from dict or object."""
+    return a.get("action", "?") if isinstance(a, dict) else getattr(a, "action", "?")
+
+
 class OGBActionManager:
     """
     Base action manager for OpenGrowBox.
@@ -976,15 +986,10 @@ class OGBActionManager:
                 vpd_status = "critical"
 
         # Create action summary (support both dict and object)
-        def get_cap(a): 
-            return a.get('capability', '?') if isinstance(a, dict) else getattr(a, 'capability', '?')
-        def get_act(a): 
-            return a.get('action', '?') if isinstance(a, dict) else getattr(a, 'action', '?')
-        
-        action_summary = ", ".join([f"{get_cap(a)}:{get_act(a)}" for a in final_actions])
+        action_summary = ", ".join([f"{_get_cap(a)}:{_get_act(a)}" for a in final_actions])
 
         # Build log message - Always show cooldown info
-        blocked_devices = ", ".join([f"{get_cap(a)}" for a in blocked_actions]) if blocked_actions else ""
+        blocked_devices = ", ".join([f"{_get_cap(a)}" for a in blocked_actions]) if blocked_actions else ""
         
         # Get cooldown status if dampening is enabled
         cooldown_status = {}
@@ -1234,7 +1239,7 @@ class OGBActionManager:
             {
                 "Name": self.room,
                 "message": f"VPD Target: {len(final_actions)} actions executed ({len(blocked_actions)} blocked by cooldown, {active_cooldown_count} active cooldowns)",
-                "actions": ", ".join([f"{get_cap(a)}:{get_act(a)}" for a in final_actions]),
+                "actions": ", ".join([f"{_get_cap(a)}:{_get_act(a)}" for a in final_actions]),
                 "actionCount": len(final_actions),
                 "blockedActions": len(blocked_actions),
                 "blockedDevices": blocked_devices,
