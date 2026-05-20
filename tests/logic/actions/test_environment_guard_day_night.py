@@ -186,11 +186,11 @@ def test_day_mode_high_humidity_allows_exhaust():
 
 
 def test_night_mode_cold_ambient_blocks_intake():
-    """Night mode with cold intake air should block intake."""
+    """Night mode with cold intake air should block intake when near min temp."""
     data_store = FakeDataStore(
         {
             "tentData": {
-                "temperature": 20.0,
+                "temperature": 18.5,  # Near min temp (18.0 + 0.8 margin = 18.8)
                 "humidity": 70.0,
                 "maxHumidity": 75.0,
                 "minTemp": 18.0,

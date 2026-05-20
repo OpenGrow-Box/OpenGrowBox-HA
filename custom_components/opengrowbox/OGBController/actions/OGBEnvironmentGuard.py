@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional, Tuple
 
-AIR_EXCHANGE_CAPABILITIES = {"canExhaust", "canIntake"}
+AIR_EXCHANGE_CAPABILITIES = {"canExhaust", "canIntake", "canWindow"}
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -147,8 +147,8 @@ def _assess_risks(
     - temp_critical: temperature is dangerously low
     """
     ambient_delta = config.get("ambient_delta", 1.2)
-    humidity_delta = config.get("environmentGuardHumidityDelta", 15.0)
-    humidity_margin = config.get("environmentGuardHumidityMargin", 5.0)
+    humidity_delta = config.get("humidity_delta", 15.0)
+    humidity_margin = config.get("humidity_margin", 5.0)
     min_margin = config.get("min_margin", 0.8)
 
     risk_assessment = {
@@ -184,9 +184,9 @@ def _assess_risks(
         and source_temp > indoor_temp
     )
 
+    has_source_hum = source_hum is not None
     risk_assessment["humidity_risk"] = (
-        has_source_hum := source_hum is not None,
-        near_humidity_floor and has_source_hum and source_hum <= (indoor_hum - humidity_delta),
+        near_humidity_floor and has_source_hum and source_hum <= (indoor_hum - humidity_delta)
     )
 
     risk_assessment["humidity_benefit"] = (
