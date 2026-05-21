@@ -63,6 +63,21 @@ class ClosedActions:
         self.air_mixing_humidity_trigger = 3.5  # %RH: avoid unnecessary mixing near target
         self._o2_warning_logged = False
 
+        # NEW: Hysteresis to prevent device oscillation (on/off cycling)
+        self.temp_hysteresis = 0.5  # °C: must drop this far below max before cooling stops
+        self.hum_hysteresis = 2.0   # %RH: must drop this far below max before dehumidifying stops
+
+        # NEW: Thermal safety limits
+        self.temp_emergency_high = 35.0  # °C: absolute maximum before emergency exhaust
+        self.temp_emergency_low = 10.0   # °C: absolute minimum before emergency heating
+
+        # NEW: Dew point safety margin (prevent condensation/mold)
+        self.dewpoint_margin = 2.0  # °C: keep surface temp at least this far above dew point
+
+        # NEW: Track last device states for state-aware control
+        self._last_device_states = {}
+        self._last_action_time = 0
+
     # =================================================================
     # CO2 Control Actions
     # =================================================================
@@ -90,8 +105,6 @@ class ClosedActions:
     # - _inject_co2 -> handled by OGBCO2Manager._decide_closed_environment_action()
     # - _reduce_co2 -> handled by OGBCO2Manager._decide_closed_environment_action()
     # - _emergency_co2_ventilation -> handled by OGBCO2Manager._decide_closed_environment_action()
-
-        return action_map
 
     # =================================================================
     # O2 Safety Monitoring
@@ -290,6 +303,7 @@ class ClosedActions:
     async def control_temperature_closed(self, capabilities: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
         """
         Control temperature like VPD: control when outside min/max bounds.
+        With hysteresis to prevent oscillation.
 
         Args:
             capabilities: Device capabilities and states
@@ -316,14 +330,15 @@ class ClosedActions:
             f"{self.ogb.room}: Closed temp control: {current:.1f}°C (min={min_temp:.1f}, max={max_temp:.1f}, status={status})"
         )
 
-        if status == "too_low":
-            action_message = f"Closed temp: too cold ({current:.1f}°C < {min_temp:.1f}°C)"
-            actions = await self._increase_temperature(capabilities, action_message)
-            return actions, "heizen"
-        elif status == "too_high":
+        # HYSTERESIS: Only stop cooling when temp drops below (max - hysteresis)
+        if status == "too_high":
             action_message = f"Closed temp: too hot ({current:.1f}°C > {max_temp:.1f}°C)"
             actions = await self._decrease_temperature(capabilities, action_message)
             return actions, "kuehlen"
+        elif status == "too_low":
+            action_message = f"Closed temp: too cold ({current:.1f}°C < {min_temp:.1f}°C)"
+            actions = await self._increase_temperature(capabilities, action_message)
+            return actions, "heizen"
         else:
             _LOGGER.debug(f"{self.ogb.room}: Closed temp in range, no action")
             return [], "stabil"
@@ -347,6 +362,7 @@ class ClosedActions:
         """Decrease temperature using available cooling devices."""
         action_map = []
 
+        # Priority 1: Dedicated cooling
         if capabilities.get("canCool", {}).get("state", False):
             action_map.append(
                 self._create_action("canCool", "Increase", action_message)
@@ -355,10 +371,11 @@ class ClosedActions:
             action_map.append(
                 self._create_action("canClimate", "Reduce", action_message)
             )
-        elif self._can_control_air_movement(capabilities):
-            action_map.append(
-                self._create_action("canVentilate", "Increase", f"{action_message}: air mixing fallback")
-            )
+        else:
+            # Priority 2: Smart cooling fallback (exhaust, dehumidify, reduce lights)
+            _LOGGER.info(f"{self.ogb.room}: No cooler available, using smart cooling fallback")
+            fallback_actions = await self._smart_cool_fallback(capabilities, action_message)
+            action_map.extend(fallback_actions)
 
         return action_map
 
@@ -515,6 +532,32 @@ class ClosedActions:
         
         # Collect all actions
         all_actions = []
+        
+        # NEW: Check for thermal runaway FIRST (highest priority)
+        thermal_safe, thermal_msg, emergency_type = self._check_thermal_runaway()
+        if not thermal_safe and emergency_type:
+            _LOGGER.critical(f"{self.ogb.room}: {thermal_msg}")
+            emergency_actions = await self._handle_thermal_emergency(capabilities, emergency_type)
+            all_actions.extend(emergency_actions)
+            
+            # Skip normal controls during emergency
+            await self.action_manager.checkLimitsAndPublicateNoVPD(all_actions)
+            await self._emit_closed_environment_log(
+                capabilities, all_actions, "THERMAL EMERGENCY", "skipped", 
+                temp_dev, hum_dev, temp_target, hum_target, False
+            )
+            return
+        
+        # NEW: Check dew point safety
+        dew_safe, dew_msg, dew_point = self._check_dew_point_safety()
+        if not dew_safe:
+            _LOGGER.warning(f"{self.ogb.room}: {dew_msg}")
+            # Trigger dehumidification to reduce dew point risk
+            if capabilities.get("canDehumidify", {}).get("state", False):
+                all_actions.append(self._create_action("canDehumidify", "Increase", f"Dew point safety: {dew_msg}"))
+            # Also increase air circulation
+            if capabilities.get("canVentilate", {}).get("state", False):
+                all_actions.append(self._create_action("canVentilate", "Increase", "Dew point safety: Air circulation"))
         
         # O2 Safety (always - emergency)
         o2_actions = await self.monitor_o2_safety(capabilities)
@@ -735,6 +778,181 @@ class ClosedActions:
             return (float(min_humidity) + float(max_humidity)) / 2
         except (TypeError, ValueError):
             return None
+
+    def _calculate_dew_point(self, temperature: Optional[float], humidity: Optional[float]) -> Optional[float]:
+        """
+        Calculate dew point from temperature and humidity.
+        Uses Magnus formula for approximation.
+        
+        Returns:
+            Dew point temperature in Celsius, or None if inputs invalid
+        """
+        if temperature is None or humidity is None:
+            return None
+        try:
+            temp = float(temperature)
+            hum = float(humidity)
+        except (TypeError, ValueError):
+            return None
+        
+        if hum <= 0 or hum > 100:
+            return None
+        
+        # Magnus formula constants
+        import math
+        a = 17.271
+        b = 237.7
+        
+        # Correct Magnus formula
+        gamma = ((a * temp) / (b + temp)) + math.log(hum / 100.0)
+        dew_point = (b * gamma) / (a - gamma)
+        
+        return round(dew_point, 1)
+
+    def _check_dew_point_safety(self) -> Tuple[bool, str, Optional[float]]:
+        """
+        Check if dew point is dangerously close to surface temperature.
+        
+        Returns:
+            (is_safe, message, dew_point)
+        """
+        temp = self.ogb.dataStore.getDeep("tentData.temperature")
+        humidity = self.ogb.dataStore.getDeep("tentData.humidity")
+        
+        dew_point = self._calculate_dew_point(temp, humidity)
+        if dew_point is None:
+            return True, "No dew point data", None
+        
+        try:
+            current_temp = float(temp) if temp is not None else None
+        except (TypeError, ValueError):
+            return True, "Invalid temperature", dew_point
+        
+        if current_temp is None:
+            return True, "No temperature data", dew_point
+        
+        margin = current_temp - dew_point
+        
+        if margin < self.dewpoint_margin:
+            return False, f"Dew point risk: {margin:.1f}°C margin (need {self.dewpoint_margin}°C)", dew_point
+        
+        return True, f"Dew point safe: {margin:.1f}°C margin", dew_point
+
+    def _check_thermal_runaway(self) -> Tuple[bool, str, Optional[str]]:
+        """
+        Check for thermal runaway conditions.
+        
+        Returns:
+            (is_safe, message, emergency_action)
+        """
+        temp = self.ogb.dataStore.getDeep("tentData.temperature")
+        
+        if temp is None:
+            return True, "No temperature data", None
+        
+        try:
+            current_temp = float(temp)
+        except (TypeError, ValueError):
+            return True, "Invalid temperature", None
+        
+        if current_temp >= self.temp_emergency_high:
+            return False, f"THERMAL RUNAWAY: {current_temp:.1f}°C exceeds emergency limit {self.temp_emergency_high}°C", "emergency_exhaust"
+        
+        if current_temp <= self.temp_emergency_low:
+            return False, f"THERMAL RUNAWAY: {current_temp:.1f}°C below emergency limit {self.temp_emergency_low}°C", "emergency_heat"
+        
+        return True, f"Temperature safe: {current_temp:.1f}°C", None
+
+    async def _handle_thermal_emergency(self, capabilities: Dict[str, Any], emergency_type: str) -> List[Dict[str, Any]]:
+        """
+        Handle thermal emergency with maximum cooling/heating.
+        
+        Args:
+            capabilities: Device capabilities
+            emergency_type: "emergency_exhaust" or "emergency_heat"
+            
+        Returns:
+            List of emergency actions
+        """
+        action_map = []
+        
+        if emergency_type == "emergency_exhaust":
+            # Maximum cooling: exhaust, dehumidify, stop heating, reduce lights
+            if capabilities.get("canExhaust", {}).get("state", False):
+                action_map.append(self._create_action("canExhaust", "Increase", "THERMAL EMERGENCY: Maximum exhaust"))
+            if capabilities.get("canVentilate", {}).get("state", False):
+                action_map.append(self._create_action("canVentilate", "Increase", "THERMAL EMERGENCY: Maximum ventilation"))
+            if capabilities.get("canDehumidify", {}).get("state", False):
+                action_map.append(self._create_action("canDehumidify", "Increase", "THERMAL EMERGENCY: Dehumidify to cool"))
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(self._create_action("canHeat", "Reduce", "THERMAL EMERGENCY: Stop heating"))
+            if capabilities.get("canLight", {}).get("state", False):
+                action_map.append(self._create_action("canLight", "Reduce", "THERMAL EMERGENCY: Reduce lights"))
+        
+        elif emergency_type == "emergency_heat":
+            # Maximum heating
+            if capabilities.get("canHeat", {}).get("state", False):
+                action_map.append(self._create_action("canHeat", "Increase", "THERMAL EMERGENCY: Maximum heating"))
+            if capabilities.get("canCool", {}).get("state", False):
+                action_map.append(self._create_action("canCool", "Reduce", "THERMAL EMERGENCY: Stop cooling"))
+        
+        return action_map
+
+    async def _smart_cool_fallback(self, capabilities: Dict[str, Any], action_message: str) -> List[Dict[str, Any]]:
+        """
+        Smart cooling fallback when no dedicated cooler is available.
+        Uses exhaust, dehumidifier, and light reduction to cool.
+        
+        Args:
+            capabilities: Device capabilities
+            action_message: Base message for actions
+            
+        Returns:
+            List of cooling fallback actions
+        """
+        action_map = []
+        
+        # Strategy 1: Remove hot humid air via exhaust
+        if capabilities.get("canExhaust", {}).get("state", False):
+            action_map.append(self._create_action("canExhaust", "Increase", f"{action_message}: Exhaust heat"))
+        
+        # Strategy 2: Dehumidify (evaporative cooling effect)
+        if capabilities.get("canDehumidify", {}).get("state", False):
+            action_map.append(self._create_action("canDehumidify", "Increase", f"{action_message}: Dehumidify to cool"))
+        
+        # Strategy 3: Reduce heat sources (lights)
+        if capabilities.get("canLight", {}).get("state", False):
+            # Only reduce if lights are on
+            is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON", False)
+            if is_light_on:
+                action_map.append(self._create_action("canLight", "Reduce", f"{action_message}: Reduce heat from lights"))
+        
+        # Strategy 4: Air mixing to distribute heat
+        if capabilities.get("canVentilate", {}).get("state", False):
+            action_map.append(self._create_action("canVentilate", "Increase", f"{action_message}: Air mixing"))
+        
+        return action_map
+
+    def _is_device_active(self, capability: str) -> bool:
+        """
+        Check if a device is currently active (on).
+        
+        Args:
+            capability: Device capability name
+            
+        Returns:
+            True if device is active
+        """
+        device_data = self.ogb.dataStore.getDeep(f"capabilities.{capability}.deviceData")
+        if not device_data:
+            return False
+        
+        # Get first device entry
+        for dev_name, dev_info in device_data.items():
+            if isinstance(dev_info, dict):
+                return dev_info.get("on_off", False)
+        
+        return False
 
     async def _emit_closed_environment_log(
         self,
@@ -990,12 +1208,18 @@ class ClosedActions:
         # Collect actions
         all_actions = []
 
+        # NEW: State-aware night mode - only reduce devices that are actually ON
         # Climate devices that should be minimized at night to save power
         climate_caps = ["canHeat", "canCool", "canHumidify", "canClimate", "canDehumidify", "canCO2", "canLight"]
 
         for cap in climate_caps:
             if capabilities.get(cap, {}).get("state", False):
-                all_actions.append(self._create_action(cap, "Reduce", action_message))
+                # Only send Reduce if device is actually active
+                if self._is_device_active(cap):
+                    all_actions.append(self._create_action(cap, "Reduce", action_message))
+                    _LOGGER.debug(f"{self.ogb.room}: Night mode - reducing {cap} (was active)")
+                else:
+                    _LOGGER.debug(f"{self.ogb.room}: Night mode - skipping {cap} (already off)")
 
         # Ventilation devices that should be actively controlled
         ventilation_caps = ["canExhaust", "canVentilate", "canIntake"]

@@ -40,13 +40,13 @@ async def test_closed_environment_night_mode_power_saving():
         },
         "isPlantDay": {"islightON": False},  # Night mode
         "capabilities": {
-            "canHeat": {"state": True},
-            "canCool": {"state": True},
-            "canHumidify": {"state": True},
-            "canDehumidify": {"state": True},
-            "canVentilate": {"state": True},
-            "canExhaust": {"state": True},
-            "canWindow": {"state": True},
+            "canHeat": {"state": True, "deviceData": {"devheater": {"on_off": True}}},
+            "canCool": {"state": True, "deviceData": {"devcooler": {"on_off": True}}},
+            "canHumidify": {"state": True, "deviceData": {"devhumidifier": {"on_off": True}}},
+            "canDehumidify": {"state": True, "deviceData": {"devdehumidifier": {"on_off": True}}},
+            "canVentilate": {"state": True, "deviceData": {"devventilation": {"on_off": True}}},
+            "canExhaust": {"state": True, "deviceData": {"devexhaust": {"on_off": True}}},
+            "canWindow": {"state": True, "deviceData": {"devwindow": {"on_off": True}}},
         }
     })
 

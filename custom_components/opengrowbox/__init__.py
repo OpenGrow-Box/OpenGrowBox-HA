@@ -757,7 +757,7 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     room_lower = room_name.lower()
 
     _LOGGER.warning(
-        "Removing OpenGrowBox entry %s for room '%s' - deleting room-scoped data",
+        "Removing OpenGrowBox entry %s for room '%s' - deleting room-scoped data (state preserved)",
         config_entry.entry_id,
         room_name or "unknown",
     )
@@ -771,12 +771,13 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 
     targets: list[str] = []
 
-    # Room-specific state and media in ogb_data / legacy ogb-data
+    # Room-specific media and scripts in ogb_data / legacy ogb-data
+    # NOTE: State file (ogb_{room}_state.json) is intentionally NOT deleted
+    # to preserve plant dates, calibration data, and grow history across reinstalls
     for base_name in ("ogb_data", "ogb-data"):
         base_dir = hass.config.path(base_name)
         targets.extend(
             [
-                os.path.join(base_dir, f"ogb_{room_lower}_state.json"),
                 os.path.join(base_dir, f"{room_name}_img"),
                 os.path.join(base_dir, f"{room_lower}_img"),
                 os.path.join(base_dir, "scripts", f"{room_lower}_script.yaml"),
