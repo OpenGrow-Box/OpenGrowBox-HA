@@ -839,6 +839,16 @@ class Device:
                     self.dataStore.setDeep(capPath, currentCap)
 
     def identifyIfRunningState(self):
+        import time
+        # Check if we're within the control lock period (prevents HA state updates
+        # from overwriting our recently sent control values)
+        control_lock_until = getattr(self, '_control_lock_until', 0)
+        if control_lock_until and time.time() < control_lock_until:
+            _LOGGER.debug(
+                f"{self.deviceName}: Skipping identifyIfRunningState - control lock active for {control_lock_until - time.time():.1f}s "
+                f"(current isRunning={self.isRunning})"
+            )
+            return
 
         if self.isAcInfinDev:
             for select in self.options:
@@ -907,6 +917,14 @@ class Device:
                     return
 
     def checkForControlValue(self, force_update: bool = False) -> None:
+        import time
+        # Check if we're within the control lock period (prevents HA state updates
+        # from overwriting our recently sent control values)
+        control_lock_until = getattr(self, '_control_lock_until', 0)
+        if control_lock_until and time.time() < control_lock_until and not force_update:
+            _LOGGER.debug(f"{self.deviceName}: Skipping checkForControlValue - control lock active for {control_lock_until - time.time():.1f}s")
+            return
+        
         if getattr(self, '_in_active_control', False) and not force_update:
             _LOGGER.warning(f"{self.deviceName}: Skipping checkForControlValue - device is under active control")
             return
@@ -1208,6 +1226,10 @@ class Device:
         
         # Flag to prevent sensor from overwriting our control value
         self._in_active_control = True
+        # Set a timestamp for how long to ignore HA state updates (5 seconds)
+        # This prevents race conditions where HA reports the old state
+        # before the device has physically changed
+        self._control_lock_until = time.time() + 5.0
         
         try:
             # Check if device is online before proceeding
@@ -1826,8 +1848,14 @@ class Device:
 
     async def turn_off(self, **kwargs):
         """Schaltet das Gerät aus."""
+        import time
+        
         # Store power before action for reliability validation
         power_before = await self._get_current_power()
+        
+        # Set control lock to prevent HA state updates from overwriting
+        # our recently sent control value (5 second lock)
+        self._control_lock_until = time.time() + 5.0
         
         try:
             # === Sonderfall: AcInfinity Geräte ===
