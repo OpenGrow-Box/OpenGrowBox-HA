@@ -1997,7 +1997,6 @@ class OGBWebSocketConManager:
             if active_connections > 0:
                 # We have an active connection - we ARE a room!
                 active_rooms = [normalized_current_room]
-                logging.debug(f"📊 {self.ws_room} API update: active connections={active_connections}, using current room")
             else:
                 active_rooms = []
             
@@ -2012,17 +2011,11 @@ class OGBWebSocketConManager:
             if server_plan:
                 self.subscription_data["plan_name"] = server_plan
                 self._plan = server_plan
-                logging.info(f"📊 {self.ws_room} Updated plan from api_usage_update: {server_plan}")
-            
             # Update features and limits
             if features:
                 self.subscription_data["features"] = features
-                logging.info(f"📊 {self.ws_room} Updated features: {len(features)}")
-            
             if limits:
                 self.subscription_data["limits"] = limits
-                logging.info(f"📊 {self.ws_room} Updated limits: {len(limits)}")
-            
             # Update usage
             if "usage" not in self.subscription_data:
                 self.subscription_data["usage"] = {}

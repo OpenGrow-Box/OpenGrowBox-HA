@@ -2776,11 +2776,10 @@ class OGBPremiumIntegration:
         # V1-specific checks
         aes_status = getattr(self.ogb_ws, '_aes_gcm', None) is not None
         v1_ns = getattr(self.ogb_ws, '_v1_namespace', None)
-        _LOGGER.debug(f"🔐 {self.room} #{event_id} V1 status: aes={aes_status}, namespace={v1_ns}")
 
         # Send via V1 encrypted messaging
         try:
-            _LOGGER.debug(f"📤 {self.room} #{event_id} Attempting to send grow data (size: {len(str(grow_data))} chars)")
+            #_LOGGER.debug(f"📤 {self.room} #{event_id} Attempting to send grow data (size: {len(str(grow_data))} chars)")
 
             # Use V1 encrypted messaging (authoritative path)
             success = await self.ogb_ws.send_v1_grow_data(grow_data)
