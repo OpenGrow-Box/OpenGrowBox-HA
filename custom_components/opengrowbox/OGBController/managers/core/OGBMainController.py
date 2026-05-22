@@ -24,6 +24,7 @@ from ..medium.OGBMediumManager import OGBMediumManager
 from ..hydro.tank.OGBTankFeedManager import OGBTankFeedManager
 from ..OGBEnergyManager import OGBEnergyManager
 from ...RegistryListener import OGBRegistryEvenListener
+from ...utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -434,7 +435,7 @@ class OGBMainController:
 
     async def _handle_ambient_data(self, event):
         """Handle ambient data from other rooms."""
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             return
 
         _LOGGER.debug(f"📥 {self.room} Received AmbientData: Temp={event.data.get('AvgTemp')}, Hum={event.data.get('AvgHum')}")
@@ -466,7 +467,7 @@ class OGBMainController:
 
     async def _handle_outsite_data(self, event):
         """Handle outside weather data."""
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             return
 
         _LOGGER.debug(f"🌍 {self.room} Received OutsiteData: Temp={event.data.get('temperature')}°C, Hum={event.data.get('humidity')}%")

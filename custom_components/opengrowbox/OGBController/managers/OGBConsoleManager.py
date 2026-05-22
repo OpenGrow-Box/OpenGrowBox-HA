@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from ..data.OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
+from ..utils.ambient import is_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +34,11 @@ class OGBConsoleManager:
         self.event_manager = eventManager
         self.is_initialized = False
         self.last_command = ""
+
+        # Skip for ambient room - no console needed
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Console Manager disabled - ambient room")
+            return
 
         # Command registry with metadata
         self.commands: Dict[str, CommandInfo] = {}

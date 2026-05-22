@@ -16,6 +16,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from collections import deque
 
+from ..utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -323,6 +325,11 @@ class OGBCO2Manager:
         Returns:
             Liste von Action-Maps (leere Liste wenn keine Aktion noetig)
         """
+        # Skip for ambient room - ambient has no CO2 control
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Ambient room - skipping CO2 control")
+            return []
+        
         action_map = []
         
         try:

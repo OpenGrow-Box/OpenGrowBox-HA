@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from ..logic.ClosedControlLogic import ClosedControlLogic
 from ..managers.OGBActionManager import OGBActionManager
 from ..data.OGBDataClasses.OGBPublications import OGBActionPublication
+from ..utils.ambient import is_ambient_room
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -44,6 +45,11 @@ class ClosedEnvironmentManager:
         self.room = room
         self.hass = hass
         self.action_manager = action_manager
+
+        # Skip for ambient room - no devices to control
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Closed Environment Manager disabled - ambient room")
+            return
 
         # Control logic engine
         self.control_logic = ClosedControlLogic(data_store, room)

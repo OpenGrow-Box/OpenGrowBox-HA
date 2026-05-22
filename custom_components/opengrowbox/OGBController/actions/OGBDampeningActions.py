@@ -1292,18 +1292,30 @@ class OGBDampeningActions:
             if vpd_status in ["critical", "high"]:
                 # Urgent temperature correction
                 temp_actions = self._create_temperature_correction_actions(temp_dev, priority="high", vpd_status=vpd_status)
-                enhanced.extend(temp_actions)
+                # Filter out duplicates that already exist in enhanced
+                for ta in temp_actions:
+                    if not any(getattr(e, 'capability', '') == getattr(ta, 'capability', '') and 
+                               getattr(e, 'action', '') == getattr(ta, 'action', '') for e in enhanced):
+                        enhanced.append(ta)
 
         # Humidity deviation handling - ALWAYS correct if humidity exceeds max
         if hum_dev > 0:  # Any positive deviation = humidity too high
             if vpd_status in ["critical", "high"]:
                 # Urgent humidity correction
                 hum_actions = self._create_humidity_correction_actions(hum_dev, priority="high")
-                enhanced.extend(hum_actions)
+                # Filter out duplicates that already exist in enhanced
+                for ha in hum_actions:
+                    if not any(getattr(e, 'capability', '') == getattr(ha, 'capability', '') and 
+                               getattr(e, 'action', '') == getattr(ha, 'action', '') for e in enhanced):
+                        enhanced.append(ha)
             elif vpd_status in ["medium", "low"]:
                 # Standard humidity correction
                 hum_actions = self._create_humidity_correction_actions(hum_dev, priority="medium")
-                enhanced.extend(hum_actions)
+                # Filter out duplicates that already exist in enhanced
+                for ha in hum_actions:
+                    if not any(getattr(e, 'capability', '') == getattr(ha, 'capability', '') and 
+                               getattr(e, 'action', '') == getattr(ha, 'action', '') for e in enhanced):
+                        enhanced.append(ha)
 
         return enhanced
 

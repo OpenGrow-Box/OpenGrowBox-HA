@@ -17,6 +17,7 @@ from ..premium.analytics.OGBAIDataBridge import OGBAIDataBridge
 from .hydro.crop_steering.OGBCSManager import OGBCSManager
 from .ClosedEnvironmentManager import ClosedEnvironmentManager
 from .OGBScriptMode import OGBScriptMode
+from ..utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -754,7 +755,7 @@ class OGBModeManager:
         Executes one control cycle with ambient-enhanced logic.
         """
         # Ambient room should never trigger Closed Environment actions - only used as reference
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(
                 f"{self.room}: Ambient room - skipping Closed Environment mode, "
                 f"only used as reference for other rooms"
@@ -781,7 +782,7 @@ class OGBModeManager:
         Handhabt den Modus 'VPD Perfection' und steuert die Geräte basierend auf dem aktuellen VPD-Wert.
         """
         # Ambient room should never trigger VPD actions - only used as reference for Closed Environment
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(
                 f"{self.room}: Ambient room - skipping VPD Perfection mode, "
                 f"only used as reference for Closed Environment"
@@ -844,7 +845,7 @@ class OGBModeManager:
         Handhabt den Modus 'Targeted VPD' mit Toleranz.
         """
         # Ambient room should never trigger VPD actions - only used as reference for Closed Environment
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(
                 f"{self.room}: Ambient room - skipping VPD Target mode, "
                 f"only used as reference for Closed Environment"

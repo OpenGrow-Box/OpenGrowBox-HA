@@ -33,6 +33,7 @@ from .analytics.OGBPremCompliance import OGBPremCompliance
 from .analytics.OGBPremResearch import OGBPremResearch
 from .features.OGBPremFeatureManager import OGBFeatureManager
 from .growplans.OGBGrowPlanManager import OGBGrowPlanManager
+from ..utils.ambient import do_nothing, is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -219,8 +220,11 @@ class OGBPremiumIntegration:
     async def init(self):
         """Initialize Premium Manager."""
 
+        needToDoings = ambient.do_nothing(self.room.lower)
+        if not needToDoings:
+            return
 
-        if self.room.lower == "ambient":
+        if is_ambient_room(self.room):
             return
 
         # Get or create room ID first
@@ -3004,6 +3008,8 @@ class OGBPremiumIntegration:
         """Initialize or update the feature manager with current subscription data."""
         _LOGGER.debug(f"{self.room} 🔧 _update_feature_manager called")
         
+
+
         if self.subscription_data:
             if self.feature_manager is None:
                 self.feature_manager = OGBFeatureManager(
@@ -3471,7 +3477,7 @@ class OGBPremiumIntegration:
 
     def _check_if_can_connect(self):
         """Check if room can connect based on session limits."""
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(f"✅ {self.room} Ambient room bypass - always allowed")
             return True
 

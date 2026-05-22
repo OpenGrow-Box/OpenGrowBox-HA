@@ -10,6 +10,7 @@ from .OGBCSCalibrationManager import OGBCSCalibrationManager
 from .OGBCSConfigurationManager import CSMode, OGBCSConfigurationManager
 # OGBCSIrrigationManager removed - irrigation handled directly in CSManager like CastManager
 from .OGBCSPhaseManager import OGBCSPhaseManager
+from ....utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class OGBCSManager:
         self.isInitialized = False
 
         # AMBIENT ROOM CHECK: Ambient rooms don't use Crop Steering
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(f"{self.room}: Crop Steering disabled - ambient room")
             return
 
@@ -759,7 +760,7 @@ class OGBCSManager:
     def _get_drippers(self):
         """Get dripper devices from pump capabilities."""
         # AMBIENT ROOM CHECK: Ambient rooms don't have drippers
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             return []
 
         dripperDevices = self.data_store.getDeep("capabilities.canPump")

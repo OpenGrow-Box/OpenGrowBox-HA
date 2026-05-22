@@ -20,6 +20,7 @@ from ..data.OGBDataClasses.OGBPublications import (OGBActionPublication,
                                                OGBWeightPublication)
 from ..data.OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
 from .OGBgcdManager import OGBgcdManager
+from ..utils.ambient import is_ambient_room
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
@@ -1062,6 +1063,11 @@ class OGBActionManager:
         Args:
             actionMap: List of actions to process
         """
+        # Skip for ambient room - ambient has no devices to control
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Ambient room - skipping action publication")
+            return
+        
         # Check if this is a VPD mode (not Premium PID/MPC/AI or Closed Environment)
         mode = self.data_store.get("tentMode")
         # Core VPD Logic only for VPD Perfection and VPD Target, NOT for Closed Environment

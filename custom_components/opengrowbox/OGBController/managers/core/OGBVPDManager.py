@@ -8,6 +8,7 @@ from ...utils.sensorUpdater import (_update_specific_number,
                                   _update_specific_sensor,
                                   update_sensor_via_service)
 from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
+from ...utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ class OGBVPDManager:
         
         # Calculate leaf temperature average if sensors available
         # Skip for ambient room - leaf sensors only make sense for grow rooms
-        if self.room.lower() != "ambient":
+        if is_not_ambient_room(self.room):
             leafTemp = None
             if leafTemperatures:
                 leafTemp = calculate_avg_value(leafTemperatures)
@@ -226,7 +227,7 @@ class OGBVPDManager:
         lastVpd = self.data_store.getDeep("vpd.current")
         
         # For ambient room, always use manual offset (no leaf sensor support)
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
             currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
         elif leafTemp is not None:
@@ -273,7 +274,7 @@ class OGBVPDManager:
                 currentMode = self.data_store.get("tentMode")
                 tentMode = OGBModeRunPublication(currentMode=currentMode)
 
-                if self.room.lower() == "ambient":
+                if is_ambient_room(self.room):
                     _LOGGER.debug(f"📡 {self.room} AmbientData emitted: VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
                     await self.event_manager.emit("AmbientData",vpdPub,haEvent=True)
                     # Also emit selectActionMode for ambient rooms so mode manager processes VPD changes
@@ -453,7 +454,7 @@ class OGBVPDManager:
         # Calculate leaf temperature average if sensors available
         # Skip for ambient room - leaf sensors only make sense for grow rooms
         leafTemp = None
-        if self.room.lower() != "ambient":
+        if is_not_ambient_room(self.room):
             if leafTemperatures:
                 leafTemp = calculate_avg_value(leafTemperatures)
                 self.data_store.setDeep("tentData.leafTemperature", leafTemp)
@@ -521,7 +522,7 @@ class OGBVPDManager:
         lastVpd = self.data_store.getDeep("vpd.current")
         
         # For ambient room, always use manual offset (no leaf sensor support)
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             leafTempOffset = self.data_store.getDeep("tentData.leafTempOffset")
             currentVPD = calculate_current_vpd(avgTemp, avgHum, leafTempOffset)
         elif leafTemp is not None:
@@ -561,7 +562,7 @@ class OGBVPDManager:
         )
 
         # Handle ambient room special case
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.warning(f"📡 {self.room} AmbientData emitted (init): VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
             await self.event_manager.emit("AmbientData", vpdPub, haEvent=True)
             await self.get_weather_data()

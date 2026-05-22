@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from ....data.OGBDataClasses.OGBPublications import OGBHydroAction
+from ....utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class OGBPlantWateringManager:
         self._wet_lock_active = False
 
         # AMBIENT ROOM CHECK: Ambient rooms don't use Plant Watering
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(f"{self.room}: Plant Watering Manager disabled - ambient room")
             return
 
@@ -32,7 +33,7 @@ class OGBPlantWateringManager:
         _LOGGER.debug(f"[{self.room}] PlantWatering.start() called: duration={duration}, cooldown_minutes={cooldown_minutes}, pump_devices={pump_devices}")
         
         # AMBIENT ROOM CHECK
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(f"{self.room}: Plant Watering skipped - ambient room")
             return None
 

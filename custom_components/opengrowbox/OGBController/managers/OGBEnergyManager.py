@@ -3,6 +3,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, List
 
+from ..utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -51,6 +53,11 @@ class OGBEnergyManager:
         self.data_store = data_store
         self.event_manager = event_manager
         self.room = room
+
+        # Skip initialization for ambient room - no devices to track
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"[{self.room}] OGBEnergyManager disabled - ambient room")
+            return
 
         # Active tracking state per device
         # {
@@ -243,6 +250,10 @@ class OGBEnergyManager:
 
     async def _on_device_state_change(self, event_data):
         """Handle device on/off state changes."""
+        # Skip for ambient room - no devices to track
+        if is_ambient_room(self.room):
+            return
+            
         try:
             device_name = event_data.get("device_name")
             is_running = event_data.get("is_running", False)
@@ -373,6 +384,10 @@ class OGBEnergyManager:
         CRITICAL FIX: If power > 0 but device not in tracking, start tracking!
         This handles devices that are on but we missed the startup event.
         """
+        # Skip for ambient room - no devices to track
+        if is_ambient_room(self.room):
+            return
+            
         try:
             device_name = event_data.get("device_name")
             power_watts = event_data.get("power_watts", 0.0)

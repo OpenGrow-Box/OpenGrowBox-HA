@@ -11,6 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 from ....data.OGBDataClasses.OGBPublications import OGBWaterAction, OGBWaterPublication, OGBHydroAction
 from ....managers.OGBNotifyManager import OGBNotificator
 from custom_components.opengrowbox.OGBController.managers.hydro.tank.OGBReservoirManager import OGBReservoirManager
+from ....utils.ambient import is_ambient_room, is_not_ambient_room
 
 class ECUnit(Enum):
     """Unterstützte EC-Einheiten"""
@@ -161,7 +162,7 @@ class OGBTankFeedManager:
         self.is_initialized = False
 
         # AMBIENT ROOM CHECK: Ambient rooms don't use Tank Feed
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(f"{self.room}: Tank Feed Manager disabled - ambient room")
             return
         

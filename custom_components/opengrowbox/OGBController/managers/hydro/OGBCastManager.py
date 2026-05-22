@@ -8,6 +8,7 @@ from ...data.OGBDataClasses.OGBPublications import (OGBHydroAction,
 from .crop_steering.OGBCSManager import OGBCSManager
 from .plant_watering.OGBPlantWateringManager import OGBPlantWateringManager
 from ..medium.OGBMediumManager import OGBMediumManager
+from ...utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ class OGBCastManager:
         self.isInitialized = False
 
         # AMBIENT ROOM CHECK: Ambient rooms don't use Cast Manager
-        if self.room.lower() == "ambient":
+        if is_ambient_room(self.room):
             _LOGGER.debug(f"{self.room}: Cast Manager disabled - ambient room")
             return
 

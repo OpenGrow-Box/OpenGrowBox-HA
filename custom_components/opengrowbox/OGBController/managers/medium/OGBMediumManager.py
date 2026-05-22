@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from ...data.OGBDataClasses.OGBMedium import GrowMedium, MediumType
 from ...data.OGBDataClasses.OGBPublications import OGBMediumPlantPublication
+from ...utils.ambient import is_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,11 @@ class OGBMediumManager:
         self._save_delay_seconds = 5  # Increased to 5 seconds to reduce UI spam
         self._last_save_hash: Optional[int] = None  # Track data changes via hash
         self._save_count = 0  # Track save frequency for monitoring
+
+        # Skip for ambient room - no plants/mediums in ambient
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Medium Manager disabled - ambient room")
+            return
 
         self.media: List[GrowMedium] = []
         self.current_medium_type: Optional[MediumType] = None

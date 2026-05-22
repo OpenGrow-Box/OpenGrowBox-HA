@@ -72,10 +72,21 @@ class OGBVPDActions:
             else:
                 return "low"
 
+    def _action_exists(self, action_map, capability, action):
+        """
+        Prüft ob eine Action mit gegebener capability und action bereits existiert.
+        Verhindert Duplikate wenn mehrere Logiken dieselbe Action erstellen.
+        """
+        for a in action_map:
+            if getattr(a, 'capability', '') == capability and getattr(a, 'action', '') == action:
+                return True
+        return False
+
     def _add_bounds_correction_actions(self, action_map, capabilities, context=""):
         """
         Prüft Temp/Humidity Bounds und fügt Korrektur-Actions hinzu.
         BEACHTET ownWeights für dynamische Priorisierung!
+        Verhindert Duplikate: Prüft ob Action bereits in action_map existiert.
         """
         current_temp = self.ogb.dataStore.getDeep("tentData.temperature")
         current_hum = self.ogb.dataStore.getDeep("tentData.humidity")
@@ -125,7 +136,8 @@ class OGBVPDActions:
                     priority = self._calculate_dynamic_priority(deviation, False)
                 
                 if capabilities.get("canHeat", {}).get("state", False):
-                    correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})", priority))
+                    if not self._action_exists(action_map, "canHeat", "Increase"):
+                        correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})", priority))
         
         # Temp zu hoch
         if current_temp is not None and max_temp is not None:
@@ -138,7 +150,8 @@ class OGBVPDActions:
                     priority = self._calculate_dynamic_priority(deviation, False)
                 
                 if capabilities.get("canCool", {}).get("state", False):
-                    correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})", priority))
+                    if not self._action_exists(action_map, "canCool", "Increase"):
+                        correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})", priority))
         
         # Humidity zu niedrig
         if current_hum is not None and min_hum is not None:
@@ -151,7 +164,8 @@ class OGBVPDActions:
                     priority = self._calculate_dynamic_priority(deviation, False)
                 
                 if capabilities.get("canHumidify", {}).get("state", False):
-                    correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})", priority))
+                    if not self._action_exists(action_map, "canHumidify", "Increase"):
+                        correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})", priority))
         
         # Humidity zu hoch
         if current_hum is not None and max_hum is not None:
@@ -164,7 +178,8 @@ class OGBVPDActions:
                     priority = self._calculate_dynamic_priority(deviation, False)
                 
                 if capabilities.get("canDehumidify", {}).get("state", False):
-                    correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})", priority))
+                    if not self._action_exists(action_map, "canDehumidify", "Increase"):
+                        correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})", priority))
         
         return action_map + correction_actions
 

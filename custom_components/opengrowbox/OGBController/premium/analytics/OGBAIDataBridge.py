@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from ...utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -40,6 +42,11 @@ class OGBAIDataBridge:
         self.data_store = dataStore
         self.room = room
         self.websocket_manager = websocket_manager
+
+        # Skip for ambient room - no cropsteering/AI needed
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: AI Data Bridge disabled - ambient room")
+            return
 
         # Event buffering
         self.event_buffer: deque = deque(maxlen=1000)
