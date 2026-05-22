@@ -6,6 +6,7 @@ import shutil
 from typing import Any, Dict, List, Optional
 
 from ..data.OGBParams.OGBParams import CAP_MAPPING
+from ..utils.ambient import is_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 

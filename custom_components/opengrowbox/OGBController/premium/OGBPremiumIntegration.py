@@ -87,11 +87,6 @@ class OGBPremiumIntegration:
         self._is_initialized = False
         self._init_lock = asyncio.Lock()
 
-        # Skip for ambient room - ambient never connects to premium
-        if is_ambient_room(self.room):
-            _LOGGER.debug(f"{self.room}: Premium Integration disabled - ambient room")
-            return
-
         # Data control
         self.lastTentMode = None
         
@@ -126,6 +121,18 @@ class OGBPremiumIntegration:
         self._ha_unsubscribers = []
         self._event_bindings = []
         self._init_task = None
+
+        # DataRelease debounce (must be set before any early return)
+        self._datarelease_counter = 0
+        self._last_datarelease_time = 0
+        self._datarelease_debounce_seconds = 5
+        self._initialization_blocked = False
+
+        # Skip for ambient room - ambient never connects to premium
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Premium Integration disabled - ambient room")
+            return
+
         self._setup_event_listeners()
 
         # Start async initialization
@@ -227,7 +234,7 @@ class OGBPremiumIntegration:
     async def init(self):
         """Initialize Premium Manager."""
 
-        needToDoings = ambient.do_nothing(self.room.lower)
+        needToDoings = do_nothing(self.room.lower)
         if not needToDoings:
             return
 
@@ -250,10 +257,6 @@ class OGBPremiumIntegration:
         # Give WebSocket client access to credentials for auto-relogin
         self.ogb_ws._credential_provider = self._get_credentials_for_relogin
         self.is_primary_ws_client = True  # Always true since no sharing
-        self._datarelease_counter = 0  # Track DataRelease events
-        self._last_datarelease_time = 0  # Debounce DataRelease events
-        self._datarelease_debounce_seconds = 5  # Minimum seconds between DataRelease sends
-        self._initialization_blocked = False  # Track if initialization was blocked by limits
         _LOGGER.info(f"🔗 {self.room} Created independent WebSocket client")
 
         # Initialize grow plan manager with WebSocket client

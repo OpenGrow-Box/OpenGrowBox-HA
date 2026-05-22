@@ -33,11 +33,6 @@ class OGBMediumManager:
         self._last_save_hash: Optional[int] = None  # Track data changes via hash
         self._save_count = 0  # Track save frequency for monitoring
 
-        # Skip for ambient room - no plants/mediums in ambient
-        if is_ambient_room(self.room):
-            _LOGGER.debug(f"{self.room}: Medium Manager disabled - ambient room")
-            return
-
         self.media: List[GrowMedium] = []
         self.current_medium_type: Optional[MediumType] = None
 
@@ -56,6 +51,11 @@ class OGBMediumManager:
         
         # Queue for sensor registrations that arrive before init completes
         self._pending_sensor_registrations: List[Dict[str, Any]] = []
+
+        # Skip for ambient room - no plants/mediums in ambient
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Medium Manager disabled - ambient room")
+            return
 
         # CRITICAL: Setup event listeners IMMEDIATELY in __init__ 
         # so we don't miss any events that come before async init() completes
@@ -80,6 +80,12 @@ class OGBMediumManager:
 
     async def init(self):
         """Initialize Medium Manager - load data and emit initial state"""
+        # Skip for ambient room - no plants/mediums in ambient
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"[{self.room}] MediumManager.init() skipped - ambient room")
+            self._initialized = True  # Mark as initialized to prevent re-calls
+            return
+        
         # Guard against double initialization
         if self._initialized:
             _LOGGER.debug(f"[{self.room}] ⚠️ MediumManager.init() called but already initialized! Skipping.")
