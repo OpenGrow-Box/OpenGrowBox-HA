@@ -223,7 +223,7 @@ class OpenGrowBox:
         # Premium manager grow plan activation
         if hasattr(self, 'premium_manager') and self.premium_manager:
             try:
-                if hasattr(self.premium_manager, 'growPlanManager') and self.premium_manager.growPlanManager.managerActive is True:
+                if hasattr(self.premium_manager, 'growPlanManager') and self.premium_manager.growPlanManager is not None and self.premium_manager.growPlanManager.managerActive is True:
                     strain_name = self.data_store.get("strainName")
                     planRequestData = {"event_id": "grow_plans_on_start", "strain_name": strain_name}
 
