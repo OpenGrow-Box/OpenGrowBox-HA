@@ -216,7 +216,7 @@ class OGBPremiumIntegration:
                 self._initialization_blocked = True
                 return False
 
-            _LOGGER.warning(f"✅ {self.room} ALLOWED - proceeding with initialization")
+            _LOGGER.info(f"✅ {self.room} ALLOWED - proceeding with initialization")
             return True
 
         except Exception as e:
@@ -1604,7 +1604,7 @@ class OGBPremiumIntegration:
                     
                     # Verify authentication succeeded
                     if not self.ogb_ws.authenticated:
-                        _LOGGER.warning(f"⚠️ {self.room} WebSocket connected but not authenticated, waiting...")
+                        _LOGGER.debug(f"⚠️ {self.room} WebSocket connected but not authenticated, waiting...")
                         # Wait up to 5 seconds for authentication
                         for _ in range(5):
                             await asyncio.sleep(1.0)
@@ -1626,7 +1626,7 @@ class OGBPremiumIntegration:
                         return True
                 
                 # Direct reconnection failed - fallback to full login with stored credentials
-                _LOGGER.warning(f"⚠️ {self.room} Direct reconnection failed, trying fresh login with stored credentials...")
+                _LOGGER.info(f"⚠️ {self.room} Direct reconnection failed, trying fresh login with stored credentials...")
                 
                 if not self.ogb_login_email or not self.ogb_login_token:
                     _LOGGER.error(f"❌ {self.room} No stored credentials for fallback login")
@@ -3309,7 +3309,7 @@ class OGBPremiumIntegration:
                 await asyncio.sleep(retry_delay)
         
         if not tent_select and self.is_logged_in:
-            _LOGGER.warning(f"{self.room} TentMode select not found after {max_retries} retries")
+            _LOGGER.debug(f"{self.room} TentMode select not found after {max_retries} retries")
             return
 
         # If not logged in, remove ALL premium modes
@@ -3558,7 +3558,7 @@ class OGBPremiumIntegration:
                         await self._managePremiumControls()
                         return
 
-                    _LOGGER.warning(f"🔗 Triggering WebSocket connection for {self.room}")
+                    _LOGGER.debug(f"🔗 Triggering WebSocket connection for {self.room}")
                     await self.ogb_ws._connect_websocket()
                     await self._managePremiumControls()
                     await self._save_request(True)
@@ -3569,7 +3569,7 @@ class OGBPremiumIntegration:
     async def _on_premium_deselected(self):
         """Handle Premium mode deactivation."""
         try:
-            _LOGGER.warning(f"Premium mode deactivated for {self.room}")
+            _LOGGER.info(f"Premium mode deactivated for {self.room}")
             if not self.is_premium_selected:
                 return
 
@@ -3634,7 +3634,7 @@ class OGBPremiumIntegration:
             event_id: Optional event ID for response tracking
         """
         try:
-            _LOGGER.warning(f"🧹 {self.room} Starting authentication cleanup")
+            _LOGGER.info(f"🧹 {self.room} Starting authentication cleanup")
 
             # Disconnect WebSocket if connected
             if self.ogb_ws and self.ogb_ws.ws_connected:
@@ -3686,7 +3686,7 @@ class OGBPremiumIntegration:
                 except Exception as e:
                     _LOGGER.error(f"⚠️ {self.room} Error sending logout response: {e}")
 
-            _LOGGER.warning(f"✅ {self.room} Authentication cleanup completed")
+            _LOGGER.info(f"✅ {self.room} Authentication cleanup completed")
 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Cleanup auth error: {e}")
