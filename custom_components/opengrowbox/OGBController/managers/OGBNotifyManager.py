@@ -5,6 +5,8 @@ from typing import Dict, Optional
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
+from ..utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -27,6 +29,11 @@ class OGBNotificator:
         self.service = service  # Standard-Service
         self.critical_service = critical_service  # Service für Critical Notifications
         self.notification_enabled = notification_enabled  # Globaler An/Aus-Schalter
+
+        # Skip for ambient room - no notifications needed
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"[{self.room}] OGB Notificator disabled - ambient room")
+            return
 
         # Rate limiting configuration
         self.rate_limits = {

@@ -25,9 +25,6 @@ PRESERVED_STATE_KEYS = {
     # Grow-Mediums
     "growMediums",
 
-    # Plant Dates (wenn nicht durch HA Entities)
-    "plantDates",
-
     # Camera Timelapse
     "plantsView",
 
@@ -59,7 +56,7 @@ IGNORED_STATE_KEYS = {
     "mainControl",
     
     # Pflanzen-Daten (werden durch HA Entities restored)
-    "plantStage", "plantSpecies", "plantType", "strainName", "plantName",
+    "plantStage", "plantSpecies", "plantType", "strainName", "plantName","plantDates",
     
     # VPD-Berechnungen (werden neu berechnet)
     "vpd", "vpd.range", "vpd.perfection", "vpd.perfectMin", "vpd.perfectMax",
@@ -388,6 +385,11 @@ class OGBDSManager:
 
     async def saveState(self, data):
         """Speichert nur kritische Daten, die nicht durch HA Entities gespeichert werden."""
+        # Skip state saving for ambient room - no critical data to preserve
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"[{self.room}] SaveState skipped - ambient room")
+            return
+        
         _LOGGER.debug(f"[{self.room}] RECEIVED SaveState event: {data}")
         try:
             state = self.data_store.getFullState()

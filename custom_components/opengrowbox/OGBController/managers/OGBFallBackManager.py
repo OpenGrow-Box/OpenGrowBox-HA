@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Set
 
+from ..utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -92,6 +94,11 @@ class OGBFallBackManager:
         self.event_manager = eventManager
         self.regListener = regListener
         self.notificator = notificator
+
+        # Skip for ambient room - no devices/sensors to monitor
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: FallBack Manager disabled - ambient room")
+            return
 
         # State tracking
         self._monitored_entities: Dict[str, MonitoredEntityState] = {}

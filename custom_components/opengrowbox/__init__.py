@@ -277,11 +277,11 @@ def _add_logger_to_yaml(config_path: str) -> None:
     logger_block = f"""logger:
   default: info
   logs:
-    homeassistant.config_entries: warning
-    homeassistant.setup: warning
-    homeassistant.loader: warning
-    custom_components.opengrowbox: warning
-    custom_components.ogb-dev-env: warning
+    homeassistant.config_entries: debug
+    homeassistant.setup: debug
+    homeassistant.loader: debug
+    custom_components.opengrowbox: debug
+    custom_components.ogb-dev-env: debug
 
 """
 
@@ -757,7 +757,7 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     room_lower = room_name.lower()
 
     _LOGGER.warning(
-        "Removing OpenGrowBox entry %s for room '%s' - deleting room-scoped data (state preserved)",
+        "Removing OpenGrowBox entry %s for room '%s' - deleting room-scoped data",
         config_entry.entry_id,
         room_name or "unknown",
     )
@@ -771,13 +771,12 @@ async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 
     targets: list[str] = []
 
-    # Room-specific media and scripts in ogb_data / legacy ogb-data
-    # NOTE: State file (ogb_{room}_state.json) is intentionally NOT deleted
-    # to preserve plant dates, calibration data, and grow history across reinstalls
+    # Room-specific state and media in ogb_data / legacy ogb-data
     for base_name in ("ogb_data", "ogb-data"):
         base_dir = hass.config.path(base_name)
         targets.extend(
             [
+                os.path.join(base_dir, f"ogb_{room_lower}_state.json"),
                 os.path.join(base_dir, f"{room_name}_img"),
                 os.path.join(base_dir, f"{room_lower}_img"),
                 os.path.join(base_dir, "scripts", f"{room_lower}_script.yaml"),

@@ -35,6 +35,8 @@ from .features.OGBPremFeatureManager import OGBFeatureManager
 from .growplans.OGBGrowPlanManager import OGBGrowPlanManager
 from ..utils.ambient import do_nothing, is_ambient_room, is_not_ambient_room
 
+# ... existing code ...
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -84,6 +86,11 @@ class OGBPremiumIntegration:
         self.subscription_data = None
         self._is_initialized = False
         self._init_lock = asyncio.Lock()
+
+        # Skip for ambient room - ambient never connects to premium
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Premium Integration disabled - ambient room")
+            return
 
         # Data control
         self.lastTentMode = None

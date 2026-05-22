@@ -2,23 +2,31 @@ import asyncio
 import logging
 from datetime import datetime
 
+from ...utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
 class OGBLightScheduler:
     """Handles light scheduling, timing, and plant stage adjustments for OpenGrowBox lights."""
 
-    def __init__(self, device_name, data_store, event_manager):
+    def __init__(self, device_name, data_store, event_manager, room=None):
         """Initialize the light scheduler.
 
         Args:
             device_name: Name of the light device
             data_store: Reference to the data store
             event_manager: Reference to the event manager
+            room: Room name (optional, for ambient check)
         """
         self.device_name = device_name
         self.data_store = data_store
         self.event_manager = event_manager
+
+        # Skip for ambient room - no lights in ambient
+        if room and is_ambient_room(room):
+            _LOGGER.debug(f"{room}: Light Scheduler disabled for {device_name} - ambient room")
+            return
 
         # Light Times
         self.light_on_time = ""

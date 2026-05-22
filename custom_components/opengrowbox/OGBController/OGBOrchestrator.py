@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from typing import Any, Optional
 
+from .utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -74,6 +76,11 @@ class OGBOrchestrator:
         """Start the orchestration control loop."""
         if self._is_running:
             _LOGGER.warning(f"{self.room} Orchestrator already running")
+            return
+
+        # Skip control loop for ambient room - only sensor monitoring needed
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Orchestrator control loop disabled - ambient room")
             return
 
         self._is_running = True

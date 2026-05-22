@@ -20,6 +20,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from ..utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -42,6 +44,11 @@ class OGBDataCleanupManager:
         self.data_store = dataStore
         self.room = room
         self.retention_days = retention_days
+
+        # Skip for ambient room - no historical data to cleanup
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Data Cleanup Manager disabled - ambient room")
+            return
 
         # Cleanup task
         self._cleanup_task: Optional[asyncio.Task] = None
