@@ -834,7 +834,7 @@ class OGBPremiumIntegration:
 
                 self.subscription_data["active_grow_plan"] = active_grow_plan
                 plan_id = active_grow_plan.get('id')
-                _LOGGER.warning(
+                _LOGGER.debug(
                     f"🌱 {self.room} ACTIVE GROW PLAN RECEIVED: "
                     f"name={active_grow_plan.get('name')}, "
                     f"strain={active_grow_plan.get('strainName')}, "
@@ -849,31 +849,11 @@ class OGBPremiumIntegration:
                 self.data_store.setDeep("growPlan.id", active_grow_plan.get('id'))
                 self.data_store.setDeep("growPlan.totalWeeks", active_grow_plan.get('maxWeeks'))
                 
-                _LOGGER.warning(
-                    f"🌱 {self.room} FULL GROW PLAN. "
-                    f"Grow_Plan={active_grow_plan}, "
-                )
-
-                # Activate grow plan if not already active
-                if self.growPlanManager:
-
-                    #if self.growPlanManager.active_grow_plan_id == plan_id:
-                    #    await self.growPlanManager.get_current_week_data(plan_id)
-
-                    #else:
-                    #    _LOGGER.warning(
-                    #        f"🌱 {self.room} GrowPlanManager detected other growPlan Switching Plans. "
-                    #        f"plan_id={plan_id}, "
-                    #        f"managerActive={self.growPlanManager.managerActive}, "
-                    #    )                       
-                    #    await self.growPlanManager.activate_grow_plan_by_id(plan_id)
-
-                    if plan_id and not self.growPlanManager.managerActive:                       
-                        _LOGGER.warning(
-                            f"🌱 {self.room} ACTIVATING GROW PLAN: "
-                            f"plan_id={plan_id}, "
-                            f"name={active_grow_plan.get('name')}"
-                        )
+                # Activate grow plan or refresh week data
+                if self.growPlanManager and plan_id:
+                    if self.growPlanManager.active_grow_plan_id == plan_id and self.growPlanManager.managerActive:
+                        await self.growPlanManager._update_current_week()
+                    else:
                         await self.growPlanManager.activate_grow_plan_by_id(plan_id, active_grow_plan)
 
 

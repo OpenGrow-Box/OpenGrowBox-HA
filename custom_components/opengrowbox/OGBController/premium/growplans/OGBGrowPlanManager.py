@@ -13,7 +13,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from ...utils.Premium.ogb_state import _save_state_securely, _remove_state_file, _load_state_securely
-
+from ...utils.sensorUpdater import update_entity
+            
 _LOGGER = logging.getLogger(__name__)
 
 class OGBGrowPlanManager:
@@ -57,9 +58,7 @@ class OGBGrowPlanManager:
         self._setup_event_listeners()
         await self._start_daily_update_timer()
         _LOGGER.debug(f"OGB Grow Plan Manager initialized for room: {self.room}")
-
-
-    
+  
     def _register_bus_listener(self, event_name, callback):
         unsub = self.hass.bus.async_listen(event_name, callback)
         self._ha_unsubscribers.append(unsub)
@@ -220,8 +219,6 @@ class OGBGrowPlanManager:
             
             _LOGGER.warning(f"🌱 {self.room} Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}, Woche: {self.current_week}")
             
-            _LOGGER.warning(f"Grow Plan Settings Adjustment Started for {plan_id},")
-            
             self.managerActive = True
             self.data_store.set("growManagerActive",True)
             
@@ -275,7 +272,6 @@ class OGBGrowPlanManager:
         api_week = self.data_store.getDeep("growPlan.currentWeek")
         if api_week:
             week_number = api_week
-            _LOGGER.warning(f"🌱 {self.room} Using API-provided week: {week_number}")
         else:
             # Fallback: Calculate week from start date
             try:
@@ -296,7 +292,7 @@ class OGBGrowPlanManager:
         api_week_data = self.data_store.getDeep("growPlan.currentWeekData")
         if api_week_data and api_week_data.get("week") == week_number:
             current_week_data = api_week_data
-            _LOGGER.warning(f"🌱 {self.room} Using API-provided week data for week {week_number}")
+            _LOGGER.debug(f"{self.room} Using API-provided week data for week {week_number}")
         else:
             # Fallback: Find week data in local plan
             plan_data_raw = self.active_grow_plan.get("weeks", [])
@@ -424,14 +420,19 @@ class OGBGrowPlanManager:
             light_cycle = env.get("lightCycle", {})
             light_intensity = env.get("lightIntensity", {})
             tent_mode = week_data.get("tentMode")
-            
+            plant_stage = week_data.get("stage")
+
             _LOGGER.warning(f"🌱 {self.room} Updating entities from week data: week={week_data.get('week')}, stage={week_data.get('stage')}, tentMode={tent_mode}")
             
             # Update tentMode
             if tent_mode:
                 _LOGGER.warning(f"🌱 {self.room} Setting tentMode to: {tent_mode}")
-                await self._update_entity("ogb_tentmode", tent_mode)
-            
+                await update_entity("select.ogb_tentmode", tent_mode , self.room, self.hass)
+
+            if plant_stage:
+                _LOGGER.warning(f"🌱 {self.room} Setting PlantStage to: {plant_stage}")
+                await update_entity("select.ogb_plantstage", plant_stage , self.room, self.hass)
+
             # Update temperature targets (handle both old and new format)
             temp = env.get("temperature", {})
             if isinstance(temp, dict):
@@ -441,42 +442,42 @@ class OGBGrowPlanManager:
                 # Handle new format with min/max/optimal
                 if isinstance(day_temp, dict):
                     if day_temp.get("max") is not None:
-                        await self._update_entity("ogb_current_temp_target", day_temp["max"])
+                        await update_entity("number.ogb_maxtemp", day_temp["max"], self.room, self.hass )
                     if day_temp.get("min") is not None:
-                        await self._update_entity("ogb_current_temp_target_min", day_temp["min"])
-                elif day_temp is not None:
-                    await self._update_entity("ogb_current_temp_target", day_temp)
+                        await update_entity("number.ogb_mintemp", day_temp["min"], self.room, self.hass )
+                #elif day_temp is not None:
+                #    await update_entity("ogb_current_temp_target", day_temp)
                     
-                if isinstance(night_temp, dict):
-                    if night_temp.get("min") is not None:
-                        await self._update_entity("ogb_current_temp_target_min", night_temp["min"])
-                elif night_temp is not None:
-                    await self._update_entity("ogb_current_temp_target_min", night_temp)
+                #if isinstance(night_temp, dict):
+                #    if night_temp.get("min") is not None:
+                #        await update_entity("ogb_current_temp_target_min", night_temp["min"])
+                #elif night_temp is not None:
+                #    await update_entity("ogb_current_temp_target_min", night_temp)
             
             # Update humidity targets
             humidity = env.get("humidity", {})
             if isinstance(humidity, dict):
                 if humidity.get("day") is not None:
-                    await self._update_entity("ogb_current_humidity_target", humidity["day"])
-                if humidity.get("night") is not None:
-                    await self._update_entity("ogb_current_humidity_target_min", humidity["night"])
+                    await update_entity("number.ogb_maxhum", humidity["day"], self.room, self.hass)
+                #if humidity.get("night") is not None:
+                #    await update_entity("number.ogb_minhum", humidity["night"])
             
             # Update VPD target
             vpd = env.get("vpd", {})
             if isinstance(vpd, dict) and vpd.get("target") is not None:
-                await self._update_entity("ogb_current_vpd_target", vpd["target"])
+                await update_entity("number.ogb_vpdtarget", vpd["target"], self.room, self.hass)
             
             # Update CO2 targets
             co2 = env.get("co2", {})
             if isinstance(co2, dict):
                 if co2.get("optimal") is not None:
-                    await self._update_entity("ogb_current_co2_target", co2["optimal"])
+                    await update_entity("number.ogb_co2targetvalue", co2["optimal"], self.room, self.hass)
                 if co2.get("max") is not None:
-                    await self._update_entity("ogb_current_co2_target_max", co2["max"])
+                    await update_entity("number.ogb_co2maxvalue", co2["max"], self.room, self.hass)
                 if co2.get("min") is not None:
-                    await self._update_entity("ogb_current_co2_target_min", co2["min"])
+                    await update_entity("number.ogb_co2minvalue", co2["min"], self.room, self.hass)
                 if co2.get("enabled") is not None:
-                    await self._update_entity("ogb_co2_control", co2["enabled"])
+                    await update_entity("select.ogb_co2_control", co2["enabled"], self.room, self.hass)
             
             # Update light times
             if light_cycle:
@@ -484,69 +485,46 @@ class OGBGrowPlanManager:
                 on_hours = light_cycle.get("on")
                 if start_hour is not None:
                     light_on = f"{int(start_hour):02d}:00:00"
-                    await self._update_entity("ogb_current_light_on", light_on)
+                    await update_entity("time.ogb_lightontime", light_on, self.room, self.hass)
                 if start_hour is not None and on_hours is not None:
                     end_hour = (start_hour + on_hours) % 24
                     light_off = f"{int(end_hour):02d}:00:00"
-                    await self._update_entity("ogb_current_light_off", light_off)
+                    await update_entity("time.ogb_lightofftime", light_off, self.room, self.hass)
                 
                 # Update sunrise/sunset durations
                 sunrise_min = light_cycle.get("sunrise", 0)
                 sunset_min = light_cycle.get("sunset", 0)
                 if sunrise_min:
-                    await self._update_entity("ogb_current_sunrise_duration", sunrise_min)
+                    await update_entity("time.ogb_sunrisetime", sunrise_min, self.room, self.hass)
                 if sunset_min:
-                    await self._update_entity("ogb_current_sunset_duration", sunset_min)
+                    await update_entity("time.ogb_sunsettime", sunset_min, self.room, self.hass)
             
             # Update light intensity
             if isinstance(light_intensity, dict):
                 if light_intensity.get("min") is not None:
-                    await self._update_entity("ogb_current_light_intensity_min", light_intensity["min"])
+                    await update_entity("number.ogb_light_volt_min", light_intensity["min"], self.room, self.hass)
                 if light_intensity.get("max") is not None:
-                    await self._update_entity("ogb_current_light_intensity_max", light_intensity["max"])
+                    await update_entity("number.ogb_light_volt_max", light_intensity["max"], self.room, self.hass)
             elif isinstance(light_intensity, (int, float)):
-                await self._update_entity("ogb_current_light_intensity_max", light_intensity)
+                await update_entity("number.ogb_light_volt_max", light_intensity, self.room, self.hass)
             
             # Update tent controls
             tent_controls = week_data.get("tentControls", {})
             if tent_controls:
                 night_vpd = tent_controls.get("nightVpdHold", {})
                 if night_vpd.get("enabled") is not None:
-                    await self._update_entity("ogb_night_vpd_hold", night_vpd["enabled"])
+                    await update_entity("select.ogb_holdvpdnight", night_vpd["enabled"], self.room, self.hass)
                 
                 device_damp = tent_controls.get("deviceDampening", {})
                 if device_damp.get("enabled") is not None:
-                    await self._update_entity("ogb_device_dampening", device_damp["enabled"])
+                    await update_entity("select.ogb_vpd_devicedampening", device_damp["enabled"], self.room, self.hass)
                 
                 vpd_det = tent_controls.get("vpdDetermination", {})
                 if vpd_det.get("mode") is not None:
-                    await self._update_entity("ogb_vpd_determination_mode", vpd_det["mode"])
-                if vpd_det.get("enabled") is not None:
-                    await self._update_entity("ogb_vpd_determination", vpd_det["enabled"])
+                    await update_entity("select.ogb_vpd_determination", vpd_det["mode"], self.room, self.hass)
                 
-                drying = tent_controls.get("drying", {})
-                if drying.get("mode") is not None:
-                    await self._update_entity("ogb_drying_mode", drying["mode"])
-                if drying.get("enabled") is not None:
-                    await self._update_entity("ogb_drying", drying["enabled"])
             
             _LOGGER.warning(f"🌱 {self.room} Entity update completed")
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Error updating entities from week data: {e}")
-    
-    async def _update_entity(self, entity_prefix, value):
-        """Helper to update a specific entity."""
-        try:
-            from ...utils.sensorUpdater import _update_specific_sensor, _update_specific_select
-            
-            # Try sensor update first
-            if await _update_specific_sensor(entity_prefix, self.room, value, self.hass):
-                return
-            
-            # Try select update if sensor fails
-            if await _update_specific_select(entity_prefix, self.room, value, self.hass):
-                return
-                
-        except Exception as e:
-            _LOGGER.debug(f"{self.room} - Could not update entity {entity_prefix}: {e}")

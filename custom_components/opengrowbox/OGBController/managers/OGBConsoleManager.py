@@ -174,6 +174,14 @@ class OGBConsoleManager:
         )
 
         self.register_command(
+            "get_week",
+            self.cmd_get_week,
+            "Shows current grow plan week data",
+            "get_week",
+            ["get_week"],
+        )
+
+        self.register_command(
             "get_costs",
             self.cmd_get_costs,
             "Shows energy consumption and costs for today, week, and month",
@@ -949,6 +957,69 @@ class OGBConsoleManager:
         
         response = "\n".join(lines)
         await self._send_response(response)
+
+    async def cmd_get_week(self, params: List[str]):
+        """Shows current grow plan week data from the API."""
+        grow_plan = self.data_store.getDeep("growPlan") or {}
+        week_data = grow_plan.get("currentWeekData")
+        current_week = grow_plan.get("currentWeek")
+        plan_id = grow_plan.get("id")
+        plan_name = grow_plan.get("name")
+        total_weeks = grow_plan.get("totalWeeks")
+
+        if not plan_id:
+            await self._send_response("📋 Kein aktiver GrowPlan.")
+            return
+
+        lines = [
+            f"🌱 {plan_name or 'Unnamed'} — Woche {current_week}/{total_weeks}",
+            f"   ID: {plan_id}",
+        ]
+
+        if week_data:
+            env = week_data.get("environment", {})
+            temp = env.get("temperature", {})
+            humidity = env.get("humidity", {})
+            vpd = env.get("vpd", {})
+            co2 = env.get("co2", {})
+            light_cycle = env.get("lightCycle", {})
+
+            day_temp = temp.get("day", {})
+            if isinstance(day_temp, dict):
+                day_temp_val = day_temp.get("max", "?")
+            else:
+                day_temp_val = day_temp
+
+            night_temp = temp.get("night", {})
+            if isinstance(night_temp, dict):
+                night_temp_val = night_temp.get("min", "?")
+            else:
+                night_temp_val = night_temp
+
+            lines += [
+                "",
+                f"Stage: {week_data.get('stage', '?')}   Mode: {week_data.get('tentMode', '?')}",
+                "",
+                f"🌡️  Tag: {day_temp_val}°C  Nacht: {night_temp_val}°C",
+                f"💧 Tag: {humidity.get('day', '?')}%  Nacht: {humidity.get('night', '?')}%",
+                f"🎯 VPD: {vpd.get('target', '?')} kPa",
+                f"💨 CO₂: {co2.get('optimal', '?')} ppm ({co2.get('min', '?')}–{co2.get('max', '?')})",
+                f"💡 Licht: {light_cycle.get('on', '?')}h an / {light_cycle.get('off', '?')}h aus",
+            ]
+
+            tc = week_data.get("tentControls", {})
+            if tc:
+                lines += [
+                    "",
+                    "🎛️  Controls:",
+                    f"   Night VPD Hold: {tc.get('nightVpdHold', {}).get('enabled', '?')}",
+                    f"   Dampening: {tc.get('deviceDampening', {}).get('enabled', '?')}",
+                    f"   VPD Mode: {tc.get('vpdDetermination', {}).get('mode', '?')}",
+                ]
+        else:
+            lines.append("\n⚠️  Keine Wochendaten")
+
+        await self._send_response("\n".join(lines))
 
     async def cmd_get_costs(self, params: List[str]):
         """Shows detailed energy consumption, costs, and device statistics."""

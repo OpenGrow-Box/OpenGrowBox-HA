@@ -254,6 +254,10 @@ class OGBConf:
             "AmbientHum": None,
             "OutsiteTemp": None,
             "OutsiteHum": None,
+            "NightTempMin":None,
+            "NightTempMax":None,
+            "NightHumMin":None,
+            "NightHUmMin":None,
         }
     )
     vpd: Dict[str, Optional[Any]] = field(

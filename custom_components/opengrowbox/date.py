@@ -122,18 +122,18 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
     dates = [
-        CustomDate(
-            f"OGB_GrowStartDate_{coordinator.room_name}",
-            coordinator.room_name,
-            coordinator,
-            initial_date="",
-        ),
-        CustomDate(
-            f"OGB_BloomSwitchDate_{coordinator.room_name}",
-            coordinator.room_name,
-            coordinator,
-            initial_date="",
-        ),
+        #CustomDate(
+        #    f"OGB_GrowStartDate_{coordinator.room_name}",
+        #    coordinator.room_name,
+        #    coordinator,
+        #    initial_date="",
+        #),
+        #CustomDate(
+        #    f"OGB_BloomSwitchDate_{coordinator.room_name}",
+        #    coordinator.room_name,
+        #    coordinator,
+        #    initial_date="",
+        #),
     ]
     if "dates" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["dates"] = []

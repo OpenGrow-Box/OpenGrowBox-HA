@@ -1142,24 +1142,12 @@ class OGBWebSocketConManager:
                     
                     logging.debug(f"✅ {self.ws_room} V1 session confirmed - encryption ready (AES-256-GCM) - sessions: {self.ogb_sessions}/{self.ogb_max_sessions}")
 
-                    # Call auth callback if not already called by auth_success
-                    if self._pending_auth_callback and not self._auth_callback_called:
-                        logging.debug(f"🔄 {self.ws_room} Calling stored auth callback after V1 session confirmed")
-                        try:
-                            await self._pending_auth_callback(
-                                self._pending_event_id,
-                                "success",
-                                "V1 session confirmed",
-                                data
-                            )
-                            logging.debug(f"✅ {self.ws_room} Auth callback called successfully")
-                            self._auth_callback_called = True
-                        except Exception as e:
-                            logging.error(f"❌ {self.ws_room} Error calling auth callback: {e}")
-                        finally:
-                            # Clear callback after calling
-                            self._pending_auth_callback = None
-                            self._pending_event_id = None
+                    # Proactively fetch grow plan data after successful connection
+                    try:
+                        await self.request_grow_plans_week()
+                    except Exception as e:
+                        logging.warning(f"🌱 {self.ws_room} Initial grow plan fetch failed: {e}")
+
                 else:
                     logging.error(f"❌ {self.ws_room} V1 session ID mismatch: expected {self._session_id}, got {session_id}")
                     self.authenticated = False
@@ -1385,7 +1373,7 @@ class OGBWebSocketConManager:
                 
                 # Also emit via event_manager for internal handlers
                 if self.ogbevents:
-                    self.ogbevents.emit("new_grow_plans", emit_data)
+                    await self.ogbevents.emit("new_grow_plans", emit_data)
                     logging.info(f"🌱 {self.ws_room} Also emitted via ogbevents.emit()")
                 
             except Exception as e:
@@ -1646,12 +1634,13 @@ class OGBWebSocketConManager:
             logging.info(f"📊 {self.ws_room} Connection status update: {data}")
             
             try:
-                # New consistent API structure: { plan, features, limits, usage, ogb_sessions, timestamp }
+                # New consistent API structure: { plan, features, limits, usage, ogb_sessions, activeGrowPlan, timestamp }
                 server_plan = data.get("plan")
                 features = data.get("features", {})
                 limits = data.get("limits", {})
                 usage = data.get("usage", {})
                 ogb_sessions = data.get("ogb_sessions", {})
+                active_grow_plan = data.get("activeGrowPlan")
                 
                 logging.info(f"📊 {self.ws_room} Connection status: plan={server_plan}")
                 
@@ -1715,6 +1704,7 @@ class OGBWebSocketConManager:
                     "features": features,
                     "limits": limits,
                     "usage": self.subscription_data.get("usage", {}),
+                    "activeGrowPlan": active_grow_plan,
                     "timestamp": data.get("timestamp", time.time())
                 }
                 

@@ -120,7 +120,46 @@ class DataStore(SimpleEventEmitter):
         return f"Datastore State:'{self.state}'"
 
     def get(self, key):
-        """Ruft den Wert für einen Schlüssel ab."""
+        """Ruft den Wert für einen Schlüssel ab.
+        
+        Wenn GrowPlan aktiv: merged tentData mit WeekData-Werten.
+        """
+        if key == "tentData" and getattr(self.state, "growManagerActive", None):
+            stored = getattr(self.state, "tentData", None) or {}
+            week_data = self.getDeep("growPlan.currentWeekData")
+            if week_data:
+                merged = dict(stored)
+                env = week_data.get("environment", {})
+
+                temp = env.get("temperature", {})
+                if isinstance(temp, dict):
+                    day_temp = temp.get("day")
+                    if isinstance(day_temp, dict):
+                        if day_temp.get("max") is not None:
+                            merged["maxTemp"] = day_temp["max"]
+                    elif day_temp is not None:
+                        merged["maxTemp"] = day_temp
+
+                    night_temp = temp.get("night")
+                    if isinstance(night_temp, dict):
+                        if night_temp.get("min") is not None:
+                            merged["minTemp"] = night_temp["min"]
+                    elif night_temp is not None:
+                        merged["minTemp"] = night_temp
+
+                humidity = env.get("humidity", {})
+                if isinstance(humidity, dict):
+                    if humidity.get("day") is not None:
+                        merged["maxHumidity"] = humidity["day"]
+                    if humidity.get("night") is not None:
+                        merged["minHumidity"] = humidity["night"]
+
+                vpd = env.get("vpd", {})
+                if isinstance(vpd, dict) and vpd.get("target") is not None:
+                    merged["targetVPD"] = vpd["target"]
+
+                return merged
+
         return getattr(self.state, key, None)
 
     def set(self, key, value):
@@ -130,7 +169,16 @@ class DataStore(SimpleEventEmitter):
             self.emit(key, value)
 
     def getDeep(self, path, default=None):
-        """Ruft verschachtelte Daten anhand eines Pfads ab (für Attribute oder Schlüssel in Dictionaries)."""
+        """Ruft verschachtelte Daten anhand eines Pfads ab (für Attribute oder Schlüssel in Dictionaries).
+        
+        Wenn GrowPlan aktiv: prüft get_active_value für bekannte Pfade.
+        """
+        if (not path.startswith("growPlan")
+            and getattr(self.state, "growManagerActive", None)):
+            result = self.get_active_value(path)
+            if result is not None:
+                return result
+
         keys = path.split(".")
         data = self.state
         for key in keys:
