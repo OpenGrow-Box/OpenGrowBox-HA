@@ -583,7 +583,6 @@ class OGBEnergyManager:
             # Atomically persist
             self.data_store.setDeep("Energy", energy_data)
             
-            # CRITICAL: Emit SaveState to ensure data is written to disk
             # This prevents data loss on unexpected restarts
             try:
                 await self.event_manager.emit("SaveState", {"source": "OGBEnergyManager", "room": self.room})

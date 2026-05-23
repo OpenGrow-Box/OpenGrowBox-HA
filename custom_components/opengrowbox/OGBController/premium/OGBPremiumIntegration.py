@@ -1334,9 +1334,6 @@ class OGBPremiumIntegration:
                     await self.growPlanManager._update_entities_from_week_data()
                     _LOGGER.debug(f"🌱 {self.room} Updated entities from week data")
                 
-                # Persist to disk
-                await self.event_manager.emit("SaveState", {"source": "PremiumIntegration", "action": "grow_plan_week_data"})
-                
             elif active_plan:
                 _LOGGER.debug(f"🌱 {self.room} Received activePlan without week data")
                 # Store basic plan info
