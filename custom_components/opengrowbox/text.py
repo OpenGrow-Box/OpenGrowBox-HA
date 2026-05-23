@@ -48,11 +48,13 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
 
     async def async_set_value(self, value: str) -> None:
         if len(value) > 254:
-            _LOGGER.warning(f"Token input too long: {value}")
+            _LOGGER.warning(f"Token input too long ({len(value)} chars)")
             return
         self._value = value
         self.async_write_ha_state()
-        _LOGGER.debug(f"Token '{self._name}' set to {value}")
+        
+        masked = value[:4] + "****" + value[-4:] if len(value) > 8 else "****"
+        _LOGGER.debug(f"Token '{self._name}' set to {masked}")
 
     async def async_added_to_hass(self):
         """Restore previous value."""
@@ -108,14 +110,16 @@ class CustomText(TextEntity, RestoreEntity):
         self.async_write_ha_state()
         _LOGGER.debug(f"Text '{self._name}' set to {value}")
 
-    async def async_added_to_hass(self) -> None:
+    async def async_added_to_hass(self):
+        """Restore previous value."""
         await super().async_added_to_hass()
-        state = await self.async_get_last_state()
-        if state and state.state not in (None, "", "unknown", "unavailable"):
-            self._value = state.state
-            _LOGGER.debug(f"Restored text for '{self._name}': {self._value}")
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in (None, "", "unknown", "unavailable"):
+            self._value = last_state.state
+            masked = self._value[:4] + "****" + self._value[-4:] if len(self._value) > 8 else "****"
+            _LOGGER.debug(f"Restored access token: {masked}")
         else:
-            _LOGGER.debug(f"No state to restore for '{self._name}'")
+            _LOGGER.debug(f"No state to restore for {self.name}")
         self.async_write_ha_state()
 
 
