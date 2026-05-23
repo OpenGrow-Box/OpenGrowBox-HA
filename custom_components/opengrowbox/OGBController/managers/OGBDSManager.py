@@ -391,6 +391,13 @@ class OGBDSManager:
             _LOGGER.debug(f"[{self.room}] SaveState skipped - ambient room")
             return
         
+        # CRITICAL: Skip if state hasn't been loaded from disk yet
+        # Prevents managers (e.g. OGBEnergyManager) from overwriting the state file
+        # with empty data during startup before OGBDSManager loads persisted state
+        if not self._state_loaded:
+            _LOGGER.debug(f"[{self.room}] SaveState skipped - state not loaded from disk yet")
+            return
+        
         _LOGGER.debug(f"[{self.room}] RECEIVED SaveState event: {data}")
         try:
             state = self.data_store.getFullState()
