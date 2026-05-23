@@ -59,7 +59,7 @@ class OGBDataCleanupManager:
         self.aggregation_interval = 86400  # 24 hours
         self.deep_cleanup_interval = 604800  # 7 days
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"✅ {self.room} Data Cleanup Manager initialized (retention: {retention_days} days)"
         )
 
@@ -72,7 +72,7 @@ class OGBDataCleanupManager:
         self._is_running = True
         if self._cleanup_task is None or self._cleanup_task.done():
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-            _LOGGER.info(f"🧹 {self.room} Data cleanup system started")
+            _LOGGER.debug(f"🧹 {self.room} Data cleanup system started")
 
     async def stop_cleanup(self):
         """Stop the cleanup system."""
@@ -86,11 +86,11 @@ class OGBDataCleanupManager:
             except asyncio.CancelledError:
                 pass
 
-        _LOGGER.info(f"🛑 {self.room} Data cleanup system stopped")
+        _LOGGER.debug(f"🛑 {self.room} Data cleanup system stopped")
 
     async def _cleanup_loop(self):
         """Main cleanup loop - runs different cleanup tasks at different intervals."""
-        _LOGGER.info(f"{self.room} Data cleanup loop started")
+        _LOGGER.debug(f"{self.room} Data cleanup loop started")
 
         last_aggregation = datetime.now()
         last_deep_cleanup = datetime.now()
@@ -120,7 +120,7 @@ class OGBDataCleanupManager:
                 await asyncio.sleep(self.sensor_cleanup_interval)
 
             except asyncio.CancelledError:
-                _LOGGER.info(f"{self.room} Cleanup loop cancelled")
+                _LOGGER.debug(f"{self.room} Cleanup loop cancelled")
                 break
             except Exception as e:
                 _LOGGER.error(
@@ -224,7 +224,7 @@ class OGBDataCleanupManager:
                     cleaned_count += original_count - len(filtered_history)
 
             if cleaned_count > 0:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🧹 {self.room} Cleaned {cleaned_count} old sensor readings"
                 )
 
@@ -332,7 +332,7 @@ class OGBDataCleanupManager:
             # Note: This is a simplified version - in practice you'd need to
             # iterate through all dataStore keys and clean old aggregated data
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"🧽 {self.room} Deep cleanup completed - removed {cleaned_count} old records"
             )
 
@@ -395,17 +395,17 @@ class OGBDataCleanupManager:
 
     async def force_cleanup_now(self):
         """Force immediate cleanup of all data types."""
-        _LOGGER.info(f"🔧 {self.room} Forcing immediate cleanup")
+        _LOGGER.debug(f"🔧 {self.room} Forcing immediate cleanup")
         await self._cleanup_sensor_data()
         await self._aggregate_sensor_data()
         await self._deep_cleanup()
-        _LOGGER.info(f"✅ {self.room} Forced cleanup completed")
+        _LOGGER.debug(f"✅ {self.room} Forced cleanup completed")
 
     async def set_retention_policy(self, days: int):
         """Update data retention policy."""
         if 1 <= days <= 90:  # Reasonable bounds
             self.retention_days = days
-            _LOGGER.info(f"📅 {self.room} Data retention policy updated to {days} days")
+            _LOGGER.debug(f"📅 {self.room} Data retention policy updated to {days} days")
         else:
             _LOGGER.warning(
                 f"{self.room} Invalid retention days: {days} (must be 1-90)"

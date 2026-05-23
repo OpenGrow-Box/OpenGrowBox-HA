@@ -45,7 +45,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
             os.makedirs(icon_js_dest_dir, exist_ok=True)
             if not os.path.exists(icon_js_dest):
                 shutil.copy(icon_js_src, icon_js_dest)
-                _LOGGER.info(f"Copied ogb_icons.js to {icon_js_dest}")
+                _LOGGER.debug(f"Copied ogb_icons.js to {icon_js_dest}")
             else:
                 _LOGGER.debug(f"ogb_icons.js already exists in {icon_js_dest_dir}")
         except Exception as e:
@@ -62,7 +62,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
             os.makedirs(png_dest_dir, exist_ok=True)
             if not os.path.exists(png_dest):
                 shutil.copy(png_src, png_dest)
-                _LOGGER.info(f"Copied ogb_tree.png to {png_dest}")
+                _LOGGER.debug(f"Copied ogb_tree.png to {png_dest}")
             else:
                 _LOGGER.debug(f"ogb_tree.png already exists in {png_dest_dir}")
         except Exception as e:
@@ -89,6 +89,6 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
             },
             require_admin=False,
         )
-        _LOGGER.info(f"Custom panel registered with icon: {sidebar_icon}")
+        _LOGGER.debug(f"Custom panel registered with icon: {sidebar_icon}")
     else:
         _LOGGER.debug("Custom panel already registered.")

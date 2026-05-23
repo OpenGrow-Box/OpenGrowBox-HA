@@ -74,7 +74,7 @@ class OGBUsageMetrics:
         self.pages_viewed = 0
         self.errors_encountered = 0
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"📊 Usage metrics initialized for {self.room} "
             f"(user: {user_id[:8]}, plan: {plan_name})"
         )
@@ -127,7 +127,7 @@ class OGBUsageMetrics:
                 self.first_blocked_feature = feature_name
                 self.first_blocked_at = datetime.now(timezone.utc)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"📊 {self.room} Feature denied: {feature_name} "
                 f"(reason: {reason or 'subscription tier'})"
             )
@@ -181,7 +181,7 @@ class OGBUsageMetrics:
         self.upgrade_prompts_shown += 1
         self.last_activity = datetime.now(timezone.utc)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"📊 {self.room} Upgrade prompt shown: {feature_name} "
             f"(type: {prompt_type}, total: {self.upgrade_prompts_shown})"
         )
@@ -202,7 +202,7 @@ class OGBUsageMetrics:
             else 0
         )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"📊 {self.room} Upgrade prompt clicked: {feature_name} "
             f"(clicks: {self.upgrade_prompts_clicked}, "
             f"conversion rate: {conversion_rate:.1f}%)"

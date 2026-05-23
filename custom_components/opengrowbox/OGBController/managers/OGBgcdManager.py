@@ -148,7 +148,7 @@ class OGBgcdManager:
             if not user_cooldowns:
                 user_cooldowns = self.data_store.getDeep("controlOptions.deviceCooldowns")
                 if user_cooldowns:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room}: Migrated cooldowns from controlOptions.deviceCooldowns to top-level deviceCooldowns"
                     )
                     # Migrate to new location
@@ -166,7 +166,7 @@ class OGBgcdManager:
                         )
 
                 if updated_count > 0:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room}: Loaded {updated_count} user-defined cooldown(s) from datastore: {user_cooldowns}"
                     )
             else:
@@ -187,7 +187,7 @@ class OGBgcdManager:
         try:
             # Save to top-level key for persistence
             self.data_store.set("deviceCooldowns", self.cooldowns)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: Saved {len(self.cooldowns)} cooldown(s) to datastore"
             )
             
@@ -439,7 +439,7 @@ class OGBgcdManager:
                 f"{self.room}: Emergency conditions active: {conditions}"
             )
         else:
-            _LOGGER.info(f"{self.room}: Emergency conditions cleared")
+            _LOGGER.debug(f"{self.room}: Emergency conditions cleared")
 
     async def _clear_all(self):
         """
@@ -450,4 +450,4 @@ class OGBgcdManager:
         for capability in self.action_history:
             self.action_history[capability]["cooldown_until"] = now
 
-        _LOGGER.info(f"{self.room}: All cooldowns cleared")
+        _LOGGER.debug(f"{self.room}: All cooldowns cleared")

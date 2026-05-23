@@ -263,7 +263,7 @@ class ClosedControlLogic:
         if humidity_influence is not None:
             self.ambient_humidity_influence = max(0.0, min(1.0, humidity_influence))
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"Ambient influence updated for {self.room}: "
             f"temp={self.ambient_temp_influence}, humidity={self.ambient_humidity_influence}"
         )

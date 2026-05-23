@@ -123,7 +123,7 @@ class ClosedActions:
         current_o2 = self.ogb.dataStore.getDeep("tentData.o2Level")
         if current_o2 is None:
             if not self._o2_warning_logged:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.ogb.room}: O2 safety monitor inactive - no O2 sensor available in Closed Environment"
                 )
                 self._o2_warning_logged = True
@@ -194,7 +194,7 @@ class ClosedActions:
             and target_temp is not None
             and float(current_temp) < float(target_temp) - self.humidify_temp_guard
         ):
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.ogb.room}: Skipping humidify because temperature is below target "
                 f"({current_temp} < {target_temp} - {self.humidify_temp_guard})"
             )
@@ -208,7 +208,7 @@ class ClosedActions:
             and target_humidity is not None
             and float(current_humidity) >= float(target_humidity) - self.cooling_humidity_guard
         ):
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.ogb.room}: Skipping humidify because humidity is already close to target "
                 f"({current_humidity} vs {target_humidity})"
             )
@@ -373,7 +373,7 @@ class ClosedActions:
             )
         else:
             # Priority 2: Smart cooling fallback (exhaust, dehumidify, reduce lights)
-            _LOGGER.info(f"{self.ogb.room}: No cooler available, using smart cooling fallback")
+            _LOGGER.debug(f"{self.ogb.room}: No cooler available, using smart cooling fallback")
             fallback_actions = await self._smart_cool_fallback(capabilities, action_message)
             action_map.extend(fallback_actions)
 
@@ -512,7 +512,7 @@ class ClosedActions:
 
         if not is_light_on and not night_vpd_hold:
             # Night mode without VPD hold - use power-saving mode
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.ogb.room}: Night mode without VPD hold - using power-saving mode"
             )
             await self._handle_night_mode_power_saving(capabilities)
@@ -592,7 +592,7 @@ class ClosedActions:
 
         # Execute all collected actions at once
         if all_actions:
-            _LOGGER.info(f"{self.ogb.room}: Executing {len(all_actions)} closed environment actions")
+            _LOGGER.debug(f"{self.ogb.room}: Executing {len(all_actions)} closed environment actions")
             await self.action_manager.checkLimitsAndPublicateNoVPD(all_actions)
 
         # Emit consolidated log event (like VPD Perfection)
@@ -1253,7 +1253,7 @@ class ClosedActions:
 
         # Execute all actions
         if all_actions:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.ogb.room}: Night Mode Power-Saving - {len(all_actions)} actions"
             )
             await self.action_manager.checkLimitsAndPublicateNoVPD(all_actions)

@@ -165,7 +165,7 @@ class OGBLightScheduler:
             min_voltage = percent_range["min"]
             max_voltage = percent_range["max"]
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.device_name}: Set voltage range for phase '{plant_stage}' "
                 f"to {min_voltage}V–{max_voltage}V."
             )
@@ -361,7 +361,7 @@ class OGBLightScheduler:
         today = datetime.now().date()
         if today > self.last_day_reset:
             self.last_day_reset = today
-            _LOGGER.info(f"{self.device_name}: Daily reset of sun phases performed")
+            _LOGGER.debug(f"{self.device_name}: Daily reset of sun phases performed")
             return True
         return False
 

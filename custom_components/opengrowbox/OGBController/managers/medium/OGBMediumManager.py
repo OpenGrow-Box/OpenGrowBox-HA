@@ -118,7 +118,7 @@ class OGBMediumManager:
     async def _emit_initial_data(self):
         """Emit initial medium and plant data to UI on startup."""
         try:
-            _LOGGER.info(f"{self.room}: Emitting initial data for {len(self.media)} mediums")
+            _LOGGER.debug(f"{self.room}: Emitting initial data for {len(self.media)} mediums")
             
             # Emit all plants data to MediumContext
             await self.emit_all_plants_update()
@@ -129,7 +129,7 @@ class OGBMediumManager:
                 await self.event_manager.emit("LogForClient", medium_data, haEvent=True, debug_type="DEBUG")
                 _LOGGER.debug(f"Emitted initial data for medium: {medium.name}")
             
-            _LOGGER.info(f"{self.room}: Initial data emission complete")
+            _LOGGER.debug(f"{self.room}: Initial data emission complete")
         except Exception as e:
             _LOGGER.error(f"Error emitting initial medium data: {e}", exc_info=True)
 
@@ -349,7 +349,7 @@ class OGBMediumManager:
             self._save_mediums_to_store()
             await self.emit_all_plants_update()
             
-            _LOGGER.info(f"[{self.room}] Updated {len(self.media)} mediums to plantStage={new_stage}")
+            _LOGGER.debug(f"[{self.room}] Updated {len(self.media)} mediums to plantStage={new_stage}")
             
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error handling PlantStageChange: {e}", exc_info=True)
@@ -432,7 +432,7 @@ class OGBMediumManager:
 
                 if medium.unregister_sensor(entity_id):
                     del self._entity_to_medium_index[entity_id]
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Sensor {entity_id} removed from Medium {medium.name}"
                     )
                     self._save_mediums_to_store()
@@ -502,7 +502,7 @@ class OGBMediumManager:
             
             # 3. Emit medium values update for UI - only on actual changes
             medium_values = medium.get_all_medium_values()
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.room}] 📊 Medium {medium.name} changed: {data.get('sensor_type')}="
                 f"{data.get('state') or data.get('last_reading')} -> Emitting LogForClient"
             )
@@ -604,7 +604,7 @@ class OGBMediumManager:
         default_type = MediumType.SOIL
         self.current_medium_type = default_type
         await self._create_mediums(default_type, 1)
-        _LOGGER.info(
+        _LOGGER.debug(
             f"Created default medium: {default_type.value}_1 for room {self.room}"
         )
 
@@ -660,7 +660,7 @@ class OGBMediumManager:
             _LOGGER.debug(f"{self.room}: Cannot have less than 1 medium, setting count to 1")
             count = 1
 
-        _LOGGER.info(f"{self.room}: Processing medium change: {base.value} x {count}")
+        _LOGGER.debug(f"{self.room}: Processing medium change: {base.value} x {count}")
         await self._sync_mediums(base, count)
 
     def _parse_medium_input(self, input_str: str) -> tuple:
@@ -790,7 +790,7 @@ class OGBMediumManager:
                 plant_stage=global_plant_stage,  # Use global plantStage
             )
             self.media.append(medium)
-            _LOGGER.info(f"Created medium {name} with plantStage={global_plant_stage}")
+            _LOGGER.debug(f"Created medium {name} with plantStage={global_plant_stage}")
 
         # Names are already correct from creation, no need to sync
         self._save_mediums_to_store()
@@ -841,14 +841,14 @@ class OGBMediumManager:
             while True:
                 try:
                     await asyncio.sleep(24 * 3600)
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Daily medium check for {self.room}: {len(self.media)} active mediums"
                     )
 
                     # Log status
                     for medium in self.media:
                         status = medium.get_status()
-                        _LOGGER.info(f"Medium {medium.name}: {status}")
+                        _LOGGER.debug(f"Medium {medium.name}: {status}")
                 except asyncio.CancelledError:
                     _LOGGER.debug(f"Daily update timer cancelled for {self.room}")
                     break
@@ -860,7 +860,7 @@ class OGBMediumManager:
     async def async_shutdown(self):
         """Shutdown manager and cleanup resources."""
         try:
-            _LOGGER.info(f"Shutting down Medium Manager for {self.room}")
+            _LOGGER.debug(f"Shutting down Medium Manager for {self.room}")
 
             # Cancel save task
             if self._save_task and not self._save_task.done():
@@ -878,7 +878,7 @@ class OGBMediumManager:
             # Final save
             self._save_mediums_to_store()
 
-            _LOGGER.info(f"Medium Manager shutdown complete for {self.room}")
+            _LOGGER.debug(f"Medium Manager shutdown complete for {self.room}")
 
         except Exception as e:
             _LOGGER.error(f"Error during shutdown: {e}")
@@ -954,7 +954,7 @@ class OGBMediumManager:
         await self.event_manager.emit("MediumPlantsUpdate", publication, haEvent=True)
         # Note: Not emitting to LogForClient - this is only for MediumContext, not GrowLogs
         
-        _LOGGER.info(f"{self.room}: Emitted MediumPlantsUpdate for {len(plants_data)} mediums")
+        _LOGGER.debug(f"{self.room}: Emitted MediumPlantsUpdate for {len(plants_data)} mediums")
 
     async def update_medium_plant_dates(
         self, 
@@ -1258,12 +1258,12 @@ class OGBMediumManager:
             # Load medium configuration from dataStore
             medium_config = self.data_store.getDeep("Mediums")
             if medium_config:
-                _LOGGER.info(f"[{self.room}] Found medium config, processing...")
+                _LOGGER.debug(f"[{self.room}] Found medium config, processing...")
                 # Process legacy config format if present
                 for medium_id, properties in medium_config.items():
                     await self.update_medium_properties(medium_id, properties)
 
-            _LOGGER.info(f"[{self.room}] Initialized {len(self.media)} mediums from config")
+            _LOGGER.debug(f"[{self.room}] Initialized {len(self.media)} mediums from config")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error initializing mediums from config: {e}")

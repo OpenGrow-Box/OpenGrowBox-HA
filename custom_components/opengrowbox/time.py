@@ -80,7 +80,7 @@ class CustomTime(TimeEntity, RestoreEntity):
             new_time = self._parse_time(value)
             self._time = new_time
             self.async_write_ha_state()
-            _LOGGER.info(f"Time '{self._name}' set to {new_time}")
+            _LOGGER.debug(f"Time '{self._name}' set to {new_time}")
         except ValueError as e:
             _LOGGER.error(f"Failed to set time for '{self._name}': {e}")
 
@@ -92,7 +92,7 @@ class CustomTime(TimeEntity, RestoreEntity):
             try:
                 restored_time = self._parse_time(state.state)
                 self._time = restored_time
-                _LOGGER.info(f"Restored time for '{self._name}': {restored_time}")
+                _LOGGER.debug(f"Restored time for '{self._name}': {restored_time}")
             except ValueError:
                 _LOGGER.warning(
                     f"Failed to restore time for '{self._name}', using default."
@@ -142,12 +142,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             """Handle the update_time service call."""
             entity_id = call.data.get("entity_id")
             new_time = call.data.get("time")
-            _LOGGER.info(f"Received update_time request for {entity_id} to {new_time}")
+            _LOGGER.debug(f"Received update_time request for {entity_id} to {new_time}")
 
             for time_entity in hass.data[DOMAIN]["times"]:
                 if time_entity.entity_id == entity_id:
                     await time_entity.async_set_value(new_time)
-                    _LOGGER.info(f"Updated time for {entity_id} to {new_time}")
+                    _LOGGER.debug(f"Updated time for {entity_id} to {new_time}")
                     return
             _LOGGER.warning(f"Time entity with id {entity_id} not found")
 

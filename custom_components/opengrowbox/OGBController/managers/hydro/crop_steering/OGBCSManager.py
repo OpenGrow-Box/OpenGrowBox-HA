@@ -101,12 +101,12 @@ class OGBCSManager:
                     # GrowMedium object - medium_type is MediumType enum
                     self.medium_type = first_medium.medium_type.value
                     medium_found = True
-                    _LOGGER.info(f"{self.room} - Got medium type from GrowMedium: {self.medium_type}")
+                    _LOGGER.debug(f"{self.room} - Got medium type from GrowMedium: {self.medium_type}")
                 elif isinstance(first_medium, dict) and "type" in first_medium:
                     # Dict format (from persistence)
                     self.medium_type = first_medium["type"].lower()
                     medium_found = True
-                    _LOGGER.info(f"{self.room} - Got medium type from dict: {self.medium_type}")
+                    _LOGGER.debug(f"{self.room} - Got medium type from dict: {self.medium_type}")
 
             # Priority 2: Fallback to dataStore CropSteering settings (only if no medium found)
             if not medium_found:
@@ -114,7 +114,7 @@ class OGBCSManager:
                 if stored_medium:
                     self.medium_type = stored_medium.lower()
                     medium_found = True
-                    _LOGGER.info(f"{self.room} - Got medium type from CropSteering.MediumType: {self.medium_type}")
+                    _LOGGER.debug(f"{self.room} - Got medium type from CropSteering.MediumType: {self.medium_type}")
 
             # Priority 3: Default fallback
             if not medium_found:
@@ -125,7 +125,7 @@ class OGBCSManager:
             _LOGGER.warning(f"{self.room} - Could not sync medium type: {e}")
             self.medium_type = "rockwool"
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room} - CropSteering using medium type: {self.medium_type}"
         )
 
@@ -149,7 +149,7 @@ class OGBCSManager:
             self.medium_type = new_medium
             self.data_store.setDeep("CropSteering.MediumType", new_medium)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - CropSteering medium changed: {old_medium} → {new_medium}"
             )
 
@@ -269,7 +269,7 @@ class OGBCSManager:
                 blocking=True,
             )
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Updated number entity {entity_id} to {value:.1f}"
             )
             
@@ -391,7 +391,7 @@ class OGBCSManager:
 
         # ===== STEP 7: Start the appropriate task =====
         if mode == CSMode.AUTOMATIC:
-            _LOGGER.info(f"{self.room} - STARTING AUTOMATIC cycle")
+            _LOGGER.debug(f"{self.room} - STARTING AUTOMATIC cycle")
             self._main_task = asyncio.create_task(self._automatic_cycle())
         elif mode.value.startswith("Manual"):
             # For Manual mode, get phase from CropPhase selector (set by Phases entity)
@@ -412,7 +412,7 @@ class OGBCSManager:
                 phase = self._extract_phase_from_mode(mode)
                 _LOGGER.debug(f"{self.room} - Extracted phase from mode enum: {phase}")
             
-            _LOGGER.info(f"{self.room} - STARTING MANUAL cycle for phase {phase}")
+            _LOGGER.debug(f"{self.room} - STARTING MANUAL cycle for phase {phase}")
             self._main_task = asyncio.create_task(self._manual_cycle(phase))
         else:
             _LOGGER.error(f"{self.room} - Unknown mode: {mode}")
@@ -585,7 +585,7 @@ class OGBCSManager:
             # No phase in mode string - check CropPhase selector
             stored_phase = self.data_store.getDeep("CropSteering.CropPhase")
             if stored_phase and stored_phase.lower() in ["p0", "p1", "p2", "p3"]:
-                _LOGGER.info(f"{self.room} - Manual mode using CropPhase: {stored_phase}")
+                _LOGGER.debug(f"{self.room} - Manual mode using CropPhase: {stored_phase}")
                 return CSMode[f"MANUAL_{stored_phase.upper()}"]
             
             # Default to P0 if nothing else specified
@@ -817,7 +817,7 @@ class OGBCSManager:
             # Temporarily override capabilities for UI display
             self.data_store.setDeep("capabilities.canPump", filtered_capabilities)
 
-            _LOGGER.info(f"{self.room} - Filtered capabilities.canPump for Crop-Steering: {all_devices} → {dripper_devices}")
+            _LOGGER.debug(f"{self.room} - Filtered capabilities.canPump for Crop-Steering: {all_devices} → {dripper_devices}")
 
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error filtering capabilities for Crop-Steering: {e}")
@@ -911,7 +911,7 @@ class OGBCSManager:
             )
         }
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room} - Automatic timing settings for {phase}: "
             f"Duration={settings['ShotDuration']}s, "
             f"Interval={settings['ShotIntervall']}min, "
@@ -1021,7 +1021,7 @@ class OGBCSManager:
             # === NIGHT TIME - ALWAYS P3, no irrigation at night ===
             # Night irrigation disrupts the dryback cycle which is essential for generative steering
             self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-            _LOGGER.info(f"{self.room} - Night time (light OFF), starting P3 Dryback (VWC={vwc:.1f}%)")
+            _LOGGER.debug(f"{self.room} - Night time (light OFF), starting P3 Dryback (VWC={vwc:.1f}%)")
             return "p3"
         
         # === DAY TIME ===
@@ -1042,15 +1042,15 @@ class OGBCSManager:
         # Only start in P1 if critically dry, only start in P2 if already at/above max
         if vwc < vwc_min:
             # Block is dry -> P1 Saturation needed
-            _LOGGER.info(f"{self.room} - Day, VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
+            _LOGGER.debug(f"{self.room} - Day, VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
             return "p1"
         elif vwc >= vwc_max:
             # Block is already at max -> P2 Maintenance (just hold it)
-            _LOGGER.info(f"{self.room} - Day, VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
+            _LOGGER.debug(f"{self.room} - Day, VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
             return "p2"
         else:
             # VWC is between min and max -> P0 Monitoring (wait for dryback signal)
-            _LOGGER.info(f"{self.room} - Day, VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
+            _LOGGER.debug(f"{self.room} - Day, VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
             return "p0"
 
     def _get_light_transition_times(self):
@@ -1255,7 +1255,7 @@ class OGBCSManager:
             # Get plant info from GrowMedium (authoritative source)
             plant_phase, generative_week = self._get_plant_info_from_medium()
             
-            _LOGGER.info(f"{self.room} - Plant info from medium: phase={plant_phase}, week={generative_week}")
+            _LOGGER.debug(f"{self.room} - Plant info from medium: phase={plant_phase}, week={generative_week}")
 
             # IMPORTANT: ALWAYS determine start phase based on CURRENT conditions
             # Ignore any persisted phase - we need to evaluate the actual situation
@@ -1265,7 +1265,7 @@ class OGBCSManager:
             # Clear any old persisted phase and set the freshly determined one
             self.data_store.setDeep("CropSteering.CropPhase", initial_phase)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Automatic CS cycle started in phase {initial_phase}"
             )
 
@@ -1380,7 +1380,7 @@ class OGBCSManager:
         else:
             is_light_on = bool(is_light_on_raw)
         if not is_light_on:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P0: Lights are OFF, transitioning to P3 Night Dryback"
             )
             self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
@@ -1398,7 +1398,7 @@ class OGBCSManager:
         
         # P0 is simple: Wait until VWC falls below minimum
         if vwc < preset["VWCMin"]:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P0: VWC {vwc:.1f}% < Min {preset['VWCMin']:.1f}% → Switching to P1"
             )
             self.data_store.setDeep("CropSteering.CropPhase", "p1")
@@ -1449,7 +1449,7 @@ class OGBCSManager:
         
         # Check if lights will turn off soon (2h buffer)
         if self._is_near_light_off(buffer_minutes=120):
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P1: Lights will turn off soon, stopping irrigation early"
             )
             # Transition to P3 early to start dryback
@@ -1527,7 +1527,7 @@ class OGBCSManager:
 
         # === 1. Target reached? ===
         if vwc >= target_max:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P1: Target reached {vwc:.1f}% >= {target_max:.1f}%"
             )
             await self._complete_p1_saturation(vwc, target_max, success=True)
@@ -1542,7 +1542,7 @@ class OGBCSManager:
         if p1_irrigation_count >= 3 and vwc_increase_since_last < 1.5:
             if vwc >= min_vwc_for_stagnation:
                 # Legitimate stagnation - block is actually full
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - P1: Stagnation at {vwc:.1f}% (no increase since last shot)"
                 )
                 await self.event_manager.emit(
@@ -1581,7 +1581,7 @@ class OGBCSManager:
 
         # === 3. Max Attempts? ===
         if p1_irrigation_count >= max_cycles:
-            _LOGGER.info(f"{self.room} - P1: Max attempts reached ({max_cycles})")
+            _LOGGER.debug(f"{self.room} - P1: Max attempts reached ({max_cycles})")
             
             # Only save calibration if VWC reached a reasonable level
             if vwc >= min_vwc_for_stagnation:
@@ -1625,7 +1625,7 @@ class OGBCSManager:
             # CRITICAL: Check if target reached after irrigation
             current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
             if current_vwc >= target_max:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - P1: Target reached after irrigation! "
                     f"VWC {current_vwc:.1f}% >= {target_max:.1f}% → Switching to P2"
                 )
@@ -1652,7 +1652,7 @@ class OGBCSManager:
                 },
                 haEvent=True,
             )
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P1: Shot {p1_irrigation_count}/{max_cycles}, VWC={current_vwc:.1f}%, duration={shot_duration}s, next in {next_shot_min:.0f}min"
             )
         else:
@@ -1691,7 +1691,7 @@ class OGBCSManager:
             haEvent=True,
         )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room} - P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%, success={success}"
         )
 
@@ -1743,7 +1743,7 @@ class OGBCSManager:
                 if vwc < hold_threshold:
                     # Check if we've reached max shots limit
                     if p2_shot_count >= max_shots:
-                        _LOGGER.info(f"{self.room} - P2: Max shots reached ({max_shots}) - skipping irrigation")
+                        _LOGGER.debug(f"{self.room} - P2: Max shots reached ({max_shots}) - skipping irrigation")
                         await self.event_manager.emit(
                             "LogForClient",
                             {
@@ -1766,7 +1766,7 @@ class OGBCSManager:
                         },
                         haEvent=True,
                     )
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room} - P2: Irrigated (VWC {vwc:.1f}% < {hold_threshold:.1f}%)"
                     )
                 else:
@@ -1776,7 +1776,7 @@ class OGBCSManager:
                     )
             else:
                 # STAGE-CHECKER: Light is off -> Switch to P3
-                _LOGGER.info(f"{self.room} - P2: Light OFF → Switching to P3")
+                _LOGGER.debug(f"{self.room} - P2: Light OFF → Switching to P3")
                 # Reset P2 state tracking before leaving phase
                 self._reset_p2_state_tracking()
                 self.data_store.setDeep("CropSteering.CropPhase", "p3")
@@ -1806,7 +1806,7 @@ class OGBCSManager:
             if start_night is None or start_night == 0:
                 self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
                 start_night = vwc
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - P3: Initialized startNightMoisture to {vwc:.1f}%"
                 )
 
@@ -1836,7 +1836,7 @@ class OGBCSManager:
                     },
                     haEvent=True,
                 )
-                _LOGGER.info(f"{self.room} - P3: Low dryback, EC increased")
+                _LOGGER.debug(f"{self.room} - P3: Low dryback, EC increased")
 
             elif current_dryback > preset.get("max_dryback_percent", 12.0):
                 # Too much dryback -> decrease EC (less stress)
@@ -1854,7 +1854,7 @@ class OGBCSManager:
                     },
                     haEvent=True,
                 )
-                _LOGGER.info(f"{self.room} - P3: High dryback, EC decreased")
+                _LOGGER.debug(f"{self.room} - P3: High dryback, EC decreased")
             else:
                 _LOGGER.debug(
                     f"{self.room} - P3: Dryback optimal at {current_dryback:.1f}%"
@@ -1943,7 +1943,7 @@ class OGBCSManager:
             )
             night_start_time = self.data_store.getDeep("CropSteering.phaseStartTime")
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P3: Light ON → Switching to P0 (Dryback was {current_dryback:.1f}%)"
             )
             # Reset P3 state tracking before leaving phase
@@ -1994,7 +1994,7 @@ class OGBCSManager:
     # ==================== MANUAL MODE ====================
     async def _manual_cycle(self, phase):
         """Manual time-based cycle (uses USER settings)"""
-        _LOGGER.info(f"{self.room} - CS - Manual {phase}: Started")
+        _LOGGER.debug(f"{self.room} - CS - Manual {phase}: Started")
         try:
             settings = self._get_manual_phase_settings(phase)
 
@@ -2048,9 +2048,9 @@ class OGBCSManager:
                     
                     if ec_target > 0 and ec:
                         if ec < min_ec:
-                            _LOGGER.info(f"{self.room} - Manual: EC {ec:.2f} < Min {min_ec:.2f} (would increase)")
+                            _LOGGER.debug(f"{self.room} - Manual: EC {ec:.2f} < Min {min_ec:.2f} (would increase)")
                         elif ec > max_ec:
-                            _LOGGER.info(f"{self.room} - Manual: EC {ec:.2f} > Max {max_ec:.2f} (would decrease)")
+                            _LOGGER.debug(f"{self.room} - Manual: EC {ec:.2f} > Max {max_ec:.2f} (would decrease)")
 
                     # Emergency irrigation - VWCMin is already a float
                     vwc_min = settings["VWCMin"]["value"]
@@ -2226,7 +2226,7 @@ class OGBCSManager:
         finally:
             # ALWAYS release the irrigation lock
             self._irrigation_in_progress = False
-            _LOGGER.info(f"🔓 {self.room} - Irrigation lock RELEASED")
+            _LOGGER.debug(f"🔓 {self.room} - Irrigation lock RELEASED")
 
     # ==================== EC ADJUSTMENT ====================
 

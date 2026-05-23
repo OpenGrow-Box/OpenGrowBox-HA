@@ -246,7 +246,7 @@ class OGBModeManager:
         elif stability_duration >= self._deadband_stability_duration:
             # Stable for long time - full reduction
             if self._current_deadband_stage != 3:
-                _LOGGER.info(f"{self.room}: Entering deadband stage 3 (full) - stable for {stability_duration:.0f}s")
+                _LOGGER.debug(f"{self.room}: Entering deadband stage 3 (full) - stable for {stability_duration:.0f}s")
             self._current_deadband_stage = 3
             return 3
         else:
@@ -294,7 +294,7 @@ class OGBModeManager:
         if deviation > self._deadband_exit_threshold:
             if self._is_in_deadband:
                 time_since_exit = now - self._deadband_last_exit_time if self._deadband_last_exit_time else 0
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room}: VPD {current_vpd} EXITED deadband with hysteresis "
                     f"(deviation: {deviation:.3f} > exit_threshold: {self._deadband_exit_threshold:.3f}, "
                     f"deadband: {deadband:.3f}, last_exit: {time_since_exit:.0f}s ago) - "
@@ -328,7 +328,7 @@ class OGBModeManager:
             self.data_store.setDeep("controlOptionData.deadband.entered_at", now)
             self.data_store.setDeep("controlOptionData.deadband.mode", mode_name)
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: VPD {current_vpd} entered deadband ±{deadband} of target {target_vpd} - "
                 f"starting smart deadband (hold: {self._deadband_hold_duration}s)"
             )
@@ -366,7 +366,7 @@ class OGBModeManager:
         if is_night and not night_vpd_hold:
             # Night mode without VPD hold - no deadband, use power-saving mode instead
             if self._is_in_deadband:
-                _LOGGER.info(f"{self.room}: Night mode without VPD hold - exiting deadband for power-saving")
+                _LOGGER.debug(f"{self.room}: Night mode without VPD hold - exiting deadband for power-saving")
                 self._reset_deadband_state()
             return False, []  # Deadband is NOT active (night mode without nightVPDHold)
         
@@ -376,7 +376,7 @@ class OGBModeManager:
         # Check max deadband time (10 minutes)
         max_deadband_time = 600  # 10 minutes
         if self._deadband_hold_start and (now - self._deadband_hold_start) > max_deadband_time:
-            _LOGGER.info(f"{self.room}: Max deadband time ({max_deadband_time}s) reached - exiting")
+            _LOGGER.debug(f"{self.room}: Max deadband time ({max_deadband_time}s) reached - exiting")
             self._reset_deadband_state()
             return False, []  # Deadband is NOT active (max time reached)
 
@@ -551,7 +551,7 @@ class OGBModeManager:
 
         # Check if hold time elapsed
         if hold_remaining <= 0:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: Deadband hold time ({self._deadband_hold_duration}s) elapsed - checking extension"
             )
             # Extend hold time only if VPD is stable AND within hysteresis zone
@@ -559,19 +559,19 @@ class OGBModeManager:
                 if deviation <= self._deadband_exit_threshold:
                     # Both conditions met: stable trend AND within hysteresis zone
                     self._deadband_hold_start = now
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room}: Extending deadband - VPD stable ({trend}) and within hysteresis zone (deviation: {deviation:.3f} <= {self._deadband_exit_threshold:.3f})"
                     )
                 else:
                     # Trend is good but outside hysteresis zone - exit
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room}: Not extending - trend {trend} but outside hysteresis zone (deviation: {deviation:.3f} > {self._deadband_exit_threshold:.3f})"
                     )
                     self._reset_deadband_state()
                     return False, []
             else:
                 # Trend is bad - exit
-                _LOGGER.info(f"{self.room}: Not extending - trend {trend}")
+                _LOGGER.debug(f"{self.room}: Not extending - trend {trend}")
                 self._reset_deadband_state()
                 return False, []
 
@@ -581,7 +581,7 @@ class OGBModeManager:
     def _reset_deadband_state(self):
         """Reset deadband state when leaving deadband."""
         if self._is_in_deadband:
-            _LOGGER.info(f"{self.room}: Leaving deadband - resetting state and restoring devices")
+            _LOGGER.debug(f"{self.room}: Leaving deadband - resetting state and restoring devices")
             self._is_in_deadband = False
             self._deadband_hold_start = None
             self._deadband_active_devices.clear()
@@ -666,7 +666,7 @@ class OGBModeManager:
         }
         action = action_map.get(device_type, "Increase")
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room}: Creating correction action for {device_type}: "
             f"cap={cap}, action={action}, duty={duty}% (deviation: {deviation_pct:.1f}%)"
         )
@@ -729,7 +729,7 @@ class OGBModeManager:
         Handhabt den Modus 'Disabled'.
         Stops all active control actions and ensures devices are in safe state.
         """
-        _LOGGER.info(f"🔴 {self.room}: Tent mode set to Disabled - stopping all control actions")
+        _LOGGER.debug(f"🔴 {self.room}: Tent mode set to Disabled - stopping all control actions")
         
         # Emit disabled event for other managers to clean up
         await self.event_manager.emit("TentModeDisabled", {"room": self.room})
@@ -745,7 +745,7 @@ class OGBModeManager:
         await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Exhaust"})
         await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Intake"})
         
-        _LOGGER.info(f"🔴 {self.room}: All control actions disabled")
+        _LOGGER.debug(f"🔴 {self.room}: All control actions disabled")
         
         return None
 
@@ -816,7 +816,7 @@ class OGBModeManager:
                 # Deadband IS active - devices are already reduced to minimum
                 # Process correction actions through action chain
                 if correction_actions:
-                    _LOGGER.info(f"{self.room}: Processing {len(correction_actions)} deadband correction actions through action chain")
+                    _LOGGER.debug(f"{self.room}: Processing {len(correction_actions)} deadband correction actions through action chain")
                     await self.action_manager.checkLimitsAndPublicate(correction_actions)
                 return  # Keine normalen VPD Actions ausführen
             # If deadband is NOT active (e.g., night mode without nightVPDHold), continue to normal cycle
@@ -852,7 +852,7 @@ class OGBModeManager:
             )
             return
 
-        _LOGGER.info(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
+        _LOGGER.debug(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
         _LOGGER.debug(
             f"{self.room} VPD Target state: "
             f"current={self.data_store.getDeep('vpd.current')}, "
@@ -911,7 +911,7 @@ class OGBModeManager:
                 if deadband_active:
                     # Process correction actions through action chain
                     if correction_actions:
-                        _LOGGER.info(f"{self.room}: Processing {len(correction_actions)} deadband correction actions through action chain")
+                        _LOGGER.debug(f"{self.room}: Processing {len(correction_actions)} deadband correction actions through action chain")
                         await self.action_manager.checkLimitsAndPublicate(correction_actions)
                     return  # Keine normalen VPD Actions ausführen
                 # If deadband is NOT active (e.g., night mode without nightVPDHold), continue to normal cycle
@@ -995,7 +995,7 @@ class OGBModeManager:
             )
             return
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room}: Premium controller cycle for {controllerType} - emitting DataRelease to API"
         )
         await self.event_manager.emit("DataRelease", True)
@@ -1059,7 +1059,7 @@ class OGBModeManager:
             }, haEvent=True, debug_type="WARNING")
             return
         
-        _LOGGER.info(f"{self.room}: Executing {controllerType} controller (feature '{feature_key}' enabled)")
+        _LOGGER.debug(f"{self.room}: Executing {controllerType} controller (feature '{feature_key}' enabled)")
         
         actionData = data.get("actionData")
         if not actionData:
@@ -1085,7 +1085,7 @@ class OGBModeManager:
             if not self._ai_bridge_started:
                 await self.aiDataBridge.start()
                 self._ai_bridge_started = True
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - AI Data Bridge started for cropsteering learning"
                 )
         except Exception as e:
@@ -1097,7 +1097,7 @@ class OGBModeManager:
             if self._ai_bridge_started:
                 await self.aiDataBridge.stop()
                 self._ai_bridge_started = False
-                _LOGGER.info(f"{self.room} - AI Data Bridge stopped")
+                _LOGGER.debug(f"{self.room} - AI Data Bridge stopped")
         except Exception as e:
             _LOGGER.error(f"{self.room} - Failed to stop AI Data Bridge: {e}")
 
@@ -1137,4 +1137,4 @@ class OGBModeManager:
         self._ogb_ref = ogb
         if self.scriptModeManager is None:
             self.scriptModeManager = OGBScriptMode(ogb)
-            _LOGGER.info(f"{self.room}: Script Mode manager initialized")
+            _LOGGER.debug(f"{self.room}: Script Mode manager initialized")

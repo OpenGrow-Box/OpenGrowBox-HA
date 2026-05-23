@@ -383,7 +383,7 @@ class OGBCO2Manager:
             lower_limit = predictive_target - self._increase_hysterese
             upper_limit = predictive_target + self._reduce_hysterese
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: CO2 PRO control - current={current_co2:.0f}ppm, "
                 f"target={co2_target:.0f}ppm, predictive={predictive_target:.0f}ppm, "
                 f"rate={rate:.1f}ppm/min, zone=[{lower_limit:.0f}-{upper_limit:.0f}]"
@@ -412,7 +412,7 @@ class OGBCO2Manager:
                         self._last_action = action.action
                         break
                 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room}: CO2 action executed - mode={mode}, "
                     f"actions={[a.capability + ':' + a.action for a in action_map]}"
                 )
@@ -452,7 +452,7 @@ class OGBCO2Manager:
         # Below minimum - must increase (if light is on)
         if current_co2 < co2_target_min:
             if is_light_on:
-                _LOGGER.info(f"{self.room}: CO2 {current_co2:.0f} < min {co2_target_min:.0f}, injecting")
+                _LOGGER.debug(f"{self.room}: CO2 {current_co2:.0f} < min {co2_target_min:.0f}, injecting")
                 if capabilities.get("canCO2", {}).get("state", False):
                     action_map.append(self._create_action("canCO2", "Increase", action_message + " [Below Min]"))
             else:
@@ -463,7 +463,7 @@ class OGBCO2Manager:
         
         # Above maximum - must reduce immediately
         if current_co2 > co2_target_max:
-            _LOGGER.info(f"{self.room}: CO2 {current_co2:.0f} > max {co2_target_max:.0f}, reducing")
+            _LOGGER.debug(f"{self.room}: CO2 {current_co2:.0f} > max {co2_target_max:.0f}, reducing")
             if capabilities.get("canCO2", {}).get("state", False):
                 action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Above Max]"))
             if capabilities.get("canExhaust", {}).get("state", False):
@@ -473,7 +473,7 @@ class OGBCO2Manager:
         # TARGET ZONE LOGIC with predictive control
         if current_co2 < lower_limit and is_light_on:
             # Below predictive lower limit - increase
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: CO2 {current_co2:.0f} < {lower_limit:.0f} "
                 f"(predictive, rate={rate:.1f}), injecting"
             )
@@ -482,7 +482,7 @@ class OGBCO2Manager:
                 
         elif current_co2 > upper_limit:
             # Above predictive upper limit - reduce
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: CO2 {current_co2:.0f} > {upper_limit:.0f} "
                 f"(predictive, rate={rate:.1f}), reducing"
             )
@@ -508,7 +508,7 @@ class OGBCO2Manager:
         
         # Night mode - always off
         if not is_light_on:
-            _LOGGER.info(f"{self.room}: Night mode - CO2 off")
+            _LOGGER.debug(f"{self.room}: Night mode - CO2 off")
             if capabilities.get("canCO2", {}).get("state", False):
                 action_map.append(self._create_action("canCO2", "Reduce", action_message + " [Night]"))
             return action_map
@@ -522,7 +522,7 @@ class OGBCO2Manager:
         
         # Below predictive lower limit - increase
         if current_co2 < lower_limit:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: CO2 {current_co2:.0f} < {lower_limit:.0f} "
                 f"(predictive, rate={rate:.1f}), injecting"
             )
@@ -531,7 +531,7 @@ class OGBCO2Manager:
                 
         # Above predictive upper limit - reduce
         elif current_co2 > upper_limit:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: CO2 {current_co2:.0f} > {upper_limit:.0f} "
                 f"(predictive, rate={rate:.1f}), reducing"
             )

@@ -162,7 +162,7 @@ class FridgeGrowDevice(Device):
         # Extract device ID from entity name for keepalive
         self._extract_device_id(deviceData)
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"FridgeGrow device '{deviceName}' initializing "
             f"(output_type={self.output_type}, device_id={self.fridgegrow_device_id})"
         )
@@ -183,7 +183,7 @@ class FridgeGrowDevice(Device):
         # Register FridgeGrow-specific event listeners
         self._register_fridgegrow_events()
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"FridgeGrow device '{deviceName}' initialized successfully "
             f"(capability={self._get_capability()}, dimmable={self.isDimmable})"
         )
@@ -300,7 +300,7 @@ class FridgeGrowDevice(Device):
 
         self.dataStore.setDeep(capPath, currentCap)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"FridgeGrow '{self.deviceName}' registered for capability '{capability}' "
             f"(count: {currentCap['count']})"
         )
@@ -553,7 +553,7 @@ class FridgeGrowDevice(Device):
         # Start keepalive task
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"FridgeGrow '{self.deviceName}' MQTT control enabled "
             f"(device_id={self.fridgegrow_device_id})"
         )
@@ -576,7 +576,7 @@ class FridgeGrowDevice(Device):
         
         self._keepalive_task = None
         
-        _LOGGER.info(f"FridgeGrow '{self.deviceName}' MQTT control disabled")
+        _LOGGER.debug(f"FridgeGrow '{self.deviceName}' MQTT control disabled")
     
     async def _keepalive_loop(self) -> None:
         """

@@ -181,7 +181,7 @@ class DeviceBinding:
                 self.last_triggered = datetime.now()
                 self.trigger_count += 1
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"Triggered {self.device_id} with action {self.device_action.value}"
                 )
 
@@ -356,7 +356,7 @@ class OGBMediumDeviceBindingManager:
             self.device_bindings[device_id] = binding
             self.binding_priorities[device_id] = priority
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Bound device {device_id} with action {device_action.value}"
             )
             return True
@@ -375,7 +375,7 @@ class OGBMediumDeviceBindingManager:
         if device_id in self.device_bindings:
             del self.device_bindings[device_id]
             del self.binding_priorities[device_id]
-            _LOGGER.info(f"{self.room} - Unbound device {device_id}")
+            _LOGGER.debug(f"{self.room} - Unbound device {device_id}")
 
     def enable_device(self, device_id: str) -> None:
         """
@@ -386,7 +386,7 @@ class OGBMediumDeviceBindingManager:
         """
         if device_id in self.device_bindings:
             self.device_bindings[device_id].enabled = True
-            _LOGGER.info(f"{self.room} - Enabled device binding for {device_id}")
+            _LOGGER.debug(f"{self.room} - Enabled device binding for {device_id}")
 
     def disable_device(self, device_id: str) -> None:
         """
@@ -397,7 +397,7 @@ class OGBMediumDeviceBindingManager:
         """
         if device_id in self.device_bindings:
             self.device_bindings[device_id].enabled = False
-            _LOGGER.info(f"{self.room} - Disabled device binding for {device_id}")
+            _LOGGER.debug(f"{self.room} - Disabled device binding for {device_id}")
 
     async def update_sensor_readings(self, sensor_values: Dict[str, Any]) -> List[str]:
         """
@@ -545,7 +545,7 @@ class OGBMediumDeviceBindingManager:
         """
         self.device_bindings.clear()
         self.binding_priorities.clear()
-        _LOGGER.info(f"{self.room} - Cleared all device bindings")
+        _LOGGER.debug(f"{self.room} - Cleared all device bindings")
 
     def get_triggered_devices_count(self) -> Dict[str, int]:
         """

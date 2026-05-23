@@ -61,7 +61,7 @@ class ClosedEnvironmentManager:
         )  # 30% ambient influence by default
         self._sync_ambient_influence()
 
-        _LOGGER.info(f"Closed Environment Manager initialized for {room}")
+        _LOGGER.debug(f"Closed Environment Manager initialized for {room}")
 
     async def execute_cycle(self):
         """
@@ -172,7 +172,7 @@ class ClosedEnvironmentManager:
         # Persist to data_store for stateless operation (in controlOptionData like other settings)
         self.data_store.setDeep("controlOptionData.closedEnvironment.ambientInfluenceStrength", self.ambient_influence_strength)
         self._sync_ambient_influence()
-        _LOGGER.info(f"Ambient influence strength set to {self.ambient_influence_strength} for {self.room}")
+        _LOGGER.debug(f"Ambient influence strength set to {self.ambient_influence_strength} for {self.room}")
 
     async def emergency_stop(self):
         """

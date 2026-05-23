@@ -73,7 +73,7 @@ class OGBPremiumActions:
             )
             return
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.ogb.room}: {controller_type} action payload received - commands={len(action_data)}"
         )
 
@@ -325,7 +325,7 @@ class OGBPremiumActions:
         Reset PID action history for fresh start.
         """
         self.ogb.dataStore.set("previousActions", [])
-        _LOGGER.info(f"{self.ogb.room}: PID action history reset")
+        _LOGGER.debug(f"{self.ogb.room}: PID action history reset")
 
     async def update_pid_parameters(self, parameters: Dict[str, Any]):
         """
@@ -336,7 +336,7 @@ class OGBPremiumActions:
         """
         # Store PID parameters in dataStore
         self.ogb.dataStore.setDeep("control.pid.parameters", parameters)
-        _LOGGER.info(f"{self.ogb.room}: PID parameters updated: {parameters}")
+        _LOGGER.debug(f"{self.ogb.room}: PID parameters updated: {parameters}")
 
     async def update_mpc_horizon(self, horizon: int):
         """
@@ -347,7 +347,7 @@ class OGBPremiumActions:
         """
         # Store MPC horizon
         self.ogb.dataStore.setDeep("control.mpc.horizon", horizon)
-        _LOGGER.info(f"{self.ogb.room}: MPC prediction horizon set to {horizon} hours")
+        _LOGGER.debug(f"{self.ogb.room}: MPC prediction horizon set to {horizon} hours")
 
     async def train_ai_model(self):
         """
@@ -356,7 +356,7 @@ class OGBPremiumActions:
         This would initiate background training of ML models
         using historical data and performance metrics.
         """
-        _LOGGER.info(f"{self.ogb.room}: AI model training initiated")
+        _LOGGER.debug(f"{self.ogb.room}: AI model training initiated")
 
         # Emit training start event
         await self.ogb.eventManager.emit(

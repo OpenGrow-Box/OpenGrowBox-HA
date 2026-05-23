@@ -1116,7 +1116,7 @@ async def _handle_smart_deadband(
             if deviation <= self._deadband_exit_threshold:
                 # Both conditions met: stable trend AND within hysteresis zone
                 self._deadband_hold_start = now
-                _LOGGER.info("Extending deadband - VPD stable and within hysteresis zone")
+                _LOGGER.debug("Extending deadband - VPD stable and within hysteresis zone")
             else:
                 # Trend is good but outside hysteresis zone - exit
                 self._reset_deadband_state()

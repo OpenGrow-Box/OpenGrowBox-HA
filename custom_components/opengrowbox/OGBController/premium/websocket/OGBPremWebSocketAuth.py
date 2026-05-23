@@ -121,7 +121,7 @@ class OGBPremWebSocketAuthMixin:
                 # Step 2: Log user plan (allow all plans including free)
                 # Free plan users have limited features via OGBFeatureManager
                 plan_name = self.subscription_data.get("plan_name", "unknown")
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🔐 User plan for {self.ws_room}: {plan_name} "
                     f"(is_premium: {self.is_premium})"
                 )

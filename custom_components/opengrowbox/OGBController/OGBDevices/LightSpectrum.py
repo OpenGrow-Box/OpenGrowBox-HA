@@ -185,7 +185,7 @@ class LightSpectrum(Light):
                 for entity_id in possible_entity_ids:
                     state = self.hass.states.get(entity_id)
                     if state and state.state not in ("unavailable", "unknown", None):
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Found entity '{entity_id}' in HA. "
                             f"Adding to switches list."
                         )
@@ -259,7 +259,7 @@ class LightSpectrum(Light):
             if self.mode == SpectrumMode.SCHEDULE:
                 self._adjust_for_plant_stage()
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: {self.spectrum_type.upper()} spectrum settings loaded - "
                 f"Enabled: {self.enabled}, Mode: {self.mode}, "
                 f"Morning: {self.morning_intensity}%, Midday: {self.midday_intensity}%, "
@@ -268,23 +268,23 @@ class LightSpectrum(Light):
             
             # CRITICAL: Stop any existing scheduler before deciding to start a new one
             if self._schedule_task and not self._schedule_task.done():
-                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before reload")
+                _LOGGER.debug(f"{self.deviceName}: Stopping existing scheduler before reload")
                 self._schedule_task.cancel()
                 self._schedule_task = None
             
             # Only start scheduler if enabled AND mode is Schedule - use immediate check
             if self.enabled and self.mode == SpectrumMode.SCHEDULE:
-                _LOGGER.info(f"{self.deviceName}: {self.spectrum_type.upper()} enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
+                _LOGGER.debug(f"{self.deviceName}: {self.spectrum_type.upper()} enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
                 self._start_scheduler_with_immediate_check()
             else:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: {self.spectrum_type.upper()} NOT starting scheduler - "
                     f"enabled={self.enabled} (type: {type(self.enabled).__name__}), "
                     f"mode={self.mode}"
                 )
                 # Ensure light is off if not enabled or not in schedule mode
                 if not self.enabled or self.mode == SpectrumMode.ALWAYS_OFF:
-                    _LOGGER.info(f"{self.deviceName}: {self.spectrum_type.upper()} disabled or Always Off - ensuring light is off")
+                    _LOGGER.debug(f"{self.deviceName}: {self.spectrum_type.upper()} disabled or Always Off - ensuring light is off")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
@@ -324,7 +324,7 @@ class LightSpectrum(Light):
             return
             
         self._schedule_task = asyncio.create_task(self._schedule_loop())
-        _LOGGER.info(f"{self.deviceName}: Spectrum scheduler started")
+        _LOGGER.debug(f"{self.deviceName}: Spectrum scheduler started")
 
     async def _start_scheduler_with_immediate_check(self):
         """Start the scheduler and run an immediate check without waiting.
@@ -332,7 +332,7 @@ class LightSpectrum(Light):
         This ensures Spectrum can activate immediately if we're already in a window,
         without waiting for the first sleep cycle to complete.
         """
-        _LOGGER.info(f"{self.deviceName}: Starting scheduler with immediate check")
+        _LOGGER.debug(f"{self.deviceName}: Starting scheduler with immediate check")
         
         # Run immediate check first (no wait)
         try:
@@ -536,7 +536,7 @@ class LightSpectrum(Light):
         else:
             message = f"{self.spectrum_type.upper()} spectrum activated ({phase} phase, {intensity}%)"
         
-        _LOGGER.info(f"{self.deviceName}: {message}")
+        _LOGGER.debug(f"{self.deviceName}: {message}")
         
         # Create action log
         lightAction = OGBLightAction(
@@ -583,7 +583,7 @@ class LightSpectrum(Light):
         self.current_intensity = 0
         self.current_phase = None
         
-        _LOGGER.info(f"{self.deviceName}: Deactivating {self.spectrum_type.upper()} spectrum ({reason})")
+        _LOGGER.debug(f"{self.deviceName}: Deactivating {self.spectrum_type.upper()} spectrum ({reason})")
         
         # Create action log
         message = f"{self.spectrum_type.upper()} spectrum deactivated: {reason}" if reason else f"{self.spectrum_type.upper()} spectrum deactivated"
@@ -605,11 +605,11 @@ class LightSpectrum(Light):
 
     async def _on_light_time_change(self, data):
         """Handle main light schedule changes - reload settings and restart scheduler."""
-        _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        _LOGGER.debug(f"{self.deviceName}: Light schedule changed, reloading settings")
         
         # CRITICAL: Stop existing scheduler before reloading
         if self._schedule_task and not self._schedule_task.done():
-            _LOGGER.info(f"{self.deviceName}: Stopping scheduler for time change reload")
+            _LOGGER.debug(f"{self.deviceName}: Stopping scheduler for time change reload")
             self._schedule_task.cancel()
             self._schedule_task = None
         
@@ -672,7 +672,7 @@ class LightSpectrum(Light):
     async def _on_plant_stage_change(self, data):
         """Handle plant stage changes - adjust spectrum profile (Schedule mode only)."""
         if self.mode == SpectrumMode.SCHEDULE:
-            _LOGGER.info(f"{self.deviceName}: Plant stage changed, adjusting spectrum profile")
+            _LOGGER.debug(f"{self.deviceName}: Plant stage changed, adjusting spectrum profile")
             self._load_settings()
 
     async def _on_settings_update(self, data):
@@ -692,7 +692,7 @@ class LightSpectrum(Light):
             self.mode = spectrum_data["mode"]
             if old_mode != self.mode:
                 settings_changed = True
-                _LOGGER.info(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
+                _LOGGER.debug(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
                 
                 # Handle mode transitions
                 if self.mode == SpectrumMode.ALWAYS_OFF:
@@ -740,7 +740,7 @@ class LightSpectrum(Light):
             settings_changed = True
                 
         if settings_changed:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Settings updated - "
                 f"Mode: {self.mode}, "
                 f"Morning: {self.morning_intensity}%, Midday: {self.midday_intensity}%, "

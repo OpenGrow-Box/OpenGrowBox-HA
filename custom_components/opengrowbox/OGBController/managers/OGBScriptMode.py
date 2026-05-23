@@ -47,7 +47,7 @@ class OGBScriptMode:
         self.max_execution_time = 5  # seconds
         self.max_instructions = 1000
         
-        _LOGGER.info(f"{self.room}: Script Mode executor initialized")
+        _LOGGER.debug(f"{self.room}: Script Mode executor initialized")
     
     async def execute(self) -> bool:
         """
@@ -275,7 +275,7 @@ class OGBScriptMode:
         elif level == "error":
             _LOGGER.error(f"{self.room}: {message}")
         else:
-            _LOGGER.info(f"{self.room}: {message}")
+            _LOGGER.debug(f"{self.room}: {message}")
     
     async def _execute_python(self, script_code: str):
         """Execute Python script in sandboxed environment."""
@@ -297,7 +297,7 @@ class OGBScriptMode:
                 "min": min,
                 "max": max,
                 "sum": sum,
-                "print": lambda x: _LOGGER.info(f"{self.room}: {x}"),
+                "print": lambda x: _LOGGER.debug(f"{self.room}: {x}"),
             },
             "datetime": datetime,
             "timedelta": timedelta,
@@ -349,7 +349,7 @@ class OGBScriptMode:
         elif level == "error":
             _LOGGER.error(f"{self.room}: {message}")
         else:
-            _LOGGER.info(f"{self.room}: {message}")
+            _LOGGER.debug(f"{self.room}: {message}")
     
     async def _execute_device_action(self, device: str, action: str, params: Dict):
         """Execute a device action."""

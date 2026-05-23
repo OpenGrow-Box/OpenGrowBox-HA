@@ -143,7 +143,7 @@ class OGBActionManager:
             self.closed_actions = ClosedActions(self.ogb)
 
             self.isInitialized = True
-            _LOGGER.info(f"Action modules initialized for {self.room}")
+            _LOGGER.debug(f"Action modules initialized for {self.room}")
 
         except Exception as e:
             _LOGGER.error(f"Error initializing action modules for {self.room}: {e}")
@@ -255,7 +255,7 @@ class OGBActionManager:
                 blockedActions.append(action)
 
         if blockedActions:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: {len(blockedActions)} actions blocked by dampening"
             )
 
@@ -338,7 +338,7 @@ class OGBActionManager:
         """Clear emergency conditions after delay."""
         await asyncio.sleep(5)  # 5 seconds
         await self.cooldown_manager.set_emergency_conditions([])
-        _LOGGER.info(f"{self.room}: Emergency conditions cleared")
+        _LOGGER.debug(f"{self.room}: Emergency conditions cleared")
 
     # =================================================================
     # Event Handlers
@@ -584,7 +584,7 @@ class OGBActionManager:
             "deadbandActive": True
         }, haEvent=True, debug_type="INFO")
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room}: VPD in deadband - entering quiet zone, no device actions"
         )
 
@@ -677,13 +677,13 @@ class OGBActionManager:
 
             if prio_b > prio_a:
                 blocked_caps.add(cap_a)
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room}: Conflict – {cap_b}:{act_b} (prio={prio_b}) "
                     f"overrides {cap_a}:{act_a} (prio={prio_a})"
                 )
             else:
                 blocked_caps.add(cap_b)
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room}: Conflict – {cap_a}:{act_a} (prio={prio_a}) "
                     f"overrides {cap_b}:{act_b} (prio={prio_b})"
                 )
@@ -707,7 +707,7 @@ class OGBActionManager:
         if self.closed_actions:
             co2_actions = await self.closed_actions.maintain_co2(capabilities)
             if co2_actions:
-                _LOGGER.info(f"{self.room}: Executing {len(co2_actions)} CO2 actions")
+                _LOGGER.debug(f"{self.room}: Executing {len(co2_actions)} CO2 actions")
                 await self.checkLimitsAndPublicateNoVPD(co2_actions)
         else:
             _LOGGER.warning(f"{self.room}: closed_actions not initialized, skipping CO2 maintenance")
@@ -749,7 +749,7 @@ class OGBActionManager:
     def clearDampeningHistory(self):
         """Clear the dampening history (for debugging/reset)."""
         self.cooldown_manager.action_history.clear()
-        _LOGGER.info(f"{self.room}: Dampening history reset")
+        _LOGGER.debug(f"{self.room}: Dampening history reset")
 
     def get_action_status(self) -> Dict[str, Any]:
         """
@@ -939,7 +939,7 @@ class OGBActionManager:
         
         # Execute all night hold actions
         if dampened_actions:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room}: Night Hold executing {len(dampened_actions)} actions - "
                 f"Climate minimized, Ventilation active for mold prevention"
             )
@@ -1337,7 +1337,7 @@ class OGBActionManager:
             await self.dampening_actions.process_actions_with_dampening(actionMap)
         else:
             # Fallback: execute actions directly without dampening
-            _LOGGER.info(f"{self.room}: VPD mode with dampening (dampening disabled) - executing {len(actionMap)} actions directly")
+            _LOGGER.debug(f"{self.room}: VPD mode with dampening (dampening disabled) - executing {len(actionMap)} actions directly")
             
             # Log actions before environment guard
             action_summary = ", ".join([f"{getattr(a, 'capability', 'unknown')}:{getattr(a, 'action', 'unknown')}" for a in actionMap])
@@ -1371,7 +1371,7 @@ class OGBActionManager:
         """
         tentMode = self.data_store.get("tentMode") or "VPD Perfection"
         if tentMode == "Disabled":
-            _LOGGER.info(f"{self.room}: Actions skipped - tent mode is Disabled")
+            _LOGGER.debug(f"{self.room}: Actions skipped - tent mode is Disabled")
             return
 
         actionMap = await self._apply_environment_guard(actionMap)
@@ -1568,7 +1568,7 @@ class OGBActionManager:
                     setattr(action, "message", new_message)
                     guarded_actions.append(action)
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room}: EnvironmentGuard blocked {cap} Increase -> Reduce "
                     f"(reason={reason}, selectedSource={metadata.get('selectedSource')})"
                 )
@@ -1705,7 +1705,7 @@ class OGBActionManager:
     async def async_shutdown(self):
         """Shutdown action manager and cleanup resources."""
         try:
-            _LOGGER.info(f"Shutting down Action Manager for {self.room}")
+            _LOGGER.debug(f"Shutting down Action Manager for {self.room}")
             
             # Cancel all background tasks
             if hasattr(self, '_background_tasks'):
@@ -1720,7 +1720,7 @@ class OGBActionManager:
             # Clear previous actions from datastore
             self.data_store.set("previousActions", [])
             
-            _LOGGER.info(f"Action Manager shutdown complete for {self.room}")
+            _LOGGER.debug(f"Action Manager shutdown complete for {self.room}")
             
         except Exception as e:
             _LOGGER.error(f"Error during Action Manager shutdown: {e}")

@@ -175,7 +175,7 @@ class OGBPumpControlManager:
                 # Add to active pumps
                 self.active_pumps.add(pump_entity)
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - Activating {pump_entity} for {run_time:.1f}s ({dose_ml:.1f}ml)"
                 )
 
@@ -370,7 +370,7 @@ class OGBPumpControlManager:
 
             run_time = self.calculate_dose_time(water_ml, PumpType.WATER)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Diluting EC: adding {water_ml:.0f}ml water to reach target {target_ec:.2f}"
             )
 

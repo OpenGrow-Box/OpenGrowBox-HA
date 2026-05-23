@@ -16,14 +16,14 @@ async def update_sensor_via_service(room, vpdPub, hass):
     avgHum_entity = f"sensor.ogb_avghumidity_{room.lower()}"
     avgDew_entity = f"sensor.ogb_avgdewpoint_{room.lower()}"
 
-    _LOGGER.info(f"🔍 {room} UPDATE SENSORS: VPD={vpd_value}, Temp={temp_value}, Hum={hum_value}, Dew={dew_value}")
+    _LOGGER.debug(f"🔍 {room} UPDATE SENSORS: VPD={vpd_value}, Temp={temp_value}, Hum={hum_value}, Dew={dew_value}")
 
     try:
         # Überprüfe, ob der Wert gültig ist
         new_vpd_value = (
             vpd_value if vpd_value not in (None, "unknown", "unbekannt") else 0.0
         )
-        _LOGGER.info(f"🔍 {room} Calling update_sensor for {vpd_entity} with value {new_vpd_value}")
+        _LOGGER.debug(f"🔍 {room} Calling update_sensor for {vpd_entity} with value {new_vpd_value}")
         # Rufe den Service auf
         await hass.services.async_call(
             domain="opengrowbox",
@@ -31,48 +31,48 @@ async def update_sensor_via_service(room, vpdPub, hass):
             service_data={"entity_id": vpd_entity, "value": new_vpd_value},
             blocking=True,
         )
-        _LOGGER.info(f"✅ {room} VPD service call completed")
+        _LOGGER.debug(f"✅ {room} VPD service call completed")
         
         new_temp_value = (
             temp_value if temp_value not in (None, "unknown", "unbekannt") else 0.0
         )
-        _LOGGER.info(f"🔍 {room} Calling update_sensor for {avgTemp_entity} with value {new_temp_value}")
+        _LOGGER.debug(f"🔍 {room} Calling update_sensor for {avgTemp_entity} with value {new_temp_value}")
         await hass.services.async_call(
             domain="opengrowbox",
             service="update_sensor",
             service_data={"entity_id": avgTemp_entity, "value": new_temp_value},
             blocking=True,
         )
-        _LOGGER.info(f"✅ {room} AvgTemp service call completed")
+        _LOGGER.debug(f"✅ {room} AvgTemp service call completed")
         
         new_hum_value = (
             hum_value if hum_value not in (None, "unknown", "unbekannt") else 0.0
         )
-        _LOGGER.info(f"🔍 {room} Calling update_sensor for {avgHum_entity} with value {new_hum_value}")
+        _LOGGER.debug(f"🔍 {room} Calling update_sensor for {avgHum_entity} with value {new_hum_value}")
         await hass.services.async_call(
             domain="opengrowbox",
             service="update_sensor",
             service_data={"entity_id": avgHum_entity, "value": new_hum_value},
             blocking=True,
         )
-        _LOGGER.info(f"✅ {room} AvgHum service call completed")
+        _LOGGER.debug(f"✅ {room} AvgHum service call completed")
         
         new_dew_value = (
             dew_value if dew_value not in (None, "unknown", "unbekannt") else 0.0
         )
-        _LOGGER.info(f"🔍 {room} Calling update_sensor for {avgDew_entity} with value {new_dew_value}")
+        _LOGGER.debug(f"🔍 {room} Calling update_sensor for {avgDew_entity} with value {new_dew_value}")
         await hass.services.async_call(
             domain="opengrowbox",
             service="update_sensor",
             service_data={"entity_id": avgDew_entity, "value": new_dew_value},
             blocking=True,
         )
-        _LOGGER.info(f"✅ {room} AvgDew service call completed")
+        _LOGGER.debug(f"✅ {room} AvgDew service call completed")
         _LOGGER.debug(
             f"Sensor '{vpd_entity}' updated via service with value: {vpd_entity}"
         )
     except Exception as e:
-        _LOGGER.info(f"Failed to update sensor '{vpd_entity}' via service: {e}")
+        _LOGGER.debug(f"Failed to update sensor '{vpd_entity}' via service: {e}")
 
 
 async def _update_specific_sensor(entity, room, value, hass):
@@ -86,7 +86,7 @@ async def _update_specific_sensor(entity, room, value, hass):
             blocking=True,
         )
     except Exception as e:
-        _LOGGER.info(f"Failed to update sensor '{entity_id}' via service: {e}")
+        _LOGGER.debug(f"Failed to update sensor '{entity_id}' via service: {e}")
 
 
 async def _update_specific_select(entity, room, value, hass):
@@ -100,7 +100,7 @@ async def _update_specific_select(entity, room, value, hass):
             blocking=True,
         )
     except Exception as e:
-        _LOGGER.info(f"Failed to update select '{entity_id}' via service: {e}")
+        _LOGGER.debug(f"Failed to update select '{entity_id}' via service: {e}")
 
 
 
@@ -115,4 +115,4 @@ async def _update_specific_number(entity, room, value, hass):
             blocking=True,
         )
     except Exception as e:
-        _LOGGER.info(f"Failed to update Number '{entity_id}' via service: {e}")
+        _LOGGER.debug(f"Failed to update Number '{entity_id}' via service: {e}")

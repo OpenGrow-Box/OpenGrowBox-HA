@@ -89,7 +89,7 @@ class CustomDate(DateEntity, RestoreEntity):
                 new_date = self._parse_date(value)
             self._date = new_date
             self.async_write_ha_state()
-            _LOGGER.info(f"Date '{self._name}' set to {new_date}")
+            _LOGGER.debug(f"Date '{self._name}' set to {new_date}")
         except ValueError as e:
             _LOGGER.error(f"Failed to set date for '{self._name}': {e}")
 
@@ -105,7 +105,7 @@ class CustomDate(DateEntity, RestoreEntity):
             try:
                 restored_date = self._parse_date(state.state)
                 self._date = restored_date
-                _LOGGER.info(f"Restored date for '{self._name}': {restored_date}")
+                _LOGGER.debug(f"Restored date for '{self._name}': {restored_date}")
             except ValueError:
                 _LOGGER.warning(
                     f"Failed to restore date for '{self._name}', using default."
@@ -150,7 +150,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             for date_entity in hass.data[DOMAIN]["dates"]:
                 if date_entity.entity_id == entity_id:
                     await date_entity.async_set_value(new_date)
-                    _LOGGER.info(f"Updated date for {entity_id} to {new_date}")
+                    _LOGGER.debug(f"Updated date for {entity_id} to {new_date}")
                     return
             _LOGGER.error(f"Date entity with id {entity_id} not found")
 

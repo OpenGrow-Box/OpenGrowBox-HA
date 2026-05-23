@@ -84,14 +84,14 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Shutdown coordinator and cleanup all resources."""
-        _LOGGER.info(f"🛑 Shutting down coordinator for {self.room_name}")
+        _LOGGER.debug(f"🛑 Shutting down coordinator for {self.room_name}")
 
         # 1. Shutdown the OGB controller and all its managers
         if hasattr(self, 'OGB') and self.OGB:
             try:
-                _LOGGER.info(f"🛑 Shutting down OGB controller for {self.room_name}")
+                _LOGGER.debug(f"🛑 Shutting down OGB controller for {self.room_name}")
                 await self.OGB.async_shutdown()
-                _LOGGER.info(f"✅ OGB controller shutdown complete for {self.room_name}")
+                _LOGGER.debug(f"✅ OGB controller shutdown complete for {self.room_name}")
             except Exception as e:
                 _LOGGER.error(f"❌ Error shutting down OGB controller: {e}", exc_info=True)
 
@@ -114,7 +114,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._background_tasks.clear()
         self.is_ready = False
         self._started = False
-        _LOGGER.info(f"✅ Coordinator shutdown complete for {self.room_name}")
+        _LOGGER.debug(f"✅ Coordinator shutdown complete for {self.room_name}")
 
     def create_room_selector(self):
         """Create a new global Room Selector."""
@@ -169,12 +169,12 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 global_room_selector._attr_current_option = room_names[0] if room_names else None
             global_room_selector.async_write_ha_state()
-            _LOGGER.info(f"🔄 Immediate room selector update: {room_names} (current: {global_room_selector._attr_current_option})")
+            _LOGGER.debug(f"🔄 Immediate room selector update: {room_names} (current: {global_room_selector._attr_current_option})")
         else:
             _LOGGER.warning("Global room selector not available for immediate update")
 
     async def startOGB(self):
-        _LOGGER.info(f"🚀 ============ STARTING OGB INTEGRATION FOR {self.room_name} ============")
+        _LOGGER.debug(f"🚀 ============ STARTING OGB INTEGRATION FOR {self.room_name} ============")
         """
         Start the OpenGrowBox-Init.
         """
@@ -192,10 +192,10 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # NOTE: Uses async_init() to avoid blocking I/O in event loop
             try:
                 await self.OGB.data_storeManager.async_init()
-                _LOGGER.info(f"✅ {self.room_name}: Restored saved state from disk (async)")
+                _LOGGER.debug(f"✅ {self.room_name}: Restored saved state from disk (async)")
                 if hasattr(self.OGB, 'wizard_manager') and self.OGB.wizard_manager:
                     await self.OGB.wizard_manager.restore_active_plant_stage_config()
-                    _LOGGER.info(f"✅ {self.room_name}: Restored active plant stage source")
+                    _LOGGER.debug(f"✅ {self.room_name}: Restored active plant stage source")
             except Exception as e:
                 _LOGGER.warning(f"⚠️ {self.room_name}: Could not load saved state: {e}")
             
@@ -206,13 +206,13 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self.OGB.mediumManager:
                 await self.OGB.mediumManager.init()
                 media_count = len(self.OGB.mediumManager.media) if self.OGB.mediumManager.media else 0
-                _LOGGER.info(f"🌱 {self.room_name}: MediumManager initialized with {media_count} restored mediums")
+                _LOGGER.debug(f"🌱 {self.room_name}: MediumManager initialized with {media_count} restored mediums")
             
             # CRITICAL: Wait for entities to be registered in HA's entity registry
             # This fixes the issue where newly created rooms don't find OGB entities
             # because async_forward_entry_setups returns before entities are fully registered
             await asyncio.sleep(2)
-            _LOGGER.info(f"⏱️ {self.room_name}: Waited 2s for entities to be registered in registry")
+            _LOGGER.debug(f"⏱️ {self.room_name}: Waited 2s for entities to be registered in registry")
             
             groupedRoomEntities = (
                 await self.OGB.registryListener.get_filtered_entities_with_value(room, max_retries=10, retry_interval=0.5)
@@ -228,7 +228,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ]
 
             if ogbGroup:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"✅ {self.room_name}: Found {len(ogbGroup)} OGB configuration groups"
                 )
             else:
@@ -241,12 +241,12 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning(f"No devices found in room {self.room_name}")
 
             if ogbGroup:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"✅ {self.room_name}: Found {len(ogbGroup)} OGB configuration groups"
                 )
                 for group in ogbGroup:
                     entity_count = len(group.get('entities', []))
-                    _LOGGER.info(f"  📦 {group['name']}: {entity_count} entities")
+                    _LOGGER.debug(f"  📦 {group['name']}: {entity_count} entities")
                 ogbTasks = [self.OGB.managerInit(group) for group in ogbGroup]
                 ogbResults = await asyncio.gather(*ogbTasks, return_exceptions=True)
                 for group, result in zip(ogbGroup, ogbResults):
@@ -255,21 +255,21 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             f"❌ {self.room_name}: OGB config group '{group.get('name', 'unknown')}' failed during init: {result}",
                             exc_info=(type(result), result, result.__traceback__),
                         )
-                _LOGGER.info(f"✅ {self.room_name}: OGB configuration complete")
+                _LOGGER.debug(f"✅ {self.room_name}: OGB configuration complete")
             else:
                 # New room or room without OGB entities - continue with device setup
-                _LOGGER.info(f"ℹ️ {self.room_name}: Skipping OGB initialization (no OGB groups found)")
+                _LOGGER.debug(f"ℹ️ {self.room_name}: Skipping OGB initialization (no OGB groups found)")
 
             if realDevices:
                 self.OGB.dataStore.setDeep("workData.Devices", realDevices)
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"✅ {self.room_name}: Found {len(realDevices)} device groups"
                 )
                 for group in realDevices[:5]:  # Log first 5
                     entity_count = len(group.get('entities', []))
-                    _LOGGER.info(f"  🔌 {group['name']}: {entity_count} entities")
+                    _LOGGER.debug(f"  🔌 {group['name']}: {entity_count} entities")
                 if len(realDevices) > 5:
-                    _LOGGER.info(f"  ... and {len(realDevices) - 5} more device groups")
+                    _LOGGER.debug(f"  ... and {len(realDevices) - 5} more device groups")
                 deviceTasks = [
                     self.OGB.deviceManager.setupDevice(deviceGroup)
                     for deviceGroup in realDevices
@@ -281,24 +281,24 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             f"❌ {self.room_name}: Device '{deviceGroup.get('name', 'unknown')}' failed during init: {result}",
                             exc_info=(type(result), result, result.__traceback__),
                         )
-                _LOGGER.info(f"✅ {self.room_name}: Device initialization complete")
+                _LOGGER.debug(f"✅ {self.room_name}: Device initialization complete")
 
                 # CRITICAL: Start periodic device refresh AFTER initial setup is complete
                 # This prevents race condition where DeviceUpdater runs before
                 # devices are fully initialized, causing duplicate creation
                 if hasattr(self.OGB, 'deviceManager') and self.OGB.deviceManager:
                     self.OGB.deviceManager.start_periodic_refresh()
-                    _LOGGER.info(f"✅ {self.room_name}: Periodic device refresh started")
+                    _LOGGER.debug(f"✅ {self.room_name}: Periodic device refresh started")
             else:
                 _LOGGER.warning(f"⚠️ {self.room_name}: No devices found.")
 
-            _LOGGER.info(f"🎉 {self.room_name}: OpenGrowBox initialization completed!")
+            _LOGGER.debug(f"🎉 {self.room_name}: OpenGrowBox initialization completed!")
 
             # CRITICAL: Signal orchestrator that initialization is complete
             # This allows the orchestrator's control loop to start safely
             if hasattr(self.OGB, 'orchestrator') and self.OGB.orchestrator:
                 self.OGB.orchestrator.mark_initialization_complete()
-                _LOGGER.info(f"✅ {self.room_name}: Orchestrator signaled initialization complete")
+                _LOGGER.debug(f"✅ {self.room_name}: Orchestrator signaled initialization complete")
 
         except Exception as e:
             _LOGGER.error(
@@ -313,7 +313,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 await self._register_core_services()
                 self.hass.data[DOMAIN]["_core_services_registered"] = True
-                _LOGGER.info("✅ Core services registered successfully")
+                _LOGGER.debug("✅ Core services registered successfully")
             except Exception as e:
                 _LOGGER.error(
                     f"Failed to register core services: {e}", exc_info=True

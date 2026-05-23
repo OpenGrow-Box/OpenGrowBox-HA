@@ -145,7 +145,7 @@ async def register_sensor_to_medium(self, sensor_id: str, medium_id: str):
             "medium_id": medium_id
         })
 
-        _LOGGER.info(f"[{self.room}] Registered sensor {sensor_id} to medium {medium_id}")
+        _LOGGER.debug(f"[{self.room}] Registered sensor {sensor_id} to medium {medium_id}")
 ```
 
 ### Sensor Data Routing
@@ -506,7 +506,7 @@ async def initialize_medium(self, medium_config: Dict[str, Any]) -> str:
         "medium_type": medium_type
     })
 
-    _LOGGER.info(f"[{self.room}] Initialized medium {medium_id} of type {medium_type}")
+    _LOGGER.debug(f"[{self.room}] Initialized medium {medium_id} of type {medium_type}")
 
     return medium_id
 ```
@@ -561,7 +561,7 @@ async def replace_medium(self, old_medium_id: str, new_medium_config: Dict[str, 
         "new_medium_id": new_medium_id
     })
 
-    _LOGGER.info(f"[{self.room}] Replaced medium {old_medium_id} with {new_medium_id}")
+    _LOGGER.debug(f"[{self.room}] Replaced medium {old_medium_id} with {new_medium_id}")
 ```
 
 ## Integration with Other Systems

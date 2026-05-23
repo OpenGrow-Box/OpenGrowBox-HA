@@ -86,7 +86,7 @@ class Device:
         else:
             await self.turn_on(percentage=clamped)
             
-        _LOGGER.info(f"{self.deviceName}: Set duty cycle to {clamped}%")
+        _LOGGER.debug(f"{self.deviceName}: Set duty cycle to {clamped}%")
         if log_action_callback:
             log_action_callback(f"DimTo {clamped}%")
 
@@ -118,14 +118,14 @@ class Device:
             min_duty = float(self.minDuty) if self.minDuty is not None else 0
             
             if new_duty <= min_duty or new_duty == old_duty:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Minimum duty cycle ({new_duty}%) reached, turning OFF"
                 )
                 if log_action_callback:
                     log_action_callback("TurnOFF (min reached)")
                 await self.turn_off()
             else:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Reduced to {new_duty}%"
                 )
                 if log_action_callback:
@@ -137,7 +137,7 @@ class Device:
         else:
             # Non-dimmable: just turn off
             if self.isRunning:
-                _LOGGER.info(f"{self.deviceName}: Turning OFF")
+                _LOGGER.debug(f"{self.deviceName}: Turning OFF")
                 if log_action_callback:
                     log_action_callback("TurnOFF")
                 await self.turn_off()
@@ -194,7 +194,7 @@ class Device:
         )
 
         if should_block:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: EnvironmentGuard blocked direct increase "
                 f"for {capability} (reason={metadata.get('reason')})"
             )
@@ -540,7 +540,7 @@ class Device:
             devices = self.dataStore.get("devices") or []
             devices.extend(new_sensors)
             self.dataStore.set("devices", devices)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.deviceName}] Added {len(new_sensors)} remapped sensors to dataStore"
             )
 
@@ -599,7 +599,7 @@ class Device:
                 if old_voltage < self.minVoltage or old_voltage > self.maxVoltage:
                     self.voltage = self.clamp_voltage(self.voltage)
                     if old_voltage != self.voltage:
-                        _LOGGER.info(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}% (range: {self.minVoltage}-{self.maxVoltage}%)")
+                        _LOGGER.debug(f"{self.deviceName}: Voltage clamped from {old_voltage}% to {self.voltage}% (range: {self.minVoltage}-{self.maxVoltage}%)")
                     else:
                         _LOGGER.debug(f"{self.deviceName}: Voltage {old_voltage}% already within bounds {self.minVoltage}-{self.maxVoltage}%")
                 else:
@@ -615,7 +615,7 @@ class Device:
                 if old_duty < self.minDuty or old_duty > self.maxDuty:
                     self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)
                     if old_duty != self.dutyCycle:
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: DutyCycle clamped from {old_duty}% to {self.dutyCycle}% "
                             f"(range: {self.minDuty}-{self.maxDuty}%)"
                         )
@@ -703,7 +703,7 @@ class Device:
     # Mapp Entity Types to Class vars
     def identifySwitchesAndSensors(self, entitys):
         """Identifiziere Switches und Sensoren aus der Liste der Entitäten und prüfe ungültige Werte."""
-        _LOGGER.info(f"Identify all given {entitys}")
+        _LOGGER.debug(f"Identify all given {entitys}")
 
         try:
             for entity in entitys:
@@ -912,7 +912,7 @@ class Device:
             for entity in source:
                 entity_id = entity.get("entity_id", "").lower()
                 if any(key in entity_id for key in dimmableKeys):
-                    _LOGGER.info(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
+                    _LOGGER.debug(f"{self.deviceName}: Device Recognized as Dimmable - DeviceName {self.deviceName} Entity_id: {entity_id}")
                     self.isDimmable = True
                     return
 
@@ -977,7 +977,7 @@ class Device:
                 continue
 
             raw_value = sensor.get("value")
-            _LOGGER.info(f"{self.deviceName}: checkForControlValue sensor {entity_id} raw_value={raw_value}")
+            _LOGGER.debug(f"{self.deviceName}: checkForControlValue sensor {entity_id} raw_value={raw_value}")
             if raw_value is None:
                 continue
 
@@ -987,7 +987,7 @@ class Device:
 
             # Beim Init (force_update=False): Wert 0 überspringen – noch kein echter HA-Wert
             if not force_update and converted == 0:
-                _LOGGER.info(f"{self.deviceName}: Init – sensor {entity_id} hat Wert 0, überspringe (warte auf echten Wert via deviceUpdater)")
+                _LOGGER.debug(f"{self.deviceName}: Init – sensor {entity_id} hat Wert 0, überspringe (warte auf echten Wert via deviceUpdater)")
                 continue
 
             if self.deviceType == "Light":
@@ -1153,14 +1153,14 @@ class Device:
         if self.deviceType == "Light":
             if self.voltage is None:
                 self.voltage = 20.0  # Default light voltage (sunrise starts at 20%)
-                _LOGGER.info(f"{self.deviceName}: No control value found - using default voltage: {self.voltage}%")
+                _LOGGER.debug(f"{self.deviceName}: No control value found - using default voltage: {self.voltage}%")
             else:
                 _LOGGER.debug(f"{self.deviceName}: Using existing voltage: {self.voltage}%")
                 
         elif self.deviceType in {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier", "Heater", "Cooler"}:
             if self.dutyCycle is None:
                 self.dutyCycle = 50.0  # Default duty cycle
-                _LOGGER.info(f"{self.deviceName}: No control value found - using default duty cycle: {self.dutyCycle}%")
+                _LOGGER.debug(f"{self.deviceName}: No control value found - using default duty cycle: {self.dutyCycle}%")
             else:
                 _LOGGER.debug(f"{self.deviceName}: Using existing duty cycle: {self.dutyCycle}%")
 
@@ -2299,7 +2299,7 @@ class Device:
     async def _on_calib_off(self, data):
         """Handle calibration off event – turn this device fully off."""
         room = data.get("room")
-        _LOGGER.info(f"{self.deviceName}: CalibOff received room={room}")
+        _LOGGER.debug(f"{self.deviceName}: CalibOff received room={room}")
         if room != self.room:
             return
         try:
@@ -2310,7 +2310,7 @@ class Device:
     async def _on_calib_on(self, data):
         """Handle calibration on event – turn this device fully on."""
         room = data.get("room")
-        _LOGGER.info(f"{self.deviceName}: CalibOn received room={room}")
+        _LOGGER.debug(f"{self.deviceName}: CalibOn received room={room}")
         if room != self.room:
             return
         try:
@@ -2323,7 +2323,7 @@ class Device:
         room = data.get("room")
         cap = data.get("cap")
         level = data.get("level")
-        _LOGGER.info(f"{self.deviceName}: CalibStart received room={room} cap={cap} level={level} isDimmable={self.isDimmable}")
+        _LOGGER.debug(f"{self.deviceName}: CalibStart received room={room} cap={cap} level={level} isDimmable={self.isDimmable}")
         if room != self.room:
             return
         capabilities = self.dataStore.get("capabilities") or {}
@@ -2555,7 +2555,7 @@ class Device:
                 _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring WorkMode, using dedicated scheduling")
                 return
             self.pendingWorkMode = workmode
-            _LOGGER.info(f"{self.deviceName}: WorkMode {workmode} saved, will activate when light turns on")
+            _LOGGER.debug(f"{self.deviceName}: WorkMode {workmode} saved, will activate when light turns on")
             return
 
         self.inWorkMode = workmode
@@ -2635,14 +2635,14 @@ class Device:
         if self.deviceType == "Light":
             clamped_value = self.clamp_voltage(newValue)
             self.voltage = clamped_value
-            _LOGGER.info(f"{self.deviceName}: Voltage set to {clamped_value} (was {newValue})")
+            _LOGGER.debug(f"{self.deviceName}: Voltage set to {clamped_value} (was {newValue})")
             await self.turn_on(brightness_pct=clamped_value)
             return
 
         else:
             clamped_value = self.clamp_duty_cycle(newValue)
             self.dutyCycle = clamped_value
-            _LOGGER.info(f"{self.deviceName}: DutyCycle set to {clamped_value}% (was {newValue}%)")
+            _LOGGER.debug(f"{self.deviceName}: DutyCycle set to {clamped_value}% (was {newValue}%)")
             if self.isSpecialDevice:
                 await self.turn_on(brightness_pct=float(clamped_value))
                 return
@@ -2653,7 +2653,7 @@ class Device:
     async def DeviceSetMinMax(self, data) -> None:
         # KEIN isInitialized check – Bounds müssen auch beim Init geladen werden
         if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
-            _LOGGER.info(f"{self.deviceName}: Cannot change min/max during active sunphase")
+            _LOGGER.debug(f"{self.deviceName}: Cannot change min/max during active sunphase")
             return
 
         if not self.isDimmable:
@@ -2690,7 +2690,7 @@ class Device:
                 old_min, old_max = self.minVoltage, self.maxVoltage
                 self.minVoltage = float(minMaxSets.get("minVoltage"))
                 self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-                _LOGGER.info(f"{self.deviceName}: Updated voltage min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
+                _LOGGER.debug(f"{self.deviceName}: Updated voltage min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
             except (ValueError, TypeError):
                 _LOGGER.error(f"{self.deviceName}: Ungültige Voltage-Werte: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
                 return
@@ -2709,7 +2709,7 @@ class Device:
                 old_min, old_max = self.minDuty, self.maxDuty
                 self.minDuty = float(minMaxSets.get("minDuty"))
                 self.maxDuty = float(minMaxSets.get("maxDuty"))
-                _LOGGER.info(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
+                _LOGGER.debug(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
             except (ValueError, TypeError):
                 _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {minMaxSets.get('minDuty')}, {minMaxSets.get('maxDuty')}")
                 return
@@ -2826,7 +2826,7 @@ class Device:
                 except (ValueError, TypeError, KeyError):
                     self.minVoltage = float(getattr(self, 'initVoltage', 20))
                     self.maxVoltage = 100.0
-                _LOGGER.info(f"{self.deviceName}: Using {plant_stage} min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
+                _LOGGER.debug(f"{self.deviceName}: Using {plant_stage} min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
             else:
                 self.minVoltage = 20.0
                 self.maxVoltage = 100.0
@@ -3001,7 +3001,7 @@ class Device:
                     try:
                         self.checkForControlValue(force_update=True)
                         self._update_deviceData_in_capabilities()
-                        _LOGGER.info(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Sensor-Update")
+                        _LOGGER.debug(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Sensor-Update")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
                     
@@ -3025,7 +3025,7 @@ class Device:
                     try:
                         self.checkForControlValue(force_update=True)
                         self._update_deviceData_in_capabilities()
-                        _LOGGER.info(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Option-Update")
+                        _LOGGER.debug(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Option-Update")
                     except Exception as e:
                         _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
 
@@ -3036,7 +3036,7 @@ class Device:
                     try:
                         self.identifyIfRunningState()
                         self._update_deviceData_in_capabilities()
-                        _LOGGER.info(f"{self.deviceName}: Running state → {self.isRunning} nach {entity_id} = {new_state_value}")
+                        _LOGGER.debug(f"{self.deviceName}: Running state → {self.isRunning} nach {entity_id} = {new_state_value}")
                         
                         # Emit device state change for energy tracking
                         try:
@@ -3055,7 +3055,7 @@ class Device:
             # OGB Entitäten → nur updaten, kein checkForControlValue nötig
             elif "ogb_" in entity_id:
                 update_entity_in_lists([self.sensors, self.ogbsettings], entity_id, new_state_value)
-                _LOGGER.info(f"{self.deviceName}: OGB entity {entity_id} → {new_state_value}")
+                _LOGGER.debug(f"{self.deviceName}: OGB entity {entity_id} → {new_state_value}")
 
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
         _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
@@ -3083,14 +3083,14 @@ class Device:
             else:
                 await self.turn_on(percentage=clamped)
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Set to minimum for deadband: {clamped}% "
                 f"(dimmable device)"
             )
         else:
             # Nicht-dimmbares Gerät: Ausschalten
             if self.isRunning:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Turned off for deadband (non-dimmable device)"
                 )
                 await self.turn_off()
@@ -3117,7 +3117,7 @@ class Device:
                 else:
                     await self.turn_on(percentage=clamped)
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Restored from deadband: {clamped}% "
                     f"(previous duty cycle)"
                 )
@@ -3130,13 +3130,13 @@ class Device:
             if self._pre_deadband_is_running is not None:
                 if self._pre_deadband_is_running:
                     if not self.isRunning:
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Restored from deadband: turning on (was running before)"
                         )
                         await self.turn_on()
                 else:
                     if self.isRunning:
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Restored from deadband: turning off (was off before)"
                         )
                         await self.turn_off()
@@ -3167,7 +3167,7 @@ class Device:
             exclude_correction = data.get("excludeCorrectionDevices", False)
             
             if exclude_correction and self.deviceType in correction_devices:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Smart Deadband ENTERED - but device is actively correcting "
                     f"temp/humidity, keeping current state (NOT reduced to minimum)"
                 )
@@ -3186,7 +3186,7 @@ class Device:
             await self.setToMinimum()
 
             self._in_smart_deadband = True
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Smart Deadband ENTERED - device reduced to minimum (dimmable: 10%, non-dimmable: off), "
                 f"saved previous state (duty: {self._pre_deadband_duty_cycle}, running: {self._pre_deadband_is_running})"
             )
@@ -3212,9 +3212,9 @@ class Device:
 
             # Restore previous state
             #await self.restoreFromMinimum()
-            _LOGGER.info(f"{self.deviceName}: Smart Deadband EXITED - device will resume normal operation in next control cycle")
+            _LOGGER.debug(f"{self.deviceName}: Smart Deadband EXITED - device will resume normal operation in next control cycle")
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Smart Deadband EXITED - device restored to previous state"
             )
 
@@ -3235,7 +3235,7 @@ class Device:
             _LOGGER.debug(f"{self.deviceName}: Not in deadband, ignoring correction request")
             return
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.deviceName}: Smart Deadband CORRECTION - activating device for temp/humidity correction "
             f"(previous state: duty={self._pre_deadband_duty_cycle}, running={self._pre_deadband_is_running})"
         )
@@ -3245,11 +3245,11 @@ class Device:
             # For dimmable devices, set to a moderate level (not full power)
             correction_duty = min(50, self.maxDuty or 100)  # 50% or max, whichever is lower
             await self.set_duty_cycle(correction_duty)
-            _LOGGER.info(f"{self.deviceName}: Set to {correction_duty}% for correction")
+            _LOGGER.debug(f"{self.deviceName}: Set to {correction_duty}% for correction")
         else:
             # For non-dimmable devices, turn on
             await self.turn_on()
-            _LOGGER.info(f"{self.deviceName}: Turned on for correction")
+            _LOGGER.debug(f"{self.deviceName}: Turned on for correction")
 
     async def _get_current_power(self) -> Optional[float]:
         """Read current power consumption of device."""

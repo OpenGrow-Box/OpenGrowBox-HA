@@ -122,9 +122,9 @@ class Exhaust(Device):
         # Only update if the value actually changed
         if clamped_duty_cycle != self.dutyCycle:
             self.dutyCycle = clamped_duty_cycle
-            _LOGGER.info(f"{self.deviceName}: Duty Cycle changed from {int(self.dutyCycle) + (step_value if not increase else -step_value)}% to {self.dutyCycle}% (step: {step_value}%)")
+            _LOGGER.debug(f"{self.deviceName}: Duty Cycle changed from {int(self.dutyCycle) + (step_value if not increase else -step_value)}% to {self.dutyCycle}% (step: {step_value}%)")
         else:
-            _LOGGER.info(f"{self.deviceName}: Duty Cycle unchanged at {self.dutyCycle}% (already at {'max' if increase else 'min'} bound)")
+            _LOGGER.debug(f"{self.deviceName}: Duty Cycle unchanged at {self.dutyCycle}% (already at {'max' if increase else 'min'} bound)")
             
         return self.dutyCycle
 

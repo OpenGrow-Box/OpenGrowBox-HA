@@ -365,7 +365,7 @@ class OGBMediumHistoryManager:
                     _LOGGER.warning(f"Skipping invalid reading during import: {e}")
                     continue
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Imported {len(readings)} readings for {sensor_type}"
             )
             return True
@@ -557,7 +557,7 @@ class OGBMediumHistoryManager:
                 for key in history_keys:
                     self.data_store.setDeep(key, [])
 
-            _LOGGER.info(f"{self.room} - Cleared {cleared_count} history entries")
+            _LOGGER.debug(f"{self.room} - Cleared {cleared_count} history entries")
             return cleared_count
 
         except Exception as e:

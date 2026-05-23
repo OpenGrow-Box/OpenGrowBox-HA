@@ -213,7 +213,7 @@ class OGBVPDActions:
         # STAGED ACTIVATION based on deviation
         if deviation < 0.10:
             # Stage 1: Small deviation - Only most effective device
-            _LOGGER.info(f"{self.ogb.room}: VPD increase - small deviation ({deviation:.3f}), using minimal correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD increase - small deviation ({deviation:.3f}), using minimal correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(
                     self._create_action("canExhaust", "Increase", action_message)
@@ -221,7 +221,7 @@ class OGBVPDActions:
         
         elif deviation < 0.20:
             # Stage 2: Medium deviation - Two key devices
-            _LOGGER.info(f"{self.ogb.room}: VPD increase - medium deviation ({deviation:.3f}), using moderate correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD increase - medium deviation ({deviation:.3f}), using moderate correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(
                     self._create_action("canExhaust", "Increase", action_message)
@@ -233,7 +233,7 @@ class OGBVPDActions:
         
         else:
             # Stage 3: Large deviation - All devices (original behavior)
-            _LOGGER.info(f"{self.ogb.room}: VPD increase - large deviation ({deviation:.3f}), using full correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD increase - large deviation ({deviation:.3f}), using full correction")
             # Build action map for VPD increase
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(
@@ -269,7 +269,7 @@ class OGBVPDActions:
                 capabilities=capabilities
             )
             if co2_actions:
-                _LOGGER.info(f"{self.ogb.room}: Adding {len(co2_actions)} CO2 actions to action_map: {[a.capability + ':' + a.action for a in co2_actions]}")
+                _LOGGER.debug(f"{self.ogb.room}: Adding {len(co2_actions)} CO2 actions to action_map: {[a.capability + ':' + a.action for a in co2_actions]}")
                 action_map.extend(co2_actions)
             else:
                 _LOGGER.debug(f"{self.ogb.room}: No CO2 actions to add")
@@ -282,7 +282,7 @@ class OGBVPDActions:
         # Bounds-Korrektur hinzufuegen (wie bei VPD Target)
         action_map = self._add_bounds_correction_actions(action_map, capabilities, "Perfection-")
 
-        _LOGGER.info(f"{self.ogb.room}: Final action_map before checkLimitsAndPublicate: {[a.capability + ':' + a.action for a in action_map]}")
+        _LOGGER.debug(f"{self.ogb.room}: Final action_map before checkLimitsAndPublicate: {[a.capability + ':' + a.action for a in action_map]}")
         await self.action_manager.checkLimitsAndPublicate(action_map)
 
     async def reduce_vpd(self, capabilities: Dict[str, Any]):
@@ -311,7 +311,7 @@ class OGBVPDActions:
         # STAGED ACTIVATION based on deviation
         if deviation < 0.10:
             # Stage 1: Small deviation - Only most effective device
-            _LOGGER.info(f"{self.ogb.room}: VPD reduce - small deviation ({deviation:.3f}), using minimal correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD reduce - small deviation ({deviation:.3f}), using minimal correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(
                     self._create_action("canExhaust", "Reduce", action_message)
@@ -319,7 +319,7 @@ class OGBVPDActions:
         
         elif deviation < 0.20:
             # Stage 2: Medium deviation - Two key devices
-            _LOGGER.info(f"{self.ogb.room}: VPD reduce - medium deviation ({deviation:.3f}), using moderate correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD reduce - medium deviation ({deviation:.3f}), using moderate correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(
                     self._create_action("canExhaust", "Reduce", action_message)
@@ -331,7 +331,7 @@ class OGBVPDActions:
         
         else:
             # Stage 3: Large deviation - All devices (original behavior)
-            _LOGGER.info(f"{self.ogb.room}: VPD reduce - large deviation ({deviation:.3f}), using full correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD reduce - large deviation ({deviation:.3f}), using full correction")
             # Build action map for VPD reduction
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(
@@ -398,19 +398,19 @@ class OGBVPDActions:
         # STAGED ACTIVATION based on deviation
         if deviation < 0.10:
             # Stage 1: Small deviation - Only most effective device
-            _LOGGER.info(f"{self.ogb.room}: VPD target increase - small deviation ({deviation:.3f}), using minimal correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD target increase - small deviation ({deviation:.3f}), using minimal correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(self._create_action("canExhaust", "Increase", action_message))
         elif deviation < 0.20:
             # Stage 2: Medium deviation - Two key devices
-            _LOGGER.info(f"{self.ogb.room}: VPD target increase - medium deviation ({deviation:.3f}), using moderate correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD target increase - medium deviation ({deviation:.3f}), using moderate correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(self._create_action("canExhaust", "Increase", action_message))
             if capabilities.get("canHeat", {}).get("state", False):
                 action_map.append(self._create_action("canHeat", "Increase", action_message))
         else:
             # Stage 3: Large deviation - All devices (original behavior)
-            _LOGGER.info(f"{self.ogb.room}: VPD target increase - large deviation ({deviation:.3f}), using full correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD target increase - large deviation ({deviation:.3f}), using full correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(self._create_action("canExhaust", "Increase", action_message))
             if capabilities.get("canIntake", {}).get("state", False):
@@ -463,19 +463,19 @@ class OGBVPDActions:
         # STAGED ACTIVATION based on deviation
         if deviation < 0.10:
             # Stage 1: Small deviation - Only most effective device
-            _LOGGER.info(f"{self.ogb.room}: VPD target reduce - small deviation ({deviation:.3f}), using minimal correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD target reduce - small deviation ({deviation:.3f}), using minimal correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(self._create_action("canExhaust", "Reduce", action_message))
         elif deviation < 0.20:
             # Stage 2: Medium deviation - Two key devices
-            _LOGGER.info(f"{self.ogb.room}: VPD target reduce - medium deviation ({deviation:.3f}), using moderate correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD target reduce - medium deviation ({deviation:.3f}), using moderate correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(self._create_action("canExhaust", "Reduce", action_message))
             if capabilities.get("canHumidify", {}).get("state", False):
                 action_map.append(self._create_action("canHumidify", "Increase", action_message))
         else:
             # Stage 3: Large deviation - All devices (original behavior)
-            _LOGGER.info(f"{self.ogb.room}: VPD target reduce - large deviation ({deviation:.3f}), using full correction")
+            _LOGGER.debug(f"{self.ogb.room}: VPD target reduce - large deviation ({deviation:.3f}), using full correction")
             if capabilities.get("canExhaust", {}).get("state", False):
                 action_map.append(self._create_action("canExhaust", "Reduce", action_message))
             if capabilities.get("canIntake", {}).get("state", False):

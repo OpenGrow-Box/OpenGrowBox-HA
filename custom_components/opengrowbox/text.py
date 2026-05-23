@@ -52,7 +52,7 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
             return
         self._value = value
         self.async_write_ha_state()
-        _LOGGER.info(f"Token '{self._name}' set to {value}")
+        _LOGGER.debug(f"Token '{self._name}' set to {value}")
 
     async def async_added_to_hass(self):
         """Restore previous value."""
@@ -60,9 +60,9 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (None, "", "unknown", "unavailable"):
             self._value = last_state.state
-            _LOGGER.info(f"Restored access token: {self._value}")
+            _LOGGER.debug(f"Restored access token: {self._value}")
         else:
-            _LOGGER.info(f"No state to restore for {self.name}")
+            _LOGGER.debug(f"No state to restore for {self.name}")
         self.async_write_ha_state()
 
 
@@ -106,16 +106,16 @@ class CustomText(TextEntity, RestoreEntity):
             return
         self._value = value
         self.async_write_ha_state()
-        _LOGGER.info(f"Text '{self._name}' set to {value}")
+        _LOGGER.debug(f"Text '{self._name}' set to {value}")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         state = await self.async_get_last_state()
         if state and state.state not in (None, "", "unknown", "unavailable"):
             self._value = state.state
-            _LOGGER.info(f"Restored text for '{self._name}': {self._value}")
+            _LOGGER.debug(f"Restored text for '{self._name}': {self._value}")
         else:
-            _LOGGER.info(f"No state to restore for '{self._name}'")
+            _LOGGER.debug(f"No state to restore for '{self._name}'")
         self.async_write_ha_state()
 
 
@@ -138,7 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
         async_add_entities([access_token_entity])
         hass.data[DOMAIN]["texts"].append(access_token_entity)
         hass.data[DOMAIN]["access_token_entity"] = access_token_entity
-        _LOGGER.info("AccessToken entity registered for ambient")
+        _LOGGER.debug("AccessToken entity registered for ambient")
     elif room_name == "ambient":
         _LOGGER.debug("AccessToken entity already registered")
 

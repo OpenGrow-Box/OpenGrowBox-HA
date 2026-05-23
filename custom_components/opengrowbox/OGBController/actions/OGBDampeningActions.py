@@ -184,7 +184,7 @@ class OGBDampeningActions:
         # Resolve conflicts between actions
         final_actions = self._resolve_action_conflicts(dampened_actions)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.ogb.room}: Executing {len(final_actions)} of {len(enhanced_action_map)} actions "
             f"(VPD status: {vpd_status}, blocked: {len(enhanced_action_map) - len(dampened_actions)})"
         )
@@ -291,7 +291,7 @@ class OGBDampeningActions:
         # Step 2: Resolve conflicts
         final_actions = self._resolve_action_conflicts(enhanced_action_map)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.ogb.room}: Core VPD Logic: {len(action_map)} → {len(enhanced_action_map)} (enhanced) → "
             f"{len(final_actions)} (resolved)"
         )
@@ -360,7 +360,7 @@ class OGBDampeningActions:
         # Resolve conflicts after dampening
         final_actions = self._resolve_action_conflicts(dampened_actions)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.ogb.room}: Dampening Features: {len(action_map)} → {len(dampened_actions)} "
             f"(filtered, {len(blocked_actions)} blocked) → {len(final_actions)} (resolved)"
         )
@@ -994,7 +994,7 @@ class OGBDampeningActions:
 
         if len(filtered_actions) < len(action_map):
             blocked_count = len(action_map) - len(filtered_actions)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.ogb.room}: Buffer zones blocked {blocked_count} actions to prevent oscillation "
                 f"(temp: {current_temp}°C, humidity: {current_humidity}%)"
             )
@@ -1129,7 +1129,7 @@ class OGBDampeningActions:
                             # CRITICAL: Check if humidifier is trying to increase
                             # If yes, don't change exhaust to increase - they fight each other!
                             if has_humidifier_increase:
-                                _LOGGER.info(
+                                _LOGGER.debug(
                                     f"{self.ogb.room}: DynamicFan - Keeping exhaust at Reduce because "
                                     f"humidifier needs to increase (humidity too low). "
                                     f"Temp {current_temp}°C >= {max_temp}°C but humidity correction takes priority."
@@ -1725,7 +1725,7 @@ class OGBDampeningActions:
         )
 
         if final_actions:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.ogb.room}: Night Hold executing {len(final_actions)} actions - "
                 f"Climate minimized, Ventilation active for mold prevention"
             )

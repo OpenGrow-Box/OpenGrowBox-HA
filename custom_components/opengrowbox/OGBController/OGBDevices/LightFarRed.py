@@ -149,7 +149,7 @@ class LightFarRed(Light):
                 for entity_id in possible_entity_ids:
                     state = self.hass.states.get(entity_id)
                     if state and state.state not in ("unavailable", "unknown", None):
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Found entity '{entity_id}' in HA. "
                             f"Adding to switches list."
                         )
@@ -224,7 +224,7 @@ class LightFarRed(Light):
             self.smart_start_enabled = fr_settings.get("smartStartEnabled", True)
             self.smart_end_enabled = fr_settings.get("smartEndEnabled", True)
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: FarRed settings loaded - "
                 f"Enabled: {self.enabled}, Mode: {self.mode}, "
                 f"Start: {self.start_duration_minutes}min, End: {self.end_duration_minutes}min, "
@@ -234,15 +234,15 @@ class LightFarRed(Light):
             
             # Only start scheduler if enabled AND mode is Schedule
             if self.enabled and self.mode == FarRedMode.SCHEDULE:
-                _LOGGER.info(f"{self.deviceName}: FarRed enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
+                _LOGGER.debug(f"{self.deviceName}: FarRed enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
                 asyncio.create_task(self._start_scheduler_with_immediate_check())
             else:
                 # If disabled, ensure FarRed is off and scheduler is not running
                 if self.is_fr_active:
-                    _LOGGER.info(f"{self.deviceName}: FarRed disabled, deactivating...")
+                    _LOGGER.debug(f"{self.deviceName}: FarRed disabled, deactivating...")
                     asyncio.create_task(self._deactivate_far_red("Disabled"))
                 else:
-                    _LOGGER.info(f"{self.deviceName}: FarRed disabled, scheduler not started")
+                    _LOGGER.debug(f"{self.deviceName}: FarRed disabled, scheduler not started")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
@@ -262,14 +262,14 @@ class LightFarRed(Light):
         Note: Removed immediate check to prevent race conditions with the periodic scheduler.
         The first check will happen after 10 seconds when _schedule_loop runs.
         """
-        _LOGGER.info(f"{self.deviceName}: Starting scheduler")
+        _LOGGER.debug(f"{self.deviceName}: Starting scheduler")
         await self._restart_scheduler()
 
     async def _restart_scheduler(self):
         """Safely restart the scheduler with lock protection."""
         async with self._scheduler_lock:
             if self._schedule_task and not self._schedule_task.done():
-                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before restart")
+                _LOGGER.debug(f"{self.deviceName}: Stopping existing scheduler before restart")
                 self._schedule_task.cancel()
                 try:
                     await asyncio.wait_for(self._schedule_task, timeout=2.0)
@@ -279,11 +279,11 @@ class LightFarRed(Light):
             
             if self.enabled and self.mode == FarRedMode.SCHEDULE:
                 self._schedule_task = asyncio.create_task(self._schedule_loop())
-                _LOGGER.info(f"{self.deviceName}: Far Red scheduler restarted")
+                _LOGGER.debug(f"{self.deviceName}: Far Red scheduler restarted")
             elif not self.enabled or self.mode == FarRedMode.ALWAYS_OFF:
                 if self.is_fr_active:
                     await self._deactivate_far_red()
-                _LOGGER.info(f"{self.deviceName}: FarRed not restarting - enabled={self.enabled}, mode={self.mode}")
+                _LOGGER.debug(f"{self.deviceName}: FarRed not restarting - enabled={self.enabled}, mode={self.mode}")
 
     async def _on_sunrise_window_status(self, data):
         """FarRed has its own scheduling - ignore sunrise window events from main light."""
@@ -451,7 +451,7 @@ class LightFarRed(Light):
             is_ramping = False
             ramp_direction = None
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.deviceName}: Time check - Now: {now.strftime('%H:%M:%S')}, "
             f"LightOn: {self.lightOnTime}, LightOff: {self.lightOffTime}, "
             f"InStart: {now < light_on_dt}, InMid: {light_on_dt <= now < end_window_begin}, InEnd: {end_window_begin <= now < end_window_end}, "
@@ -506,7 +506,7 @@ class LightFarRed(Light):
             # Check if Phase 2 is ending (within last 20 seconds)
             # This ensures we turn off after reaching 100%
             if time_until_phase_2_end <= 20 and target_intensity >= 99.5:
-                _LOGGER.info(f"{self.deviceName}: Phase 2 ending at {target_intensity:.1f}%, will deactivate after current tick")
+                _LOGGER.debug(f"{self.deviceName}: Phase 2 ending at {target_intensity:.1f}%, will deactivate after current tick")
                 # Schedule deactivation after this tick completes
                 asyncio.create_task(self._delayed_deactivate(5, "Phase 2 complete"))
 
@@ -556,7 +556,7 @@ class LightFarRed(Light):
             self._last_logged_direction = direction
             
             message = f"FarRed activated - {intensity:.1f}% ({direction} ramping)"
-            _LOGGER.info(f"{self.deviceName}: {message}")
+            _LOGGER.debug(f"{self.deviceName}: {message}")
             
             # Create action log
             lightAction = OGBLightAction(
@@ -595,7 +595,7 @@ class LightFarRed(Light):
             else:
                 message = f"FarRed {phase.upper()} phase activated"
             
-            _LOGGER.info(f"{self.deviceName}: {message}")
+            _LOGGER.debug(f"{self.deviceName}: {message}")
             
             # Create action log
             lightAction = OGBLightAction(
@@ -640,7 +640,7 @@ class LightFarRed(Light):
         else:
             message = "FarRed deactivated"
         
-        _LOGGER.info(f"{self.deviceName}: {message}")
+        _LOGGER.debug(f"{self.deviceName}: {message}")
         
         # Create action log
         lightAction = OGBLightAction(
@@ -673,7 +673,7 @@ class LightFarRed(Light):
                     service="turn_off",
                     service_data={"entity_id": entity_id},
                 )
-                _LOGGER.info(f"{self.deviceName}: FarRed turned off via direct HA call")
+                _LOGGER.debug(f"{self.deviceName}: FarRed turned off via direct HA call")
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Direct HA turn_off failed: {e}")
                 # Fallback: try turning on with 0%
@@ -683,7 +683,7 @@ class LightFarRed(Light):
                         service="turn_on",
                         service_data={"entity_id": entity_id, "brightness_pct": 0},
                     )
-                    _LOGGER.info(f"{self.deviceName}: FarRed turned off via fallback (brightness_pct=0)")
+                    _LOGGER.debug(f"{self.deviceName}: FarRed turned off via fallback (brightness_pct=0)")
                 except Exception as e2:
                     _LOGGER.error(f"{self.deviceName}: Fallback also failed: {e2}")
         else:
@@ -704,7 +704,7 @@ class LightFarRed(Light):
 
     async def _on_light_time_change(self, data):
         """Handle main light schedule changes - reload settings and restart scheduler."""
-        _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        _LOGGER.debug(f"{self.deviceName}: Light schedule changed, reloading settings")
         
         # Use _restart_scheduler for safe scheduler restart with lock protection
         await self._restart_scheduler()
@@ -773,7 +773,7 @@ class LightFarRed(Light):
                 self.mode = data["mode"]
                 if old_mode != self.mode:
                     settings_changed = True
-                    _LOGGER.info(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
+                    _LOGGER.debug(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
                     
                     # Handle mode transitions
                     if self.mode == FarRedMode.ALWAYS_OFF:
@@ -816,7 +816,7 @@ class LightFarRed(Light):
                 settings_changed = True
                 
             if settings_changed:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Settings updated - "
                     f"Mode: {self.mode}, "
                     f"Start: {self.start_duration_minutes}min, End: {self.end_duration_minutes}min, "

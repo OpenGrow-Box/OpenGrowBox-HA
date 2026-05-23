@@ -42,7 +42,7 @@ class ModbusSensor(OGBModbusDevice, Sensor):
                 return
 
             self._polling_task = asyncio.create_task(self._polling_loop())
-            _LOGGER.info(f"Modbus polling started for {self.deviceName}")
+            _LOGGER.debug(f"Modbus polling started for {self.deviceName}")
 
         except Exception as e:
             _LOGGER.error(f"Error setting up Modbus polling for {self.deviceName}: {e}")
@@ -62,7 +62,7 @@ class ModbusSensor(OGBModbusDevice, Sensor):
                 await asyncio.sleep(self.modbus_config.get("poll_interval", 30))
 
         except asyncio.CancelledError:
-            _LOGGER.info(f"Modbus polling stopped for {self.deviceName}")
+            _LOGGER.debug(f"Modbus polling stopped for {self.deviceName}")
         except Exception as e:
             _LOGGER.error(f"Unexpected error in Modbus polling loop for {self.deviceName}: {e}")
 
@@ -74,7 +74,7 @@ class ModbusSensor(OGBModbusDevice, Sensor):
                 await self._polling_task
             except asyncio.CancelledError:
                 pass
-        _LOGGER.info(f"Modbus polling stopped for {self.deviceName}")
+        _LOGGER.debug(f"Modbus polling stopped for {self.deviceName}")
 
     async def poll_sensors(self):
         """Liest Sensor-Daten über Modbus aus und updates sensorReadings."""
@@ -128,7 +128,7 @@ class ModbusSensor(OGBModbusDevice, Sensor):
         # Configure registers from entity data
         if "modbus" in entitys and "registers" in entitys["modbus"]:
             self.registers = entitys["modbus"]["registers"]
-            _LOGGER.info(f"Configured {len(self.registers)} Modbus registers for {self.deviceName}")
+            _LOGGER.debug(f"Configured {len(self.registers)} Modbus registers for {self.deviceName}")
 
         # Start polling after configuration
         if self.registers:

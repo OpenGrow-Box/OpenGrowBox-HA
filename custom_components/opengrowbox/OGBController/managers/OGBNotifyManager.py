@@ -52,7 +52,7 @@ class OGBNotificator:
 
         self._ensure_dst_monitor_started()
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"[{self.room}] OGB Notificator initialized with service '{self.service}'"
         )
 
@@ -210,7 +210,7 @@ class OGBNotificator:
                     mobile_service = await self._find_mobile_notification_service()
                     if mobile_service:
                         svc = mobile_service
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"[{self.room}] Using mobile notification service for critical alert: {svc}"
                         )
             elif level == "warning" and svc == "persistent_notification.create":
@@ -243,7 +243,7 @@ class OGBNotificator:
             self._record_notification(level)
 
             service_list = ", ".join([svc, *additional_services])
-            _LOGGER.info(f"[{self.room}] {level.title()} notification sent via {service_list}: {title}")
+            _LOGGER.debug(f"[{self.room}] {level.title()} notification sent via {service_list}: {title}")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Failed to send {level} notification: {e}")

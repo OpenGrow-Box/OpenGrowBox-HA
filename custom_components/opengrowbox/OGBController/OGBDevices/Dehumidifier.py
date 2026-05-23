@@ -89,7 +89,7 @@ class Dehumidifier(Device):
             if modes and len(modes) > 0:
                 self.hasModes = True
                 self.modes = modes
-                _LOGGER.info(f"{self.deviceName}: Dehumidifier has {len(modes)} modes: {modes}")
+                _LOGGER.debug(f"{self.deviceName}: Dehumidifier has {len(modes)} modes: {modes}")
             else:
                 _LOGGER.debug(f"{self.deviceName}: Dehumidifier has no modes, using simple switch")
 
@@ -132,7 +132,7 @@ class Dehumidifier(Device):
                 'set_mode',
                 {'entity_id': self.humidifierEntityId, 'mode': mode}
             )
-            _LOGGER.info(f"{self.deviceName}: Set mode to {mode}")
+            _LOGGER.debug(f"{self.deviceName}: Set mode to {mode}")
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Failed to set mode {mode}: {e}")
 
@@ -177,7 +177,7 @@ class Dehumidifier(Device):
         # Setze den begrenzten Wert als neuen Duty Cycle
         self.dutyCycle = int(clamped_duty_cycle)
 
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
         return self.dutyCycle
 
     async def increaseAction(self, data):

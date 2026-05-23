@@ -205,7 +205,7 @@ class OGBMediumPropertiesManager:
             self.data_store.setDeep("Medium.type", medium_type.value)
             self.data_store.setDeep("Medium.volume", volume_liters)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Medium set to {medium_type.value} ({volume_liters}L)"
             )
             return True

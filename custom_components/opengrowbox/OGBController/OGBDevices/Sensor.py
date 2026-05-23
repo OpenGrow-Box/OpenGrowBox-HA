@@ -63,7 +63,7 @@ class Sensor:
         
         # Only log if medium label was found
         if self.medium_label:
-            _LOGGER.info(f"[{room}] Sensor '{deviceName}' has medium_label: {self.medium_label}")
+            _LOGGER.debug(f"[{room}] Sensor '{deviceName}' has medium_label: {self.medium_label}")
 
         # Events registrieren
         self.event_manager.on("ReadSensor", self.readSensor)
@@ -202,7 +202,7 @@ class Sensor:
                 # WICHTIG: Wenn medium_label vorhanden ist, ist es ein soil Sensor!
                 if medium_label:
                     context = "soil"
-                    _LOGGER.info(f"[{self.room}] Sensor {entity_id} hat medium_label '{medium_label}' -> soil context (trotz unbekanntem Typ)")
+                    _LOGGER.debug(f"[{self.room}] Sensor {entity_id} hat medium_label '{medium_label}' -> soil context (trotz unbekanntem Typ)")
                 else:
                     context = extract_context_from_entity(entity_id) or "other"
             else:
@@ -257,7 +257,7 @@ class Sensor:
             "unrecognized": list(set(unrecognized_suffixes)),
         }
 
-        _LOGGER.info(f"{self.deviceName} - SensorMap mit Label-Mapping erstellt")
+        _LOGGER.debug(f"{self.deviceName} - SensorMap mit Label-Mapping erstellt")
         return self.sensorMap
 
     async def sensorDataGetter(self):
@@ -278,7 +278,7 @@ class Sensor:
                         )
 
             self.isInitialized = True
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"Sensor-Device {self.deviceName} erfolgreich initialisiert mit {len(self._entity_to_config)} Sensoren"
             )
             
@@ -305,7 +305,7 @@ class Sensor:
                         try:
                             numeric_value = float(value)
                             self.data_store.setDeep(datastore_key, numeric_value)
-                            _LOGGER.info(
+                            _LOGGER.debug(
                                 f"[{self.room}] Initial {sensor_type} stored: {numeric_value}"
                             )
                         except (ValueError, TypeError) as e:
@@ -322,7 +322,7 @@ class Sensor:
                     try:
                         temp_numeric = float(temp_value)
                         self.data_store.setDeep("Hydro.current_temp", temp_numeric)
-                        _LOGGER.info(f"[{self.room}] Initial temperature stored: {temp_numeric}")
+                        _LOGGER.debug(f"[{self.room}] Initial temperature stored: {temp_numeric}")
                     except (ValueError, TypeError) as e:
                         _LOGGER.error(f"[{self.room}] Failed to store initial temperature: {e}")
             
@@ -350,7 +350,7 @@ class Sensor:
                             "ogb_waterorp_", self.room, orp_value, self.hass
                         )
                         
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"[{self.room}] Initial ORP calculated: {orp_value:.2f} mV "
                             f"(pH={ph_numeric}, temp={temp_numeric}°C)"
                         )
@@ -380,13 +380,13 @@ class Sensor:
             try:
                 ha_state = self.hass.states.get(entity_id)
                 if ha_state and ha_state.attributes.get("unit_of_measurement") == "°F":
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"[{self.room}] 🌡️ Fahrenheit sensor detected: {entity_id}, "
                         f"converting {raw_value}°F to Celsius"
                     )
                     # Convert °F to °C: (°F - 32) * 5/9
                     raw_value = round((float(raw_value) - 32) * 5 / 9, 1)
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"[{self.room}] 🌡️ Converted: {raw_value}°C"
                     )
             except (ValueError, TypeError) as e:
@@ -461,7 +461,7 @@ class Sensor:
             try:
                 co2_value = float(raw_value)
                 self.data_store.setDeep("tentData.co2Level", co2_value)
-                _LOGGER.info(f"[{self.room}] Initial CO2 value stored: {co2_value}")
+                _LOGGER.debug(f"[{self.room}] Initial CO2 value stored: {co2_value}")
             except (ValueError, TypeError):
                 pass
 
@@ -476,13 +476,13 @@ class Sensor:
         
         # Register to medium if: has medium label AND context is soil or light
         if effective_medium_label and context == "soil":
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.room}] Medium sensor registered: {entity_id} -> {effective_medium_label}"
             )
             await self._register_sensor_to_medium(entity_id, sensor_type, effective_medium_label)
 
         elif effective_medium_label and context == "light":
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.room}] Medium light sensor registered: {entity_id} -> {effective_medium_label}"
             )
             await self._register_sensor_to_medium(entity_id, sensor_type, effective_medium_label)
@@ -1062,7 +1062,7 @@ class Sensor:
                     self._entity_to_config[entity_id]["calibration_offset"] = float(
                         offset
                     )
-                    _LOGGER.info(f"Sensor {entity_id} kalibriert mit Offset: {offset}")
+                    _LOGGER.debug(f"Sensor {entity_id} kalibriert mit Offset: {offset}")
                     return True
 
             elif sensor_type:
@@ -1077,7 +1077,7 @@ class Sensor:
                             count += 1
 
                 if count > 0:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{count} Sensoren vom Typ {sensor_type} kalibriert mit Offset: {offset}"
                     )
                     return True
@@ -1112,7 +1112,7 @@ class Sensor:
                         config["threshold_min"] = float(threshold_min)
                     if threshold_max is not None:
                         config["threshold_max"] = float(threshold_max)
-                    _LOGGER.info(f"Schwellwerte für {entity_id} gesetzt")
+                    _LOGGER.debug(f"Schwellwerte für {entity_id} gesetzt")
                     return True
 
             elif sensor_type:
@@ -1130,7 +1130,7 @@ class Sensor:
                             count += 1
 
                 if count > 0:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Schwellwerte für {count} Sensoren vom Typ {sensor_type} gesetzt"
                     )
                     return True

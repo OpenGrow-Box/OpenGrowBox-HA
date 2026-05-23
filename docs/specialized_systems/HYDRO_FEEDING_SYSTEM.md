@@ -265,7 +265,7 @@ async def prepare_nutrient_solution(self, target_profile: Dict[str, Any]) -> boo
     success = self.verify_solution_quality(final_ph, final_ec, target_profile)
 
     if success:
-        _LOGGER.info(f"Nutrient solution prepared successfully: "
+        _LOGGER.debug(f"Nutrient solution prepared successfully: "
                     f"pH {final_ph:.1f}, EC {final_ec:.1f}")
     else:
         _LOGGER.error("Nutrient solution preparation failed quality checks")
@@ -773,7 +773,7 @@ async def calibrate_pump(self, pump_id: str):
     # Step 6: Update pump configuration
     self.update_pump_calibration(pump_id, calibration_factor, accuracy)
 
-    _LOGGER.info(f"Pump {pump_id} calibrated: {calibration_factor:.3f} ml/s, accuracy: {accuracy:.1f}%")
+    _LOGGER.debug(f"Pump {pump_id} calibrated: {calibration_factor:.3f} ml/s, accuracy: {accuracy:.1f}%")
 ```
 
 **Important Notes**:

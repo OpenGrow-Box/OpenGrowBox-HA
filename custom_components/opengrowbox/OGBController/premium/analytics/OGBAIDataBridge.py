@@ -72,7 +72,7 @@ class OGBAIDataBridge:
         self._flush_task = None
         self._is_enabled = False
 
-        _LOGGER.info(f"{self.room} - AI Data Bridge initialized")
+        _LOGGER.debug(f"{self.room} - AI Data Bridge initialized")
 
     async def start(self):
         """Start the AI data bridge"""
@@ -91,7 +91,7 @@ class OGBAIDataBridge:
         # Start periodic flush task
         self._flush_task = asyncio.create_task(self._periodic_flush())
 
-        _LOGGER.info(f"{self.room} - AI Data Bridge started")
+        _LOGGER.debug(f"{self.room} - AI Data Bridge started")
 
     async def stop(self):
         """Stop the AI data bridge"""
@@ -107,7 +107,7 @@ class OGBAIDataBridge:
         # Flush remaining events
         await self._flush_buffer()
 
-        _LOGGER.info(f"{self.room} - AI Data Bridge stopped")
+        _LOGGER.debug(f"{self.room} - AI Data Bridge stopped")
 
     # ==================== EVENT HANDLERS ====================
 
@@ -281,7 +281,7 @@ class OGBAIDataBridge:
 
         self.event_buffer.append(event)
 
-        _LOGGER.info(f"{self.room} - AI logged dryback cycle complete")
+        _LOGGER.debug(f"{self.room} - AI logged dryback cycle complete")
 
     async def _on_performance_metric(self, data: Dict[str, Any]):
         """Handle performance metric updates"""
@@ -378,7 +378,7 @@ class OGBAIDataBridge:
         self.ai_recommendations = recommendations
         self.last_optimization_time = datetime.now().timestamp() * 1000
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room} - Received AI recommendations: {list(recommendations.keys())}"
         )
 

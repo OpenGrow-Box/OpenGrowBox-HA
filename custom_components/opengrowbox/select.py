@@ -49,7 +49,7 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
         if option in self._options:
             self._attr_current_option = option
             self.async_write_ha_state()
-            _LOGGER.info(f"Room Selector changed to: {option}")
+            _LOGGER.debug(f"Room Selector changed to: {option}")
         else:
             _LOGGER.warning(f"Invalid room selection: {option}")
 
@@ -59,9 +59,9 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in self._options:
             self._attr_current_option = last_state.state
-            _LOGGER.info(f"Restored state for '{self._name}': {last_state.state}")
+            _LOGGER.debug(f"Restored state for '{self._name}': {last_state.state}")
         else:
-            _LOGGER.info(f"No valid previous state found for '{self._name}'")
+            _LOGGER.debug(f"No valid previous state found for '{self._name}'")
 
     @property
     def extra_state_attributes(self):
@@ -98,19 +98,19 @@ class CustomSelect(SelectEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in self._attr_options:
             self._attr_current_option = last_state.state
-            _LOGGER.info(f"Restored state for '{self._name}': {last_state.state}")
+            _LOGGER.debug(f"Restored state for '{self._name}': {last_state.state}")
         elif last_state and last_state.state:
             # CRITICAL FIX: Remember the last state even if it's not in current options.
             # This happens for premium modes (AI Control, PID Control, MPC Control) that
             # are added dynamically at runtime. Store it so it can be restored later
             # when the option is added back.
             self._attr_current_option = last_state.state
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"Restored state for '{self._name}': {last_state.state} "
                 f"(not in current options yet - will be available when premium modes load)"
             )
         else:
-            _LOGGER.info(f"No valid previous state found for '{self._name}'")
+            _LOGGER.debug(f"No valid previous state found for '{self._name}'")
 
     @property
     def unique_id(self):
@@ -137,18 +137,18 @@ class CustomSelect(SelectEntity, RestoreEntity):
         if option in self._attr_options:
             self._attr_current_option = option
             self.async_write_ha_state()
-            _LOGGER.info(f"Select '{self._name}' changed to '{option}'")
+            _LOGGER.debug(f"Select '{self._name}' changed to '{option}'")
         else:
             _LOGGER.warning(f"Invalid option '{option}' for select '{self._name}'")
 
     def add_options(self, new_options):
         """Add new options to the select entity."""
-        _LOGGER.info(f"Adding options to '{self._name}': {new_options}")
+        _LOGGER.debug(f"Adding options to '{self._name}': {new_options}")
         unique_new_options = [
             opt for opt in new_options if opt not in self._attr_options
         ]
         self._attr_options = list(set(self._attr_options + new_options))
-        _LOGGER.info(f"Updated options for '{self._name}': {self._attr_options}")
+        _LOGGER.debug(f"Updated options for '{self._name}': {self._attr_options}")
         self.async_write_ha_state()
 
     @property
@@ -562,13 +562,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entity_id = call.data.get("entity_id")
             options = call.data.get("options")
 
-            _LOGGER.info(f"Adding options to '{entity_id}': {options}")
+            _LOGGER.debug(f"Adding options to '{entity_id}': {options}")
 
             for select in hass.data[DOMAIN]["selects"]:
                 if select.entity_id == entity_id:
                     found = True
                     select.add_options(options)
-                    _LOGGER.info(f"Updated select'{select.name}' to value: {options}")
+                    _LOGGER.debug(f"Updated select'{select.name}' to value: {options}")
                     break
             if not found:
                 _LOGGER.error(f"Select entity with id '{entity_id}' not found.")
@@ -672,7 +672,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                         # Set to first available option
                         new_option = options[0] if options else None
                         select._attr_current_option = new_option
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"Current option '{current_option}' not in new options, "
                             f"setting '{select.name}' to '{new_option}'"
                         )

@@ -262,7 +262,7 @@ class OGBFeatureService:
         self._event_unsubscribers = []
 
         self._setup_event_listeners()
-        _LOGGER.info(f"✅ {room} OGBFeatureService initialized")
+        _LOGGER.debug(f"✅ {room} OGBFeatureService initialized")
 
     def set_feature_manager(self, feature_manager):
         """
@@ -304,7 +304,7 @@ class OGBFeatureService:
             if callable(unsubscribe):
                 unsubscribe()
         self._event_unsubscribers.clear()
-        _LOGGER.info(f"{self.room} OGBFeatureService shutdown")
+        _LOGGER.debug(f"{self.room} OGBFeatureService shutdown")
 
     async def _handle_get_available(self, event):
         """

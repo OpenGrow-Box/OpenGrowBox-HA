@@ -76,7 +76,7 @@ class OGBModbusDevice(Device):
                 )
 
             if self.modbus_client.connect():
-                _LOGGER.info(f"Modbus-Verbindung zu {self.deviceName} erfolgreich")
+                _LOGGER.debug(f"Modbus-Verbindung zu {self.deviceName} erfolgreich")
                 return True
             return False
         except Exception as e:
@@ -263,12 +263,12 @@ class OGBModbusDevice(Device):
                 }
 
             self.data_store.setDeep("capabilities", current_caps)
-            _LOGGER.info(f"Registered Modbus device {self.deviceName} with capabilities: {capabilities}")
+            _LOGGER.debug(f"Registered Modbus device {self.deviceName} with capabilities: {capabilities}")
 
     def detect_modbus_ip(self):
         """Detect Modbus device IP (placeholder for auto-detection)."""
         # TODO: Implement IP scanning logic
-        _LOGGER.info(f"Detecting IP for Modbus device {self.deviceName}")
+        _LOGGER.debug(f"Detecting IP for Modbus device {self.deviceName}")
         return "192.168.1.100"  # Placeholder
 
     async def deviceUpdate(self, updateData):
@@ -284,7 +284,7 @@ class OGBModbusDevice(Device):
         """Handle min/max settings, matching Device class."""
         # Check if min/max is active during sunphase
         if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
-            _LOGGER.info(f"{self.deviceName}: Cannot change min/max during active sunphase")
+            _LOGGER.debug(f"{self.deviceName}: Cannot change min/max during active sunphase")
             return
 
         if not self.isDimmable:
@@ -327,7 +327,7 @@ class OGBModbusDevice(Device):
                 old_min, old_max = self.minVoltage, self.maxVoltage
                 self.minVoltage = float(minMaxSets.get("minVoltage"))
                 self.maxVoltage = float(minMaxSets.get("maxVoltage"))
-                _LOGGER.info(f"{self.deviceName}: Updated voltage min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
+                _LOGGER.debug(f"{self.deviceName}: Updated voltage min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
             except (ValueError, TypeError):
                 _LOGGER.warning(f"{self.deviceName}: Ungültige Voltage-Werte: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
                 return
@@ -337,14 +337,14 @@ class OGBModbusDevice(Device):
                 await self._apply_voltage_settings(self.clamp_voltage(self.voltage))
             else:
                 self.voltage = self.clamp_voltage(self.voltage)
-                _LOGGER.info(f"{self.deviceName}: Not running - voltage clamped to {self.voltage}% but device NOT turned on")
+                _LOGGER.debug(f"{self.deviceName}: Not running - voltage clamped to {self.voltage}% but device NOT turned on")
 
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             try:
                 old_min, old_max = self.minDuty, self.maxDuty
                 self.minDuty = float(minMaxSets.get("minDuty"))
                 self.maxDuty = float(minMaxSets.get("maxDuty"))
-                _LOGGER.info(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
+                _LOGGER.debug(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
             except (ValueError, TypeError):
                 _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {minMaxSets.get('minDuty')}, {minMaxSets.get('maxDuty')}")
                 return
@@ -434,7 +434,7 @@ class OGBModbusDevice(Device):
                 _LOGGER.debug(f"{self.deviceName}: ignoring MinMaxControlEnabled – event for '{event_device_type}', I am '{self.deviceType}'")
                 return
 
-        _LOGGER.info(f"{self.deviceName}: MinMax control enabled - applying user-defined min/max values")
+        _LOGGER.debug(f"{self.deviceName}: MinMax control enabled - applying user-defined min/max values")
 
         # Re-apply min/max settings
         await self.userSetMinMax(self.deviceType)
@@ -453,14 +453,14 @@ class OGBModbusDevice(Device):
                 _LOGGER.debug(f"{self.deviceName}: ignoring MinMaxControlDisabled – event for '{event_device_type}', I am '{self.deviceType}'")
                 return
 
-        _LOGGER.info(f"{self.deviceName}: MinMax control disabled - resetting to default values")
+        _LOGGER.debug(f"{self.deviceName}: MinMax control disabled - resetting to default values")
 
         # Reset to default values
         if self.deviceType == "Light":
             # Reset voltage to default
             self.minVoltage = float(getattr(self, 'initVoltage', 20))
             self.maxVoltage = 100.0
-            _LOGGER.info(f"{self.deviceName}: Reset voltage min/max to defaults: min={self.minVoltage}%, max={self.maxVoltage}%")
+            _LOGGER.debug(f"{self.deviceName}: Reset voltage min/max to defaults: min={self.minVoltage}%, max={self.maxVoltage}%")
             
             if self.isRunning and hasattr(self, 'voltage'):
                 self.voltage = self.clamp_voltage(self.voltage)
@@ -469,7 +469,7 @@ class OGBModbusDevice(Device):
             # Reset duty to default
             self.minDuty = 0.0
             self.maxDuty = 100.0
-            _LOGGER.info(f"{self.deviceName}: Reset duty min/max to defaults: min={self.minDuty}%, max={self.maxDuty}%")
+            _LOGGER.debug(f"{self.deviceName}: Reset duty min/max to defaults: min={self.minDuty}%, max={self.maxDuty}%")
             
             if self.isRunning and hasattr(self, 'dutyCycle'):
                 self.dutyCycle = self.clamp_duty_cycle(self.dutyCycle)

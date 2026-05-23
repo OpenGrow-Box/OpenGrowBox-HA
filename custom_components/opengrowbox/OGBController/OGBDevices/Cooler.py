@@ -83,7 +83,7 @@ class Cooler(Device):
         # Setze den begrenzten Wert als neuen Duty Cycle
         self.dutyCycle = int(clamped_duty_cycle)
 
-        _LOGGER.info(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
+        _LOGGER.debug(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
         return self.dutyCycle
 
     async def increaseAction(self, data):

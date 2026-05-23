@@ -201,7 +201,7 @@ class OGBPremResearch:
             update_type = update_data.get("update_type", "unknown")
             dataset_name = update_data.get("dataset_name", "Unknown")
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"📊 Dataset Update [{update_type}]: {dataset_name} ({dataset_id})"
             )
 
@@ -240,7 +240,7 @@ class OGBPremResearch:
             result = await self.api_proxy.submit_research_data(data)
 
             if result.get("success"):
-                _LOGGER.info("Research data submitted successfully")
+                _LOGGER.debug("Research data submitted successfully")
                 return True
             else:
                 _LOGGER.error(

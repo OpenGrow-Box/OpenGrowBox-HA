@@ -70,9 +70,9 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Only create ambient automatically on first setup (no existing entries)
                 # Skip if user explicitly names their room "ambient"
                 if not existing_entries and room_name.lower() != "ambient" and not has_ambient:
-                    _LOGGER.info("First-time setup: Creating 'ambient' room first")
+                    _LOGGER.debug("First-time setup: Creating 'ambient' room first")
                     await self._async_create_room_entry("ambient")
-                    _LOGGER.info("Ambient room created, now creating user room: %s", room_name)
+                    _LOGGER.debug("Ambient room created, now creating user room: %s", room_name)
                 
                 return await self._async_create_room_entry(room_name)
 
@@ -104,7 +104,7 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         
         if not existing_entries and room_name.lower() != "ambient" and not has_ambient:
-            _LOGGER.info("Import setup (first room): Creating 'ambient' room first")
+            _LOGGER.debug("Import setup (first room): Creating 'ambient' room first")
             await self._async_create_room_entry("ambient")
 
         return await self._async_create_room_entry(room_name)

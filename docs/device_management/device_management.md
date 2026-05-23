@@ -485,7 +485,7 @@ async def _recover_device(self, device):
 
         # Verify recovery
         if await device.is_operational():
-            _LOGGER.info(f"Successfully recovered device {device.name}")
+            _LOGGER.debug(f"Successfully recovered device {device.name}")
             device.reset_recovery_attempts()
         else:
             device.increment_recovery_attempts()

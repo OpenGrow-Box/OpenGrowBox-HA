@@ -285,7 +285,7 @@ async def handle_targeted_vpd(self):
     Allows manual override of automatic stage-based VPD control.
     """
 
-    _LOGGER.info(f"ModeManager: {self.room} Modus 'Targeted VPD' activated.")
+    _LOGGER.debug(f"ModeManager: {self.room} Modus 'Targeted VPD' activated.")
 
     try:
         // 1. Retrieve VPD control values
@@ -558,7 +558,7 @@ def _filterActionsByDampening(self, actionMap, tempDeviation: float = 0, humDevi
             blockedActions.append(action)
 
     if blockedActions:
-        _LOGGER.info(f"{self.room}: {len(blockedActions)} actions blocked by dampening")
+        _LOGGER.debug(f"{self.room}: {len(blockedActions)} actions blocked by dampening")
 
     return filteredActions, blockedActions
 ```

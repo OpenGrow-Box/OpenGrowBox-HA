@@ -235,7 +235,7 @@ class Camera(Device):
                         # Update camera_entity_id to actual entity ID
                         if entity_id:
                             self.camera_entity_id = entity_id
-                            _LOGGER.info(
+                            _LOGGER.debug(
                                 f"[{self.inRoom}] Camera '{self.deviceName}' mapped to entity: {entity_id} "
                                 f"(by_name={is_camera_by_name}, by_label={is_camera_by_label})"
                             )
@@ -293,7 +293,7 @@ class Camera(Device):
                     bool(plants_view.get("StartDate")) or
                     bool(plants_view.get("EndDate"))
                 ):
-                    _LOGGER.info(f"{self.deviceName}: Saved state detected in dataStore (attempt {attempt + 1})")
+                    _LOGGER.debug(f"{self.deviceName}: Saved state detected in dataStore (attempt {attempt + 1})")
                     break
                 if attempt < 9:  # Don't sleep on last attempt
                     await asyncio.sleep(0.5)
@@ -309,13 +309,13 @@ class Camera(Device):
             
             try:
                 os.makedirs(storage_path, exist_ok=True)
-                _LOGGER.info(f"{self.deviceName}: Created storage directory: {storage_path}")
+                _LOGGER.debug(f"{self.deviceName}: Created storage directory: {storage_path}")
             except Exception as mkdir_err:
                 _LOGGER.warning(f"{self.deviceName}: Could not create storage directory: {mkdir_err}")
                 # Fallback to /tmp if not writable
                 storage_path = f"/tmp/ogb_data/{self.inRoom}_img/{self.deviceName}"
                 os.makedirs(storage_path, exist_ok=True)
-                _LOGGER.info(f"{self.deviceName}: Using fallback storage: {storage_path}")
+                _LOGGER.debug(f"{self.deviceName}: Using fallback storage: {storage_path}")
             
             self.camera_storage_path = storage_path
 
@@ -323,7 +323,7 @@ class Camera(Device):
             daily_path = os.path.join(storage_path, "daily")
             try:
                 os.makedirs(daily_path, exist_ok=True)
-                _LOGGER.info(f"{self.deviceName}: Created daily snapshot directory: {daily_path}")
+                _LOGGER.debug(f"{self.deviceName}: Created daily snapshot directory: {daily_path}")
             except Exception as daily_mkdir_err:
                 _LOGGER.warning(f"{self.deviceName}: Could not create daily directory: {daily_mkdir_err}")
 
@@ -331,7 +331,7 @@ class Camera(Device):
             timelapse_path = os.path.join(storage_path, "timelapse")
             try:
                 os.makedirs(timelapse_path, exist_ok=True)
-                _LOGGER.info(f"{self.deviceName}: Created timelapse directory: {timelapse_path}")
+                _LOGGER.debug(f"{self.deviceName}: Created timelapse directory: {timelapse_path}")
             except Exception as tl_mkdir_err:
                 _LOGGER.warning(f"{self.deviceName}: Could not create timelapse directory: {tl_mkdir_err}")
             
@@ -353,7 +353,7 @@ class Camera(Device):
             if plants_view and plants_view.get("isTimeLapseActive", False):
                 await self._restore_timelapse_after_restart(plants_view)
                 
-            _LOGGER.info(f"{self.deviceName}: Camera initialized (storage: {storage_path})")
+            _LOGGER.debug(f"{self.deviceName}: Camera initialized (storage: {storage_path})")
             self._init_completed = True
 
         except Exception as e:
@@ -382,7 +382,7 @@ class Camera(Device):
             current = self._get_plants_view() or {}
             merged = {**current, **disk_plants_view}
             self._set_plants_view(merged)
-            _LOGGER.info(f"{self.deviceName}: Hydrated plantsView from persisted state file")
+            _LOGGER.debug(f"{self.deviceName}: Hydrated plantsView from persisted state file")
         except Exception as e:
             _LOGGER.warning(f"{self.deviceName}: Failed to hydrate plantsView from disk: {e}")
 
@@ -421,7 +421,7 @@ class Camera(Device):
             self.tl_end_time = end_dt
 
             if end_dt <= now:
-                _LOGGER.info(f"{self.deviceName}: Timelapse end time already passed, not restoring")
+                _LOGGER.debug(f"{self.deviceName}: Timelapse end time already passed, not restoring")
                 plants_view["isTimeLapseActive"] = False
                 self._set_plants_view(plants_view)
                 await self.event_manager.emit("CameraRecordingStatus", {
@@ -436,10 +436,10 @@ class Camera(Device):
                 return
 
             if start_dt <= now:
-                _LOGGER.info(f"{self.deviceName}: Restoring active timelapse capture after restart")
+                _LOGGER.debug(f"{self.deviceName}: Restoring active timelapse capture after restart")
                 await self._start_capturing(start_dt, end_dt)
             else:
-                _LOGGER.info(f"{self.deviceName}: Restoring scheduled timelapse after restart")
+                _LOGGER.debug(f"{self.deviceName}: Restoring scheduled timelapse after restart")
                 await self._schedule_timelapse_start(start_dt, end_dt)
 
             await self.event_manager.emit("SaveState", {"source": "Camera", "device": self.deviceName, "action": "restore_recording"})
@@ -495,7 +495,7 @@ class Camera(Device):
                     _LOGGER.debug(f"{self.deviceName}: Could not send mismatch notification: {notify_error}")
                 return
 
-            _LOGGER.info(f"{self.deviceName}: Processing plant view request for room: {self.inRoom}")
+            _LOGGER.debug(f"{self.deviceName}: Processing plant view request for room: {self.inRoom}")
             await self.event_manager.emit("LogForClient", {
                 "Name": self.inRoom,
                 "Type": "Camera",
@@ -528,11 +528,11 @@ class Camera(Device):
                 image_data = self.last_image
                 cache_status = "cached"
                 capture_time = self.last_capture_time
-                _LOGGER.info(f"{self.deviceName}: Using cached image (captured {capture_time})")
+                _LOGGER.debug(f"{self.deviceName}: Using cached image (captured {capture_time})")
 
             else:
                 # Capture new image
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Capturing new image "
                     f"({'forced' if force_new else 'no cache or too old'})"
                 )
@@ -545,7 +545,7 @@ class Camera(Device):
                     self.last_capture_time = dt_util.now()
                     cache_status = "new"
                     capture_time = self.last_capture_time
-                    _LOGGER.info(f"{self.deviceName}: Captured new image successfully")
+                    _LOGGER.debug(f"{self.deviceName}: Captured new image successfully")
                 else:
                     # Capture failed
                     await self.event_manager.emit("user_image_response", {
@@ -587,7 +587,7 @@ class Camera(Device):
                 "plant_data": plant_data,
             })
 
-            _LOGGER.info(f"{self.deviceName}: HasPlantViewed emitted with image and plant data")
+            _LOGGER.debug(f"{self.deviceName}: HasPlantViewed emitted with image and plant data")
             await self.event_manager.emit("LogForClient", {
                 "Name": self.inRoom,
                 "Type": "Camera",
@@ -703,7 +703,7 @@ class Camera(Device):
                     plants_view["tl_image_count"] = self.tl_image_count
                     self._set_plants_view( plants_view)
 
-                    _LOGGER.info(f"{self.deviceName}: Captured first timelapse image immediately at start")
+                    _LOGGER.debug(f"{self.deviceName}: Captured first timelapse image immediately at start")
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Failed to capture initial timelapse image: {e}")
 
@@ -714,7 +714,7 @@ class Camera(Device):
             timedelta(seconds=interval_sec)
         )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.deviceName}: Timelapse capture started "
             f"(interval: {interval_sec}s, end: {dt_util.as_local(end_dt).isoformat()})"
         )
@@ -762,7 +762,7 @@ class Camera(Device):
             start_dt
         )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.deviceName}: Timelapse scheduled to start at {dt_util.as_local(start_dt).isoformat()} "
             f"(current time: {dt_util.now().isoformat()})"
         )
@@ -849,7 +849,7 @@ class Camera(Device):
             now_local = dt_util.as_local(now)
 
             if self.tl_end_time and now_utc > self.tl_end_time:
-                _LOGGER.info(f"{self.deviceName}: Timelapse duration exceeded")
+                _LOGGER.debug(f"{self.deviceName}: Timelapse duration exceeded")
                 await self._stop_timelapse_and_notify()
                 return
 
@@ -1085,7 +1085,7 @@ class Camera(Device):
                 image_data = await self._get_ha_camera_image(camera_entity_id)
 
                 if image_data:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.deviceName}: Daily snapshot captured successfully "
                         f"(attempt {attempt + 1})"
                     )
@@ -1103,7 +1103,7 @@ class Camera(Device):
 
             # If not the last attempt, wait before retry
             if attempt < len(retry_delays) - 1:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Retrying daily snapshot in {delay} seconds..."
                 )
                 await asyncio.sleep(delay)
@@ -1155,7 +1155,7 @@ class Camera(Device):
                     self.last_image = image_data
                     self.last_capture_time = dt_util.now()
 
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.deviceName}: Timelapse image captured successfully "
                         f"(attempt {attempt + 1})"
                     )
@@ -1173,7 +1173,7 @@ class Camera(Device):
 
             # If not the last attempt, wait before retry
             if attempt < len(retry_delays) - 1:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Retrying timelapse capture in {delay} seconds..."
                 )
                 await asyncio.sleep(delay)
@@ -1326,7 +1326,7 @@ class Camera(Device):
             existing_photos = await asyncio.to_thread(_check_existing)
 
             if existing_photos:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Daily snapshot already exists for today ({today_prefix}), skipping save"
                 )
                 return {
@@ -1347,7 +1347,7 @@ class Camera(Device):
             # Use asyncio.to_thread for blocking file write
             saved_path = await asyncio.to_thread(_write_image)
 
-            _LOGGER.info(f"{self.deviceName}: Daily snapshot saved: {saved_path}")
+            _LOGGER.debug(f"{self.deviceName}: Daily snapshot saved: {saved_path}")
 
             return {
                 "success": True,
@@ -1373,7 +1373,7 @@ class Camera(Device):
         emits a success event, and reschedules for the next day.
         """
         try:
-            _LOGGER.info(f"{self.deviceName}: Daily snapshot triggered")
+            _LOGGER.debug(f"{self.deviceName}: Daily snapshot triggered")
 
             # Get storage path
             storage_path = getattr(self, 'camera_storage_path', f"/config/ogb_data/{self.inRoom}_img/{self.deviceName}")
@@ -1549,7 +1549,7 @@ class Camera(Device):
                 "tl_image_count": self.tl_image_count,
                 "last_capture_time": self.last_capture_time.isoformat() if self.last_capture_time else None,
             }, haEvent=True)
-            _LOGGER.info(f"{self.deviceName}: Sent timelapse config")
+            _LOGGER.debug(f"{self.deviceName}: Sent timelapse config")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling get timelapse config: {e}")
@@ -1601,13 +1601,13 @@ class Camera(Device):
             daily_enabled = plants_view.get("daily_snapshot_enabled", False)
             if daily_enabled:
                 await self._schedule_daily_snapshot()
-                _LOGGER.info(f"{self.deviceName}: Daily snapshots rescheduled with time {plants_view.get('daily_snapshot_time', '09:00')}")
+                _LOGGER.debug(f"{self.deviceName}: Daily snapshots rescheduled with time {plants_view.get('daily_snapshot_time', '09:00')}")
             else:
                 # Cancel existing schedule if disabled
                 if self._daily_snapshot_unsub is not None:
                     self._daily_snapshot_unsub()
                     self._daily_snapshot_unsub = None
-                    _LOGGER.info(f"{self.deviceName}: Daily snapshots disabled, schedule cancelled")
+                    _LOGGER.debug(f"{self.deviceName}: Daily snapshots disabled, schedule cancelled")
 
             # Emit success event
             await self.event_manager.emit("TimelapseConfigSaved", {
@@ -1691,7 +1691,7 @@ class Camera(Device):
                 "format": output_format,
             }, haEvent=True)
 
-            _LOGGER.info(f"{self.deviceName}: Timelapse generation started")
+            _LOGGER.debug(f"{self.deviceName}: Timelapse generation started")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling generate timelapse: {e}")
@@ -1700,7 +1700,7 @@ class Camera(Device):
         """Handle opengrowbox_get_timelapse_status event from frontend."""
         try:
             # Debug: Log incoming event
-            _LOGGER.info(f"{self.deviceName}: Received timelapse status request - event.data: {event.data}")
+            _LOGGER.debug(f"{self.deviceName}: Received timelapse status request - event.data: {event.data}")
 
             event_data = event.data if hasattr(event, 'data') else event
             device_name = event_data.get("device_name") if isinstance(event_data, dict) else None
@@ -1761,7 +1761,7 @@ class Camera(Device):
             # Do not rewrite user's configured date range from existing image files.
             await self.startTL(oldest_start_time=None)
 
-            _LOGGER.info(f"{self.deviceName}: Timelapse start command processed via event (interval: {interval}s)")
+            _LOGGER.debug(f"{self.deviceName}: Timelapse start command processed via event (interval: {interval}s)")
 
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling start timelapse: {e}")
@@ -1778,7 +1778,7 @@ class Camera(Device):
             # Stop timelapse recording using helper (user-initiated, no TimelapseCompleted)
             await self._stop_timelapse_and_notify(user_initiated=True)
             
-            _LOGGER.info(f"{self.deviceName}: Timelapse recording stopped via event")
+            _LOGGER.debug(f"{self.deviceName}: Timelapse recording stopped via event")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling stop timelapse: {e}")
@@ -1890,7 +1890,7 @@ class Camera(Device):
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
-                _LOGGER.info(f"{self.deviceName}: Detected V4L2 M2M hardware acceleration (Raspberry Pi)")
+                _LOGGER.debug(f"{self.deviceName}: Detected V4L2 M2M hardware acceleration (Raspberry Pi)")
                 return ("h264_v4l2m2m", "yuv420p", [])
         except Exception as e:
             _LOGGER.debug(f"{self.deviceName}: V4L2 M2M not available: {e}")
@@ -1903,7 +1903,7 @@ class Camera(Device):
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
-                _LOGGER.info(f"{self.deviceName}: Detected VAAPI hardware acceleration (Intel/AMD)")
+                _LOGGER.debug(f"{self.deviceName}: Detected VAAPI hardware acceleration (Intel/AMD)")
                 return ("h264_vaapi", "yuv420p", ["-vaapi_device", "/dev/dri/renderD128"])
         except Exception as e:
             _LOGGER.debug(f"{self.deviceName}: VAAPI not available: {e}")
@@ -1916,13 +1916,13 @@ class Camera(Device):
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
-                _LOGGER.info(f"{self.deviceName}: Detected NVENC hardware acceleration (NVIDIA)")
+                _LOGGER.debug(f"{self.deviceName}: Detected NVENC hardware acceleration (NVIDIA)")
                 return ("h264_nvenc", "yuv420p", ["-preset", "fast"])
         except Exception as e:
             _LOGGER.debug(f"{self.deviceName}: NVENC not available: {e}")
         
         # Fallback: Software encoding with optimized settings
-        _LOGGER.info(f"{self.deviceName}: Using software encoding (libx264)")
+        _LOGGER.debug(f"{self.deviceName}: Using software encoding (libx264)")
         return ("libx264", "yuv420p", [])
 
     def _resolve_logo_png_path(self):
@@ -2037,7 +2037,7 @@ class Camera(Device):
             if output_format == "zip":
                 # Include all images for ZIP format
                 filtered_images = all_images
-                _LOGGER.info(f"{self.deviceName}: Including all {len(filtered_images)} images for ZIP format")
+                _LOGGER.debug(f"{self.deviceName}: Including all {len(filtered_images)} images for ZIP format")
             else:
                 # Apply interval filtering for video formats
                 filtered_images = [all_images[0]]  # Always include first
@@ -2049,7 +2049,7 @@ class Camera(Device):
                         filtered_images.append(img)
                         last_time = img["mtime"]
                 
-                _LOGGER.info(f"{self.deviceName}: Selected {len(filtered_images)} images for video timelapse (interval: {interval}s)")
+                _LOGGER.debug(f"{self.deviceName}: Selected {len(filtered_images)} images for video timelapse (interval: {interval}s)")
 
             # Emit early progress info for frontend (visible even when ffmpeg startup is slow)
             self.tl_generation_status = "preparing"
@@ -2149,7 +2149,7 @@ class Camera(Device):
                         # Preserve original resolution
                         target_width = img_width
                         target_height = img_height
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Detected image resolution: {img_width}x{img_height}, preserving in video"
                         )
 
@@ -2169,7 +2169,7 @@ class Camera(Device):
                 else:
                     fps = 6  # ~5s video for 36+ images
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Calculating fps for timelapse: {num_images} images @ {fps} fps = ~{num_images / fps:.1f}s video, "
                     f"encoder: {encoder}, resolution: {target_width}x{target_height}"
                 )
@@ -2178,7 +2178,7 @@ class Camera(Device):
                 logo_png_path = self._resolve_logo_png_path()
                 watermark_enabled = bool(logo_png_path)
                 if watermark_enabled:
-                    _LOGGER.info(f"{self.deviceName}: Watermark logo found: {logo_png_path}")
+                    _LOGGER.debug(f"{self.deviceName}: Watermark logo found: {logo_png_path}")
                 else:
                     _LOGGER.warning(f"{self.deviceName}: ogb_tree.png not found, rendering without logo watermark")
 
@@ -2239,10 +2239,10 @@ class Camera(Device):
                 # Add output file
                 cmd.append(output_path)
 
-                _LOGGER.info(f"{self.deviceName}: Running ffmpeg with {'hardware' if hw_params else 'software'} encoding")
+                _LOGGER.debug(f"{self.deviceName}: Running ffmpeg with {'hardware' if hw_params else 'software'} encoding")
                 _LOGGER.debug(f"{self.deviceName}: ffmpeg command: {' '.join(cmd)}")
 
-                _LOGGER.info(f"{self.deviceName}: Running ffmpeg with {'hardware' if hw_params else 'software'} encoding")
+                _LOGGER.debug(f"{self.deviceName}: Running ffmpeg with {'hardware' if hw_params else 'software'} encoding")
 
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -2311,7 +2311,7 @@ class Camera(Device):
                                     stuck_count += 1
                                     if stuck_count >= MAX_STUCK_COUNT:
                                         # Assume ffmpeg is done (file not growing for 5s)
-                                        _LOGGER.info(f"{self.deviceName}: File size stuck for {MAX_STUCK_COUNT * 0.5}s, assuming complete")
+                                        _LOGGER.debug(f"{self.deviceName}: File size stuck for {MAX_STUCK_COUNT * 0.5}s, assuming complete")
                                         break
                             else:
                                 # File doesn't exist yet (ffmpeg still starting)
@@ -2423,7 +2423,7 @@ class Camera(Device):
                 "estimated_space": f"{file_size / (1024*1024):.1f} MB" if file_size else None,
             }, haEvent=True)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Timelapse generation complete: {output_path} "
                 f"({file_size / (1024*1024):.2f}MB, URL download)"
             )
@@ -2518,7 +2518,7 @@ class Camera(Device):
                 "count": len(daily_photos),
             }, haEvent=True)
 
-            _LOGGER.info(f"{self.deviceName}: Sent daily photos list (count: {len(daily_photos)})")
+            _LOGGER.debug(f"{self.deviceName}: Sent daily photos list (count: {len(daily_photos)})")
 
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling get daily photos: {e}")
@@ -2539,8 +2539,8 @@ class Camera(Device):
             timelapse_path = os.path.join(storage_path, "timelapse")
             output_path = self.hass.config.path("www", "ogb_data", f"{self.inRoom}_img", "timelapse_output") if self.hass else f"/config/www/ogb_data/{self.inRoom}_img/timelapse_output"
 
-            _LOGGER.info(f"{self.deviceName}: _handle_get_timelapse_photos - storage_path: {storage_path}")
-            _LOGGER.info(f"{self.deviceName}: _handle_get_timelapse_photos - timelapse_path: {timelapse_path}")
+            _LOGGER.debug(f"{self.deviceName}: _handle_get_timelapse_photos - storage_path: {storage_path}")
+            _LOGGER.debug(f"{self.deviceName}: _handle_get_timelapse_photos - timelapse_path: {timelapse_path}")
 
             timelapse_photos = []
             total_count = 0
@@ -2561,7 +2561,7 @@ class Camera(Device):
                     # Sort by modification time (newest first)
                     timelapse_photos.sort(key=lambda x: x["mtime"], reverse=True)
 
-                    _LOGGER.info(f"{self.deviceName}: Found {total_count} photos in {timelapse_path}")
+                    _LOGGER.debug(f"{self.deviceName}: Found {total_count} photos in {timelapse_path}")
                 else:
                     # Fallback without hass
                     def _list_photos():
@@ -2585,7 +2585,7 @@ class Camera(Device):
                     timelapse_photos = _list_photos()
                     total_count = len(timelapse_photos)
                     timelapse_photos.sort(key=lambda x: x["mtime"], reverse=True)
-                    _LOGGER.info(f"{self.deviceName}: Found {total_count} photos (no hass) in {timelapse_path}")
+                    _LOGGER.debug(f"{self.deviceName}: Found {total_count} photos (no hass) in {timelapse_path}")
 
             except Exception as e:
                 _LOGGER.warning(f"{self.deviceName}: Error listing timelapse photos: {e}")
@@ -2663,7 +2663,7 @@ class Camera(Device):
                 "output_counts": output_counts,
             }, haEvent=True)
 
-            _LOGGER.info(f"{self.deviceName}: Sent timelapse photos response (count: {total_count}, active: {active_image_count})")
+            _LOGGER.debug(f"{self.deviceName}: Sent timelapse photos response (count: {total_count}, active: {active_image_count})")
 
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error handling get timelapse photos: {e}")
@@ -2775,7 +2775,7 @@ class Camera(Device):
                     "timestamp": dt_util.now().isoformat(),
                 }, haEvent=True)
 
-                _LOGGER.info(f"{self.deviceName}: Sent daily photo for {date_str} ({photo_filename})")
+                _LOGGER.debug(f"{self.deviceName}: Sent daily photo for {date_str} ({photo_filename})")
 
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Failed to read/encode photo: {e}")
@@ -2921,7 +2921,7 @@ class Camera(Device):
                     "filename": photo_filename,
                 }, haEvent=True)
 
-                _LOGGER.info(f"{self.deviceName}: Deleted daily photo for {date_str} ({photo_filename})")
+                _LOGGER.debug(f"{self.deviceName}: Deleted daily photo for {date_str} ({photo_filename})")
 
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Failed to delete photo: {e}")
@@ -3023,7 +3023,7 @@ class Camera(Device):
                     "deleted_count": deleted_count,
                 }, haEvent=True)
 
-                _LOGGER.info(f"{self.deviceName}: Deleted all daily photos ({deleted_count} files)")
+                _LOGGER.debug(f"{self.deviceName}: Deleted all daily photos ({deleted_count} files)")
 
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Failed to delete all daily photos: {e}")
@@ -3181,7 +3181,7 @@ class Camera(Device):
                 if total_size is None:
                     raise Exception("Failed to calculate total ZIP size")
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Creating daily ZIP with {len(photos)} photos "
                     f"(estimated size: {total_size / (1024*1024):.2f}MB)"
                 )
@@ -3195,7 +3195,7 @@ class Camera(Device):
                 timestamp = dt_util.now().strftime("%Y%m%d_%H%M%S")
                 zip_filename = f"daily_photos_{timestamp}.zip"
                 zip_path = os.path.join(output_dir, zip_filename)
-                _LOGGER.info(f"{self.deviceName}: Creating daily ZIP at {zip_path}")
+                _LOGGER.debug(f"{self.deviceName}: Creating daily ZIP at {zip_path}")
 
                 zip_filename = os.path.basename(zip_path)
 
@@ -3232,7 +3232,7 @@ class Camera(Device):
                     "download_method": "url",
                 }, haEvent=True)
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Generated daily ZIP with {len(photos)} photos "
                     f"(range: {start_date or 'all'} to {end_date or 'all'}, "
                     f"size: {final_size / (1024*1024):.2f}MB, URL download)"
@@ -3337,7 +3337,7 @@ class Camera(Device):
                     "deleted_count": deleted_count,
                 }, haEvent=True)
 
-                _LOGGER.info(f"{self.deviceName}: Deleted all timelapse photos ({deleted_count} files)")
+                _LOGGER.debug(f"{self.deviceName}: Deleted all timelapse photos ({deleted_count} files)")
 
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Failed to delete all timelapse photos: {e}")
@@ -3437,7 +3437,7 @@ class Camera(Device):
                     "deleted_count": deleted_count,
                 }, haEvent=True)
 
-                _LOGGER.info(f"{self.deviceName}: Deleted all timelapse output files ({deleted_count} files)")
+                _LOGGER.debug(f"{self.deviceName}: Deleted all timelapse output files ({deleted_count} files)")
 
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Failed to delete all timelapse output files: {e}")
@@ -3464,7 +3464,7 @@ class Camera(Device):
             if self._daily_snapshot_unsub is not None:
                 self._daily_snapshot_unsub()
                 self._daily_snapshot_unsub = None
-                _LOGGER.info(f"{self.deviceName}: Cancelled daily snapshot schedule")
+                _LOGGER.debug(f"{self.deviceName}: Cancelled daily snapshot schedule")
 
             # Cancel background timelapse generation task if active
             if self.tl_generation_task and not self.tl_generation_task.done():
@@ -3472,7 +3472,7 @@ class Camera(Device):
                 try:
                     await self.tl_generation_task
                 except asyncio.CancelledError:
-                    _LOGGER.info(f"{self.deviceName}: Timelapse generation task cancelled during cleanup")
+                    _LOGGER.debug(f"{self.deviceName}: Timelapse generation task cancelled during cleanup")
                 self.tl_generation_task = None
 
             # Stop timelapse scheduler if active
@@ -3481,7 +3481,7 @@ class Camera(Device):
             # Reset active flag
             if self.tl_active:
                 self.tl_active = False
-                _LOGGER.info(f"{self.deviceName}: Stopped timelapse during cleanup")
+                _LOGGER.debug(f"{self.deviceName}: Stopped timelapse during cleanup")
 
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error during cleanup: {e}")

@@ -79,7 +79,7 @@ class OGBReservoirManager:
         self.event_manager.on("ReservoirLevelChange", self._handle_level_config_change)
         self.event_manager.on("FeedModeChange", self._handle_feed_mode_change)
         
-        _LOGGER.info(f"[{self.room}] OGB Reservoir Manager initialized")
+        _LOGGER.debug(f"[{self.room}] OGB Reservoir Manager initialized")
     
     @property
     def low_threshold(self) -> float:
@@ -191,7 +191,7 @@ class OGBReservoirManager:
                 entity_id = state.entity_id
                 if self._entity_looks_like_reservoir_level_sensor(entity_id):
                     self.reservoir_sensor_entity = entity_id
-                    _LOGGER.info(f"[{self.room}] Found reservoir sensor: {entity_id}")
+                    _LOGGER.debug(f"[{self.room}] Found reservoir sensor: {entity_id}")
                     
                     # Get initial value - create OGBEventPublication object
                     from ....data.OGBDataClasses.OGBPublications import OGBEventPublication
@@ -220,7 +220,7 @@ class OGBReservoirManager:
                 if dev_entities:
                     # Get the first available pump entity
                     self.reservoir_pump_entity = dev_entities[0]
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"[{self.room}] Found reservoir pump via capability: {self.reservoir_pump_entity}"
                     )
                     return
@@ -246,7 +246,7 @@ class OGBReservoirManager:
                             self.reservoir_pump_entity = entities[0].get("entity_id")
                         else:
                             self.reservoir_pump_entity = str(entities[0])
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"[{self.room}] Found reservoir pump by device type: {self.reservoir_pump_entity}"
                         )
                         return
@@ -264,7 +264,7 @@ class OGBReservoirManager:
                                 self.reservoir_pump_entity = entities[0].get("entity_id")
                             else:
                                 self.reservoir_pump_entity = str(entities[0])
-                            _LOGGER.info(
+                            _LOGGER.debug(
                                 f"[{self.room}] Found reservoir pump by label '{label_name}': {self.reservoir_pump_entity}"
                             )
                             return
@@ -279,14 +279,14 @@ class OGBReservoirManager:
                     if any(keyword in entity_id.lower() for keyword in 
                            ['reservoir_pump', 'reservoirpump', 'tank_fill', 'fill_pump', 'reservoir_fill', 'water_fill']):
                         self.reservoir_pump_entity = entity_id
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"[{self.room}] Found reservoir pump by entity_id fallback: {entity_id}"
                         )
                         return
             
             if not self.reservoir_pump_entity and log_missing:
                 _LOGGER.debug(f"[{self.room}] No reservoir pump found - auto-fill disabled")
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"[{self.room}] To enable auto-fill, add a device with label 'reservoir_pump' "
                     f"or deviceType 'ReservoirPump'"
                 )
@@ -305,7 +305,7 @@ class OGBReservoirManager:
 
             if not self.reservoir_sensor_entity and self._entity_looks_like_reservoir_level_sensor(entity_id):
                 self.reservoir_sensor_entity = entity_id
-                _LOGGER.info(f"[{self.room}] Reservoir sensor discovered lazily: {entity_id}")
+                _LOGGER.debug(f"[{self.room}] Reservoir sensor discovered lazily: {entity_id}")
 
             if self.reservoir_sensor_entity and entity_id != self.reservoir_sensor_entity:
                 return
@@ -490,11 +490,11 @@ class OGBReservoirManager:
                 value = data.get('value')
                 
                 if change_type == 'min_level':
-                    _LOGGER.info(f"[{self.room}] Reservoir min level config changed to {value}%")
+                    _LOGGER.debug(f"[{self.room}] Reservoir min level config changed to {value}%")
                     # Re-check thresholds with new value
                     await self._check_thresholds()
                 elif change_type == 'max_level':
-                    _LOGGER.info(f"[{self.room}] Reservoir max level config changed to {value}%")
+                    _LOGGER.debug(f"[{self.room}] Reservoir max level config changed to {value}%")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error handling level config change: {e}")
     
@@ -576,7 +576,7 @@ class OGBReservoirManager:
         else:
             # Level is back in normal range, reset alert type
             if self.last_alert_type is not None:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"[{self.room}] Reservoir level back to normal: "
                     f"{self.current_level:.1f}%"
                 )
@@ -670,10 +670,10 @@ class OGBReservoirManager:
         5. Repeat until configured maximum reached
         6. Block on 2 consecutive sensor errors
         """
-        _LOGGER.info(f"[{self.room}] _auto_fill_reservoir() called - checking conditions...")
+        _LOGGER.debug(f"[{self.room}] _auto_fill_reservoir() called - checking conditions...")
         
         if self._is_filling:
-            _LOGGER.info(f"[{self.room}] Auto-fill already in progress, skipping")
+            _LOGGER.debug(f"[{self.room}] Auto-fill already in progress, skipping")
             return
         
         if self._fill_blocked:
@@ -684,15 +684,15 @@ class OGBReservoirManager:
         
         # Try to find pump if not already found
         if not self.reservoir_pump_entity:
-            _LOGGER.info(f"[{self.room}] No pump cached, attempting discovery...")
+            _LOGGER.debug(f"[{self.room}] No pump cached, attempting discovery...")
             await self._find_reservoir_pump()
         
         if not self.reservoir_pump_entity:
             _LOGGER.error(f"[{self.room}] Cannot auto-fill: No reservoir pump configured")
-            _LOGGER.info(f"[{self.room}] Add a pump with label 'reservoir_pump' to enable auto-fill")
+            _LOGGER.debug(f"[{self.room}] Add a pump with label 'reservoir_pump' to enable auto-fill")
             return
         
-        _LOGGER.info(f"[{self.room}] Starting auto-fill process with pump: {self.reservoir_pump_entity}")
+        _LOGGER.debug(f"[{self.room}] Starting auto-fill process with pump: {self.reservoir_pump_entity}")
         
         self._is_filling = True
         self._fill_cycles_completed = 0
@@ -702,7 +702,7 @@ class OGBReservoirManager:
         
         target_level = self.fill_stop_level
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"[{self.room}] Auto-fill initialized: {self.current_level:.1f}% → {target_level:.1f}%"
         )
         
@@ -807,7 +807,7 @@ class OGBReservoirManager:
                     f"Zyklen: {self._fill_cycles_completed}",
                     level="warning",
                 )
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"[{self.room}] Auto-fill complete: {self._fill_start_level:.1f}% → "
                     f"{self.current_level:.1f}% in {self._fill_cycles_completed} cycles"
                 )
@@ -848,7 +848,7 @@ class OGBReservoirManager:
                 
                 # Check timeout (5 minutes max)
                 if elapsed >= max_pump_duration:
-                    _LOGGER.info(f"[{self.room}] Fill cycle timeout after 5 minutes")
+                    _LOGGER.debug(f"[{self.room}] Fill cycle timeout after 5 minutes")
                     break
                 
                 # Check if target reached
@@ -867,7 +867,7 @@ class OGBReservoirManager:
                     
                     # Check if we reached target
                     if self.current_level >= target_level:
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"[{self.room}] Fill cycle complete: "
                             f"+{added:.1f}% in {elapsed:.0f}s"
                         )
@@ -903,7 +903,7 @@ class OGBReservoirManager:
                 )
                 return False
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.room}] Fill cycle {self._fill_cycles_completed + 1} complete: "
                 f"{cycle_start_level:.1f}% → {self.current_level:.1f}% (+{actual_added:.1f}%)"
             )
@@ -1050,7 +1050,7 @@ class OGBReservoirManager:
     async def _stop_fill(self, reason: str):
         """Stop filling process"""
         if self._is_filling:
-            _LOGGER.info(f"[{self.room}] Stopping auto-fill: {reason}")
+            _LOGGER.debug(f"[{self.room}] Stopping auto-fill: {reason}")
             await self._deactivate_pump()
             self._is_filling = False
             self._last_fill_cycle_time = datetime.now()
@@ -1115,11 +1115,11 @@ class OGBReservoirManager:
         """Update alert thresholds"""
         if low is not None:
             self.data_store.setDeep("Hydro.ReservoirMinLevel", max(0.0, min(50.0, low)))
-            _LOGGER.info(f"[{self.room}] Low threshold updated to {self.low_threshold}%")
+            _LOGGER.debug(f"[{self.room}] Low threshold updated to {self.low_threshold}%")
         
         if high is not None:
             self.data_store.setDeep("Hydro.ReservoirMaxLevel", max(50.0, min(100.0, high)))
-            _LOGGER.info(f"[{self.room}] High threshold updated to {self.high_threshold}%")
+            _LOGGER.debug(f"[{self.room}] High threshold updated to {self.high_threshold}%")
         
         # Re-check current level with new thresholds
         await self._check_thresholds()

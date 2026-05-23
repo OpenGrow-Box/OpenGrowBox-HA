@@ -106,7 +106,7 @@ class OGBEmergencyActions:
         """
         await asyncio.sleep(5)  # 5 seconds
         self._emergency_mode = False
-        _LOGGER.info(f"{self.ogb.room}: Emergency mode deactivated")
+        _LOGGER.debug(f"{self.ogb.room}: Emergency mode deactivated")
 
     async def _clear_all_cooldowns(self):
         """

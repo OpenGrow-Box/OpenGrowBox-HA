@@ -278,7 +278,7 @@ class OGBWizardManager:
                 "reapply": True,
             },
         )
-        _LOGGER.info(
+        _LOGGER.debug(
             "[%s] Re-applied plant stage '%s' after wizard %s apply",
             self.room,
             current_stage,
@@ -293,7 +293,7 @@ class OGBWizardManager:
         if restored is None:
             _LOGGER.warning("Could not restore plant stage source %s for room %s", source, self.room)
         else:
-            _LOGGER.info("Restored plant stage source %s for room %s", source, self.room)
+            _LOGGER.debug("Restored plant stage source %s for room %s", source, self.room)
         return restored
 
     async def _handle_give_plant_stages(self, event):
@@ -323,7 +323,7 @@ class OGBWizardManager:
                 "activeSource": active_source,
                 "currentStage": current_stage,
             })
-            _LOGGER.info(f"{self.room} - Sent plant stages via event: {active_source}")
+            _LOGGER.debug(f"{self.room} - Sent plant stages via event: {active_source}")
             
         except Exception as err:
             _LOGGER.error(f"{self.room} - Error sending plant stages: {err}")
@@ -382,7 +382,7 @@ class OGBWizardManager:
                 "requestType": request_type,
                 "data": debug_data,
             })
-            _LOGGER.info(f"{self.room} - Sent debug info: {request_type}")
+            _LOGGER.debug(f"{self.room} - Sent debug info: {request_type}")
             
         except Exception as err:
             _LOGGER.error(f"{self.room} - Error sending debug info: {err}")
@@ -782,7 +782,7 @@ class OGBWizardManager:
 
         if numeric > 100:
             converted = numeric / 10.0
-            _LOGGER.info(
+            _LOGGER.debug(
                 "[%s] Converted %s for stage '%s' from PPFD-like value %s to brightness %s%%.",
                 self.room,
                 field_name,

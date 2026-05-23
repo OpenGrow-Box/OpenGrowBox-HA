@@ -70,7 +70,7 @@ class PumpCalibration:
                 
             self.measured_time = measured_time
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"Pump {self.pump_type} calibrated: {self.calibration_factor:.2f} ml/s, "
                 f"accuracy: {self.accuracy_score:.1f}% (expected: {expected_time:.1f}s, measured: {measured_time:.1f}s)"
             )
@@ -204,7 +204,7 @@ class OGBFeedCalibrationManager:
                         calibration = PumpCalibration.from_dict(pump_data)
                         self.pump_calibrations[calibration.pump_type] = calibration
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Loaded calibration data for {len(self.pump_calibrations)} pumps"
             )
 
@@ -284,7 +284,7 @@ class OGBFeedCalibrationManager:
             # Ensure reasonable bounds
             expected_time = max(1.0, min(expected_time, 30.0))
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Starting calibration test for {pump_type}: {calibration.test_volume}ml in ~{expected_time:.1f}s"
             )
 
@@ -306,7 +306,7 @@ class OGBFeedCalibrationManager:
             # Update calibration with measured data
             calibration.update_calibration(measured_time, calibration.test_volume)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Calibration test completed for {pump_type}: measured {measured_time:.2f}s"
             )
             return True
@@ -364,7 +364,7 @@ class OGBFeedCalibrationManager:
             self._daily_calibration_task = asyncio.create_task(
                 self._daily_calibration_loop()
             )
-            _LOGGER.info(f"{self.room} - Daily calibration automation started")
+            _LOGGER.debug(f"{self.room} - Daily calibration automation started")
 
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error starting daily calibration: {e}")
@@ -397,7 +397,7 @@ class OGBFeedCalibrationManager:
                 await self._run_daily_calibration()
 
         except asyncio.CancelledError:
-            _LOGGER.info(f"{self.room} - Daily calibration loop cancelled")
+            _LOGGER.debug(f"{self.room} - Daily calibration loop cancelled")
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error in daily calibration loop: {e}")
 
@@ -406,14 +406,14 @@ class OGBFeedCalibrationManager:
         Run daily calibration check and recalibration if needed.
         """
         try:
-            _LOGGER.info(f"{self.room} - Running daily calibration check")
+            _LOGGER.debug(f"{self.room} - Running daily calibration check")
 
             recalibrated_count = 0
 
             for pump_type, calibration in self.pump_calibrations.items():
                 # Check if calibration is still valid
                 if not calibration.is_calibration_valid():
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room} - Recalibrating {pump_type} (calibration expired)"
                     )
 
@@ -538,7 +538,7 @@ class OGBFeedCalibrationManager:
                 except asyncio.CancelledError:
                     pass
 
-            _LOGGER.info(f"{self.room} - Daily calibration stopped")
+            _LOGGER.debug(f"{self.room} - Daily calibration stopped")
 
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error stopping daily calibration: {e}")

@@ -142,7 +142,7 @@ class OGBPremWebSocketEventHandlers:
                 event_type = data.get("event_type", "unknown")
                 new_plan = data.get("plan_name", "free")
 
-                _LOGGER.info(f"📡 Subscription changed via {event_type}: {new_plan}")
+                _LOGGER.debug(f"📡 Subscription changed via {event_type}: {new_plan}")
 
                 old_status = client.is_premium
                 client.is_premium = new_plan.lower() != "free"
@@ -198,7 +198,7 @@ class OGBPremWebSocketEventHandlers:
                 new_plan = data.get("plan_name", "unknown")
                 subscription_data = data.get("subscription_data", {})
 
-                _LOGGER.info(f"🔄 Premium features changed (plan: {new_plan})")
+                _LOGGER.debug(f"🔄 Premium features changed (plan: {new_plan})")
 
                 if subscription_data:
                     client.subscription_data = subscription_data
@@ -225,7 +225,7 @@ class OGBPremWebSocketEventHandlers:
                 enabled = data.get("enabled")
                 source = data.get("source", "admin")
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🎛️ Feature flag updated: {feature_key}={enabled} (source: {source})"
                 )
 
@@ -285,7 +285,7 @@ class OGBPremWebSocketEventHandlers:
                 feature_key = data.get("feature_key")
                 config = data.get("config", {})
 
-                _LOGGER.info(f"⚙️ Feature config changed: {feature_key}")
+                _LOGGER.debug(f"⚙️ Feature config changed: {feature_key}")
 
                 if client.ogbevents:
                     await client.ogbevents.emit(
@@ -326,7 +326,7 @@ class OGBPremWebSocketEventHandlers:
                 update_type = data.get("update_type", "unknown")
                 room_id = data.get("room_id")
 
-                _LOGGER.info(f"📊 Analytics update [{update_type}] for room: {room_id}")
+                _LOGGER.debug(f"📊 Analytics update [{update_type}] for room: {room_id}")
 
                 if client.ogbevents:
                     await client.ogbevents.emit(
@@ -372,7 +372,7 @@ class OGBPremWebSocketEventHandlers:
                 update_type = data.get("update_type", "unknown")
                 dataset_name = data.get("dataset_name", "Unknown")
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"📊 Dataset Update [{update_type}]: {dataset_name} ({dataset_id})"
                 )
 

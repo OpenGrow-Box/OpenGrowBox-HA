@@ -116,7 +116,7 @@ class OGBCastManager:
         if new_operation != "retrieve":
             await self._safe_cancel_task(self.active_pumps[device_id]["task"])
             del self.active_pumps[device_id]
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.room}] Cancelled conflicting operation {current_op} for {device_id}"
             )
 
@@ -147,7 +147,7 @@ class OGBCastManager:
                     Name=self.room, Action="off", Device=device_id, Cycle=False
                 )
                 await self.event_manager.emit("PumpAction", pump_action)
-                _LOGGER.info(f"[{self.room}] Emergency shutdown: {device_id}")
+                _LOGGER.debug(f"[{self.room}] Emergency shutdown: {device_id}")
             except Exception as e:
                 _LOGGER.error(
                     f"[{self.room}] Emergency cleanup failed for {device_id}: {e}"
@@ -175,7 +175,7 @@ class OGBCastManager:
 
         for task, operation_type in tasks:
             if task is not None and not task.done():
-                _LOGGER.info(f"[{self.room}] Cancelling {operation_type} task")
+                _LOGGER.debug(f"[{self.room}] Cancelling {operation_type} task")
                 await self._safe_cancel_task(task)
 
         # Clear all pump registrations
@@ -203,7 +203,7 @@ class OGBCastManager:
                 and (not self._retrive_task or self._retrive_task.done())
             ):
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"[{self.room}] Starting retrieve system alongside {primary_mode}"
                 )
                 PumpDevices = self.data_store.getDeep("capabilities.canPump")
@@ -237,7 +237,7 @@ class OGBCastManager:
             return
         
         # Hydro.Mode is "Crop-Steering" - forward to CS Manager
-        _LOGGER.info(f"{self.room} - CropSteeringChanges forwarded to CSManager (Hydro.Mode={hydro_mode})")
+        _LOGGER.debug(f"{self.room} - CropSteeringChanges forwarded to CSManager (Hydro.Mode={hydro_mode})")
         await self.CropSteeringManager.handle_mode_change(data)
 
     ## Hydro Modes
@@ -314,12 +314,12 @@ class OGBCastManager:
             if not current_active_mode:
                 self.data_store.setDeep("CropSteering.ActiveMode", "Automatic")
                 current_active_mode = "Automatic"
-                _LOGGER.info(f"{self.room} - CropSteering ActiveMode defaulted to Automatic")
+                _LOGGER.debug(f"{self.room} - CropSteering ActiveMode defaulted to Automatic")
             
             # Set Active based on mode - Disabled/Config = not active
             is_active = current_active_mode not in ("Disabled", "Config", None)
             self.data_store.setDeep("CropSteering.Active", is_active)
-            _LOGGER.info(f"{self.room} - CropSteering Active={is_active} (mode={current_active_mode})")
+            _LOGGER.debug(f"{self.room} - CropSteering Active={is_active} (mode={current_active_mode})")
             
             await self.CropSteeringManager.handle_mode_change(pumpAction)
             # Start retrieve system alongside crop-steering

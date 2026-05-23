@@ -691,7 +691,7 @@ class OGBPremWebSocketSessionMixin:
                     else:
                         # Reset consecutive failures on successful pong
                         if consecutive_failures > 0:
-                            _LOGGER.info(
+                            _LOGGER.debug(
                                 f"Health check recovered for {self.ws_room} after {consecutive_failures} failures"
                             )
                         consecutive_failures = 0

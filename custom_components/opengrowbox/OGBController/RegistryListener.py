@@ -156,7 +156,7 @@ class OGBRegistryEvenListener:
         device_registry = async_get_device_registry(self.hass)
         label_registry = async_get_label_registry(self.hass)
 
-        _LOGGER.info(f"RegistryListener: Looking for devices in room '{room_name}'")
+        _LOGGER.debug(f"RegistryListener: Looking for devices in room '{room_name}'")
 
         # Log all areas and devices for debugging
         all_areas = set()
@@ -166,10 +166,10 @@ class OGBRegistryEvenListener:
                 all_areas.add(device.area_id)
             all_devices.append(f"{device.name} (area: {device.area_id})")
 
-        _LOGGER.info(f"RegistryListener: All areas found: {sorted(all_areas)}")
-        _LOGGER.info(f"RegistryListener: Total devices: {len(all_devices)}")
+        _LOGGER.debug(f"RegistryListener: All areas found: {sorted(all_areas)}")
+        _LOGGER.debug(f"RegistryListener: Total devices: {len(all_devices)}")
         for device_info in all_devices[:10]:  # Log first 10 devices
-            _LOGGER.info(f"RegistryListener: Device: {device_info}")
+            _LOGGER.debug(f"RegistryListener: Device: {device_info}")
 
         # Geräte im Raum filtern - try exact match first
         devices_in_room = {
@@ -186,9 +186,9 @@ class OGBRegistryEvenListener:
                 if device.area_id and device.area_id.lower() == room_name.lower()
             }
 
-        _LOGGER.info(f"RegistryListener: Found {len(devices_in_room)} devices in room '{room_name}' (after case-insensitive match)")
+        _LOGGER.debug(f"RegistryListener: Found {len(devices_in_room)} devices in room '{room_name}' (after case-insensitive match)")
         for device_id, device in list(devices_in_room.items())[:3]:  # Log first 3 devices
-            _LOGGER.info(f"RegistryListener: Device {device_id} - name: {device.name}, area: {device.area_id}")
+            _LOGGER.debug(f"RegistryListener: Device {device_id} - name: {device.name}, area: {device.area_id}")
 
         grouped_entities_array = []
         room_lower = room_name.lower()
@@ -612,7 +612,7 @@ class OGBRegistryEvenListener:
                 # Remove from capabilities
                 await self._remove_disabled_entity_from_capabilities(entry)
             else:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room_name}: Entity {entity_id} was ENABLED"
                 )
                 # Re-register in capabilities
@@ -651,7 +651,7 @@ class OGBRegistryEvenListener:
                 # Update capabilities
                 self.data_store.setDeep(f"capabilities.{cap}", cap_data)
                 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room_name}: Removed disabled device {entry.entity_id} "
                     f"from capability {cap}. Remaining: {cap_data['count']}"
                 )
@@ -686,7 +686,7 @@ class OGBRegistryEvenListener:
                     
                     self.data_store.setDeep(cap_path, current_cap)
                     
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room_name}: Re-enabled device {entry.entity_id} "
                         f"in capability {cap}. Total: {current_cap['count']}"
                     )

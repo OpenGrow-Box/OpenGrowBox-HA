@@ -104,7 +104,7 @@ class OGBMainController:
         self.medium_manager = OGBMediumManager(
             self.hass, self.data_store, self.event_manager, self.room
         )
-        _LOGGER.info(f"🌱 {self.room}: Medium Manager initialized")
+        _LOGGER.debug(f"🌱 {self.room}: Medium Manager initialized")
 
         # Plant cast manager - pass shared medium_manager to avoid duplicate
         self.plant_cast_manager = OGBCastManager(
@@ -240,13 +240,13 @@ class OGBMainController:
         BEFORE managerInit() to ensure saved data is restored before entity values
         trigger MediumChange events.
         """
-        _LOGGER.info(f"Starting OpenGrowBox system for room: {self.room}")
+        _LOGGER.debug(f"Starting OpenGrowBox system for room: {self.room}")
 
         # Initialize action modules (VPD, Emergency, Dampening, Premium actions)
         # Pass 'self' as the ogb reference - we have compatibility properties
         if self.action_manager:
             await self.action_manager.initialize_action_modules(self)
-            _LOGGER.info(f"🔥 {self.room}: Action modules initialized")
+            _LOGGER.debug(f"🔥 {self.room}: Action modules initialized")
         else:
             _LOGGER.error(f"❌ {self.room}: Action manager not available")
 
@@ -368,7 +368,7 @@ class OGBMainController:
 
         # Update datastore with current desired state
         self.data_store.setDeep("isPlantDay.islightON", light_should_be_on)
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room}: Light status checked and updated for {self.room} - Light status is {light_should_be_on}"
         )
 
@@ -463,7 +463,7 @@ class OGBMainController:
         # Set mainControl default if not set
         if not self.data_store.get("mainControl"):
             self.data_store.set("mainControl", "HomeAssistant")
-            _LOGGER.info(f"🔧 Set mainControl to 'HomeAssistant' for room {self.room}")
+            _LOGGER.debug(f"🔧 Set mainControl to 'HomeAssistant' for room {self.room}")
 
     async def _handle_outsite_data(self, event):
         """Handle outside weather data."""

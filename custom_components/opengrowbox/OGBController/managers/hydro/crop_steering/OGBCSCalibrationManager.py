@@ -84,7 +84,7 @@ class OGBCSCalibrationManager:
                 blocking=True,
             )
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Updated number entity {entity_id} to {value:.1f}"
             )
             
@@ -124,7 +124,7 @@ class OGBCSCalibrationManager:
                 _LOGGER.warning(f"{self.room} - Calibration already in progress")
                 return
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Starting VWC max calibration for phase {phase}"
             )
 
@@ -156,7 +156,7 @@ class OGBCSCalibrationManager:
             phase: Phase identifier
         """
         try:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Executing VWC max calibration cycle for phase {phase}"
             )
 
@@ -217,7 +217,7 @@ class OGBCSCalibrationManager:
                     },
                 )
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - VWC max calibration completed: {max_vwc:.1f}% for phase {phase}"
                 )
 
@@ -238,7 +238,7 @@ class OGBCSCalibrationManager:
                 _LOGGER.warning(f"{self.room} - Calibration already in progress")
                 return
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Starting VWC min calibration for phase {phase}"
             )
 
@@ -273,7 +273,7 @@ class OGBCSCalibrationManager:
             dry_back_duration: Duration to wait for dryback in seconds
         """
         try:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Executing VWC min calibration cycle for phase {phase}"
             )
 
@@ -317,7 +317,7 @@ class OGBCSCalibrationManager:
                     },
                 )
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.room} - VWC min calibration completed: {min_vwc:.1f}% for phase {phase}"
                 )
 
@@ -425,7 +425,7 @@ class OGBCSCalibrationManager:
                 calibration_data,
             )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Collected {len(readings)} {calibration_type} calibration readings, average: {avg_vwc:.1f}%"
             )
 
@@ -458,7 +458,7 @@ class OGBCSCalibrationManager:
                 },
             )
 
-            _LOGGER.info(f"{self.room} - VWC calibration stopped")
+            _LOGGER.debug(f"{self.room} - VWC calibration stopped")
 
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error stopping VWC calibration: {e}")

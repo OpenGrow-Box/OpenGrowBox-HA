@@ -137,7 +137,7 @@ class LightUV(Light):
                 for entity_id in possible_entity_ids:
                     state = self.hass.states.get(entity_id)
                     if state and state.state not in ("unavailable", "unknown", None):
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"{self.deviceName}: Found entity '{entity_id}' in HA. "
                             f"Adding to switches list."
                         )
@@ -236,7 +236,7 @@ class LightUV(Light):
             self.midday_start_time = uv_settings.get("middayStartTime", "12:00")
             self.midday_end_time = uv_settings.get("middayEndTime", "14:00")
             
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: UV settings loaded - "
                 f"Enabled: {self.enabled}, Mode: {self.mode}, "
                 f"Delay: {self.delay_after_start_minutes}min, StopBefore: {self.stop_before_end_minutes}min, "
@@ -247,23 +247,23 @@ class LightUV(Light):
             
             # CRITICAL: Stop any existing scheduler before deciding to start a new one
             if self._schedule_task and not self._schedule_task.done():
-                _LOGGER.info(f"{self.deviceName}: Stopping existing scheduler before reload")
+                _LOGGER.debug(f"{self.deviceName}: Stopping existing scheduler before reload")
                 self._schedule_task.cancel()
                 self._schedule_task = None
             
             # Only start scheduler if enabled AND mode is Schedule - use immediate check
             if self.enabled and self.mode == UVMode.SCHEDULE:
-                _LOGGER.info(f"{self.deviceName}: UV enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
+                _LOGGER.debug(f"{self.deviceName}: UV enabled={self.enabled}, mode={self.mode} - Starting scheduler with immediate check")
                 asyncio.create_task(self._start_scheduler_with_immediate_check())
             else:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: UV NOT starting scheduler - "
                     f"enabled={self.enabled} (type: {type(self.enabled).__name__}), "
                     f"mode={self.mode}"
                 )
                 # Ensure light is off if not enabled or not in schedule mode
                 if not self.enabled or self.mode == UVMode.ALWAYS_OFF:
-                    _LOGGER.info(f"{self.deviceName}: UV disabled or Always Off - ensuring light is off")
+                    _LOGGER.debug(f"{self.deviceName}: UV disabled or Always Off - ensuring light is off")
             
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Error loading settings: {e}")
@@ -279,7 +279,7 @@ class LightUV(Light):
             return
             
         self._schedule_task = asyncio.create_task(self._schedule_loop())
-        _LOGGER.info(f"{self.deviceName}: UV scheduler started")
+        _LOGGER.debug(f"{self.deviceName}: UV scheduler started")
 
     async def _start_scheduler_with_immediate_check(self):
         """Start the scheduler and run an immediate check without waiting.
@@ -287,14 +287,14 @@ class LightUV(Light):
         This ensures UV can activate immediately if we're already in a window,
         without waiting for the first sleep cycle to complete.
         """
-        _LOGGER.info(f"{self.deviceName}: Starting scheduler with immediate check")
+        _LOGGER.debug(f"{self.deviceName}: Starting scheduler with immediate check")
         
         # Run immediate check first (no wait)
         try:
-            _LOGGER.info(f"{self.deviceName}: Running immediate activation check")
+            _LOGGER.debug(f"{self.deviceName}: Running immediate activation check")
             await self._check_activation_conditions()
             self._check_daily_reset()
-            _LOGGER.info(f"{self.deviceName}: Immediate check completed")
+            _LOGGER.debug(f"{self.deviceName}: Immediate check completed")
         except Exception as e:
             _LOGGER.error(f"{self.deviceName}: Immediate check error: {e}")
             import traceback
@@ -313,7 +313,7 @@ class LightUV(Light):
 
     async def _schedule_loop(self):
         """Main scheduling loop - checks every minute for activation conditions."""
-        _LOGGER.info(f"{self.deviceName}: UV scheduler loop started")
+        _LOGGER.debug(f"{self.deviceName}: UV scheduler loop started")
         while True:
             try:
                 _LOGGER.debug(f"{self.deviceName}: UV scheduler tick - running check")
@@ -469,7 +469,7 @@ class LightUV(Light):
         daily_exposure = getattr(self, 'daily_exposure_minutes', 0)
         exposure_limit_reached = daily_exposure >= max_daily_minutes
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.deviceName}: UV check - Now: {now.strftime('%H:%M')}, "
             f"Light: {self.lightOnTime}-{self.lightOffTime}, "
             f"Delay: {delay_minutes}min, StopBefore: {stop_minutes}min, "
@@ -510,7 +510,7 @@ class LightUV(Light):
         else:
             message = f"UV light activated (intensity: {self.intensity_percent}%)"
         
-        _LOGGER.info(f"{self.deviceName}: {message}")
+        _LOGGER.debug(f"{self.deviceName}: {message}")
         
         # Ramp up to target intensity over transition time (default 60 seconds)
         if self.isDimmable:
@@ -535,7 +535,7 @@ class LightUV(Light):
         step_duration = duration_seconds / steps
         voltage_step = (target_voltage - start_voltage) / steps
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.deviceName}: Ramping UV from {start_voltage}% to {target_voltage}% "
             f"over {duration_seconds}s ({steps} steps, {step_duration:.1f}s per step)"
         )
@@ -546,7 +546,7 @@ class LightUV(Light):
             await self.turn_on(brightness_pct=next_voltage)
             await asyncio.sleep(step_duration)
         
-        _LOGGER.info(f"{self.deviceName}: UV ramp complete at {target_percent}%")
+        _LOGGER.debug(f"{self.deviceName}: UV ramp complete at {target_percent}%")
     
     async def _deactivate_uv(self, reason: str = ""):
         """Deactivate UV light."""
@@ -557,7 +557,7 @@ class LightUV(Light):
         self.is_uv_active = False
         self.current_phase = None
         
-        _LOGGER.info(f"{self.deviceName}: Deactivating UV light ({reason})")
+        _LOGGER.debug(f"{self.deviceName}: Deactivating UV light ({reason})")
         
         # Create action log
         message = f"UV light deactivated: {reason}" if reason else "UV light deactivated"
@@ -579,11 +579,11 @@ class LightUV(Light):
 
     async def _on_light_time_change(self, data):
         """Handle main light schedule changes - reload settings and restart scheduler."""
-        _LOGGER.info(f"{self.deviceName}: Light schedule changed, reloading settings")
+        _LOGGER.debug(f"{self.deviceName}: Light schedule changed, reloading settings")
         
         # CRITICAL: Stop existing scheduler before reloading
         if self._schedule_task and not self._schedule_task.done():
-            _LOGGER.info(f"{self.deviceName}: Stopping scheduler for time change reload")
+            _LOGGER.debug(f"{self.deviceName}: Stopping scheduler for time change reload")
             self._schedule_task.cancel()
             self._schedule_task = None
         
@@ -655,7 +655,7 @@ class LightUV(Light):
                 self.mode = data["mode"]
                 if old_mode != self.mode:
                     settings_changed = True
-                    _LOGGER.info(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
+                    _LOGGER.debug(f"{self.deviceName}: Mode changed from '{old_mode}' to '{self.mode}'")
                     
                     # Handle mode transitions
                     if self.mode == UVMode.ALWAYS_OFF:
@@ -701,7 +701,7 @@ class LightUV(Light):
                 settings_changed = True
                 
             if settings_changed:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"{self.deviceName}: Settings updated - "
                     f"Mode: {self.mode}, "
                     f"Delay: {self.delay_after_start_minutes}min, StopBefore: {self.stop_before_end_minutes}min, "
@@ -813,7 +813,7 @@ class LightUV(Light):
             except Exception as e:
                 _LOGGER.error(f"{self.deviceName}: Error turning off UV entity {entity_id}: {e}")
                 
-        _LOGGER.info(f"{self.deviceName}: UV light turn_off complete, voltage reset to 0")
+        _LOGGER.debug(f"{self.deviceName}: UV light turn_off complete, voltage reset to 0")
 
     async def cleanup(self):
         """Cleanup tasks on shutdown."""

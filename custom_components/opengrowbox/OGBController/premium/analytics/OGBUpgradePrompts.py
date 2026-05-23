@@ -115,7 +115,7 @@ class OGBUpgradePrompts:
         self.shown_prompts: Dict[str, UpgradePrompt] = {}
         self.prompt_count = 0
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"📢 Upgrade prompts initialized for {room} (plan: {current_plan})"
         )
 
@@ -292,7 +292,7 @@ class OGBUpgradePrompts:
             self.shown_prompts[prompt.prompt_id] = prompt
             self.prompt_count += 1
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"📢 {self.room} Showing upgrade prompt: {feature_name} "
                 f"({self.current_plan} → {prompt.required_plan})"
             )
@@ -361,7 +361,7 @@ class OGBUpgradePrompts:
 
         await self.event_manager.emit(event_type, event_data)
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"📢 {self.room} Upgrade prompt "
             f"{'clicked' if clicked_cta else 'dismissed'}: {prompt.feature_name}"
         )

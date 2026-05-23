@@ -84,7 +84,7 @@ class OGBFeedParameterManager:
                 },
             )
 
-            _LOGGER.info(f"{self.room} - Updated parameter {parameter} to {value}")
+            _LOGGER.debug(f"{self.room} - Updated parameter {parameter} to {value}")
             return True
 
         except Exception as e:
@@ -186,7 +186,7 @@ class OGBFeedParameterManager:
                 param_name = f"Nut_{nutrient}_ml"
                 await self.update_feed_parameter(param_name, amount)
 
-            _LOGGER.info(f"{self.room} - Updated feed mode targets")
+            _LOGGER.debug(f"{self.room} - Updated feed mode targets")
 
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error handling feed mode targets change: {e}")
@@ -271,7 +271,7 @@ class OGBFeedParameterManager:
                     },
                 )
 
-            _LOGGER.info(f"{self.room} - Handled plant stage change to {new_stage}")
+            _LOGGER.debug(f"{self.room} - Handled plant stage change to {new_stage}")
 
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error handling plant stage change: {e}")
@@ -299,7 +299,7 @@ class OGBFeedParameterManager:
                     },
                 )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - Handled plant category change to {new_category}"
             )
 

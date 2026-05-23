@@ -210,7 +210,7 @@ async def initialize_vpd_engine(self):
         humidity=self._get_average_reading(hum_sensors)
     )
 
-    _LOGGER.info(f"VPD engine initialized: {self.current_vpd:.2f} kPa")
+    _LOGGER.debug(f"VPD engine initialized: {self.current_vpd:.2f} kPa")
 ```
 
 ### 4.2 Control Mode Setup
@@ -229,7 +229,7 @@ async def initialize_control_mode(self, mode: str):
     elif mode == "manual":
         await self.activate_manual_mode()
 
-    _LOGGER.info(f"Control mode activated: {mode}")
+    _LOGGER.debug(f"Control mode activated: {mode}")
 ```
 
 ### 4.3 Event System Registration
@@ -270,7 +270,7 @@ async def start_automation(self):
     # Enable device control
     await self.enable_device_control()
 
-    _LOGGER.info("OpenGrowBox automation started successfully")
+    _LOGGER.debug("OpenGrowBox automation started successfully")
 ```
 
 ---
@@ -299,7 +299,7 @@ async def perform_startup_health_check(self):
         _LOGGER.warning(f"Health check failed: {failed_checks}")
         await self._enter_safe_mode()
     else:
-        _LOGGER.info("All systems operational")
+        _LOGGER.debug("All systems operational")
         await self._enter_normal_operation()
 ```
 

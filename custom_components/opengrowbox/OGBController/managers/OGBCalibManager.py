@@ -83,9 +83,9 @@ class OGBCalibManager:
     async def _handle_command(self, event):
         """Handle incoming calibration commands from the console."""
         event_room = event.data.get("room")
-        _LOGGER.info(f"[{self.room}] _handle_command fired: room={event_room}, action={event.data.get('action')}, cap={event.data.get('cap')}")
+        _LOGGER.debug(f"[{self.room}] _handle_command fired: room={event_room}, action={event.data.get('action')}, cap={event.data.get('cap')}")
         if event_room != self.room:
-            _LOGGER.info(f"[{self.room}] _handle_command ignored: wrong room (expected {self.room})")
+            _LOGGER.debug(f"[{self.room}] _handle_command ignored: wrong room (expected {self.room})")
             return
 
         action = event.data.get("action")
@@ -101,7 +101,7 @@ class OGBCalibManager:
 
     async def start_calibration(self, cap: str):
         """Start a calibration run for the capability."""
-        _LOGGER.info(f"[{self.room}] start_calibration called for {cap}")
+        _LOGGER.debug(f"[{self.room}] start_calibration called for {cap}")
         if self._calibration_task and not self._calibration_task.done():
             _LOGGER.warning(f"[{self.room}] Calibration already running – abort it first.")
             await self._notify("⚠️ Calibration already running. Use 'cap_cal_stop' first.")
@@ -138,7 +138,7 @@ class OGBCalibManager:
         self._calibration_task = asyncio.create_task(
             self._run_calibration(cap, target_devices, restore_tent_mode=True)
         )
-        _LOGGER.info(f"[{self.room}] Started calibration task for {cap}")
+        _LOGGER.debug(f"[{self.room}] Started calibration task for {cap}")
 
     async def start_calibration_for_sequence(self, cap: str):
         """Start calibration for use in a multi-calibration sequence.
@@ -146,7 +146,7 @@ class OGBCalibManager:
         Keeps tent mode disabled between calibrations to prevent control commands
         from interrupting the sequence.
         """
-        _LOGGER.info(f"[{self.room}] start_calibration_for_sequence called for {cap}")
+        _LOGGER.debug(f"[{self.room}] start_calibration_for_sequence called for {cap}")
 
         # Validate capability
         capabilities = self.data_store.get("capabilities") or {}
@@ -177,7 +177,7 @@ class OGBCalibManager:
         self._calibration_task = asyncio.create_task(
             self._run_calibration(cap, target_devices, restore_tent_mode=False)
         )
-        _LOGGER.info(f"[{self.room}] Started calibration task for sequence: {cap}")
+        _LOGGER.debug(f"[{self.room}] Started calibration task for sequence: {cap}")
 
     async def finish_sequence(self):
         """Restore tent mode after a multi-calibration sequence is complete."""
@@ -212,7 +212,7 @@ class OGBCalibManager:
         await self.event_manager.emit("SaveState", True)
 
         await self._notify("🛑 Calibration aborted. Tent mode restored.")
-        _LOGGER.info(f"[{self.room}] Calibration aborted by user.")
+        _LOGGER.debug(f"[{self.room}] Calibration aborted by user.")
 
     def _has_dimmable_devices(self, cap: str) -> bool:
         """Return True if any device in the capability is dimmable."""
@@ -238,7 +238,7 @@ class OGBCalibManager:
             restore_tent_mode: If True, restore original tent mode after calibration.
                               If False, keep tent mode disabled (for multi-calibration sequences).
         """
-        _LOGGER.info(f"[{self.room}] _run_calibration started for {cap}, restore_tent_mode={restore_tent_mode}")
+        _LOGGER.debug(f"[{self.room}] _run_calibration started for {cap}, restore_tent_mode={restore_tent_mode}")
 
         try:
             metrics = self.METRIC_KEYS.get(cap, ["temperature", "humidity"])
@@ -247,7 +247,7 @@ class OGBCalibManager:
             # Save original mode and disable control
             if self._original_tent_mode is None:
                 self._original_tent_mode = self.data_store.get("tentMode")
-                _LOGGER.info(f"[{self.room}] Original tentMode saved: {self._original_tent_mode}")
+                _LOGGER.debug(f"[{self.room}] Original tentMode saved: {self._original_tent_mode}")
 
             self.data_store.set("tentMode", "Disabled")
 
@@ -261,7 +261,7 @@ class OGBCalibManager:
                 "is_dimmable": is_dimmable,
             }
             self.data_store.setDeep("capCalibration.active", active_info)
-            _LOGGER.info(f"[{self.room}] capCalibration.active set to preparing (dimmable={is_dimmable})")
+            _LOGGER.debug(f"[{self.room}] capCalibration.active set to preparing (dimmable={is_dimmable})")
 
             mode_str = "response-curve" if is_dimmable else "on/off"
             await self._notify(
@@ -275,11 +275,11 @@ class OGBCalibManager:
             await self.event_manager.emit("CalibOff", {"room": self.room, "cap": cap})
             await asyncio.sleep(10)
 
-            _LOGGER.info(f"[{self.room}] All devices turned off, tentMode set to Disabled")
+            _LOGGER.debug(f"[{self.room}] All devices turned off, tentMode set to Disabled")
 
             # Update state to baseline
             self.data_store.setDeep("capCalibration.active.state", "baseline")
-            _LOGGER.info(f"[{self.room}] capCalibration.active.state updated to baseline")
+            _LOGGER.debug(f"[{self.room}] capCalibration.active.state updated to baseline")
 
             await self._notify(f"Phase 1/3: Baseline measurement ({self.BASELINE_DURATION}s)")
 
@@ -340,10 +340,10 @@ class OGBCalibManager:
             await self.event_manager.emit("SaveState", True)
 
             await self._notify(self._format_results(cap, results, metrics))
-            _LOGGER.info(f"[{self.room}] Calibration for {cap} completed: {results}")
+            _LOGGER.debug(f"[{self.room}] Calibration for {cap} completed: {results}")
 
         except asyncio.CancelledError:
-            _LOGGER.info(f"[{self.room}] Calibration task cancelled")
+            _LOGGER.debug(f"[{self.room}] Calibration task cancelled")
             raise
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Calibration error: {e}", exc_info=True)

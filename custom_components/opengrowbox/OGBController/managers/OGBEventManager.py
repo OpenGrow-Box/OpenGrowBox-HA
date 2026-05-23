@@ -178,7 +178,7 @@ class OGBEventManager:
 
             if hasattr(self.hass, "bus"):
                 self.hass.bus.fire(event_name, event_data)
-                _LOGGER.info(f"Event-Bus Event '{event_name}' erfolgreich gesendet.")
+                _LOGGER.debug(f"Event-Bus Event '{event_name}' erfolgreich gesendet.")
             else:
                 _LOGGER.error(
                     f"Kein gültiger Event-Kanal für '{event_name}' verfügbar!"
@@ -268,7 +268,7 @@ class OGBEventManager:
                 },
                 blocking=False,
             )
-            _LOGGER.info(f"Push-Notification für '{title}' gesendet (Typ: {effective_type}).")
+            _LOGGER.debug(f"Push-Notification für '{title}' gesendet (Typ: {effective_type}).")
         except Exception as e:
             _LOGGER.error(f"Fehler beim Senden der Push-Notification: {e}")
     
@@ -315,11 +315,11 @@ class OGBEventManager:
 
     def change_notify_set(self, state):
         self.notifications_enabled = state
-        _LOGGER.info(f"Notify State jetzt: {self.notifications_enabled}")
+        _LOGGER.debug(f"Notify State jetzt: {self.notifications_enabled}")
 
     async def async_shutdown(self):
         """Shutdown event manager and cleanup all resources."""
-        _LOGGER.info("🛑 Shutting down EventManager")
+        _LOGGER.debug("🛑 Shutting down EventManager")
         self._shutdown = True
         
         # Cancel all background tasks
@@ -342,7 +342,7 @@ class OGBEventManager:
         # Clear all listeners to prevent memory leaks
         listener_count = sum(len(v) for v in self.listeners.values())
         self.listeners.clear()
-        _LOGGER.info(f"✅ EventManager shutdown complete, cleared {listener_count} listeners")
+        _LOGGER.debug(f"✅ EventManager shutdown complete, cleared {listener_count} listeners")
 
     def _sanitize_data_for_json(self, data):
         """Reinigt Daten für JSON-Speicherung, um kaputte Strings zu vermeiden."""
@@ -545,7 +545,7 @@ class OGBEventManager:
                     ogb_data_dir = "/config/ogb_data"
                 backup_file = os.path.join(ogb_data_dir, "client_logs.json.backup")
                 if os.path.exists(backup_file):
-                    _LOGGER.info("Versuche Backup wiederherzustellen...")
+                    _LOGGER.debug("Versuche Backup wiederherzustellen...")
                     backup_content = await asyncio.to_thread(self._read_file, backup_file)
                     if backup_content:
                         logs = json.loads(backup_content)
@@ -561,7 +561,7 @@ class OGBEventManager:
                             os.fsync(temp_file.fileno())
                             temp_path = temp_file.name
                         os.replace(temp_path, os.path.join(ogb_data_dir, "client_logs.json"))
-                        _LOGGER.info("Backup erfolgreich wiederhergestellt")
+                        _LOGGER.debug("Backup erfolgreich wiederhergestellt")
                         return logs[-limit:] if len(logs) > limit else logs
             except Exception as backup_error:
                 _LOGGER.error(f"Konnte Backup nicht wiederherstellen: {backup_error}")
@@ -573,17 +573,17 @@ class OGBEventManager:
     async def handle_get_logs(self, event):
         """Event-Handler für getOGBClientLogs."""
         try:
-            _LOGGER.info(f"handle_get_logs called with event: {event}")
+            _LOGGER.debug(f"handle_get_logs called with event: {event}")
             event_data = getattr(event, "data", {}) or {}
             request_id = event_data.get("requestId") or event_data.get("request_id")
             room_filter = event_data.get("room")
             limit = event_data.get("limit", 200)
             
-            _LOGGER.info(f"Request: requestId={request_id}, room={room_filter}, limit={limit}")
+            _LOGGER.debug(f"Request: requestId={request_id}, room={room_filter}, limit={limit}")
             
             logs = await self.get_client_logs(room_filter=room_filter, limit=limit)
             
-            _LOGGER.info(f"Found {len(logs)} logs, firing response event")
+            _LOGGER.debug(f"Found {len(logs)} logs, firing response event")
             
             if hasattr(self.hass, "bus"):
                 self.hass.bus.fire(GET_LOGS_RESPONSE_EVENT, {
@@ -592,7 +592,7 @@ class OGBEventManager:
                     "logs": logs,
                     "count": len(logs)
                 })
-                _LOGGER.info(f"Gesendet {len(logs)} Client-Logs für Raum: {room_filter or 'alle'}")
+                _LOGGER.debug(f"Gesendet {len(logs)} Client-Logs für Raum: {room_filter or 'alle'}")
             else:
                 _LOGGER.error("No hass.bus available!")
                 

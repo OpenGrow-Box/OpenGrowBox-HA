@@ -112,9 +112,9 @@ class Ventilation(Device):
         # Only update if the value actually changed
         if clamped_duty_cycle != current_duty:
             self.dutyCycle = clamped_duty_cycle
-            _LOGGER.info(f"{self.deviceName}: Duty Cycle changed from {current_duty + (step_value if not increase else -step_value)}% to {self.dutyCycle}% (step: {step_value}%)")
+            _LOGGER.debug(f"{self.deviceName}: Duty Cycle changed from {current_duty + (step_value if not increase else -step_value)}% to {self.dutyCycle}% (step: {step_value}%)")
         else:
-            _LOGGER.info(f"{self.deviceName}: Duty Cycle unchanged at {current_duty}% (already at {'max' if increase else 'min'} bound)")
+            _LOGGER.debug(f"{self.deviceName}: Duty Cycle unchanged at {current_duty}% (already at {'max' if increase else 'min'} bound)")
             
         return float(self.dutyCycle)
 

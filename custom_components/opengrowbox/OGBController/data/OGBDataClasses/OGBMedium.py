@@ -210,7 +210,7 @@ class DeviceBinding:
             _LOGGER.debug(f"Device {self.device_name} in cooldown, skipping trigger")
             return False
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"Triggering {self.device_name} - Action: {self.action_on_trigger.value}"
         )
         self.last_triggered = datetime.now()
@@ -472,13 +472,13 @@ class GrowMedium:
     async def set_grow_start(self, date: Optional[datetime] = None) -> None:
         """Set the grow start date and emit update."""
         self.grow_start_date = date or datetime.now()
-        _LOGGER.info(f"{self.name}: Grow started on {self.grow_start_date.strftime('%Y-%m-%d')}")
+        _LOGGER.debug(f"{self.name}: Grow started on {self.grow_start_date.strftime('%Y-%m-%d')}")
         await self.emit_plant_update()
     
     async def set_bloom_switch(self, date: Optional[datetime] = None) -> None:
         """Set the bloom switch date (start of flowering) and emit update."""
         self.bloom_switch_date = date or datetime.now()
-        _LOGGER.info(f"{self.name}: Bloom switched on {self.bloom_switch_date.strftime('%Y-%m-%d')}")
+        _LOGGER.debug(f"{self.name}: Bloom switched on {self.bloom_switch_date.strftime('%Y-%m-%d')}")
         await self.emit_plant_update()
     
     async def set_plant_stage(self, stage: str) -> None:
@@ -487,7 +487,7 @@ class GrowMedium:
         self.plant_stage = stage
         
         if old_stage != stage:
-            _LOGGER.info(f"{self.name}: Plant stage changed from {old_stage} to {stage}")
+            _LOGGER.debug(f"{self.name}: Plant stage changed from {old_stage} to {stage}")
             # Emit full plant update (includes stage change)
             await self.emit_plant_update()
     
@@ -615,7 +615,7 @@ class GrowMedium:
         device_name = sensor_data.get("device_name", "Unknown")
         timestamp = sensor_data.get("last_update") or datetime.now()
 
-        _LOGGER.info(f"[{self.room}] Medium {self.name}: REGISTERING sensor {entity_id} ({sensor_type}) value={value}")
+        _LOGGER.debug(f"[{self.room}] Medium {self.name}: REGISTERING sensor {entity_id} ({sensor_type}) value={value}")
 
         numeric_value = self._safe_float_convert(value)
 
@@ -811,7 +811,7 @@ class GrowMedium:
                 self.registered_sensors[sensor_type].remove(entity_id)
             self.sensor_readings.pop(entity_id, None)
             self.sensor_type_map.pop(entity_id, None)
-            _LOGGER.info(f"Medium {self.name}: Sensor {entity_id} entfernt")
+            _LOGGER.debug(f"Medium {self.name}: Sensor {entity_id} entfernt")
             return True
         return False
 
@@ -1146,12 +1146,12 @@ class GrowMedium:
             callback=callback,
         )
         self.devices[device_id] = device
-        _LOGGER.info(f"Bound device {device_name} to medium {self.name}")
+        _LOGGER.debug(f"Bound device {device_name} to medium {self.name}")
 
     def unbind_device(self, device_id: str) -> None:
         if device_id in self.devices:
             del self.devices[device_id]
-            _LOGGER.info(f"Unbound device {device_id} from medium {self.name}")
+            _LOGGER.debug(f"Unbound device {device_id} from medium {self.name}")
 
     def enable_device(self, device_id: str) -> None:
         if device_id in self.devices:

@@ -261,7 +261,7 @@ class OGBTankFeedManager:
             # Remove zero values to avoid unnecessary pumping
             self.nutrients = {k: v for k, v in self.nutrients.items() if v > 0}
 
-            _LOGGER.info(f"[{self.room}] Loaded user nutrient configurations: {self.nutrients}")
+            _LOGGER.debug(f"[{self.room}] Loaded user nutrient configurations: {self.nutrients}")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error loading user nutrient configurations: {e}")
@@ -375,7 +375,7 @@ class OGBTankFeedManager:
         # Load nutrient concentrations (ml/L)
         self._load_nutrient_concentrations()
         
-        _LOGGER.info(f"[{self.room}] OGB Feed Manager initialized - Reservoir: {self.reservoir_volume_liters}L, EC Unit: {self.ec_unit.value}")
+        _LOGGER.debug(f"[{self.room}] OGB Feed Manager initialized - Reservoir: {self.reservoir_volume_liters}L, EC Unit: {self.ec_unit.value}")
 
     def _normalize_ec_value(self, ec_raw: float) -> float:
         """
@@ -413,7 +413,7 @@ class OGBTankFeedManager:
             history_json = self.data_store.getDeep("Hydro.FeedHistory")
             if history_json:
                 self.feed_history = json.loads(history_json)
-                _LOGGER.info(f"[{self.room}] Loaded {len(self.feed_history)} feed history entries")
+                _LOGGER.debug(f"[{self.room}] Loaded {len(self.feed_history)} feed history entries")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error loading feed history: {e}")
             self.feed_history = []
@@ -465,7 +465,7 @@ class OGBTankFeedManager:
                         cal = self.pump_calibrations[pump_type]
                         cal.calibration_factor = data.get("calibration_factor", 1.0)
                         cal.calibration_count = data.get("calibration_count", 0)
-                        _LOGGER.info(f"[{self.room}] Loaded calibration for {pump_type}: factor={cal.calibration_factor:.2f}")
+                        _LOGGER.debug(f"[{self.room}] Loaded calibration for {pump_type}: factor={cal.calibration_factor:.2f}")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error loading calibration data: {e}")
         try:
@@ -477,7 +477,7 @@ class OGBTankFeedManager:
                         cal = self.pump_calibrations[pump_type]
                         cal.calibration_factor = data.get("calibration_factor", 1.0)
                         cal.calibration_count = data.get("calibration_count", 0)
-                        _LOGGER.info(f"[{self.room}] Loaded calibration for {pump_type}: factor={cal.calibration_factor:.2f}")
+                        _LOGGER.debug(f"[{self.room}] Loaded calibration for {pump_type}: factor={cal.calibration_factor:.2f}")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error loading calibration data: {e}")
 
@@ -523,7 +523,7 @@ class OGBTankFeedManager:
             
             # Step 1: Initial EC measurement
             self.ec_before_dose = self.current_ec
-            _LOGGER.info(f"[{self.room}] Calibration EC before: {self.ec_before_dose:.2f}")
+            _LOGGER.debug(f"[{self.room}] Calibration EC before: {self.ec_before_dose:.2f}")
             
             # Step 2: Activate pump with standard dose
             target_dose_ml = 5.0  # Standard calibration dose
@@ -532,13 +532,13 @@ class OGBTankFeedManager:
             await self._activate_pump(pump_type, run_time, target_dose_ml)
             
             # Step 3: Wait for sensor settle
-            _LOGGER.info(f"[{self.room}] Waiting {self.sensor_settle_time.total_seconds()}s for sensor settle...")
+            _LOGGER.debug(f"[{self.room}] Waiting {self.sensor_settle_time.total_seconds()}s for sensor settle...")
             await asyncio.sleep(self.sensor_settle_time.total_seconds())
             
             # Step 4: Measure EC after dose
             self.ec_after_dose = self.current_ec
             actual_ec_change = self.ec_after_dose - self.ec_before_dose
-            _LOGGER.info(f"[{self.room}] Calibration EC after: {self.ec_after_dose:.2f}, EC change: {actual_ec_change:.2f}")
+            _LOGGER.debug(f"[{self.room}] Calibration EC after: {self.ec_after_dose:.2f}, EC change: {actual_ec_change:.2f}")
             
             # Step 5 & 6: Calculate and adjust calibration
             if actual_ec_change > 0 and cal is not None:
@@ -658,7 +658,7 @@ class OGBTankFeedManager:
         if self.feed_mode == FeedMode.AUTOMATIC:
             await self._update_automatic_targets()
                   
-        _LOGGER.info(f"[{self.room}] Plant stage changed to: {stage_value}")
+        _LOGGER.debug(f"[{self.room}] Plant stage changed to: {stage_value}")
 
     async def _update_automatic_targets(self):
         """Update feed targets based on current plant stage in automatic mode"""
@@ -767,7 +767,7 @@ class OGBTankFeedManager:
             if run_time > 0:
                 _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_DOWN.value} with {dose_ml:.2f}ml for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
                 return await self._activate_pump(PumpType.PH_DOWN, run_time, dose_ml)
-            _LOGGER.info(f"[{self.room}] pH down pump disabled via flow rate 0 - skipping dose")
+            _LOGGER.debug(f"[{self.room}] pH down pump disabled via flow rate 0 - skipping dose")
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down: {e}")
@@ -790,7 +790,7 @@ class OGBTankFeedManager:
             if run_time > 0:
                 _LOGGER.warning(f"[{self.room}] Try to activate {PumpType.PH_UP.value} with {dose_ml:.2f}ml for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
                 return await self._activate_pump(PumpType.PH_UP, run_time, dose_ml)
-            _LOGGER.info(f"[{self.room}] pH up pump disabled via flow rate 0 - skipping dose")
+            _LOGGER.debug(f"[{self.room}] pH up pump disabled via flow rate 0 - skipping dose")
                 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH up: {e}")
@@ -821,7 +821,7 @@ class OGBTankFeedManager:
                             # Wait between nutrients (90 seconds for sensor settling)
                             await asyncio.sleep(90)
                     else:
-                        _LOGGER.info(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
+                        _LOGGER.debug(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
                             
             return True
                     
@@ -840,7 +840,7 @@ class OGBTankFeedManager:
         try:
             # EC Tracking: Save EC before dosing
             self.feed_ec_before = self.current_ec
-            _LOGGER.info(f"[{self.room}] Starting concentration-based nutrient dosing (EC before: {self.feed_ec_before:.2f})")
+            _LOGGER.debug(f"[{self.room}] Starting concentration-based nutrient dosing (EC before: {self.feed_ec_before:.2f})")
 
             # Calculate doses based on concentration (ml/L) and current tank volume
             nutrient_doses = {}
@@ -895,7 +895,7 @@ class OGBTankFeedManager:
                 # Automatic calibration: Check if dosing was accurate
                 await self._auto_calibrate_pumps(total_dose, nutrients_to_dose)
                 
-                _LOGGER.info(f"[{self.room}] Concentration-based dosing completed - EC: {self.feed_ec_before:.2f} → {self.feed_ec_after:.2f} (added: {self.feed_ec_added:.2f}), Total dose: {total_dose:.1f}ml")
+                _LOGGER.debug(f"[{self.room}] Concentration-based dosing completed - EC: {self.feed_ec_before:.2f} → {self.feed_ec_after:.2f} (added: {self.feed_ec_added:.2f}), Total dose: {total_dose:.1f}ml")
                 
                 # Log to client
                 self._log_to_client(
@@ -914,7 +914,7 @@ class OGBTankFeedManager:
             if dose_ml <= 0:
                 return
 
-            _LOGGER.info(f"[{self.room}] Starting proportional pH down dosing: {dose_ml:.2f}ml")
+            _LOGGER.debug(f"[{self.room}] Starting proportional pH down dosing: {dose_ml:.2f}ml")
 
             # Use the existing pH down method but with custom amount
             await self._dose_ph_down_with_amount(dose_ml)
@@ -929,7 +929,7 @@ class OGBTankFeedManager:
             if dose_ml <= 0:
                 return
 
-            _LOGGER.info(f"[{self.room}] Starting proportional pH up dosing: {dose_ml:.2f}ml")
+            _LOGGER.debug(f"[{self.room}] Starting proportional pH up dosing: {dose_ml:.2f}ml")
 
             # Use the existing pH up method but with custom amount
             await self._dose_ph_up_with_amount(dose_ml)
@@ -957,7 +957,7 @@ class OGBTankFeedManager:
                         else:
                             _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
                     else:
-                        _LOGGER.info(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
+                        _LOGGER.debug(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
 
             return True
 
@@ -1002,7 +1002,7 @@ class OGBTankFeedManager:
                         else:
                             _LOGGER.warning(f"[{self.room}] Failed to dose nutrient {nutrient}")
                     else:
-                        _LOGGER.info(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
+                        _LOGGER.debug(f"[{self.room}] Pump {pump_enum.name} disabled via flow rate 0 - skipping")
 
             return True
 
@@ -1019,9 +1019,9 @@ class OGBTankFeedManager:
             run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
             if run_time > 0:
-                _LOGGER.info(f"[{self.room}] Dosing {dose_ml:.2f}ml pH down for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
+                _LOGGER.debug(f"[{self.room}] Dosing {dose_ml:.2f}ml pH down for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
                 return await self._activate_pump(PumpType.PH_DOWN, run_time, dose_ml)
-            _LOGGER.info(f"[{self.room}] pH down pump disabled via flow rate 0 - skipping dose")
+            _LOGGER.debug(f"[{self.room}] pH down pump disabled via flow rate 0 - skipping dose")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH down with amount: {e}")
@@ -1036,9 +1036,9 @@ class OGBTankFeedManager:
             run_time = dose_ml / calibration_factor if calibration_factor > 0 else 0.0
 
             if run_time > 0:
-                _LOGGER.info(f"[{self.room}] Dosing {dose_ml:.2f}ml pH up for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
+                _LOGGER.debug(f"[{self.room}] Dosing {dose_ml:.2f}ml pH up for {run_time:.1f}s (calibration factor: {calibration_factor:.3f} ml/s)")
                 return await self._activate_pump(PumpType.PH_UP, run_time, dose_ml)
-            _LOGGER.info(f"[{self.room}] pH up pump disabled via flow rate 0 - skipping dose")
+            _LOGGER.debug(f"[{self.room}] pH up pump disabled via flow rate 0 - skipping dose")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error dosing pH up with amount: {e}")
@@ -1170,7 +1170,7 @@ class OGBTankFeedManager:
                 blocking=False
             )
             
-            _LOGGER.info(f"[{self.room}] Pump {pump_type} completed")
+            _LOGGER.debug(f"[{self.room}] Pump {pump_type} completed")
             return True
                 
         except Exception as e:
@@ -1248,7 +1248,7 @@ class OGBTankFeedManager:
             self.target_oxi = float(payload.get("oxi", self.target_oxi))
             self.nutrients = payload.get("nutrients", self.nutrients)
 
-            _LOGGER.info(f"[{self.room}] New targets: pH={self.target_ph:.2f}, "
+            _LOGGER.debug(f"[{self.room}] New targets: pH={self.target_ph:.2f}, "
                          f"EC={self.target_ec:.2f}")
  
             if self.is_initialized:
@@ -1455,7 +1455,7 @@ class OGBTankFeedManager:
                 # Save calibration data
                 await self._save_calibration_data()
                 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"[{self.room}] Auto-calibration completed - "
                     f"EC change: {ec_change:.2f}, expected: {expected_total_ec_change:.2f}, "
                     f"accuracy: {accuracy_score:.1f}%"
@@ -1471,6 +1471,6 @@ class OGBTankFeedManager:
     def _handleLogForClient(self, data):
         """Handle logging for client"""
         try:
-            _LOGGER.info(f"[{self.room}] ClientLog: {data}")
+            _LOGGER.debug(f"[{self.room}] ClientLog: {data}")
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error in client log: {e}")

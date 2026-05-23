@@ -82,7 +82,7 @@ class OGBEnergyManager:
         # Start background tasks
         self._start_background_tasks()
 
-        _LOGGER.info(f"[{self.room}] OGBEnergyManager initialized")
+        _LOGGER.debug(f"[{self.room}] OGBEnergyManager initialized")
 
     def _start_background_tasks(self):
         """Start background update and persistence loops."""
@@ -97,7 +97,7 @@ class OGBEnergyManager:
         # Initial scan for already-running devices
         await self._scan_initial_devices()
         
-        _LOGGER.info(f"[{self.room}] Energy background loop started")
+        _LOGGER.debug(f"[{self.room}] Energy background loop started")
         
         while not self._shutdown:
             try:
@@ -119,13 +119,13 @@ class OGBEnergyManager:
                 
                 await asyncio.sleep(300)  # 5 minutes
             except asyncio.CancelledError:
-                _LOGGER.info(f"[{self.room}] Energy background loop cancelled")
+                _LOGGER.debug(f"[{self.room}] Energy background loop cancelled")
                 break
             except Exception as e:
                 _LOGGER.error(f"[{self.room}] Energy background loop error: {e}")
                 await asyncio.sleep(60)  # Retry after 1 minute on error
         
-        _LOGGER.info(f"[{self.room}] Energy background loop ended")
+        _LOGGER.debug(f"[{self.room}] Energy background loop ended")
 
     async def _scan_initial_devices(self):
         """Scan all devices and start tracking for those already running."""
@@ -155,7 +155,7 @@ class OGBEnergyManager:
                 started_count += 1
 
             if started_count > 0:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"[{self.room}] Started energy tracking for {started_count} "
                     f"already-running devices"
                 )
@@ -185,7 +185,7 @@ class OGBEnergyManager:
             }
             
             source = "estimated" if is_estimated else "sensor"
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"[{self.room}] Energy tracking started for {device_name} "
                 f"at {power_watts}W ({source})"
             )
@@ -283,7 +283,7 @@ class OGBEnergyManager:
                     duration = datetime.now(timezone.utc) - tracking["start_time"]
                     hours = duration.total_seconds() / 3600.0
                     
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"[{self.room}] Energy tracking stopped for {device_name}: "
                         f"{session_kwh:.4f} kWh in {hours:.1f}h"
                     )
@@ -329,7 +329,7 @@ class OGBEnergyManager:
             "is_estimated": True,
         }
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"[{self.room}] Energy tracking started for {device_name} "
             f"at {power}W (estimated, device not found)"
         )
@@ -403,7 +403,7 @@ class OGBEnergyManager:
                         device = self._find_device_by_name(device_name)
                         if device:
                             await self._start_device_tracking(device)
-                            _LOGGER.info(
+                            _LOGGER.debug(
                                 f"[{self.room}] Auto-started tracking for {device_name} "
                                 f"due to power reading: {power}W"
                             )
@@ -518,7 +518,7 @@ class OGBEnergyManager:
             
             # CRITICAL FIX: Check if today's data already exists (loaded from disk)
             if today_str not in energy_data["daily"]:
-                _LOGGER.info(f"[{self.room}] Creating new daily energy entry for {today_str}")
+                _LOGGER.debug(f"[{self.room}] Creating new daily energy entry for {today_str}")
                 energy_data["daily"][today_str] = {
                     "kwh": 0.0,
                     "cost": 0.0,
@@ -606,7 +606,7 @@ class OGBEnergyManager:
 
         if current_day and current_day != today_str:
             # Day changed - log the transition
-            _LOGGER.info(f"[{self.room}] Day rollover: {current_day} -> {today_str}")
+            _LOGGER.debug(f"[{self.room}] Day rollover: {current_day} -> {today_str}")
             
             # Reset all session tracking (new day)
             for device_name in self._device_tracking:
@@ -779,7 +779,7 @@ class OGBEnergyManager:
             await self._aggregate_and_persist()
             await self._update_sensor_entities()
 
-            _LOGGER.info(f"[{self.room}] Energy price updated to {price:.4f} EUR/kWh")
+            _LOGGER.debug(f"[{self.room}] Energy price updated to {price:.4f} EUR/kWh")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error setting energy price: {e}")
@@ -798,4 +798,4 @@ class OGBEnergyManager:
         await self._calculate_all_tracked_devices()
         await self._aggregate_and_persist()
 
-        _LOGGER.info(f"[{self.room}] OGBEnergyManager shutdown complete")
+        _LOGGER.debug(f"[{self.room}] OGBEnergyManager shutdown complete")

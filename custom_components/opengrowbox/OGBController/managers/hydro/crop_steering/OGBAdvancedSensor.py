@@ -661,7 +661,7 @@ class OGBAdvancedSensor:
                 description=f"{ec_cal.description} (custom eps_0: {ec_eps_0})",
             )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"Custom calibration set for {medium_type}: vwc_offset={vwc_offset}, ec_eps_0={ec_eps_0}"
         )
         return True

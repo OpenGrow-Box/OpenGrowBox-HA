@@ -197,7 +197,7 @@ class OGBMediumSensorManager:
                     entity_id, sensor_type, medium_label
                 )
 
-            _LOGGER.info(f"{self.room} - Registered sensor {entity_id} ({sensor_type})")
+            _LOGGER.debug(f"{self.room} - Registered sensor {entity_id} ({sensor_type})")
             return True
 
         except Exception as e:
@@ -250,7 +250,7 @@ class OGBMediumSensorManager:
             sensor_type = self.registered_sensors[entity_id]["sensor_type"]
             self._update_aggregated_value(sensor_type)
 
-            _LOGGER.info(f"{self.room} - Unregistered sensor {entity_id}")
+            _LOGGER.debug(f"{self.room} - Unregistered sensor {entity_id}")
             return True
 
         except Exception as e:
@@ -447,7 +447,7 @@ class OGBMediumSensorManager:
         for history in self.sensor_histories.values():
             history.readings.clear()
 
-        _LOGGER.info(f"{self.room} - Reset all sensor histories")
+        _LOGGER.debug(f"{self.room} - Reset all sensor histories")
 
     def get_sensor_status(self, entity_id: str) -> Optional[Dict[str, Any]]:
         """

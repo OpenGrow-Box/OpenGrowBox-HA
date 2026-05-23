@@ -103,15 +103,15 @@ class OGBCSPhaseManager:
                     return "p0"  # Monitoring if no VWC data
                 elif vwc < vwc_min:
                     # VWC below minimum - needs saturation
-                    _LOGGER.info(f"{self.room} - VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
+                    _LOGGER.debug(f"{self.room} - VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
                     return "p1"
                 elif vwc >= vwc_max:
                     # VWC at or above max - maintenance mode
-                    _LOGGER.info(f"{self.room} - VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
+                    _LOGGER.debug(f"{self.room} - VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
                     return "p2"
                 else:
                     # VWC between min and max - monitoring (wait for dryback signal)
-                    _LOGGER.info(f"{self.room} - VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
+                    _LOGGER.debug(f"{self.room} - VWC normal ({vwc:.1f}% between {vwc_min:.1f}%-{vwc_max:.1f}%), starting P0 Monitoring")
                     return "p0"
 
         elif mode in [
@@ -191,7 +191,7 @@ class OGBCSPhaseManager:
             },
         )
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"{self.room} - Phase transition: {current_phase} → {target_phase} ({reason})"
         )
 
@@ -309,7 +309,7 @@ class OGBCSPhaseManager:
         vwc_min = config.get("VWCMin", 55.0)
 
         if vwc <= vwc_min:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} - P0: VWC {vwc:.1f}% below minimum {vwc_min:.1f}%, ready for P1"
             )
             return True

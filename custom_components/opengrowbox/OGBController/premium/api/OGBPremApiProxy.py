@@ -122,7 +122,7 @@ class OGBApiProxy:
         self._event_unsubscribers = []
 
         self._setup_event_listeners()
-        _LOGGER.info(f"✅ {room} OGBApiProxy initialized (API: {self.API_BASE_URL})")
+        _LOGGER.debug(f"✅ {room} OGBApiProxy initialized (API: {self.API_BASE_URL})")
 
     def set_access_token(self, token: str):
         """Update the access token."""
@@ -166,7 +166,7 @@ class OGBApiProxy:
             await self._session.close()
             self._session = None
 
-        _LOGGER.info(f"{self.room} OGBApiProxy shutdown")
+        _LOGGER.debug(f"{self.room} OGBApiProxy shutdown")
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""

@@ -122,7 +122,7 @@ async def cleanup_sensor_data(self):
                 await self.delete_sensor_data(key)
                 cleaned_count += 1
 
-    _LOGGER.info(f"Cleaned {cleaned_count} sensor records, compressed {compressed_count}")
+    _LOGGER.debug(f"Cleaned {cleaned_count} sensor records, compressed {compressed_count}")
 ```
 
 ### Data Aggregation

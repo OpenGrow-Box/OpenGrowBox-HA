@@ -113,7 +113,7 @@ class OGBFallBackManager:
         self._is_running = False
         self.is_initialized = False
 
-        _LOGGER.info(f"✅ {self.room} FallBack Manager initialized")
+        _LOGGER.debug(f"✅ {self.room} FallBack Manager initialized")
 
         # Setup event listeners
         self._setup_event_listeners()
@@ -142,7 +142,7 @@ class OGBFallBackManager:
 
         if self._check_task is None or self._check_task.done():
             self._check_task = asyncio.create_task(self._monitoring_loop())
-            _LOGGER.info(f"🔍 {self.room} FallBack Manager monitoring started")
+            _LOGGER.debug(f"🔍 {self.room} FallBack Manager monitoring started")
 
     async def stop_monitoring(self):
         """Stop the monitoring loop."""
@@ -155,18 +155,18 @@ class OGBFallBackManager:
             except asyncio.CancelledError:
                 pass
 
-        _LOGGER.info(f"🛑 {self.room} FallBack Manager monitoring stopped")
+        _LOGGER.debug(f"🛑 {self.room} FallBack Manager monitoring stopped")
 
     async def _monitoring_loop(self):
         """Main monitoring loop - checks all entities periodically."""
-        _LOGGER.info(f"{self.room} FallBack Manager monitoring loop started")
+        _LOGGER.debug(f"{self.room} FallBack Manager monitoring loop started")
 
         while self._is_running:
             try:
                 await self._check_all_entities()
                 await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
             except asyncio.CancelledError:
-                _LOGGER.info(f"{self.room} Monitoring loop cancelled")
+                _LOGGER.debug(f"{self.room} Monitoring loop cancelled")
                 break
             except Exception as e:
                 _LOGGER.error(
@@ -209,7 +209,7 @@ class OGBFallBackManager:
                     recovered_count += 1
 
         if stale_count > 0 or recovered_count > 0:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.room} Health check: {stale_count} new stale, "
                 f"{recovered_count} recovered, {len(self._stale_entities)} total stale"
             )
@@ -275,7 +275,7 @@ class OGBFallBackManager:
                 last_update=datetime.now(),
             )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"📊 {self.room} Registered sensor for monitoring: "
                 f"{sensor_type} ({device_name}) - {entity_id}"
             )
@@ -309,7 +309,7 @@ class OGBFallBackManager:
                 last_update=datetime.now(),
             )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"🔌 {self.room} Registered device for monitoring: "
                 f"{device_name} (Type: {device_type}, Label: {context}) - {entity_id}"
             )
@@ -345,7 +345,7 @@ class OGBFallBackManager:
                 del self._monitored_entities[entity_id]
                 self._stale_entities.discard(entity_id)
 
-                _LOGGER.info(f"{self.room} Removed entity from monitoring: {entity_id}")
+                _LOGGER.debug(f"{self.room} Removed entity from monitoring: {entity_id}")
 
         except Exception as e:
             _LOGGER.error(f"Error handling entity removal: {e}", exc_info=True)
@@ -403,7 +403,7 @@ class OGBFallBackManager:
                     )
 
             if is_valid:
-                _LOGGER.info(f"{self.room}: ✅ {device_name} {expected_state.upper()} validation passed ({current_power}W)")
+                _LOGGER.debug(f"{self.room}: ✅ {device_name} {expected_state.upper()} validation passed ({current_power}W)")
                 state.retry_count = 0
                 state.is_reliable = True
                 return True
@@ -438,13 +438,13 @@ class OGBFallBackManager:
         try:
             if expected_state == "off":
                 # Turn on briefly then off again
-                _LOGGER.info(f"{self.room}: Retrigger OFF - turning ON then OFF")
+                _LOGGER.debug(f"{self.room}: Retrigger OFF - turning ON then OFF")
                 await device_ref.turn_on()
                 await asyncio.sleep(3)
                 await device_ref.turn_off()
             elif expected_state == "on":
                 # Turn off briefly then on again
-                _LOGGER.info(f"{self.room}: Retrigger ON - turning OFF then ON")
+                _LOGGER.debug(f"{self.room}: Retrigger ON - turning OFF then ON")
                 await device_ref.turn_off()
                 await asyncio.sleep(3)
                 await device_ref.turn_on()
@@ -618,7 +618,7 @@ class OGBFallBackManager:
                 title=f"OGB {self.room}: {state.entity_type.title()} Recovered",
             )
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"✅ {self.room} Sent recovery notification for {state.entity_id}"
             )
 
@@ -715,7 +715,7 @@ class OGBFallBackManager:
         self._monitored_entities.clear()
         self._stale_entities.clear()
         self._last_notification.clear()
-        _LOGGER.info(f"🧹 {self.room} FallBack Manager shutdown complete")
+        _LOGGER.debug(f"🧹 {self.room} FallBack Manager shutdown complete")
 
     def __repr__(self):
         """String representation for debugging."""

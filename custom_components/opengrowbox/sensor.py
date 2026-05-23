@@ -148,7 +148,7 @@ class CustomSensor(RestoreEntity):
                 # Only update if current state is None (initial state)
                 if self._state is None:
                     self._state = restored_value
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"✅ RESTORED: '{self._name}' state restored to: {restored_value}"
                     )
                 else:
@@ -185,7 +185,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         if not room_check["allowed"]:
             _LOGGER.warning(f"Room limit exceeded: {room_check['message']}")
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"Upgrade to {room_check.get('required_tier', 'higher tier')} for more rooms"
             )
             # Don't prevent setup, but log the limitation
@@ -405,7 +405,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entity_id_requested = call.data.get("entity_id")
             value = call.data.get("value")
 
-            _LOGGER.info(f"🔍 SERVICE CALL: update_sensor for '{entity_id_requested}' = {value}")
+            _LOGGER.debug(f"🔍 SERVICE CALL: update_sensor for '{entity_id_requested}' = {value}")
 
             # Find and update the corresponding sensor
             sensor_found = False
@@ -416,7 +416,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 
                 if sensor_entity_id == entity_id_requested or expected_entity_id == entity_id_requested:
                     sensor.update_state(value)
-                    _LOGGER.info(f"✅ Updated sensor '{sensor._name}' (matched: {entity_id_requested}) to value: {value}")
+                    _LOGGER.debug(f"✅ Updated sensor '{sensor._name}' (matched: {entity_id_requested}) to value: {value}")
                     sensor_found = True
                     return
             
@@ -441,7 +441,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 }
             ),
         )
-        _LOGGER.info(f"✅ Registered {DOMAIN}.update_sensor service with {len(hass.data[DOMAIN]['sensors'])} sensors")
+        _LOGGER.debug(f"✅ Registered {DOMAIN}.update_sensor service with {len(hass.data[DOMAIN]['sensors'])} sensors")
         
         for idx, s in enumerate(hass.data[DOMAIN]['sensors'][:15]):
             s_entity_id = getattr(s, 'entity_id', 'NOT_SET_YET')
@@ -487,7 +487,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 vol.Required("room"): str,
             }),
         )
-        _LOGGER.info(f"✅ Registered {DOMAIN}.request_medium_plants_data service")
+        _LOGGER.debug(f"✅ Registered {DOMAIN}.request_medium_plants_data service")
     
     if not hass.services.has_service(DOMAIN, "update_medium_plant_dates"):
         async def handle_update_medium_plant_dates(call):
@@ -540,7 +540,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 vol.Optional("display_name"): str,
             }, extra=vol.ALLOW_EXTRA),
         )
-        _LOGGER.info(f"✅ Registered {DOMAIN}.update_medium_plant_dates service")
+        _LOGGER.debug(f"✅ Registered {DOMAIN}.update_medium_plant_dates service")
     
     # Register finish_grow service
     if not hass.services.has_service(DOMAIN, "finish_grow"):
@@ -589,7 +589,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 vol.Optional("notes"): str,
             }, extra=vol.ALLOW_EXTRA),
         )
-        _LOGGER.info(f"✅ Registered {DOMAIN}.finish_grow service")
+        _LOGGER.debug(f"✅ Registered {DOMAIN}.finish_grow service")
 
     # Register EnergyUpdate event listener to update energy sensors
     async def handle_energy_update(event_data):
@@ -626,6 +626,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # Register event listener with coordinator's event manager
     try:
         coordinator.OGB.eventManager.on("EnergyUpdate", handle_energy_update)
-        _LOGGER.info(f"✅ Registered EnergyUpdate event listener for room: {coordinator.room_name}")
+        _LOGGER.debug(f"✅ Registered EnergyUpdate event listener for room: {coordinator.room_name}")
     except Exception as e:
         _LOGGER.error(f"❌ Failed to register EnergyUpdate event listener: {e}")

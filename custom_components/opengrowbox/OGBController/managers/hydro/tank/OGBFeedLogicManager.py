@@ -86,9 +86,9 @@ class OGBFeedLogicManager:
                 await self._handle_disabled_mode()
             elif self.feed_mode == FeedMode.CONFIG:
                 # Config mode - UI configuration only, no active feeding control
-                _LOGGER.info(f"{self.room} - Config mode active: UI settings enabled, feeding control disabled")
+                _LOGGER.debug(f"{self.room} - Config mode active: UI settings enabled, feeding control disabled")
 
-            _LOGGER.info(f"{self.room} - Feed mode changed to: {self.feed_mode.value}")
+            _LOGGER.debug(f"{self.room} - Feed mode changed to: {self.feed_mode.value}")
 
             # Emit event
             await self.event_manager.emit(
@@ -276,7 +276,7 @@ class OGBFeedLogicManager:
                 if success:
                     self.last_feed_time = datetime.now()
                     self.daily_feed_count += 1
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room} - Proportional feeding completed: "
                         f"EC nutrients={ec_adjustment.get('nutrient_dose_ml', 0):.2f}ml, "
                         f"pH down={ph_adjustment.get('ph_down_dose_ml', 0):.2f}ml, "
@@ -385,7 +385,7 @@ class OGBFeedLogicManager:
             if ph_down_needed or ph_up_needed:
                 if nutrients_dosed:
                     # Delay pH adjustment by 15 minutes after nutrient dosing
-                    _LOGGER.info(f"{self.room} - Scheduling pH adjustment in {self.ph_adjustment_delay}s (15 minutes)")
+                    _LOGGER.debug(f"{self.room} - Scheduling pH adjustment in {self.ph_adjustment_delay}s (15 minutes)")
                     await self.event_manager.emit(
                         "LogForClient",
                         {
@@ -667,4 +667,4 @@ class OGBFeedLogicManager:
         Manually reset the daily feed count.
         """
         self.daily_feed_count = 0
-        _LOGGER.info(f"{self.room} - Daily feed count manually reset")
+        _LOGGER.debug(f"{self.room} - Daily feed count manually reset")

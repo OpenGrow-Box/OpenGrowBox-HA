@@ -74,7 +74,7 @@ class DryingActions:
         """
         Turn off all drying-related devices when switching to NO-Dry.
         """
-        _LOGGER.info(f"{self.name}: Cleaning up drying devices")
+        _LOGGER.debug(f"{self.name}: Cleaning up drying devices")
         
         # Direct event emission for cleanup (no cooldowns needed for cleanup)
         await self.event_manager.emit("Reduce Heater", None)
@@ -84,7 +84,7 @@ class DryingActions:
         await self.event_manager.emit("Reduce Exhaust", None)
         await self.event_manager.emit("Reduce Ventilation", None)
         
-        _LOGGER.info(f"{self.name}: All drying devices turned off")
+        _LOGGER.debug(f"{self.name}: All drying devices turned off")
 
     def start_drying_mode(self, mode_name: str) -> None:
         """

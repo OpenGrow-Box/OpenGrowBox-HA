@@ -353,14 +353,14 @@ class OGBFeatureManager:
                         room, self.plan_name, hass, event_manager
                     )
                     
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"📊 Analytics modules initialized for {room} "
                     f"(plan: {self.plan_name})"
                 )
             except ImportError as e:
                 _LOGGER.warning(f"Analytics modules not available: {e}")
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"OGBFeatureManager initialized (plan: {self.plan_name}, tenant: {tenant_id})"
         )
         self._log_available_features()
@@ -388,7 +388,7 @@ class OGBFeatureManager:
         self.last_update = datetime.now()
 
         if old_plan != self.plan_name:
-            _LOGGER.info(f"Subscription updated: {old_plan} → {self.plan_name}")
+            _LOGGER.debug(f"Subscription updated: {old_plan} → {self.plan_name}")
         else:
             _LOGGER.debug(f"Subscription data refreshed (plan: {self.plan_name})")
 
@@ -425,7 +425,7 @@ class OGBFeatureManager:
                 }
 
                 self._cache_timestamp = datetime.now()
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"Feature flags refreshed: {len(self.db_overrides)} overrides loaded"
                 )
                 return True
@@ -462,7 +462,7 @@ class OGBFeatureManager:
         """
         self.db_overrides[feature_key] = enabled
         self._cache_timestamp = datetime.now()
-        _LOGGER.info(f"Feature override updated: {feature_key}={enabled}")
+        _LOGGER.debug(f"Feature override updated: {feature_key}={enabled}")
 
     def _normalize_feature_key(self, feature_name: str) -> tuple:
         """

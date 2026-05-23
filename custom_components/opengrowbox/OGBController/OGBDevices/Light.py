@@ -127,7 +127,7 @@ class Light(Device):
         if not self.sun_phase_paused:
             self.sun_phase_paused = True
             self.pause_event.clear()  # Blockiert alle wartenden Tasks
-            _LOGGER.info(f"{self.deviceName}: Sonnenphasen pausiert")
+            _LOGGER.debug(f"{self.deviceName}: Sonnenphasen pausiert")
         else:
             _LOGGER.debug(f"{self.deviceName}: Sonnenphasen bereits pausiert")
 
@@ -136,13 +136,13 @@ class Light(Device):
         if self.sun_phase_paused:
             self.sun_phase_paused = False
             self.pause_event.set()  # Gibt alle wartenden Tasks frei
-            _LOGGER.info(f"{self.deviceName}: Sonnenphasen fortgesetzt")
+            _LOGGER.debug(f"{self.deviceName}: Sonnenphasen fortgesetzt")
         else:
             _LOGGER.debug(f"{self.deviceName}: Sonnenphasen sind nicht pausiert")
 
     async def stop_sun_phases(self, data=None):
         """Stoppt alle laufenden Sonnenphasen komplett"""
-        _LOGGER.info(f"{self.deviceName}: Stoppe alle Sonnenphasen")
+        _LOGGER.debug(f"{self.deviceName}: Stoppe alle Sonnenphasen")
 
         # Zuerst pausieren falls aktiv
         if self.sun_phase_paused:
@@ -151,27 +151,27 @@ class Light(Device):
         # Tasks abbrechen
         if self.sunrise_task and not self.sunrise_task.done():
             self.sunrise_task.cancel()
-            _LOGGER.info(f"{self.deviceName}: SunRise Task abgebrochen")
+            _LOGGER.debug(f"{self.deviceName}: SunRise Task abgebrochen")
 
         if self.sunset_task and not self.sunset_task.done():
             self.sunset_task.cancel()
-            _LOGGER.info(f"{self.deviceName}: SunSet Task abgebrochen")
+            _LOGGER.debug(f"{self.deviceName}: SunSet Task abgebrochen")
 
         # Status zurücksetzen
         self.sunPhaseActive = False
         self.sunrise_phase_active = False
         self.sunset_phase_active = False
 
-        _LOGGER.info(f"{self.deviceName}: Alle Sonnenphasen gestoppt")
+        _LOGGER.debug(f"{self.deviceName}: Alle Sonnenphasen gestoppt")
 
     async def _wait_if_paused(self):
         """Wartet, wenn die Sonnenphasen pausiert sind"""
         if self.sun_phase_paused:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Sonnenphase pausiert, warte auf Fortsetzung..."
             )
             await self.pause_event.wait()
-            _LOGGER.info(f"{self.deviceName}: Sonnenphase fortgesetzt")
+            _LOGGER.debug(f"{self.deviceName}: Sonnenphase fortgesetzt")
 
     def init(self):
         if not self.isInitialized:
@@ -368,7 +368,7 @@ class Light(Device):
                     return
                 await self.turn_on(brightness_pct=self.maxVoltage)
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Setze Spannung für Phase '{plantStage}' auf {self.initVoltage}V–{self.maxVoltage}V-CURRENT:{self.voltage}V."
             )
         elif plantStage not in self.PlantStageMinMax and not self._has_user_defined_minmax():
@@ -396,7 +396,7 @@ class Light(Device):
         
         # Only change if target is different from current
         if target == self.voltage:
-            _LOGGER.info(f"{self.deviceName}: Voltage unchanged at {self.voltage}% (already at {'max' if increase else 'min'} bound)")
+            _LOGGER.debug(f"{self.deviceName}: Voltage unchanged at {self.voltage}% (already at {'max' if increase else 'min'} bound)")
             return self.voltage
 
         new_voltage = self.clamp_voltage(target)
@@ -405,12 +405,12 @@ class Light(Device):
         if new_voltage != self.voltage:
             self.voltage = new_voltage
             actual = self.calculate_actual_voltage(self.voltage)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Voltage changed from {self.voltage + (step_value if not increase else -step_value)}% to {self.voltage}% ({actual:.2f}V) (step: {step_value}%)"
             )
         else:
             actual = self.calculate_actual_voltage(self.voltage)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Voltage unchanged at {self.voltage}% ({actual:.2f}V) (already at {'max' if increase else 'min'} bound)"
             )
             
@@ -566,7 +566,7 @@ class Light(Device):
             self.sunrise_phase_active = False
             self.sunset_phase_active = False
             self.last_day_reset = today
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"{self.deviceName}: Täglicher Reset der Sonnenphasen durchgeführt"
             )
             return True
@@ -604,7 +604,7 @@ class Light(Device):
             return
         
         self.sunset_task = asyncio.create_task(self._run_sunset())
-        _LOGGER.info(f"{self.deviceName}: Created new sunset task")
+        _LOGGER.debug(f"{self.deviceName}: Created new sunset task")
 
     async def _run_sunrise(self):
         """Führt die SunRisessequenz als separate Task aus."""
@@ -837,12 +837,12 @@ class Light(Device):
         self.ogbLightControl = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
 
         if not self.ogbLightControl:
-            _LOGGER.info(f"{self.deviceName}: OGB control disabled")
+            _LOGGER.debug(f"{self.deviceName}: OGB control disabled")
             return False
 
         isOnDrying = self.data_store.get("tentMode")
         if isOnDrying == "Drying":
-            _LOGGER.info(f"{self.deviceName}: OGB Plant in Drying Stage Light not Allowed")
+            _LOGGER.debug(f"{self.deviceName}: OGB Plant in Drying Stage Light not Allowed")
             return False
 
         if target_state:
@@ -868,7 +868,7 @@ class Light(Device):
                     if hasattr(self, 'pendingWorkMode') and self.pendingWorkMode is not None:
                         self.inWorkMode = self.pendingWorkMode
                         self.pendingWorkMode = None
-                        _LOGGER.info(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
+                        _LOGGER.debug(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
                 else:
                     # Ensure voltage is set based on min/max settings or plant stage defaults
                     # Only use minVoltage if it's explicitly set (> 0), otherwise use initVoltage
@@ -882,7 +882,7 @@ class Light(Device):
                     if hasattr(self, 'pendingWorkMode') and self.pendingWorkMode is not None:
                         self.inWorkMode = self.pendingWorkMode
                         self.pendingWorkMode = None
-                        _LOGGER.info(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
+                        _LOGGER.debug(f"{self.deviceName}: Activated pending WorkMode {self.inWorkMode}")
                     lightAction = OGBLightAction(
                         Name=self.inRoom,
                         Device=self.deviceName,
@@ -1012,7 +1012,7 @@ class Light(Device):
 
         light_control_type = self.data_store.getDeep("controlOptions.lightControlType")
         if light_control_type is None or light_control_type.upper() != "DLI":
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: Light Control by OGB is set to {light_control_type}"
             )
             return
@@ -1096,12 +1096,12 @@ class Light(Device):
                 f"💡 {self.deviceName}: No DLI target found for week {week}. Using last week's target."
             )
             dli_target_week = light_plan[-1]["DLITarget"]
-        _LOGGER.info(
+        _LOGGER.debug(
             f"💡 {self.deviceName}: DLI target for week {week}: {dli_target_week} from phase {plant_stage} for light plan {selected_lightplan}"
         )
 
         # get current DLI
-        _LOGGER.info(
+        _LOGGER.debug(
             f"💡 {self.deviceName}: Current DLI: {dli}, Target DLI: {dli_target_week}"
         )
 
@@ -1169,7 +1169,7 @@ class Light(Device):
                 light_min = 20.0
                 light_max = 100.0
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: Using validated min {light_min} and max {light_max} from data store."
             )
 
@@ -1195,16 +1195,16 @@ class Light(Device):
 
         if dli < dli_target_week * (1 - dli_tollerance):
             new_voltage = min(light_max, self.voltage + calibration_step_size)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: DLI {dli} is lower than {dli_target_week * (1 - dli_tollerance)}. Voltage will be increased by {calibration_step_size} from {self.voltage}% to {new_voltage}%"
             )
         elif dli > dli_target_week * (1 + dli_tollerance):
             new_voltage = max(light_min, self.voltage - calibration_step_size)
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: DLI {dli} is lower than {dli_target_week * (1 - dli_tollerance)}. Voltage will be decreased by {calibration_step_size} from {self.voltage}% to {new_voltage}%"
             )
         else:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💡 {self.deviceName}: DLI {dli} is within tolerance of {dli_tollerance}. No voltage change needed."
             )
             return

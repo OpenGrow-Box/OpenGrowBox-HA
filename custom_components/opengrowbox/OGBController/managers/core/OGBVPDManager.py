@@ -241,7 +241,7 @@ class OGBVPDManager:
             return None if val == "unavailable" else val
 
         if isinstance(data, OGBInitData):
-            #_LOGGER.info(f"OGBInitData erkannt: {data}")
+            #_LOGGER.debug(f"OGBInitData erkannt: {data}")
             return
         else:
             # Spezifische Aktion für OGBEventPublication
@@ -338,7 +338,7 @@ class OGBVPDManager:
                     message=message,
                     title=f"OGB {self.room}: {sensor_type.title()} Sensor Failure"
                 )
-                _LOGGER.info(f"Sent critical notification for failed sensor {entity_id}")
+                _LOGGER.debug(f"Sent critical notification for failed sensor {entity_id}")
             else:
                 _LOGGER.warning(f"No notificator available for sensor failure alert: {entity_id}")
         except Exception as e:

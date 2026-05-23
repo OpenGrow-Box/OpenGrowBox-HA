@@ -60,7 +60,7 @@ class OGBCache:
         # Background tasks
         self._cleanup_task = None
 
-        _LOGGER.info(f"OGBCache initialized for {room_name} at {self.db_path}")
+        _LOGGER.debug(f"OGBCache initialized for {room_name} at {self.db_path}")
 
     async def initialize(self):
         """Initialize database connection and create tables."""
@@ -71,7 +71,7 @@ class OGBCache:
             # Start background cleanup task (runs every 15 minutes)
             self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
-            _LOGGER.info(f"✅ {self.room_name} Cache database initialized")
+            _LOGGER.debug(f"✅ {self.room_name} Cache database initialized")
         except Exception as e:
             _LOGGER.error(f"Failed to initialize cache database: {e}", exc_info=True)
 
@@ -548,7 +548,7 @@ class OGBCache:
             conn.commit()
             conn.close()
 
-            _LOGGER.info(f"🗑️ Invalidated {deleted} analytics cache entries")
+            _LOGGER.debug(f"🗑️ Invalidated {deleted} analytics cache entries")
 
         await self.hass.async_add_executor_job(_invalidate)
 
@@ -578,7 +578,7 @@ class OGBCache:
             conn.commit()
             conn.close()
 
-            _LOGGER.info(f"🗑️ Invalidated {deleted} compliance cache entries")
+            _LOGGER.debug(f"🗑️ Invalidated {deleted} compliance cache entries")
 
         await self.hass.async_add_executor_job(_invalidate)
 
@@ -608,7 +608,7 @@ class OGBCache:
             conn.commit()
             conn.close()
 
-            _LOGGER.info(f"🗑️ Invalidated {deleted} dataset cache entries")
+            _LOGGER.debug(f"🗑️ Invalidated {deleted} dataset cache entries")
 
         await self.hass.async_add_executor_job(_invalidate)
 
@@ -626,7 +626,7 @@ class OGBCache:
             conn.commit()
             conn.close()
 
-            _LOGGER.info(f"🗑️ {self.room_name} All cache cleared")
+            _LOGGER.debug(f"🗑️ {self.room_name} All cache cleared")
 
         await self.hass.async_add_executor_job(_clear)
 
@@ -750,7 +750,7 @@ class OGBCache:
 
             total = analytics_deleted + compliance_deleted + datasets_deleted
             if total > 0:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🧹 {self.room_name} Cleaned {total} expired cache entries "
                     f"(analytics: {analytics_deleted}, compliance: {compliance_deleted}, "
                     f"datasets: {datasets_deleted})"
@@ -834,7 +834,7 @@ class OGBCache:
         result = await self.hass.async_add_executor_job(_update)
 
         if result:
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💳 {self.room_name} Updated subscription: {user_id[:6]} → {tier_name} ({room_count} rooms)"
             )
 
@@ -938,4 +938,4 @@ class OGBCache:
             except asyncio.CancelledError:
                 pass
 
-        _LOGGER.info(f"{self.room_name} Cache shutdown complete")
+        _LOGGER.debug(f"{self.room_name} Cache shutdown complete")

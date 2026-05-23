@@ -49,19 +49,19 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
         """Turn the switch on."""
         self._state = True
         self.async_write_ha_state()
-        _LOGGER.info(f"Switch '{self._name}' turned ON.")
+        _LOGGER.debug(f"Switch '{self._name}' turned ON.")
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
         self._state = False
         self.async_write_ha_state()
-        _LOGGER.info(f"Switch '{self._name}' turned OFF.")
+        _LOGGER.debug(f"Switch '{self._name}' turned OFF.")
 
     async def async_toggle(self, **kwargs):
         """Toggle the state of the switch."""
         self._state = not self._state
         self.async_write_ha_state()
-        _LOGGER.info(
+        _LOGGER.debug(
             f"Switch '{self._name}' toggled to: {'ON' if self._state else 'OFF'}."
         )
 
@@ -71,7 +71,7 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
         state = await self.async_get_last_state()
         if state and state.state is not None:
             self._state = state.state == "on"
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"Restored state for '{self._name}': {'ON' if self._state else 'OFF'}."
             )
 
@@ -107,12 +107,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             """Handle the toggle switch service."""
             entity_id = call.data.get("entity_id")
 
-            _LOGGER.info(f"Received request to toggle switch '{entity_id}'")
+            _LOGGER.debug(f"Received request to toggle switch '{entity_id}'")
 
             for switch in hass.data[DOMAIN]["switches"]:
                 if switch.entity_id == entity_id:
                     await switch.async_toggle()
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Toggled switch '{switch.name}' to state: {'ON' if switch.is_on else 'OFF'}"
                     )
                     return

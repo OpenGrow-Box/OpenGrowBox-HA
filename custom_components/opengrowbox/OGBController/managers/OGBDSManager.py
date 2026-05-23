@@ -188,7 +188,7 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
                             parsed = eval(val)  # Safe here since we validated format
                             if isinstance(parsed, tuple) and len(parsed) == 2:
                                 props[key] = list(parsed)
-                                _LOGGER.info(f"[{room}] Converted {key} from string to list: {props[key]}")
+                                _LOGGER.debug(f"[{room}] Converted {key} from string to list: {props[key]}")
                         except:
                             _LOGGER.warning(f"[{room}] Could not parse {key}, using default")
                             props[key] = [5.5, 7.0] if key == "ph_range" else [1.0, 2.5]
@@ -198,7 +198,7 @@ def _clean_corrupted_data(data: Dict[str, Any], room: str) -> Dict[str, Any]:
             cleaned_mediums.append(medium)
         
         data["growMediums"] = cleaned_mediums
-        _LOGGER.info(f"[{room}] Cleaned {len(cleaned_mediums)} mediums in loaded state")
+        _LOGGER.debug(f"[{room}] Cleaned {len(cleaned_mediums)} mediums in loaded state")
     
     return data
 
@@ -229,7 +229,7 @@ def _merge_capabilities(data: Dict[str, Any], room: str) -> Dict[str, Any]:
             added_caps.append(cap)
     
     if added_caps:
-        _LOGGER.info(f"[{room}] Added {len(added_caps)} new capabilities: {added_caps}")
+        _LOGGER.debug(f"[{room}] Added {len(added_caps)} new capabilities: {added_caps}")
     
     return data
 
@@ -257,7 +257,7 @@ class OGBDSManager:
         # DON'T load state synchronously in __init__ - this blocks HA's event loop!
         # State will be loaded asynchronously via async_init() or loadState()
         self.is_initialized = True
-        _LOGGER.info(f"[{self.room}] OGBDSManager initialized (state will be loaded async)")
+        _LOGGER.debug(f"[{self.room}] OGBDSManager initialized (state will be loaded async)")
 
     def _ensure_capability_schema_only_in_datastore(self):
         """Ensure all known capability keys exist in datastore without restoring old device assignments."""
@@ -273,7 +273,7 @@ class OGBDSManager:
                 added.append(cap)
 
         if added:
-            _LOGGER.info(f"[{self.room}] Added {len(added)} missing capability keys to datastore: {added}")
+            _LOGGER.debug(f"[{self.room}] Added {len(added)} missing capability keys to datastore: {added}")
 
         self.data_store.set("capabilities", current_caps)
 
@@ -296,7 +296,7 @@ class OGBDSManager:
         Uses hass.async_add_executor_job to avoid blocking the event loop.
         """
         if not os.path.exists(self.storage_path):
-            _LOGGER.info(f"[{self.room}] No saved state file at {self.storage_path} - starting fresh")
+            _LOGGER.debug(f"[{self.room}] No saved state file at {self.storage_path} - starting fresh")
             return
         
         try:
@@ -306,7 +306,7 @@ class OGBDSManager:
             if data is None:
                 return
             
-            _LOGGER.info(f"[{self.room}] 📥 LOADING state from {self.storage_path}")
+            _LOGGER.debug(f"[{self.room}] 📥 LOADING state from {self.storage_path}")
             
             # CRITICAL: Clean corrupted data before loading into datastore
             # This fixes issues like corrupted tuple strings in growMediums
@@ -362,7 +362,7 @@ class OGBDSManager:
             # Keep runtime-built capabilities, only ensure schema keys exist
             self._ensure_capability_schema_only_in_datastore()
             
-            _LOGGER.info(f"[{self.room}] ✅ State loaded ASYNCHRONOUSLY into datastore ({loaded_count} keys preserved)")
+            _LOGGER.debug(f"[{self.room}] ✅ State loaded ASYNCHRONOUSLY into datastore ({loaded_count} keys preserved)")
             
         except json.JSONDecodeError as e:
             _LOGGER.error(f"[{self.room}] Failed to parse state file: {e}")
@@ -438,7 +438,7 @@ class OGBDSManager:
                 _LOGGER.debug(f"⚠️ Saving simplified state instead")
 
             await asyncio.to_thread(self._sync_save, json_string)
-            _LOGGER.info(f"[{self.room}] ✅ DataStore saved to {self.storage_path} ({len(preserved_state)} keys)")
+            _LOGGER.debug(f"[{self.room}] ✅ DataStore saved to {self.storage_path} ({len(preserved_state)} keys)")
 
         except Exception as e:
             _LOGGER.error(f"❌ Failed to save DataStore: {e}")
@@ -590,7 +590,7 @@ class OGBDSManager:
             # CRITICAL: Clean corrupted data before loading
             loaded_data = _clean_corrupted_data(loaded_data, self.room)
             
-            _LOGGER.info(f"✅ State loaded from {self.storage_path}")
+            _LOGGER.debug(f"✅ State loaded from {self.storage_path}")
 
             for key, value in loaded_data.items():
                 if key in ("devices", "capabilities"):
@@ -612,7 +612,7 @@ class OGBDSManager:
         try:
             if os.path.exists(self.storage_path):
                 await asyncio.to_thread(os.remove, self.storage_path)
-                _LOGGER.info(f"🗑️ Deleted saved state at {self.storage_path}")
+                _LOGGER.debug(f"🗑️ Deleted saved state at {self.storage_path}")
             else:
                 _LOGGER.warning(
                     f"⚠️ No state file found to delete at {self.storage_path}"
@@ -674,7 +674,7 @@ class OGBDSManager:
             content = await self.hass.async_add_executor_job(
                 self._sync_load_script, script_path
             )
-            _LOGGER.info(f"[{room}] Script loaded from {script_path}")
+            _LOGGER.debug(f"[{room}] Script loaded from {script_path}")
             return content
         except Exception as e:
             _LOGGER.error(f"[{room}] Failed to load script: {e}")
@@ -715,7 +715,7 @@ class OGBDSManager:
             await self.hass.async_add_executor_job(
                 self._sync_save_script, script_path, script_config
             )
-            _LOGGER.info(f"[{room}] Script saved to {script_path}")
+            _LOGGER.debug(f"[{room}] Script saved to {script_path}")
             return True
         except Exception as e:
             _LOGGER.error(f"[{room}] Failed to save script: {e}")
@@ -765,7 +765,7 @@ class OGBDSManager:
             await self.hass.async_add_executor_job(
                 shutil.copy2, backup_path, script_path
             )
-            _LOGGER.info(f"[{room}] Script restored from backup")
+            _LOGGER.debug(f"[{room}] Script restored from backup")
             return True
         except Exception as e:
             _LOGGER.error(f"[{room}] Failed to restore script backup: {e}")

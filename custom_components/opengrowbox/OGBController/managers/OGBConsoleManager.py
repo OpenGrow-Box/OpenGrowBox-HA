@@ -211,7 +211,7 @@ class OGBConsoleManager:
         await self._send_response(
             "🟢 Console Manager initialized. Type 'help' for available commands."
         )
-        _LOGGER.info(f"OGBConsoleManager initialized for room: {self.room}")
+        _LOGGER.debug(f"OGBConsoleManager initialized for room: {self.room}")
 
     async def _command_income(self, event):
         event_room = event.data.get("room")
@@ -823,7 +823,7 @@ class OGBConsoleManager:
         # Emit calibration start event
         event_type = "ogb_cap_calibration_command"
         event_data = {"room": self.room, "action": "start", "cap": cap}
-        _LOGGER.info(f"[Console {self.room}] Firing event {event_type} with {event_data}")
+        _LOGGER.debug(f"[Console {self.room}] Firing event {event_type} with {event_data}")
         self.hass.bus.async_fire(event_type, event_data)
 
         await self._send_response(
@@ -834,7 +834,7 @@ class OGBConsoleManager:
     async def cmd_cap_cal_status(self, params: List[str]):
         """Shows capability calibration status and stored results."""
         raw_active = self.data_store.getDeep("capCalibration.active")
-        _LOGGER.info(f"[Console {self.room}] cap_cal_status read capCalibration.active = {raw_active}")
+        _LOGGER.debug(f"[Console {self.room}] cap_cal_status read capCalibration.active = {raw_active}")
         response = "🔧 Capability Calibration Status:\n" + "=" * 50 + "\n"
 
         # Active calibration

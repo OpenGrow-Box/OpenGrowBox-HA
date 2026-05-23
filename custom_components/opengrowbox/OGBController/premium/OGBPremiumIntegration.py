@@ -106,7 +106,7 @@ class OGBPremiumIntegration:
         try:
             from ..managers.OGBNotifyManager import OGBNotificator
             self.notificator = OGBNotificator(self.hass, self.room)
-            _LOGGER.info(f"✅ {self.room} Notification manager initialized")
+            _LOGGER.debug(f"✅ {self.room} Notification manager initialized")
         except Exception as e:
             _LOGGER.warning(f"⚠️ {self.room} Failed to initialize notification manager: {e}")
         
@@ -145,12 +145,12 @@ class OGBPremiumIntegration:
 
     async def _safe_init(self):
         """Safe initialization with error handling."""
-        _LOGGER.info(f"🔄 {self.room} Starting Premium Manager initialization...")
+        _LOGGER.debug(f"🔄 {self.room} Starting Premium Manager initialization...")
         async with self._init_lock:
             try:
                 await self.init()
                 self._is_initialized = True
-                _LOGGER.info(f"✅ {self.room} Premium Manager initialized successfully. ogb_ws={self.ogb_ws is not None}")
+                _LOGGER.debug(f"✅ {self.room} Premium Manager initialized successfully. ogb_ws={self.ogb_ws is not None}")
             except Exception as e:
                 _LOGGER.error(f"❌ {self.room} Premium Manager init failed: {e}", exc_info=True)
                 # Ensure we still set ogb_ws even on partial failure
@@ -181,7 +181,7 @@ class OGBPremiumIntegration:
                         (prem_integration.ogb_ws and prem_integration.ogb_ws.ws_connected) or
                         not hasattr(prem_integration, '_initialization_blocked')):
                         active_premium_connections += 1
-                        _LOGGER.info(f"📊 Active/Initializing connection: {room_name}")
+                        _LOGGER.debug(f"📊 Active/Initializing connection: {room_name}")
                     elif hasattr(prem_integration, '_initialization_blocked') and prem_integration._initialization_blocked:
                         blocked_rooms.append(room_name)
 
@@ -216,7 +216,7 @@ class OGBPremiumIntegration:
                 self._initialization_blocked = True
                 return False
 
-            _LOGGER.info(f"✅ {self.room} ALLOWED - proceeding with initialization")
+            _LOGGER.debug(f"✅ {self.room} ALLOWED - proceeding with initialization")
             return True
 
         except Exception as e:
@@ -233,10 +233,6 @@ class OGBPremiumIntegration:
 
     async def init(self):
         """Initialize Premium Manager."""
-
-        needToDoings = do_nothing(self.room.lower)
-        if not needToDoings:
-            return
 
         if is_ambient_room(self.room):
             return
@@ -257,7 +253,7 @@ class OGBPremiumIntegration:
         # Give WebSocket client access to credentials for auto-relogin
         self.ogb_ws._credential_provider = self._get_credentials_for_relogin
         self.is_primary_ws_client = True  # Always true since no sharing
-        _LOGGER.info(f"🔗 {self.room} Created independent WebSocket client")
+        _LOGGER.debug(f"🔗 {self.room} Created independent WebSocket client")
 
         # Initialize grow plan manager with WebSocket client
         self.growPlanManager = OGBGrowPlanManager(
@@ -361,7 +357,7 @@ class OGBPremiumIntegration:
             enabled = data.get("enabled")
             reason = data.get("reason", "unknown")
 
-            _LOGGER.info(f"🎛️ {self.room} Feature '{feature_key}' = {enabled} (reason: {reason})")
+            _LOGGER.debug(f"🎛️ {self.room} Feature '{feature_key}' = {enabled} (reason: {reason})")
 
             # Update subscription_data for feature checks
             if not self.subscription_data:
@@ -467,7 +463,7 @@ class OGBPremiumIntegration:
                 _LOGGER.debug(f"⏭️ {self.room} Ignoring subscription_changed without new_plan: {data}")
                 return
 
-            _LOGGER.info(f"📊 {self.room} Subscription changed: {old_plan} → {new_plan}")
+            _LOGGER.debug(f"📊 {self.room} Subscription changed: {old_plan} → {new_plan}")
 
             # Update subscription data
             if "features" in data:
@@ -687,7 +683,7 @@ class OGBPremiumIntegration:
         try:
             ctrl_data = data.get("data", data)
             
-            _LOGGER.info(f"🎛️ {self.room} Webapp control change: {ctrl_data}")
+            _LOGGER.debug(f"🎛️ {self.room} Webapp control change: {ctrl_data}")
             
             # If it's a tent mode change
             if isinstance(ctrl_data, str):
@@ -714,7 +710,7 @@ class OGBPremiumIntegration:
     async def _on_webapp_ctrl_values_change(self, data):
         """Handle control values changes from webapp."""
         try:
-            _LOGGER.info(f"🎛️ {self.room} Webapp control values change")
+            _LOGGER.debug(f"🎛️ {self.room} Webapp control values change")
             
             # Update controlOptionData
             if "controlOptionData" in data and data["controlOptionData"]:
@@ -759,11 +755,11 @@ class OGBPremiumIntegration:
             stage_changed = current_stage != plant_stage
 
             if stage_changed:
-                _LOGGER.info(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
+                _LOGGER.debug(f"🌱 {self.room} Webapp plant stage change: {plant_stage}")
             elif force_reapply:
-                _LOGGER.info(f"🌱 {self.room} Webapp plant stage reapply (forced): {plant_stage}")
+                _LOGGER.debug(f"🌱 {self.room} Webapp plant stage reapply (forced): {plant_stage}")
             else:
-                _LOGGER.info(f"🌱 {self.room} Webapp plant stage unchanged, reapplying targets: {plant_stage}")
+                _LOGGER.debug(f"🌱 {self.room} Webapp plant stage unchanged, reapplying targets: {plant_stage}")
                 
             # Keep datastore in sync even for reapply payloads
             self.data_store.set("plantStage", plant_stage)
@@ -802,7 +798,7 @@ class OGBPremiumIntegration:
         try:
             actions = data.get("actions", [])
             
-            _LOGGER.info(f"⚡ {self.room} Webapp premium actions: {len(actions)} actions")
+            _LOGGER.debug(f"⚡ {self.room} Webapp premium actions: {len(actions)} actions")
             
             # Emit to action manager for execution
             await self.event_manager.emit("ExecuteActions", {
@@ -907,16 +903,16 @@ class OGBPremiumIntegration:
             # Update plan from api_usage_update (source of truth!)
             if server_plan:
                 self.subscription_data["plan_name"] = server_plan
-                _LOGGER.info(f"📊 {self.room} Updated plan_name: {server_plan}")
+                _LOGGER.debug(f"📊 {self.room} Updated plan_name: {server_plan}")
             
             # Update features and limits
             if features:
                 self.subscription_data["features"] = features
-                _LOGGER.info(f"📊 {self.room} Updated features: {len(features)}")
+                _LOGGER.debug(f"📊 {self.room} Updated features: {len(features)}")
             
             if limits:
                 self.subscription_data["limits"] = limits
-                _LOGGER.info(f"📊 {self.room} Updated limits: {len(limits)}")
+                _LOGGER.debug(f"📊 {self.room} Updated limits: {len(limits)}")
             
             # Update usage
             if "usage" not in self.subscription_data:
@@ -979,7 +975,7 @@ class OGBPremiumIntegration:
 
             # Only emit plan change for valid, explicit plan transitions
             if server_plan and old_plan != new_plan:
-                _LOGGER.info(f"🔄 {self.room} Plan changed from {old_plan} to {new_plan}, emitting event to frontend")
+                _LOGGER.debug(f"🔄 {self.room} Plan changed from {old_plan} to {new_plan}, emitting event to frontend")
                 
                 # Update local premium status
                 self.is_premium = new_plan not in ["free", "trial"]
@@ -1011,7 +1007,7 @@ class OGBPremiumIntegration:
                 old_features = self.feature_manager.features or {}
                 # Check if features actually changed
                 if old_features != features:
-                    _LOGGER.info(f"🔄 {self.room} Features changed, updating FeatureManager and TentMode options")
+                    _LOGGER.debug(f"🔄 {self.room} Features changed, updating FeatureManager and TentMode options")
                     self.feature_manager.update_subscription(self.subscription_data)
                     # Update UI controls based on new features
                     try:
@@ -1039,7 +1035,7 @@ class OGBPremiumIntegration:
             source = data.get("source", "unknown")
             old_plan = self.subscription_data.get("plan_name", "free") if self.subscription_data else "free"
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"🔄 {self.room} Received plan_changed event: plan_id={plan_id}, plan_name={plan_name}, "
                 f"action={action}, source={source}, current_plan={old_plan}"
             )
@@ -1108,7 +1104,7 @@ class OGBPremiumIntegration:
                         )
                     except Exception as notify_error:
                         _LOGGER.error(f"❌ {self.room} Error sending plan sync notification: {notify_error}")
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"ℹ️ {self.room} plan_changed had no transition (old={old_plan}, new={new_plan}), "
                         f"sent sync confirmation notification for action={action}"
                     )
@@ -1124,7 +1120,7 @@ class OGBPremiumIntegration:
                         )
                     except Exception as notify_error:
                         _LOGGER.error(f"❌ {self.room} Error sending plan sync notification: {notify_error}")
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"ℹ️ {self.room} plan_changed sync action completed (old={old_plan}, new={new_plan}), "
                         f"sent confirmation notification"
                     )
@@ -1150,7 +1146,7 @@ class OGBPremiumIntegration:
                 )
 
                 await self._save_request(True)
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"✅ {self.room} plan_changed sync complete: {old_plan} -> {new_plan}"
                 )
             else:
@@ -1207,7 +1203,7 @@ class OGBPremiumIntegration:
                 }
             )
 
-            _LOGGER.info(f"✅ {self.room} Maintenance alert processed: {title}")
+            _LOGGER.debug(f"✅ {self.room} Maintenance alert processed: {title}")
 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} maintenance_alert handling error: {e}", exc_info=True)
@@ -1241,7 +1237,7 @@ class OGBPremiumIntegration:
             if data.get("room") != self.room:
                 return
             
-            _LOGGER.info(f"🏁 {self.room} Grow completed event received")
+            _LOGGER.debug(f"🏁 {self.room} Grow completed event received")
             
             # Only send to API if logged in and premium
             if not self.is_logged_in or not self.ogb_ws:
@@ -1277,7 +1273,7 @@ class OGBPremiumIntegration:
                 "notes": data.get("notes"),
             }
             
-            _LOGGER.info(f"📤 {self.room} Sending grow completion to Premium API: {harvest_payload.get('plant_name')}")
+            _LOGGER.debug(f"📤 {self.room} Sending grow completion to Premium API: {harvest_payload.get('plant_name')}")
             
             # Send to Premium API via V1 encrypted WebSocket
             # IMPORTANT: This is lifecycle completion (entire grow),
@@ -1285,7 +1281,7 @@ class OGBPremiumIntegration:
             try:
                 success = await self.ogb_ws.send_v1_encrypted_message("v1:grow-completed", harvest_payload)
                 if success:
-                    _LOGGER.info(f"✅ {self.room} Grow completion data sent to Premium API")
+                    _LOGGER.debug(f"✅ {self.room} Grow completion data sent to Premium API")
                 else:
                     _LOGGER.warning(f"⚠️ {self.room} Failed to send grow completion to Premium API")
             except Exception as ws_error:
@@ -1310,7 +1306,7 @@ class OGBPremiumIntegration:
         so that climate controllers can read min/max temperature, humidity, etc.
         """
         try:
-            _LOGGER.info(f"🌱 {self.room} Received new_grow_plans event with keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+            _LOGGER.debug(f"🌱 {self.room} Received new_grow_plans event with keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
             
             if not isinstance(data, dict):
                 _LOGGER.warning(f"🌱 {self.room} new_grow_plans data is not a dict: {type(data)}")
@@ -1322,7 +1318,7 @@ class OGBPremiumIntegration:
             active_plan = data.get("activePlan")
             
             if current_week_data:
-                _LOGGER.info(f"🌱 {self.room} Storing currentWeekData in data_store")
+                _LOGGER.debug(f"🌱 {self.room} Storing currentWeekData in data_store")
                 self.data_store.setDeep("growPlan.currentWeekData", current_week_data)
                 
                 if current_week:
@@ -1336,13 +1332,13 @@ class OGBPremiumIntegration:
                     
                     # Trigger entity updates from week data
                     await self.growPlanManager._update_entities_from_week_data()
-                    _LOGGER.info(f"🌱 {self.room} Updated entities from week data")
+                    _LOGGER.debug(f"🌱 {self.room} Updated entities from week data")
                 
                 # Persist to disk
                 await self.event_manager.emit("SaveState", {"source": "PremiumIntegration", "action": "grow_plan_week_data"})
                 
             elif active_plan:
-                _LOGGER.info(f"🌱 {self.room} Received activePlan without week data")
+                _LOGGER.debug(f"🌱 {self.room} Received activePlan without week data")
                 # Store basic plan info
                 self.data_store.setDeep("growPlan.id", active_plan.get("id"))
                 self.data_store.setDeep("growPlan.name", active_plan.get("name"))
@@ -1355,7 +1351,7 @@ class OGBPremiumIntegration:
     async def _handle_has_plant_viewed(self, data):
         """Handle HasPlantViewed from Camera and send encrypted to API."""
         try:
-            _LOGGER.info(f"📷 {self.room} HasPlantViewed received, sending encrypted")
+            _LOGGER.debug(f"📷 {self.room} HasPlantViewed received, sending encrypted")
 
             # Optional operator visibility via notification manager
             try:
@@ -1393,7 +1389,7 @@ class OGBPremiumIntegration:
             )
 
             if success:
-                _LOGGER.info(f"📷 {self.room} HasPlantViewed sent encrypted successfully")
+                _LOGGER.debug(f"📷 {self.room} HasPlantViewed sent encrypted successfully")
                 try:
                     if hasattr(self, "notificator") and self.notificator is not None:
                         await self.notificator.info(
@@ -1452,7 +1448,7 @@ class OGBPremiumIntegration:
             # Save the fixed state back to prevent future issues
             try:
                 await _save_state_securely(self.hass, state_data, self.room)
-                _LOGGER.info(f"✅ {self.room} Fixed corrupted state file")
+                _LOGGER.debug(f"✅ {self.room} Fixed corrupted state file")
             except Exception as e:
                 _LOGGER.warning(f"⚠️ {self.room} Could not save fixed state: {e}")
 
@@ -1556,13 +1552,13 @@ class OGBPremiumIntegration:
                 self.ogb_ws.token_expires_at = ws_data.get("token_expires_at")
                 
                 # CRITICAL: Restore credentials for auto-relogin after API restart
-                _LOGGER.info(f"🔐 {self.room} Restoring credentials: email={bool(self.ogb_login_email)}, token={bool(self.ogb_login_token)}")
+                _LOGGER.debug(f"🔐 {self.room} Restoring credentials: email={bool(self.ogb_login_email)}, token={bool(self.ogb_login_token)}")
                 if self.ogb_login_email:
                     self.ogb_ws._stored_email = self.ogb_login_email
-                    _LOGGER.info(f"🔐 {self.room} Set _stored_email: {self.ogb_login_email[:3]}***")
+                    _LOGGER.debug(f"🔐 {self.room} Set _stored_email: {self.ogb_login_email[:3]}***")
                 if self.ogb_login_token:
                     self.ogb_ws._stored_ogb_token = self.ogb_login_token
-                    _LOGGER.info(f"🔐 {self.room} Set _stored_ogb_token: {self.ogb_login_token[:8]}***")
+                    _LOGGER.debug(f"🔐 {self.room} Set _stored_ogb_token: {self.ogb_login_token[:8]}***")
 
                 # Prepare session data
                 session_data = {}
@@ -1592,11 +1588,11 @@ class OGBPremiumIntegration:
                     return True  # Not an error, just not needed
 
                 # Try direct WebSocket reconnection first (will auto-request session key if needed)
-                _LOGGER.info(f"🔄 {self.room} Attempting direct WebSocket reconnection...")
+                _LOGGER.debug(f"🔄 {self.room} Attempting direct WebSocket reconnection...")
                 success = await self.ogb_ws._connect_websocket()
 
                 if success:
-                    _LOGGER.info(f"✅ {self.room} WebSocket session restored successfully via direct reconnection")
+                    _LOGGER.debug(f"✅ {self.room} WebSocket session restored successfully via direct reconnection")
                     
                     # CRITICAL FIX: Wait for authentication flag to be set
                     # The v1:session:confirmed event sets this flag asynchronously
@@ -1609,7 +1605,7 @@ class OGBPremiumIntegration:
                         for _ in range(5):
                             await asyncio.sleep(1.0)
                             if self.ogb_ws.authenticated:
-                                _LOGGER.info(f"✅ {self.room} Authentication confirmed after wait")
+                                _LOGGER.debug(f"✅ {self.room} Authentication confirmed after wait")
                                 break
                         
                         if not self.ogb_ws.authenticated:
@@ -1626,7 +1622,7 @@ class OGBPremiumIntegration:
                         return True
                 
                 # Direct reconnection failed - fallback to full login with stored credentials
-                _LOGGER.info(f"⚠️ {self.room} Direct reconnection failed, trying fresh login with stored credentials...")
+                _LOGGER.debug(f"⚠️ {self.room} Direct reconnection failed, trying fresh login with stored credentials...")
                 
                 if not self.ogb_login_email or not self.ogb_login_token:
                     _LOGGER.error(f"❌ {self.room} No stored credentials for fallback login")
@@ -1642,7 +1638,7 @@ class OGBPremiumIntegration:
                 )
 
                 if success:
-                    _LOGGER.info(f"✅ {self.room} Premium session restored via fresh login")
+                    _LOGGER.debug(f"✅ {self.room} Premium session restored via fresh login")
                     strain_name = state_data.get("strain_name", None)
                     planRequestData = {"event_id": "starting_event", "strain_name": strain_name}
                     # Grow plans werden nicht mehr angefordert - nur noch empfangen
@@ -1660,7 +1656,7 @@ class OGBPremiumIntegration:
 
         # Auto-login on startup if credentials exist but is_logged_in is False
         if not self.is_logged_in and self.ogb_login_email and self.ogb_login_token and self.is_premium_selected:
-            _LOGGER.info(f"🔐 {self.room} Credentials exist but not logged in - triggering auto-login on startup")
+            _LOGGER.debug(f"🔐 {self.room} Credentials exist but not logged in - triggering auto-login on startup")
             asyncio.create_task(self._auto_login_premium())
 
         return True
@@ -1682,7 +1678,7 @@ class OGBPremiumIntegration:
             _LOGGER.warning(f"❌ {self.room} Auto-login failed: no stored credentials")
             return
         
-        _LOGGER.info(f"🔐 {self.room} Starting auto-login with stored credentials...")
+        _LOGGER.debug(f"🔐 {self.room} Starting auto-login with stored credentials...")
         
         self._login_in_progress = True
         self.is_premium_selected = True
@@ -1698,7 +1694,7 @@ class OGBPremiumIntegration:
             )
             
             if success:
-                _LOGGER.info(f"✅ {self.room} Auto-login initiated successfully")
+                _LOGGER.debug(f"✅ {self.room} Auto-login initiated successfully")
             else:
                 _LOGGER.error(f"❌ {self.room} Auto-login failed to initiate")
                 self.is_premium_selected = False
@@ -1801,7 +1797,7 @@ class OGBPremiumIntegration:
                 async with session.get(api_url, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
-                        _LOGGER.info(f"✅ {self.room} Subscription data fetched from API")
+                        _LOGGER.debug(f"✅ {self.room} Subscription data fetched from API")
                         return data.get("subscription_data", {})
                     else:
                         _LOGGER.warning(f"⚠️ {self.room} API subscription fetch failed: HTTP {response.status}")
@@ -1828,7 +1824,7 @@ class OGBPremiumIntegration:
             for i in range(20):
                 await asyncio.sleep(0.5)
                 if self.is_ready:
-                    _LOGGER.info(f"✅ {self.room} Ready for login after {(i+1)*0.5}s")
+                    _LOGGER.debug(f"✅ {self.room} Ready for login after {(i+1)*0.5}s")
                     break
             if not self.is_ready:
                 _LOGGER.error(f"❌ {self.room} Still not ready after 10s, aborting login. _is_initialized={self._is_initialized}, ogb_ws={self.ogb_ws is not None}")
@@ -1867,7 +1863,7 @@ class OGBPremiumIntegration:
                 if self.ogb_ws:
                     self.ogb_ws._stored_ogb_token = OGBToken
 
-            _LOGGER.info(f"🔐 {self.room} Processing Premium login request (email stored: {bool(email)})")
+            _LOGGER.debug(f"🔐 {self.room} Processing Premium login request (email stored: {bool(email)})")
 
             # login_and_connect now returns success immediately on WebSocket connection
             # The actual V1 authentication happens asynchronously and calls _handle_auth_result
@@ -1922,7 +1918,7 @@ class OGBPremiumIntegration:
                 if auth_data:
                     self.user_id = auth_data.get('user_id')
                     plan_name = auth_data.get('plan', 'free')
-                    _LOGGER.info(f"📊 {self.room} Initial auth data: user={self.user_id}, plan={plan_name}")
+                    _LOGGER.debug(f"📊 {self.room} Initial auth data: user={self.user_id}, plan={plan_name}")
                     
                     # CRITICAL FIX: Get full subscription data from WebSocket client
                     # The WebSocket client already fetched it during REST login
@@ -1931,14 +1927,14 @@ class OGBPremiumIntegration:
                         if ws_subscription_data and isinstance(ws_subscription_data, dict) and ws_subscription_data.get('features'):
                             # WebSocket client has full subscription data from REST API login
                             self.subscription_data = ws_subscription_data
-                            _LOGGER.info(f"✅ {self.room} Using subscription data from WebSocket client: {len(ws_subscription_data.get('features', {}))} features")
+                            _LOGGER.debug(f"✅ {self.room} Using subscription data from WebSocket client: {len(ws_subscription_data.get('features', {}))} features")
                         else:
                             # WebSocket data incomplete - try fetching from API
                             _LOGGER.warning(f"⚠️ {self.room} WebSocket subscription_data incomplete, fetching from API...")
                             full_subscription_data = await self._fetch_subscription_data_from_api()
                             if full_subscription_data:
                                 self.subscription_data = full_subscription_data
-                                _LOGGER.info(f"✅ {self.room} Full subscription data fetched from API: {len(full_subscription_data.get('features', {}))} features")
+                                _LOGGER.debug(f"✅ {self.room} Full subscription data fetched from API: {len(full_subscription_data.get('features', {}))} features")
                             else:
                                 # Fallback to minimal data
                                 self.subscription_data = {'plan_name': plan_name}
@@ -1985,7 +1981,7 @@ class OGBPremiumIntegration:
                 self._update_feature_manager()
                 
                 sub_keys = list(self.subscription_data.keys()) if self.subscription_data else []
-                _LOGGER.info(f"📤 {self.room} Sending LoginSuccess with subscription data: {sub_keys}")
+                _LOGGER.debug(f"📤 {self.room} Sending LoginSuccess with subscription data: {sub_keys}")
 
                 # Send success response
                 await self._send_auth_response(event_id, "success", message, auth_data)
@@ -2048,7 +2044,7 @@ class OGBPremiumIntegration:
             # Enable premium features
             self.is_premium_selected = True
             self.has_control_prem = True
-            _LOGGER.info(f"⚡ {self.room} Premium features enabled")
+            _LOGGER.debug(f"⚡ {self.room} Premium features enabled")
 
             # Send auth to other rooms
             await self._send_auth_to_other_rooms()
@@ -2148,7 +2144,7 @@ class OGBPremiumIntegration:
     async def _broadcast_restored_state(self):
         """Broadcast restored premium state to frontend after HA restart."""
         try:
-            _LOGGER.info(f"📢 {self.room} Notifying frontend of restored Premium state")
+            _LOGGER.debug(f"📢 {self.room} Notifying frontend of restored Premium state")
             
             # CRITICAL FIX: First refresh from backend, THEN sync, THEN send to frontend
             # This ensures the validated values (not stale cached ones) are sent
@@ -2230,7 +2226,7 @@ class OGBPremiumIntegration:
             )
 
             if should_restore:
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"🔄 {self.room} Restoring tent mode after premium restore: {current_mode} -> {desired_mode}"
                 )
                 await self._change_ctrl_values(tentmode=desired_mode)
@@ -2463,8 +2459,8 @@ class OGBPremiumIntegration:
             if self.is_logged_in:
                 # Store auth credentials for manual room switching via GUI
                 authenticated_room = event.data.get("AuthenticatedRoom")
-                _LOGGER.info(f"📥 {self.room} Received auth credentials from {authenticated_room}")
-                _LOGGER.info(f"🏠 {self.room} Staying in HomeAssistant mode - user can switch to Premium via GUI")
+                _LOGGER.debug(f"📥 {self.room} Received auth credentials from {authenticated_room}")
+                _LOGGER.debug(f"🏠 {self.room} Staying in HomeAssistant mode - user can switch to Premium via GUI")
                 
                 # Get session info for logging
                 max_sessions = self.ogb_ws.ogb_max_sessions if self.ogb_ws else 1
@@ -2478,7 +2474,7 @@ class OGBPremiumIntegration:
                     current_sessions = ogb_sessions_data or 0
                 
                 plan_name = subscription_data.get('plan_name', 'free') if subscription_data else 'free'
-                _LOGGER.info(f"📊 {self.room} Session info: {current_sessions}/{max_sessions} (plan: {plan_name})")
+                _LOGGER.debug(f"📊 {self.room} Session info: {current_sessions}/{max_sessions} (plan: {plan_name})")
                 
                 # Save credentials to disk for persistence across HA restarts
                 await self._save_request(True)
@@ -2703,7 +2699,7 @@ class OGBPremiumIntegration:
         event_id = f"DR{self._datarelease_counter:03d}"
         
         if is_mode_disabled:
-            _LOGGER.info(f"🚨 {self.room} DataRelease #{event_id} triggered for DISABLED mode - sending immediately (no debounce)")
+            _LOGGER.debug(f"🚨 {self.room} DataRelease #{event_id} triggered for DISABLED mode - sending immediately (no debounce)")
         else:
             _LOGGER.debug(f"🚀 {self.room} DataRelease #{event_id} triggered - starting send process")
 
@@ -2727,7 +2723,7 @@ class OGBPremiumIntegration:
             _LOGGER.debug(f"⏭️ {self.room} #{event_id} No WebSocket client available (expected behavior)")
             return
 
-        _LOGGER.info(f"🔍 {self.room} #{event_id} WebSocket state: connected={self.ogb_ws.ws_connected}, authenticated={self.ogb_ws.authenticated}")
+        _LOGGER.debug(f"🔍 {self.room} #{event_id} WebSocket state: connected={self.ogb_ws.ws_connected}, authenticated={self.ogb_ws.authenticated}")
 
         if not self.ogb_ws.ws_connected:
             _LOGGER.debug(f"⏭️ {self.room} #{event_id} WebSocket not connected (expected behavior)")
@@ -2834,7 +2830,7 @@ class OGBPremiumIntegration:
             
             # Handle plantStage separately - update select and emit event
             if plant_stage:
-                _LOGGER.info(f"🌱 {self.room} CTRL Change plantStage: {plant_stage}")
+                _LOGGER.debug(f"🌱 {self.room} CTRL Change plantStage: {plant_stage}")
                 await self._on_webapp_plant_stage_change({"plantStage": plant_stage})
         else:
             _LOGGER.error(f"Unsupported data format: {data}")
@@ -3001,14 +2997,14 @@ class OGBPremiumIntegration:
                 },
                 "saved_at": datetime.now(timezone.utc).isoformat(),
             }
-            _LOGGER.info(
+            _LOGGER.debug(
                 f"💾 {self.room} Saving Premium state: "
                 f"user={self.user_id[:8] if self.user_id else 'none'}, "
                 f"plan={self.subscription_data.get('plan_name', 'unknown') if self.subscription_data else 'unknown'}, "
                 f"logged_in={self.is_logged_in}"
             )
             await _save_state_securely(self.hass, state_data, self.room)
-            _LOGGER.info(f"✅ {self.room} Premium state saved successfully")
+            _LOGGER.debug(f"✅ {self.room} Premium state saved successfully")
 
         except Exception as e:
             import traceback
@@ -3119,7 +3115,7 @@ class OGBPremiumIntegration:
                 if mode_name and mode_name not in available_modes:
                     available_modes.append(mode_name)
         
-        _LOGGER.info(
+        _LOGGER.debug(
             f"🎮 {self.room} Available premium modes (dynamic): {available_modes} "
             f"(plan: {self.feature_manager.plan_name})"
         )
@@ -3350,7 +3346,7 @@ class OGBPremiumIntegration:
             if new_options:
                 tent_select._attr_options = list(set(tent_select._attr_options + new_options))
                 tent_select.async_write_ha_state()
-                _LOGGER.info(f"{self.room} Added premium options: {new_options}")
+                _LOGGER.debug(f"{self.room} Added premium options: {new_options}")
 
         # Handle drying modes (if any)
         if dry_options and drying_select:
@@ -3569,7 +3565,7 @@ class OGBPremiumIntegration:
     async def _on_premium_deselected(self):
         """Handle Premium mode deactivation."""
         try:
-            _LOGGER.info(f"Premium mode deactivated for {self.room}")
+            _LOGGER.debug(f"Premium mode deactivated for {self.room}")
             if not self.is_premium_selected:
                 return
 
@@ -3589,7 +3585,7 @@ class OGBPremiumIntegration:
             update_type = event.data.get("type") if hasattr(event, 'data') else event.get("type")
             data = event.data if hasattr(event, 'data') else event.get("data", {})
 
-            _LOGGER.info(f"📊 {self.room} Processing analytics update: {update_type}")
+            _LOGGER.debug(f"📊 {self.room} Processing analytics update: {update_type}")
 
             # Update premium sensors (existing functionality)
             if update_type == "yield_prediction" and self._premium_sensors.get("yield_prediction"):
@@ -3634,7 +3630,7 @@ class OGBPremiumIntegration:
             event_id: Optional event ID for response tracking
         """
         try:
-            _LOGGER.info(f"🧹 {self.room} Starting authentication cleanup")
+            _LOGGER.debug(f"🧹 {self.room} Starting authentication cleanup")
 
             # Disconnect WebSocket if connected
             if self.ogb_ws and self.ogb_ws.ws_connected:
@@ -3661,7 +3657,7 @@ class OGBPremiumIntegration:
                 if self._check_if_premium_selected():
                     self.data_store.set("mainControl", "HomeAssistant")
                     await self._change_sensor_value("SET", "select.ogb_maincontrol", "HomeAssistant")
-                    _LOGGER.info(f"🎛️ {self.room} Reset mainControl to HomeAssistant")
+                    _LOGGER.debug(f"🎛️ {self.room} Reset mainControl to HomeAssistant")
             except Exception as e:
                 _LOGGER.error(f"⚠️ {self.room} Error resetting mainControl: {e}")
 
@@ -3675,7 +3671,7 @@ class OGBPremiumIntegration:
             # Remove state file
             try:
                 await _remove_state_file(self.hass, self.room)
-                _LOGGER.info(f"🗑️ {self.room} State file removed successfully")
+                _LOGGER.debug(f"🗑️ {self.room} State file removed successfully")
             except Exception as e:
                 _LOGGER.error(f"❌ {self.room} Error removing state file: {e}")
 
@@ -3686,7 +3682,7 @@ class OGBPremiumIntegration:
                 except Exception as e:
                     _LOGGER.error(f"⚠️ {self.room} Error sending logout response: {e}")
 
-            _LOGGER.info(f"✅ {self.room} Authentication cleanup completed")
+            _LOGGER.debug(f"✅ {self.room} Authentication cleanup completed")
 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Cleanup auth error: {e}")
@@ -3717,7 +3713,7 @@ class OGBPremiumIntegration:
 
     async def async_shutdown(self):
         """Shutdown premium integration."""
-        _LOGGER.info(f"Shutting down premium integration for {self.room}")
+        _LOGGER.debug(f"Shutting down premium integration for {self.room}")
 
         if self._init_task and not self._init_task.done():
             self._init_task.cancel()
@@ -3769,7 +3765,7 @@ class OGBPremiumIntegration:
             except Exception as e:
                 _LOGGER.error(f"Error disconnecting WebSocket: {e}")
 
-        _LOGGER.info(f"Premium integration shutdown complete for {self.room}")
+        _LOGGER.debug(f"Premium integration shutdown complete for {self.room}")
 
     def __str__(self):
         return f"{self.name} - Premium: {self.is_premium}, Logged In: {self.is_logged_in}"

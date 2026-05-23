@@ -86,7 +86,7 @@ class OGBRateLimiter:
         # Get limits for this tier
         self.limits = self.RATE_LIMITS.get(plan_name, self.RATE_LIMITS["free"])
 
-        _LOGGER.info(
+        _LOGGER.debug(
             f"⏱️ Rate limiter initialized for {room} "
             f"(user: {user_id[:8]}, plan: {plan_name})"
         )
@@ -227,7 +227,7 @@ class OGBRateLimiter:
         """Manually reset a rate limit (admin use)"""
         if operation_type in self.request_history:
             self.request_history[operation_type].clear()
-            _LOGGER.info(f"✅ {self.room} Reset rate limit for {operation_type}")
+            _LOGGER.debug(f"✅ {self.room} Reset rate limit for {operation_type}")
 
     def get_summary(self) -> Dict[str, Any]:
         """Get comprehensive rate limit summary"""

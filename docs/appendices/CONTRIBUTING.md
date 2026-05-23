@@ -234,7 +234,7 @@ Use appropriate log levels and include context:
 _LOGGER.debug(f"Processing sensor data: {sensor_data}")
 
 # Info: General information about system operation
-_LOGGER.info(f"Connected to {len(devices)} devices")
+_LOGGER.debug(f"Connected to {len(devices)} devices")
 
 # Warning: Warning conditions
 _LOGGER.warning(f"Sensor calibration is {days} days old")

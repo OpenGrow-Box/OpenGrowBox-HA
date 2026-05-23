@@ -356,7 +356,7 @@ async def reduce_vpd(self, capabilities: Dict[str, Any]):
 async def handle_targeted_vpd(self):
     """VPD Target mode - maintain user-defined VPD target with tolerance."""
 
-    _LOGGER.info(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
+    _LOGGER.debug(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
 
     try:
         # Get VPD control values

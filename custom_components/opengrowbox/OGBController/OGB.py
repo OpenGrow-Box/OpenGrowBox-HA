@@ -167,7 +167,7 @@ class OpenGrowBox:
         action = actions.get(entity_key)
         
         if action:
-            _LOGGER.info(f"OGB-Manager {self.room}: Executing action for {entity_key}")
+            _LOGGER.debug(f"OGB-Manager {self.room}: Executing action for {entity_key}")
             await action(entity)
             return True
         else:
@@ -218,7 +218,7 @@ class OpenGrowBox:
 
         # Start orchestrator control loop
         await self.orchestrator.start()
-        _LOGGER.info(f"✅ {self.room} Orchestrator control loop started")
+        _LOGGER.debug(f"✅ {self.room} Orchestrator control loop started")
 
         # Premium manager grow plan activation
         if hasattr(self, 'premium_manager') and self.premium_manager:
@@ -332,7 +332,7 @@ class OpenGrowBox:
         if not self.data_store.get("vpdDetermination"):
             self.data_store.set("vpdDetermination", "LIVE")
 
-        _LOGGER.info(f"🔧 Initialized default data store values for {self.room}")
+        _LOGGER.debug(f"🔧 Initialized default data store values for {self.room}")
 
     async def _plant_stage_to_vpd(self, plantStage, tolerance=10):
         """Calculate perfect VPD range based on plant stage."""
@@ -496,7 +496,7 @@ class OpenGrowBox:
     async def calibrate_sensors(self, sensor_type=None):
         """Calibrate sensors."""
         try:
-            _LOGGER.info(f"Calibrating sensors for {self.room}, type: {sensor_type}")
+            _LOGGER.debug(f"Calibrating sensors for {self.room}, type: {sensor_type}")
 
             if sensor_type == "temperature" or sensor_type is None:
                 # Temperature sensor calibration
@@ -516,7 +516,7 @@ class OpenGrowBox:
 
             await self.event_manager.emit("SensorCalibrationComplete", {"sensor_type": sensor_type, "room": self.room})
 
-            _LOGGER.info(f"Sensor calibration completed for {self.room}")
+            _LOGGER.debug(f"Sensor calibration completed for {self.room}")
 
         except Exception as e:
             _LOGGER.error(f"Error calibrating sensors for {self.room}: {e}")
@@ -545,7 +545,7 @@ class OpenGrowBox:
         """Transition to a new plant growth stage."""
         try:
             current_stage = self.data_store.getDeep("isPlantDay.plantPhase")
-            _LOGGER.info(f"Transitioning plant stage from {current_stage} to {new_stage} in {self.room}")
+            _LOGGER.debug(f"Transitioning plant stage from {current_stage} to {new_stage} in {self.room}")
 
             # Update plant stage in data store
             self.data_store.setDeep("isPlantDay.plantPhase", new_stage)
@@ -560,7 +560,7 @@ class OpenGrowBox:
             # Emit plant stage change event
             await self.event_manager.emit("PlantStageChange", {"old_stage": current_stage, "new_stage": new_stage, "room": self.room})
 
-            _LOGGER.info(f"Plant stage transition completed: {new_stage} in {self.room}")
+            _LOGGER.debug(f"Plant stage transition completed: {new_stage} in {self.room}")
 
         except Exception as e:
             _LOGGER.error(f"Error transitioning plant stage in {self.room}: {e}")
@@ -582,7 +582,7 @@ class OpenGrowBox:
         This method should be called when the integration is being unloaded
         to ensure all background tasks are properly cancelled and resources cleaned up.
         """
-        _LOGGER.info(f"🛑 Starting OpenGrowBox shutdown for {self.room}")
+        _LOGGER.debug(f"🛑 Starting OpenGrowBox shutdown for {self.room}")
         
         try:
             # 1. Stop orchestrator control loop first (prevents new actions)
@@ -677,7 +677,7 @@ class OpenGrowBox:
                 except Exception as e:
                     _LOGGER.error(f"Error shutting down event manager: {e}")
 
-            _LOGGER.info(f"✅ OpenGrowBox shutdown complete for {self.room}")
+            _LOGGER.debug(f"✅ OpenGrowBox shutdown complete for {self.room}")
 
         except Exception as e:
             _LOGGER.error(f"❌ Error during OpenGrowBox shutdown for {self.room}: {e}", exc_info=True)

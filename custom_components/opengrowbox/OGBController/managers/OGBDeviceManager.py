@@ -63,7 +63,7 @@ class OGBDeviceManager:
             _LOGGER.debug("Device refresh task is already running. Skipping start.")
             return
         
-        _LOGGER.info(f"🔄 {self.room}: Starting periodic device refresh")
+        _LOGGER.debug(f"🔄 {self.room}: Starting periodic device refresh")
         self.device_Worker()
 
     async def setupDevice(self, device):
@@ -75,7 +75,7 @@ class OGBDeviceManager:
             _LOGGER.warning(f"Device setup skipped - mainControl '{controlOption}' not valid")
             return False
 
-        _LOGGER.info(f"🔧 Setting up device: {device_name}")
+        _LOGGER.debug(f"🔧 Setting up device: {device_name}")
 
         try:
             identified_device = await self.addDevice(device)
@@ -87,7 +87,7 @@ class OGBDeviceManager:
                 return False
 
             self._clear_failed_device(device_name)
-            _LOGGER.info(f"✅ Device setup completed: {device_name}")
+            _LOGGER.debug(f"✅ Device setup completed: {device_name}")
             return True
         except Exception as e:
             _LOGGER.error(
@@ -162,7 +162,7 @@ class OGBDeviceManager:
         current_devices.append(identified_device)
         self.data_store.set("devices", current_devices)
 
-        _LOGGER.info(f"Added new device From List: {identified_device}")
+        _LOGGER.debug(f"Added new device From List: {identified_device}")
         return identified_device
 
     def _record_failed_device(self, device, error):
@@ -274,7 +274,7 @@ class OGBDeviceManager:
             if any(kw in label_names for kw in fridgegrow_keywords):
                 detected_type = "FridgeGrow"
                 detected_label = "FridgeGrow"
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"Device '{device_name}' identified as FridgeGrow via label "
                     f"(labels: {label_names})"
                 )
@@ -305,7 +305,7 @@ class OGBDeviceManager:
                     if label_name in keywords:
                         detected_type = device_type
                         detected_label = device_type
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"Device '{device_name}' identified via EXACT label match as {detected_type} (label: {label_name})"
                         )
                         break
@@ -321,7 +321,7 @@ class OGBDeviceManager:
                         # Exact keyword match
                         detected_type = device_type
                         detected_label = device_type
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"Device '{device_name}' identified via label keyword '{label_name}' as {detected_type}"
                         )
                         break
@@ -342,7 +342,7 @@ class OGBDeviceManager:
                     if any(keyword in label_name for keyword in keywords):
                         detected_type = device_type
                         detected_label = device_type
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"Device '{device_name}' identified via label contains-match as {detected_type} (label: {label_name})"
                         )
                         break
@@ -375,7 +375,7 @@ class OGBDeviceManager:
                 if any(keyword in device_name_lower for keyword in keywords):
                     detected_type = device_type
                     detected_label = device_type if not device_labels else device_labels[0].get("name", device_type)
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Device '{device_name}' identified via name as {detected_type} (priority match)"
                     )
                     break
@@ -570,7 +570,7 @@ class OGBDeviceManager:
             # ARCHITECTURAL FIX: Start periodic refresh loop AFTER coordinator setup
             # Don't call DeviceUpdater() immediately - devices are already initialized
             # by coordinator. Only run periodic refresh to detect new/removed devices.
-            _LOGGER.info(f"{self.room}: Periodic device refresh loop started")
+            _LOGGER.debug(f"{self.room}: Periodic device refresh loop started")
 
             while True:
                 try:
@@ -626,7 +626,7 @@ class OGBDeviceManager:
         
         if cleaned:
             self.data_store.set("capabilities", capabilities)
-            _LOGGER.info(f"{self.room}: Capability duplicates cleaned")
+            _LOGGER.debug(f"{self.room}: Capability duplicates cleaned")
 
     def _determine_device_type_from_labels(self, labels: list) -> str:
         """

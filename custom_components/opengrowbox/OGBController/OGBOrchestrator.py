@@ -58,7 +58,7 @@ class OGBOrchestrator:
         self._is_starting_up = True
         self._init_complete_event = asyncio.Event()
 
-        _LOGGER.info(f"✅ {self.room} Orchestrator initialized")
+        _LOGGER.debug(f"✅ {self.room} Orchestrator initialized")
     
     def inject_managers(self, **managers):
         """Inject manager instances for coordination."""
@@ -70,7 +70,7 @@ class OGBOrchestrator:
         """Signal that system initialization is complete and orchestrator can start control loop."""
         self._is_starting_up = False
         self._init_complete_event.set()
-        _LOGGER.info(f"✅ {self.room} Orchestrator initialization complete - control loop can now start")
+        _LOGGER.debug(f"✅ {self.room} Orchestrator initialization complete - control loop can now start")
     
     async def start(self):
         """Start the orchestration control loop."""
@@ -89,16 +89,16 @@ class OGBOrchestrator:
         # CRITICAL: Start delayed control loop that waits for initialization to complete
         self._control_loop_task = asyncio.create_task(self._delayed_control_loop_start())
 
-        _LOGGER.info(f"🚀 {self.room} Orchestrator started (waiting for initialization)")
+        _LOGGER.debug(f"🚀 {self.room} Orchestrator started (waiting for initialization)")
 
     async def _delayed_control_loop_start(self):
         """Delay control loop start until system initialization is complete."""
-        _LOGGER.info(f"⏸️ {self.room} Orchestrator waiting for initialization to complete...")
+        _LOGGER.debug(f"⏸️ {self.room} Orchestrator waiting for initialization to complete...")
 
         try:
             # Wait for initialization complete signal with timeout
             await asyncio.wait_for(self._init_complete_event.wait(), timeout=120.0)
-            _LOGGER.info(f"✅ {self.room} Orchestrator initialization signal received - starting control loop")
+            _LOGGER.debug(f"✅ {self.room} Orchestrator initialization signal received - starting control loop")
         except asyncio.TimeoutError:
             _LOGGER.warning(f"⚠️ {self.room} Orchestrator initialization timeout - starting control loop anyway")
             # Continue anyway to avoid hanging
@@ -111,7 +111,7 @@ class OGBOrchestrator:
         if not self._is_running:
             return
         
-        _LOGGER.info(f"🛑 {self.room} Orchestrator stopping...")
+        _LOGGER.debug(f"🛑 {self.room} Orchestrator stopping...")
         
         self._is_running = False
         self._shutdown_event.set()
@@ -123,11 +123,11 @@ class OGBOrchestrator:
             except asyncio.CancelledError:
                 pass
         
-        _LOGGER.info(f"✅ {self.room} Orchestrator stopped")
+        _LOGGER.debug(f"✅ {self.room} Orchestrator stopped")
     
     async def _main_control_loop(self):
         """Main control loop - coordinates all managers with timing."""
-        _LOGGER.info(f"🔄 {self.room} Control loop starting")
+        _LOGGER.debug(f"🔄 {self.room} Control loop starting")
         
         while self._is_running and not self._shutdown_event.is_set():
             try:
@@ -147,7 +147,7 @@ class OGBOrchestrator:
                 
                 # Log statistics every 100 loops
                 if self._loop_count % 100 == 0:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"{self.room} Loop stats: count={self._loop_count}, "
                         f"last={loop_duration:.2f}s, avg={self._avg_loop_time:.2f}s"
                     )
@@ -156,13 +156,13 @@ class OGBOrchestrator:
                 await asyncio.sleep(10)
                 
             except asyncio.CancelledError:
-                _LOGGER.info(f"{self.room} Control loop cancelled")
+                _LOGGER.debug(f"{self.room} Control loop cancelled")
                 break
             except Exception as e:
                 _LOGGER.error(f"❌ {self.room} Control loop error: {e}", exc_info=True)
                 await asyncio.sleep(5)  # Error backoff
         
-        _LOGGER.info(f"🔄 {self.room} Control loop stopped")
+        _LOGGER.debug(f"🔄 {self.room} Control loop stopped")
     
     async def _execute_timed_tasks(self):
         """Execute tasks based on their timing intervals."""
@@ -323,7 +323,7 @@ class OGBOrchestrator:
                 # Verify state changed
                 actual = await self._get_ha_device_state(device)
                 if actual == target_state:
-                    _LOGGER.info(f"{self.room} Re-synced {device_name} on attempt {attempt + 1}")
+                    _LOGGER.debug(f"{self.room} Re-synced {device_name} on attempt {attempt + 1}")
                     return True
                     
             except Exception as e:
@@ -416,7 +416,7 @@ class OGBOrchestrator:
                 try:
                     if hasattr(device, 'turn_off'):
                         await device.turn_off()
-                        _LOGGER.info(f"{self.room} Emergency stopped: {device.deviceName}")
+                        _LOGGER.debug(f"{self.room} Emergency stopped: {device.deviceName}")
                 except Exception as e:
                     _LOGGER.error(f"{self.room} Failed to stop {device.deviceName}: {e}")
     

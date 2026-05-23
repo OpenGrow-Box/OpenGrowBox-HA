@@ -33,7 +33,7 @@ class Door(Device):
             deviceLabel,
             allLabels,
         )
-        _LOGGER.info("%s: Door device initialized", self.deviceName)
+        _LOGGER.debug("%s: Door device initialized", self.deviceName)
 
     def deviceUpdater(self):
         """Register generic updater and dedicated door-state notifications."""
@@ -92,7 +92,7 @@ class Door(Device):
                     )
                 )
             else:
-                _LOGGER.info("🚪 %s: Door CLOSED on %s", self.room, entity_id)
+                _LOGGER.debug("🚪 %s: Door CLOSED on %s", self.room, entity_id)
                 asyncio.create_task(
                     self.event_manager.emit(
                         "LogForClient",

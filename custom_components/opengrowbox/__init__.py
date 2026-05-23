@@ -146,7 +146,7 @@ async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
     # Add all required config (default_config, logger, frontend) in one go
     try:
         await hass.async_add_executor_job(_add_required_config_to_yaml, config_path)
-        _LOGGER.info("Updated configuration.yaml with required OpenGrowBox config")
+        _LOGGER.debug("Updated configuration.yaml with required OpenGrowBox config")
     except Exception as err:
         _LOGGER.warning("Could not update configuration.yaml: %s", err)
 
@@ -235,7 +235,7 @@ def _add_required_config_to_yaml(config_path: str) -> None:
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    _LOGGER.info("Updated configuration.yaml (backup at %s)", backup_path)
+    _LOGGER.debug("Updated configuration.yaml (backup at %s)", backup_path)
 
 
 def _add_default_config_to_yaml(config_path: str) -> None:
@@ -308,15 +308,15 @@ def _add_extra_module_url_to_yaml(config_path: str, icon_url: str) -> None:
 
     if "frontend" not in config:
         config["frontend"] = {"extra_module_url": [icon_url]}
-        _LOGGER.info("Added frontend section with icon URL to configuration.yaml")
+        _LOGGER.debug("Added frontend section with icon URL to configuration.yaml")
         needs_update = True
     elif "extra_module_url" not in config["frontend"]:
         config["frontend"]["extra_module_url"] = [icon_url]
-        _LOGGER.info("Added extra_module_url to existing frontend section")
+        _LOGGER.debug("Added extra_module_url to existing frontend section")
         needs_update = True
     elif icon_url not in config["frontend"]["extra_module_url"]:
         config["frontend"]["extra_module_url"].append(icon_url)
-        _LOGGER.info("Appended icon URL to existing extra_module_url")
+        _LOGGER.debug("Appended icon URL to existing extra_module_url")
         needs_update = True
     else:
         _LOGGER.debug("Icon URL already present in configuration.yaml")
@@ -387,7 +387,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             hass.data[DOMAIN][_AMBIENT_ENSURE_FLAG] = True
 
     # Service registration happens in sensor.py to access sensor objects directly
-    _LOGGER.info(f"✅ Integration setup complete, waiting for sensor platform to register services")
+    _LOGGER.debug(f"✅ Integration setup complete, waiting for sensor platform to register services")
 
     return True
 
@@ -474,12 +474,12 @@ async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
                 _LOGGER.debug("Could not remove orphaned device %s: %s", device.id, e)
         
         if removed_count > 0:
-            _LOGGER.info(f"✅ Cleaned up {removed_count} orphaned OpenGrowBox entities")
+            _LOGGER.debug(f"✅ Cleaned up {removed_count} orphaned OpenGrowBox entities")
         else:
             _LOGGER.debug("No orphaned entities found")
 
         if removed_devices > 0:
-            _LOGGER.info("✅ Cleaned up %s orphaned OpenGrowBox devices", removed_devices)
+            _LOGGER.debug("✅ Cleaned up %s orphaned OpenGrowBox devices", removed_devices)
             
     except Exception as e:
         _LOGGER.debug(f"Entity cleanup skipped: {e}")
@@ -586,11 +586,11 @@ async def _ensure_room_area_and_assign_hub(hass: HomeAssistant, config_entry: Co
                         break
                 if existing:
                     ambient_area_id = existing.id
-                    _LOGGER.info(f"Found existing 'ambient' area with ID: {ambient_area_id}")
+                    _LOGGER.debug(f"Found existing 'ambient' area with ID: {ambient_area_id}")
                 else:
                     ambient_area = area_reg.async_create("ambient")
                     ambient_area_id = ambient_area.id
-                    _LOGGER.info(f"Created 'ambient' area with ID: {ambient_area_id}")
+                    _LOGGER.debug(f"Created 'ambient' area with ID: {ambient_area_id}")
             except Exception as e:
                 _LOGGER.warning(f"Could not create/get 'ambient' area: {e}")
                 # Don't return - try to continue with room assignment anyway
@@ -659,7 +659,7 @@ async def _ensure_global_devices_in_ambient(hass: HomeAssistant) -> None:
                 else:
                     created = area_reg.async_create("ambient")
                     ambient_area_id = created.id
-                    _LOGGER.info("Created ambient area in _ensure_global_devices_in_ambient")
+                    _LOGGER.debug("Created ambient area in _ensure_global_devices_in_ambient")
             except Exception as create_err:
                 _LOGGER.warning(f"Could not create ambient area: {create_err}")
 
@@ -686,7 +686,7 @@ async def _ensure_global_devices_in_ambient(hass: HomeAssistant) -> None:
                     ogb_devices_updated += 1
                     _LOGGER.warning(f"🌐 Re-assigned global device '{device_name}' to 'ambient' (was: {current_area})")
 
-        _LOGGER.info(f"✅ Global device assignment complete: {ogb_devices_updated} device(s) assigned to ambient")
+        _LOGGER.debug(f"✅ Global device assignment complete: {ogb_devices_updated} device(s) assigned to ambient")
     except Exception as err:
         _LOGGER.error(f"CRITICAL: Could not ensure global devices in ambient: {err}")
     except Exception as err:
@@ -695,7 +695,7 @@ async def _ensure_global_devices_in_ambient(hass: HomeAssistant) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload the OpenGrowBox config entry."""
-    _LOGGER.info(f"🛑 Unloading OpenGrowBox integration for entry {config_entry.entry_id}")
+    _LOGGER.debug(f"🛑 Unloading OpenGrowBox integration for entry {config_entry.entry_id}")
     
     # Get coordinator before unloading platforms
     coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
@@ -704,9 +704,9 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     # This prevents orphaned tasks that can crash HA
     if coordinator:
         try:
-            _LOGGER.info(f"🛑 Shutting down coordinator for {coordinator.room_name}")
+            _LOGGER.debug(f"🛑 Shutting down coordinator for {coordinator.room_name}")
             await coordinator.async_shutdown()
-            _LOGGER.info(f"✅ Coordinator shutdown complete for {coordinator.room_name}")
+            _LOGGER.debug(f"✅ Coordinator shutdown complete for {coordinator.room_name}")
         except Exception as e:
             _LOGGER.error(f"❌ Error during coordinator shutdown: {e}", exc_info=True)
     
@@ -724,7 +724,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
         except Exception as e:
             _LOGGER.debug(f"Panel already removed or not found: {e}")
         
-        _LOGGER.info(f"✅ OpenGrowBox integration unloaded successfully")
+        _LOGGER.debug(f"✅ OpenGrowBox integration unloaded successfully")
     else:
         _LOGGER.warning(f"⚠️ Failed to unload some platforms")
 
