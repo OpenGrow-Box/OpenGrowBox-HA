@@ -1211,7 +1211,7 @@ class OGBDampeningActions:
             modified_actions.append(action)
         
         if changes_made:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.ogb.room}: DynamicFan logic modified actions due to temperature priority: "
                 f"{', '.join(changes_made)}"
             )

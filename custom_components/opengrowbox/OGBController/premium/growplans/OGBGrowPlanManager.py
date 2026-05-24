@@ -205,10 +205,10 @@ class OGBGrowPlanManager:
                     else:
                         self.plan_start_date = datetime.now(timezone.utc)
                 except (ValueError, TypeError) as e:
-                    _LOGGER.warning(f"🌱 {self.room} Could not parse startDate: {start_date_str}, using current time. Error: {e}")
+                    _LOGGER.error(f"🌱 {self.room} Could not parse startDate: {start_date_str}, using current time. Error: {e}")
                     self.plan_start_date = datetime.now(timezone.utc)
             else:
-                _LOGGER.warning(f"🌱 {self.room} No startDate in plan, using current time")
+                _LOGGER.error(f"🌱 {self.room} No startDate in plan, using current time")
                 self.plan_start_date = datetime.now(timezone.utc)
             
             # Speichere Zustand
@@ -217,7 +217,7 @@ class OGBGrowPlanManager:
             # Aktualisiere aktuelle Woche (triggert API-Anfrage wenn keine Daten)
             await self._update_current_week()
             
-            _LOGGER.warning(f"🌱 {self.room} Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}, Woche: {self.current_week}")
+            _LOGGER.info(f"🌱 {self.room} Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}, Woche: {self.current_week}")
             
             self.managerActive = True
             self.data_store.set("growManagerActive",True)
@@ -356,13 +356,13 @@ class OGBGrowPlanManager:
             await self._update_entities_from_week_data()
         else:
             # Keine Wochendaten gefunden - frage API an
-            _LOGGER.warning(f"🌱 {self.room} Keine Wochendaten für Woche {week_number} gefunden")
+            _LOGGER.debug(f"🌱 {self.room} Keine Wochendaten für Woche {week_number} gefunden")
             if self.ws_client:
-                _LOGGER.warning(f"🌱 {self.room} Frage Wochendaten vom API an...")
+                _LOGGER.debug(f"🌱 {self.room} Frage Wochendaten vom API an...")
                 try:
                     await self.ws_client.request_grow_plans_week()
                 except Exception as e:
-                    _LOGGER.warning(f"🌱 {self.room} Konnte Wochendaten nicht anfragen: {e}")
+                    _LOGGER.error(f"🌱 {self.room} Konnte Wochendaten nicht anfragen: {e}")
 
     def is_plan_active(self) -> bool:
         """Prüft ob ein Plan aktiv ist"""
@@ -414,8 +414,6 @@ class OGBGrowPlanManager:
                 return
             
             # Log the complete week data for debugging
-            _LOGGER.warning(f"🌱 {self.room} Week data content: {json.dumps(week_data, indent=2, default=str)[:500]}...")
-            
             env = week_data.get("environment", {})
             light_cycle = env.get("lightCycle", {})
             light_intensity = env.get("lightIntensity", {})
@@ -454,18 +452,30 @@ class OGBGrowPlanManager:
                 #elif night_temp is not None:
                 #    await update_entity("ogb_current_temp_target_min", night_temp)
             
-            # Update humidity targets
+            # Update humidity targets (supports both old and new format)
             humidity = env.get("humidity", {})
             if isinstance(humidity, dict):
-                if humidity.get("day") is not None:
-                    await update_entity("number.ogb_maxhum", humidity["day"], self.room, self.hass)
+                day_hum = humidity.get("day")
+                if day_hum is not None:
+                    if isinstance(day_hum, dict):
+                        # New format: {min, max, optimal}
+                        if day_hum.get("max") is not None:
+                            await update_entity("number.ogb_maxhum", day_hum["max"], self.room, self.hass)
+                    else:
+                        # Old format: direct number
+                        await update_entity("number.ogb_maxhum", day_hum, self.room, self.hass)
                 #if humidity.get("night") is not None:
                 #    await update_entity("number.ogb_minhum", humidity["night"])
             
-            # Update VPD target
+            # Update VPD target (supports both old and new format)
             vpd = env.get("vpd", {})
-            if isinstance(vpd, dict) and vpd.get("target") is not None:
-                await update_entity("number.ogb_vpdtarget", vpd["target"], self.room, self.hass)
+            if isinstance(vpd, dict):
+                if vpd.get("target") is not None:
+                    # Old format
+                    await update_entity("number.ogb_vpdtarget", vpd["target"], self.room, self.hass)
+                elif vpd.get("optimal") is not None:
+                    # New format: {min, max, optimal}
+                    await update_entity("number.ogb_vpdtarget", vpd["optimal"], self.room, self.hass)
             
             # Update CO2 targets
             co2 = env.get("co2", {})

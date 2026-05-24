@@ -220,7 +220,7 @@ class OGBgcdManager:
 
         # Check if this capability helps solve any active emergency
         if self._can_solve_emergency(capability):
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Emergency override - bypassing cooldown for {capability} (solves {self._emergency_conditions})"
             )
             return True
@@ -435,7 +435,7 @@ class OGBgcdManager:
         self._emergency_conditions = conditions
         
         if conditions:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Emergency conditions active: {conditions}"
             )
         else:

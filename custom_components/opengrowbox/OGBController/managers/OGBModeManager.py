@@ -412,17 +412,17 @@ class OGBModeManager:
         correction_devices = []
         
         if current_temp is not None and max_temp is not None and current_temp > max_temp:
-            _LOGGER.warning(f"{self.room}: Temperature {current_temp}°C exceeds max {max_temp}°C during deadband - activating correction")
+            _LOGGER.debug(f"{self.room}: Temperature {current_temp}°C exceeds max {max_temp}°C during deadband - activating correction")
             correction_devices.extend(["Cooler", "Exhaust"])
         elif current_temp is not None and min_temp is not None and current_temp < min_temp:
-            _LOGGER.warning(f"{self.room}: Temperature {current_temp}°C below min {min_temp}°C during deadband - activating correction")
+            _LOGGER.debug(f"{self.room}: Temperature {current_temp}°C below min {min_temp}°C during deadband - activating correction")
             correction_devices.append("Heater")
         
         if current_humidity is not None and max_humidity is not None and current_humidity > max_humidity:
-            _LOGGER.warning(f"{self.room}: Humidity {current_humidity}% exceeds max {max_humidity}% during deadband - activating correction")
+            _LOGGER.debug(f"{self.room}: Humidity {current_humidity}% exceeds max {max_humidity}% during deadband - activating correction")
             correction_devices.append("Dehumidifier")
         elif current_humidity is not None and min_humidity is not None and current_humidity < min_humidity:
-            _LOGGER.warning(f"{self.room}: Humidity {current_humidity}% below min {min_humidity}% during deadband - activating correction")
+            _LOGGER.debug(f"{self.room}: Humidity {current_humidity}% below min {min_humidity}% during deadband - activating correction")
             correction_devices.append("Humidifier")
         
         # Track which devices are activated for correction to exclude them from SmartDeadbandEntered

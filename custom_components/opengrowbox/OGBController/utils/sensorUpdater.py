@@ -185,7 +185,7 @@ async def update_entity(entity: str, value, room: str, hass) -> bool:
             await hass.services.async_call(
                 domain="time",
                 service="set_value",
-                service_data={"entity_id": full_entity_id, "value": time_str},
+                service_data={"entity_id": full_entity_id, "time": time_str},
                 blocking=True,
             )
 

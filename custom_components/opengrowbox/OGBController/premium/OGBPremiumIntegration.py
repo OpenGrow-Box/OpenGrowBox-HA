@@ -1130,7 +1130,7 @@ class OGBPremiumIntegration:
                     f"✅ {self.room} plan_changed sync complete: {old_plan} -> {new_plan}"
                 )
             else:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     f"⚠️ {self.room} plan_changed received but fresh subscription fetch returned no data"
                 )
 
