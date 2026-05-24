@@ -53,14 +53,17 @@ class OGBGrowPlanManager:
         self._init_task = None
         self._ha_unsubscribers = []
         self._event_bindings = []
-        
+
+        self._register_event_listener("SystemReady", self._on_system_ready)
+
         self._init_task = asyncio.create_task(self.init())
             
     async def init(self):
         """Initialize Grow Plan Manager"""
         self._setup_event_listeners()
         # Register SystemReady listener to know when initialization is complete
-        self._register_event_listener("SystemReady", self._on_system_ready)
+
+        _LOGGER.warning(f"🌱 {self.room} SystemReady listener registered")
         await self._start_daily_update_timer()
         _LOGGER.debug(f"OGB Grow Plan Manager initialized for room: {self.room}")
     
