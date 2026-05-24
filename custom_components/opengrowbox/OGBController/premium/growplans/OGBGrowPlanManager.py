@@ -43,6 +43,9 @@ class OGBGrowPlanManager:
         
         self.current_week_data = None
         
+        # System initialization tracking
+        self._is_system_ready = False
+        self._pending_updates = []
 
 
         # Timer für tägliche Aktualisierungen
@@ -56,8 +59,27 @@ class OGBGrowPlanManager:
     async def init(self):
         """Initialize Grow Plan Manager"""
         self._setup_event_listeners()
+        # Register SystemReady listener to know when initialization is complete
+        self._register_event_listener("SystemReady", self._on_system_ready)
         await self._start_daily_update_timer()
         _LOGGER.debug(f"OGB Grow Plan Manager initialized for room: {self.room}")
+    
+    async def _on_system_ready(self, data):
+        """Handle SystemReady event - system initialization is complete."""
+        event_room = data.get("room") if isinstance(data, dict) else None
+        if event_room and event_room.lower() != self.room.lower():
+            return
+        
+        self._is_system_ready = True
+        _LOGGER.debug(f"🌱 {self.room} SystemReady received - processing {len(self._pending_updates)} pending updates")
+        
+        # Process any pending updates
+        while self._pending_updates:
+            update_type = self._pending_updates.pop(0)
+            if update_type == "_update_entities_from_week_data":
+                await self._update_entities_from_week_data()
+            elif update_type == "_update_current_week":
+                await self._update_current_week()
   
     def _register_bus_listener(self, event_name, callback):
         unsub = self.hass.bus.async_listen(event_name, callback)
@@ -241,6 +263,13 @@ class OGBGrowPlanManager:
         First checks for API-provided currentWeekData, then falls back to local plan data.
         Also triggers API fetch if week data is missing.
         """
+        # Wait for system initialization if not ready
+        if not self._is_system_ready:
+            _LOGGER.debug(f"{self.room} - System not ready yet, queuing week update")
+            if "_update_current_week" not in self._pending_updates:
+                self._pending_updates.append("_update_current_week")
+            return
+        
         if not self.plan_start_date or not self.active_grow_plan:
             self.current_week = None
             self.current_week_data = None
@@ -408,6 +437,12 @@ class OGBGrowPlanManager:
         Called after week data is fetched or changed.
         """
         try:
+            # Wait for system initialization if not ready
+            if not self._is_system_ready:
+                _LOGGER.debug(f"{self.room} - System not ready yet, queuing entity update")
+                self._pending_updates.append("_update_entities_from_week_data")
+                return
+            
             week_data = self.data_store.getDeep("growPlan.currentWeekData")
             if not week_data:
                 _LOGGER.debug(f"{self.room} - No week data available for entity update")

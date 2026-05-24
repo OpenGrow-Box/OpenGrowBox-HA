@@ -324,6 +324,7 @@ class OGBPremiumIntegration:
         self._register_event_listener("WebappControlValuesChange", self._on_webapp_ctrl_values_change)
         self._register_event_listener("WebappControlValueUpdate", self._on_webapp_ctrl_value_update)
         self._register_event_listener("WebappPlantStageChange", self._on_webapp_plant_stage_change)
+        self._register_event_listener("WebappDryingModeChange", self._on_webapp_drying_mode_change)
         self._register_event_listener("WebappPremiumActions", self._on_webapp_premium_actions)
 
         # Grow completion events - send harvest data to Premium API
@@ -721,10 +722,51 @@ class OGBPremiumIntegration:
             if "isLightON" in data:
                 self.data_store.setDeep("isPlantDay.islightON", data["isLightON"])
             
-            # Update VPD
+            # Update VPD - update both datastore AND entity
             if "vpd" in data and data["vpd"]:
-                for key, value in data["vpd"].items():
+                vpd_data = data["vpd"]
+                for key, value in vpd_data.items():
                     self.data_store.setDeep(f"vpd.{key}", value)
+                
+                # Update VPD target number entity if targeted value changed
+                if "targeted" in vpd_data:
+                    targeted = vpd_data["targeted"]
+                    try:
+                        vpd_target_entity = f"number.ogb_vpdtarget_{self.room.lower()}"
+                        await self.hass.services.async_call(
+                            domain="number",
+                            service="set_value",
+                            service_data={
+                                "entity_id": vpd_target_entity,
+                                "value": float(targeted)
+                            },
+                            blocking=True
+                        )
+                        _LOGGER.debug(f"🎛️ {self.room} Updated VPD target entity to {targeted}")
+                    except Exception as entity_error:
+                        _LOGGER.warning(
+                            f"⚠️ {self.room} Could not update VPD target entity '{vpd_target_entity}': {entity_error}"
+                        )
+                
+                # Update VPD tolerance number entity if tolerance value changed
+                if "tolerance" in vpd_data:
+                    tolerance = vpd_data["tolerance"]
+                    try:
+                        vpd_tolerance_entity = f"number.ogb_vpdtolerance_{self.room.lower()}"
+                        await self.hass.services.async_call(
+                            domain="number",
+                            service="set_value",
+                            service_data={
+                                "entity_id": vpd_tolerance_entity,
+                                "value": float(tolerance)
+                            },
+                            blocking=True
+                        )
+                        _LOGGER.debug(f"🎛️ {self.room} Updated VPD tolerance entity to {tolerance}")
+                    except Exception as entity_error:
+                        _LOGGER.warning(
+                            f"⚠️ {self.room} Could not update VPD tolerance entity '{vpd_tolerance_entity}': {entity_error}"
+                        )
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Webapp ctrl_values_change handler error: {e}")
@@ -792,6 +834,48 @@ class OGBPremiumIntegration:
             
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Webapp plant_stage_change handler error: {e}")
+
+    async def _on_webapp_drying_mode_change(self, data):
+        """Handle drying mode change from webapp."""
+        try:
+            drying_mode = data.get("dryingMode")
+            
+            if not drying_mode:
+                return
+            
+            _LOGGER.debug(f"🍂 {self.room} Webapp drying mode change: {drying_mode}")
+            
+            # Update data_store with new drying mode
+            self.data_store.set("dryingMode", drying_mode)
+            self.data_store.setDeep("drying.currentDryMode", drying_mode)
+            
+            # Update Home Assistant select entity directly (more reliable than service call)
+            try:
+                from custom_components.opengrowbox import DOMAIN
+                if DOMAIN in self.hass.data and "selects" in self.hass.data[DOMAIN]:
+                    for select_entity in self.hass.data[DOMAIN]["selects"]:
+                        if select_entity._name == f"OGB_DryingModes_{self.room}":
+                            await select_entity.async_select_option(drying_mode)
+                            _LOGGER.debug(f"🍂 {self.room} Updated DryingModes entity to '{drying_mode}'")
+                            break
+                    else:
+                        _LOGGER.warning(f"⚠️ {self.room} DryingModes select entity not found")
+                else:
+                    _LOGGER.warning(f"⚠️ {self.room} No selects found in hass.data")
+            except Exception as entity_error:
+                _LOGGER.warning(
+                    f"⚠️ {self.room} Could not update drying mode entity to '{drying_mode}': {entity_error}"
+                )
+            
+            # Emit event for mode manager and other listeners
+            await self.event_manager.emit("DryingModeChange", {
+                "room": self.room,
+                "dryingMode": drying_mode,
+                "source": "webapp"
+            })
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} Webapp drying_mode_change handler error: {e}")
 
     async def _on_webapp_premium_actions(self, data):
         """Handle premium actions from webapp."""

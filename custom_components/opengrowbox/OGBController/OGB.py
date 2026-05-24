@@ -235,6 +235,10 @@ class OpenGrowBox:
             except Exception as e:
                 _LOGGER.warning(f"Error in premium grow plan activation: {e}")
 
+        # Signalisiere, dass die Initialisierung abgeschlossen ist
+        await self.event_manager.emit("SystemReady", {"room": self.room})
+        _LOGGER.debug(f"✅ {self.room} SystemReady event emitted")
+        
         _LOGGER.debug(f"OpenGrowBox for {self.room} started successfully State:{self.data_store}")
         return True
 

@@ -1609,6 +1609,12 @@ class OGBWebSocketConManager:
             logging.info(f"🌱 {self.ws_room} Plant stage change from webapp: {data}")
             await self._handle_plant_stage_change(data)
 
+        @self.sio.on("drying_mode_change", namespace=ns)
+        async def on_drying_mode_change(data):
+            """Handle drying mode change from webapp"""
+            logging.info(f"🍂 {self.ws_room} Drying mode change from webapp: {data}")
+            await self._handle_drying_mode_change(data)
+
         @self.sio.on("grow_plan_status_change", namespace=ns)
         async def on_grow_plan_status_change(data):
             """Handle grow plan status change from webapp (activate/pause/resume/stop/switch)"""
@@ -2389,6 +2395,23 @@ class OGBWebSocketConManager:
             
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling plant_stage_change: {e}")
+
+    async def _handle_drying_mode_change(self, data: dict):
+        """Handle drying mode change from webapp"""
+        try:
+            drying_mode = data.get("dryingMode")
+            
+            logging.info(f"🍂 {self.ws_room} Drying mode change: {drying_mode}")
+            
+            # Emit to HA for mode manager to handle
+            await self._safe_emit("WebappDryingModeChange", {
+                "room": self.ws_room,
+                "dryingMode": drying_mode,
+                "source": "webapp"
+            }, haEvent=True)
+            
+        except Exception as e:
+            logging.error(f"❌ {self.ws_room} Error handling drying_mode_change: {e}")
 
     async def _handle_grow_plan_status_change(self, data: dict):
         """Handle grow plan status change from webapp (activate/pause/resume/stop/switch)"""

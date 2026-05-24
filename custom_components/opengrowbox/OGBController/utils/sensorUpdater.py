@@ -137,6 +137,15 @@ async def update_entity(entity: str, value, room: str, hass) -> bool:
     base   = entity.split(".", 1)[1]          # e.g. "ogb_co2_control"
     full_entity_id = f"{domain}.{base}_{room_normalized}"
 
+    # Check if entity exists and is available
+    if hass and hass.states:
+        entity_state = hass.states.get(full_entity_id)
+        if entity_state is None or entity_state.state == "unavailable":
+            _LOGGER.debug(
+                f"update_entity: entity '{full_entity_id}' not available yet (state={entity_state.state if entity_state else 'None'}), skipping update"
+            )
+            return False
+
     try:
         if domain == "sensor":
             await hass.services.async_call(
