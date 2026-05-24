@@ -63,6 +63,21 @@ class DryingActions:
             _LOGGER.debug(f"{self.name} Unknown DryMode Received: {currentDryMode}")
             return None
 
+        # Emit DataRelease for Premium API synchronization
+        mainControl = self.data_store.get("mainControl")
+        if mainControl == "Premium":
+            current_phase = self.data_store.getDeep("drying.current_phase")
+            mode_start = self.data_store.getDeep("drying.mode_start_time")
+            await self.event_manager.emit(
+                "DataRelease",
+                {
+                    "dryingMode": currentDryMode,
+                    "dryingPhase": current_phase,
+                    "dryingStartTime": mode_start,
+                },
+            )
+            _LOGGER.debug(f"{self.name}: DataRelease emitted for drying mode '{currentDryMode}'")
+
     async def _handle_cleanup_event(self, data):
         """Handle drying_cleanup event from configuration manager."""
         event_room = data.get("room") if isinstance(data, dict) else None
@@ -116,6 +131,9 @@ class DryingActions:
         if current_phase is None:
             _LOGGER.error(f"{self.name}: Could not determine current phase")
             return
+
+        # Store current phase for DataRelease and monitoring
+        self.data_store.setDeep("drying.current_phase", current_phase.get("name", "unknown"))
 
         _LOGGER.warning(f"{self.name}: current_phase={current_phase}")
 
@@ -251,6 +269,9 @@ class DryingActions:
             _LOGGER.error(f"{self.name}: Could not determine current phase")
             return
 
+        # Store current phase for DataRelease and monitoring
+        self.data_store.setDeep("drying.current_phase", current_phase.get("name", "unknown"))
+
         target_temp = current_phase.get("targetTemp")
         target_humidity = current_phase.get("targetHumidity")
 
@@ -371,6 +392,9 @@ class DryingActions:
             _LOGGER.error(f"{self.name}: Could not determine current phase")
             return
 
+        # Store current phase for DataRelease and monitoring
+        self.data_store.setDeep("drying.current_phase", current_phase.get("name", "unknown"))
+
         target_temp = current_phase.get("targetTemp")
         target_humidity = current_phase.get("targetHumidity")
 
@@ -471,6 +495,10 @@ class DryingActions:
         Direct event emission - no cooldowns or VPD logic interference.
         """
         _LOGGER.warning(f"{self.name}: Run Drying 'OwnDry'")
+        
+        # Store current phase for DataRelease and monitoring
+        self.data_store.setDeep("drying.current_phase", "OwnDry")
+        
         tentData = self.data_store.get("tentData")
         
         # Get min/max values from controlOptionData.minmax
