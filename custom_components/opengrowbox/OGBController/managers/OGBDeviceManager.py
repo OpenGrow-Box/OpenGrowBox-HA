@@ -559,7 +559,7 @@ class OGBDeviceManager:
                 _LOGGER.debug(f"Registering new device: {device}")
                 await self.setupDevice(device)
         else:
-            _LOGGER.warning("Device-Check: No new devices found.")
+            _LOGGER.info("Device-Check: No new devices found.")
     
     def device_Worker(self):
         if self._devicerefresh_task and not self._devicerefresh_task.done():

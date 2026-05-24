@@ -491,13 +491,13 @@ class OGBGrowPlanManager:
                     light_off = f"{int(end_hour):02d}:00:00"
                     await update_entity("time.ogb_lightofftime", light_off, self.room, self.hass)
                 
-                # Update sunrise/sunset durations
-                sunrise_min = light_cycle.get("sunrise", 0)
-                sunset_min = light_cycle.get("sunset", 0)
-                if sunrise_min:
-                    await update_entity("time.ogb_sunrisetime", sunrise_min, self.room, self.hass)
-                if sunset_min:
-                    await update_entity("time.ogb_sunsettime", sunset_min, self.room, self.hass)
+                # Update sunrise/sunset durations (already "HH:MM:00" strings from API)
+                sunrise_val = light_cycle.get("sunrise", "")
+                sunset_val = light_cycle.get("sunset", "")
+                if sunrise_val:
+                    await update_entity("time.ogb_sunrisetime", sunrise_val, self.room, self.hass)
+                if sunset_val:
+                    await update_entity("time.ogb_sunsettime", sunset_val, self.room, self.hass)
             
             # Update light intensity
             if isinstance(light_intensity, dict):

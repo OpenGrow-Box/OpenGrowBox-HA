@@ -194,11 +194,16 @@ class FridgeGrowDevice(Device):
         
         Looks for a label that matches one of the OUTPUT_CONFIG keys
         (heater, dehumidifier, light, etc.)
-        
+        Only considers device-level labels (entity=None).
+
         Args:
             labels: List of label dicts with 'name' key
         """
         for label in labels:
+            # Nur Device-Level Labels (nicht Entity-Level)
+            if label.get("entity") is not None:
+                continue
+
             label_name = label.get("name", "").lower()
             
             # Skip the "fridgegrow" / "plantalytix" identifier labels

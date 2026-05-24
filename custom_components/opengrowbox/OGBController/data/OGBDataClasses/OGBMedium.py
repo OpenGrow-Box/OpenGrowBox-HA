@@ -1112,13 +1112,6 @@ class GrowMedium:
             except:
                 pass
 
-        # Sensoren - rebuild sensor_type_map from registered_sensors
-        medium.registered_sensors = data.get("registered_sensors", {})
-        # CRITICAL: Also rebuild sensor_type_map so updates work!
-        for sensor_type, entity_ids in medium.registered_sensors.items():
-            for entity_id in entity_ids:
-                medium.sensor_type_map[entity_id] = sensor_type
-        
         _LOGGER.debug(
             f"[{room}] GrowMedium.from_dict COMPLETE: {medium.name} - "
             f"plant_name={medium.plant_name}, breeder_name={medium.breeder_name}, "

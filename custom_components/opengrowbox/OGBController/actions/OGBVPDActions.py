@@ -82,11 +82,50 @@ class OGBVPDActions:
                 return True
         return False
 
+    def _has_opposite_action(self, action_map, capability, action):
+        """
+        Prüft ob eine entgegengesetzte Action für dieselbe Capability existiert.
+        z.B. canHeat Reduce wenn canHeat Increase geprüft wird.
+        """
+        opposites = {"Increase": "Reduce", "Reduce": "Increase", "Eval": None}
+        opposite = opposites.get(action)
+        if not opposite:
+            return False
+        for a in action_map:
+            if getattr(a, 'capability', '') == capability and getattr(a, 'action', '') == opposite:
+                return True
+        return False
+
+    def _remove_opposite_actions(self, action_map, capability, action):
+        """
+        Entfernt entgegengesetzte Actions für eine Capability aus dem action_map.
+        Gibt die bereinigte Liste zurück.
+        """
+        opposites = {"Increase": "Reduce", "Reduce": "Increase", "Eval": None}
+        opposite = opposites.get(action)
+        if not opposite:
+            return action_map
+        filtered = []
+        removed = []
+        for a in action_map:
+            if getattr(a, 'capability', '') == capability and getattr(a, 'action', '') == opposite:
+                removed.append(a)
+            else:
+                filtered.append(a)
+        if removed:
+            _LOGGER.debug(
+                f"{self.ogb.room}: Removed conflicting {capability} {opposite} action(s) "
+                f"in favor of {action} (Bounds safety override)"
+            )
+        return filtered
+
     def _add_bounds_correction_actions(self, action_map, capabilities, context=""):
         """
         Prüft Temp/Humidity Bounds und fügt Korrektur-Actions hinzu.
         BEACHTET ownWeights für dynamische Priorisierung!
         Verhindert Duplikate: Prüft ob Action bereits in action_map existiert.
+        Safety-Override: Wenn entgegengesetzte VPD-Action existiert, wird diese
+        entfernt und die Bounds-Action gewinnt (physikalische Limits > VPD-Optimierung).
         """
         current_temp = self.ogb.dataStore.getDeep("tentData.temperature")
         current_hum = self.ogb.dataStore.getDeep("tentData.humidity")
@@ -137,6 +176,8 @@ class OGBVPDActions:
                 
                 if capabilities.get("canHeat", {}).get("state", False):
                     if not self._action_exists(action_map, "canHeat", "Increase"):
+                        # Safety override: remove opposite VPD action if present
+                        action_map = self._remove_opposite_actions(action_map, "canHeat", "Increase")
                         correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})", priority))
         
         # Temp zu hoch
@@ -151,6 +192,8 @@ class OGBVPDActions:
                 
                 if capabilities.get("canCool", {}).get("state", False):
                     if not self._action_exists(action_map, "canCool", "Increase"):
+                        # Safety override: remove opposite VPD action if present
+                        action_map = self._remove_opposite_actions(action_map, "canCool", "Increase")
                         correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})", priority))
         
         # Humidity zu niedrig
@@ -165,6 +208,8 @@ class OGBVPDActions:
                 
                 if capabilities.get("canHumidify", {}).get("state", False):
                     if not self._action_exists(action_map, "canHumidify", "Increase"):
+                        # Safety override: remove opposite VPD action if present
+                        action_map = self._remove_opposite_actions(action_map, "canHumidify", "Increase")
                         correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})", priority))
         
         # Humidity zu hoch
@@ -179,6 +224,8 @@ class OGBVPDActions:
                 
                 if capabilities.get("canDehumidify", {}).get("state", False):
                     if not self._action_exists(action_map, "canDehumidify", "Increase"):
+                        # Safety override: remove opposite VPD action if present
+                        action_map = self._remove_opposite_actions(action_map, "canDehumidify", "Increase")
                         correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})", priority))
         
         return action_map + correction_actions

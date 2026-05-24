@@ -187,12 +187,14 @@ class LightUV(Light):
                     self.lightOffTime = datetime.strptime(light_off_str, "%H:%M:%S").time()
                     
                     # Validierung: LightOn muss VOR LightOff sein
-                    # ABER: Wenn LightOff 00:00 ist, geht das Licht über Mitternacht
-                    # In diesem Fall ist LightOn (22:15) > LightOff (00:00) OK
-                    if self.lightOnTime >= self.lightOffTime and self.lightOffTime != dt_time(0, 0):
-                        _LOGGER.warning(f"Invalid times - LightOn ({self.lightOnTime}) >= LightOff ({self.lightOffTime}), using defaults")
-                        self.lightOnTime = dt_time(9, 0)   # Default 09:00
-                        self.lightOffTime = dt_time(20, 0) # Default 20:00
+                    # ABER: Über-Mitternacht-Zyklen (13:00->10:00) sind valide
+                    if self.lightOnTime >= self.lightOffTime:
+                        on_mins = (1440 - self.lightOnTime.hour*60 - self.lightOnTime.minute) \
+                                + (self.lightOffTime.hour*60 + self.lightOffTime.minute)
+                        if on_mins <= 0 or on_mins > 1440:
+                            _LOGGER.warning(f"Invalid schedule - On ({self.lightOnTime}) to Off ({self.lightOffTime}) gives {on_mins//60}h on, using defaults")
+                            self.lightOnTime = dt_time(9, 0)
+                            self.lightOffTime = dt_time(20, 0)
                 except ValueError as e:
                     _LOGGER.error(f"Failed to parse light times: {e}, using defaults")
                     self.lightOnTime = dt_time(9, 0)

@@ -402,42 +402,75 @@ class Device:
         used_entities = set()
 
         # Safety net: pull matching sensor entities directly from HA state machine
-        # in case RegistryListener grouped list is temporarily incomplete.
+        # ONLY if they belong to the same physical device (same device_id).
+        # This prevents pulling sensors from unrelated devices that happen to
+        # share a naming prefix (e.g. a heating controller vs. a heater switch).
         try:
             if self.hass and hasattr(self.hass, "states"):
-                known_ids = {
-                    e.get("entity_id")
-                    for e in entitys
-                    if isinstance(e, dict) and e.get("entity_id")
-                }
-                prefix = f"sensor.{str(self.deviceName).lower()}_"
-                for state in self.hass.states.async_all("sensor"):
-                    entity_id = getattr(state, "entity_id", "")
-                    if not entity_id:
-                        continue
-                    entity_id_lower = entity_id.lower()
-                    if not entity_id_lower.startswith(prefix):
-                        continue
-                    if entity_id in known_ids:
-                        continue
+                from homeassistant.helpers.entity_registry import (
+                    async_get as async_get_entity_registry,
+                )
 
-                    # Only backfill sensors that can actually be remapped
-                    # (translated temperature/humidity/dewpoint/co2 types).
-                    if not resolve_remappable_sensor_type(entity_id, []):
-                        continue
+                entity_registry = async_get_entity_registry(self.hass)
 
-                    entitys.append(
-                        {
-                            "entity_id": entity_id,
-                            "value": getattr(state, "state", None),
-                            "platform": "unknown",
-                            "labels": [],
-                        }
-                    )
-                    known_ids.add(entity_id)
+                # Determine the device_id from the entities we already have
+                device_id = None
+                for e in entitys:
+                    existing_id = e.get("entity_id")
+                    if not existing_id:
+                        continue
+                    entry = entity_registry.async_get(existing_id)
+                    if entry and entry.device_id:
+                        device_id = entry.device_id
+                        _LOGGER.debug(
+                            f"[{self.deviceName}] Backfill resolved device_id: {device_id}"
+                        )
+                        break
+
+                if not device_id:
                     _LOGGER.debug(
-                        f"[{self.deviceName}] Added missing sensor from HA states: {entity_id}"
+                        f"[{self.deviceName}] No device_id found – backfill skipped"
                     )
+                else:
+                    known_ids = {
+                        e.get("entity_id")
+                        for e in entitys
+                        if isinstance(e, dict) and e.get("entity_id")
+                    }
+                    prefix = f"sensor.{str(self.deviceName).lower()}_"
+
+                    for state in self.hass.states.async_all("sensor"):
+                        entity_id = getattr(state, "entity_id", "")
+                        if not entity_id:
+                            continue
+                        if not entity_id.lower().startswith(prefix):
+                            continue
+                        if entity_id in known_ids:
+                            continue
+
+                        # CRITICAL: Verify the sensor belongs to the same device
+                        entry = entity_registry.async_get(entity_id)
+                        if not entry or entry.device_id != device_id:
+                            _LOGGER.debug(
+                                f"[{self.deviceName}] Skipping sensor from different device: {entity_id}"
+                            )
+                            continue
+
+                        if not resolve_remappable_sensor_type(entity_id, []):
+                            continue
+
+                        entitys.append(
+                            {
+                                "entity_id": entity_id,
+                                "value": getattr(state, "state", None),
+                                "platform": "unknown",
+                                "labels": [],
+                            }
+                        )
+                        known_ids.add(entity_id)
+                        _LOGGER.debug(
+                            f"[{self.deviceName}] Added missing sensor from HA states: {entity_id}"
+                        )
         except Exception as e:
             _LOGGER.debug(f"[{self.deviceName}] HA state sensor backfill skipped: {e}")
 

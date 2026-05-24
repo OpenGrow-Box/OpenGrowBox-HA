@@ -648,6 +648,9 @@ class OGBActionManager:
         Remove actions that physically contradict each other on action-level.
         Conflicts are defined as (capA, actionType) vs (capB, actionType) pairs.
         Higher priority wins; equal priority keeps cap_a.
+        
+        Also detects intra-capability conflicts (same capability with opposite actions)
+        e.g. canHeat Reduce vs canHeat Increase – prevents device oscillation.
         """
         # Build lookup: capability → action object
         cap_to_action = {
@@ -656,8 +659,10 @@ class OGBActionManager:
             if getattr(a, 'capability', None)
         }
 
-        prio_map = {"high": 3, "medium": 2, "low": 1}
+        prio_map = {"emergency": 4, "high": 3, "medium": 2, "low": 1}
         blocked_caps = set()
+        # Track specific (capability, action) pairs to block for intra-capability conflicts
+        blocked_pairs = set()
 
         for cap_a, act_a, cap_b, act_b in self.CONFLICTING_ACTION_PAIRS:
             action_a = cap_to_action.get(cap_a)
@@ -688,7 +693,73 @@ class OGBActionManager:
                     f"overrides {cap_b}:{act_b} (prio={prio_b})"
                 )
 
-        return [a for a in actionMap if getattr(a, 'capability', None) not in blocked_caps]
+        # Intra-capability conflict detection (same capability with opposite actions)
+        # Prevents fatal oscillations like canHeat Reduce + canHeat Increase
+        from collections import defaultdict
+        cap_actions = defaultdict(list)
+        for a in actionMap:
+            cap = getattr(a, 'capability', None)
+            if cap:
+                cap_actions[cap].append(a)
+
+        opposite_pairs = {"Increase": "Reduce", "Reduce": "Increase"}
+        for cap, actions in cap_actions.items():
+            if len(actions) < 2:
+                continue
+
+            # Check for opposite actions on same capability
+            for i, action_a in enumerate(actions):
+                act_a = getattr(action_a, 'action', '')
+                opposite = opposite_pairs.get(act_a)
+                if not opposite:
+                    continue
+
+                for action_b in actions[i + 1:]:
+                    act_b = getattr(action_b, 'action', '')
+                    if act_b != opposite:
+                        continue
+
+                    # Found conflict: same capability with opposite actions
+                    prio_a = prio_map.get(getattr(action_a, 'priority', 'medium'), 2)
+                    prio_b = prio_map.get(getattr(action_b, 'priority', 'medium'), 2)
+
+                    msg_a = getattr(action_a, 'message', '')
+                    msg_b = getattr(action_b, 'message', '')
+
+                    if prio_a > prio_b:
+                        winner, loser = action_a, action_b
+                    elif prio_b > prio_a:
+                        winner, loser = action_b, action_a
+                    else:
+                        # Equal priority: Bounds wins (safety first)
+                        # Check if one is a bounds correction
+                        is_a_bounds = "Bounds:" in msg_a
+                        is_b_bounds = "Bounds:" in msg_b
+                        if is_a_bounds and not is_b_bounds:
+                            winner, loser = action_a, action_b
+                        elif is_b_bounds and not is_a_bounds:
+                            winner, loser = action_b, action_a
+                        else:
+                            # Both or none are bounds - keep first one found
+                            winner, loser = action_a, action_b
+
+                    loser_cap = getattr(loser, 'capability', '')
+                    loser_act = getattr(loser, 'action', '')
+                    winner_act = getattr(winner, 'action', '')
+                    # Block only the specific (capability, action) pair, not all actions on this capability
+                    blocked_pairs.add((loser_cap, loser_act))
+                    _LOGGER.warning(
+                        f"{self.room}: CRITICAL Intra-capability conflict – "
+                        f"{loser_cap}:{loser_act} removed in favor of {winner_act} "
+                        f"(reason: {getattr(winner, 'message', '')})"
+                    )
+                    break
+
+        return [
+            a for a in actionMap
+            if getattr(a, 'capability', None) not in blocked_caps
+            and (getattr(a, 'capability', None), getattr(a, 'action', None)) not in blocked_pairs
+        ]
 
 
     # =================================================================

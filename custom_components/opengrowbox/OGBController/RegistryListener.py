@@ -268,6 +268,7 @@ class OGBRegistryEvenListener:
                             {
                                 "id": label_id,
                                 "name": label_entry.name,
+                                "scope": "entity",
                                 "icon": getattr(label_entry, "icon", None),
                                 "color": getattr(label_entry, "color", None),
                             }
@@ -443,6 +444,7 @@ class OGBRegistryEvenListener:
                             {
                                 "id": label_id,
                                 "name": label_entry.name,
+                                "scope": "entity",
                                 "icon": getattr(label_entry, "icon", None),
                                 "color": getattr(label_entry, "color", None),
                             }
