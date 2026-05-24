@@ -1357,7 +1357,7 @@ class OGBWebSocketConManager:
                         f"week={current_week}, has_week_data={week_data is not None}"
                     )
                 else:
-                    logging.warning(f"🌱 {self.ws_room} No activePlan in response! Data keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+                    logging.info(f"🌱 {self.ws_room} No activePlan in response! Data keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
                 
                 # Forward to GrowPlanManager via event manager
                 emit_data = {

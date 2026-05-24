@@ -372,6 +372,7 @@ class Device:
                         "device_name": self.deviceName,
                         "context": getattr(self, 'deviceLabel', 'unknown'),
                         "room": self.inRoom,
+                        "device_ref": self,
                     },
                 )
             )

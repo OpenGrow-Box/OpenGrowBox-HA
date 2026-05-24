@@ -1320,7 +1320,7 @@ class OGBPremiumIntegration:
                 self.data_store.setDeep("growPlan.id", active_plan.get("id"))
                 self.data_store.setDeep("growPlan.name", active_plan.get("name"))
             else:
-                _LOGGER.warning(f"🌱 {self.room} new_grow_plans event has no currentWeekData or activePlan")
+                _LOGGER.debug(f"🌱 {self.room} new_grow_plans event has no currentWeekData or activePlan")
                 
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Error handling new_grow_plans: {e}", exc_info=True)

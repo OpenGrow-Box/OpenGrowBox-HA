@@ -36,6 +36,7 @@ class MonitoredEntityState:
     device_name: str = ""
     context: str = "unknown"  # air/water/soil/light or device label
     device_type: Optional[str] = None  # Exhaust, Light, etc. (for devices)
+    device_ref: Any = None  # Reference to device object for turn_on/off
     last_update: datetime = field(default_factory=datetime.now)
     last_value: Any = None
     is_stale: bool = False
@@ -108,6 +109,10 @@ class OGBFallBackManager:
         # Device reliability tracking
         self._device_reliability: Dict[str, DeviceReliabilityState] = {}
 
+        # Running-but-off device tracking (rate limiting)
+        self._running_off_notifications: Dict[str, datetime] = {}
+        self._running_off_notification_cooldown = timedelta(minutes=60)
+
         # Task management
         self._check_task: Optional[asyncio.Task] = None
         self._is_running = False
@@ -164,6 +169,7 @@ class OGBFallBackManager:
         while self._is_running:
             try:
                 await self._check_all_entities()
+                await self._check_running_but_off_devices()
                 await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
             except asyncio.CancelledError:
                 _LOGGER.debug(f"{self.room} Monitoring loop cancelled")
@@ -212,6 +218,110 @@ class OGBFallBackManager:
             _LOGGER.debug(
                 f"{self.room} Health check: {stale_count} new stale, "
                 f"{recovered_count} recovered, {len(self._stale_entities)} total stale"
+            )
+
+    async def _check_running_but_off_devices(self):
+        """
+        Check for devices that are registered as 'off' but still consuming power.
+        This indicates a hardware defect or failed turn_off command.
+        """
+        now = datetime.now()
+
+        for entity_id, state in list(self._monitored_entities.items()):
+            if state.entity_type != "device":
+                continue
+
+            # Only check devices that are supposed to be off
+            if str(state.last_value).lower() not in ["off", "false", "0", "none"]:
+                continue
+
+            # Check if device has a reference and power sensor
+            if not state.device_ref:
+                continue
+
+            device_name = state.device_name or state.context
+            if not device_name:
+                continue
+
+            power_sensor = self._find_power_sensor(device_name)
+            if not power_sensor:
+                continue
+
+            try:
+                current_power = await self._get_power_value(power_sensor)
+                if current_power is None:
+                    continue
+
+                # If power is above threshold while supposed to be off → DEFECT!
+                if current_power >= self.RELIABILITY_POWER_ON_THRESHOLD_WATTS:
+                    _LOGGER.warning(
+                        f"{self.room}: ⚠️ Device '{device_name}' is OFF but consuming "
+                        f"{current_power}W - forcing turn_off!"
+                    )
+
+                    # Attempt to turn off
+                    try:
+                        await state.device_ref.turn_off()
+                        _LOGGER.info(
+                            f"{self.room}: Forced turn_off for '{device_name}' "
+                            f"(was consuming {current_power}W while OFF)"
+                        )
+                    except Exception as e:
+                        _LOGGER.error(
+                            f"{self.room}: Failed to force turn_off for '{device_name}': {e}"
+                        )
+
+                    # Send notification (with rate limiting)
+                    await self._notify_suspected_defect(device_name, current_power)
+
+            except Exception as e:
+                _LOGGER.debug(
+                    f"{self.room}: Error checking running-but-off state for "
+                    f"'{device_name}': {e}"
+                )
+
+    async def _notify_suspected_defect(self, device_name: str, power: float):
+        """
+        Notify user about a suspected defective device.
+        Rate-limited to avoid spam.
+        """
+        try:
+            # Check cooldown
+            last_notif = self._running_off_notifications.get(device_name)
+            if last_notif:
+                if datetime.now() - last_notif < self._running_off_notification_cooldown:
+                    _LOGGER.debug(
+                        f"{self.room}: Skipping defect notification for '{device_name}' "
+                        f"(cooldown active)"
+                    )
+                    return
+
+            message = (
+                f"Suspected defective device identified:\n\n"
+                f"Device: {device_name}\n"
+                f"Room: {self.room}\n"
+                f"Power consumption: {power}W\n\n"
+                f"The device is registered as OFF but is still consuming power. "
+                f"This indicates a hardware defect or a failed turn-off command.\n\n"
+                f"A repeated turn-off command has just been sent. "
+                f"Please check the device manually."
+            )
+
+            await self.notificator.warning(
+                message=message,
+                title=f"OGB {self.room}: Defective device detected - {device_name}",
+            )
+
+            self._running_off_notifications[device_name] = datetime.now()
+
+            _LOGGER.warning(
+                f"{self.room}: 🚨 Sent suspected defect notification for '{device_name}' "
+                f"(consuming {power}W while OFF)"
+            )
+
+        except Exception as e:
+            _LOGGER.error(
+                f"{self.room}: Failed to send defect notification for '{device_name}': {e}"
             )
 
     # =================================================================
@@ -300,12 +410,14 @@ class OGBFallBackManager:
                 return
 
             # Register device for monitoring
+            device_ref = event_data.get("device_ref")
             self._monitored_entities[entity_id] = MonitoredEntityState(
                 entity_id=entity_id,
                 entity_type="device",
                 device_name=device_name,
                 context=context,
                 device_type=device_type,
+                device_ref=device_ref,
                 last_update=datetime.now(),
             )
 
