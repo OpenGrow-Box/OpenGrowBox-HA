@@ -72,6 +72,10 @@ class OGBDeviceRecognitionManager:
         self.room = room
         self.config_entry_id = config_entry_id
         
+        # Feature flag - set to True to enable device discovery
+        # Currently disabled until auto-setup is fully working
+        self.is_active = False
+        
         # Discovery state
         self._proposals: Dict[str, DeviceProposal] = {}
         self._discovered_devices: Dict[str, Dict[str, Any]] = {}  # Persisted discoveries
@@ -95,6 +99,10 @@ class OGBDeviceRecognitionManager:
     async def start_discovery(self):
         """Start all discovery engines."""
         if self._shutdown:
+            return
+        
+        if not self.is_active:
+            _LOGGER.info(f"[{self.room}] Device discovery is disabled (is_active=False)")
             return
         
         _LOGGER.info(f"[{self.room}] Starting device discovery")
