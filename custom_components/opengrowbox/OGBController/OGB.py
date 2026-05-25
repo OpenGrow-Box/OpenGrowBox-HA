@@ -220,6 +220,17 @@ class OpenGrowBox:
         await self.orchestrator.start()
         _LOGGER.debug(f"✅ {self.room} Orchestrator control loop started")
 
+        # Initialize device recognition and auto-discovery
+        try:
+            from .managers.core.OGBDeviceRecognition import OGBDeviceRecognitionManager
+            self.device_recognition = OGBDeviceRecognitionManager(
+                self.hass, self.data_store, self.event_manager, self.room
+            )
+            await self.device_recognition.start_discovery()
+            _LOGGER.debug(f"✅ {self.room} Device recognition started")
+        except Exception as e:
+            _LOGGER.warning(f"Error starting device recognition: {e}")
+
         # Premium manager grow plan activation
         if hasattr(self, 'premium_manager') and self.premium_manager:
             try:
