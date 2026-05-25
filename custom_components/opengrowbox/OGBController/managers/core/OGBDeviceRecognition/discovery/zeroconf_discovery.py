@@ -42,9 +42,10 @@ class ZeroconfDiscovery:
         self._event_loop = None
         
     async def start(self):
-        """Start Zeroconf discovery."""
+        """Start Zeroconf discovery using HA shared instance."""
         try:
-            from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
+            from zeroconf import ServiceBrowser
+            from homeassistant.components import zeroconf
             
             # Store event loop for thread-safe callbacks
             try:
@@ -52,18 +53,17 @@ class ZeroconfDiscovery:
             except RuntimeError:
                 self._event_loop = None
             
-            # Use shared HA Zeroconf if available, otherwise create own
-            if self.hass:
-                # Try to get HA's shared Zeroconf instance
-                try:
-                    from homeassistant.components import zeroconf
-                    self._zeroconf = await zeroconf.async_get_instance(self.hass)
-                    _LOGGER.debug(f"[{self.room}] Using shared HA Zeroconf instance")
-                except Exception:
-                    self._zeroconf = Zeroconf()
-                    _LOGGER.debug(f"[{self.room}] Created own Zeroconf instance")
-            else:
-                self._zeroconf = Zeroconf()
+            # MUST use HA's shared Zeroconf instance - never create our own
+            if not self.hass:
+                _LOGGER.warning(f"[{self.room}] No HA instance available, skipping Zeroconf discovery")
+                return
+            
+            try:
+                self._zeroconf = await zeroconf.async_get_instance(self.hass)
+                _LOGGER.debug(f"[{self.room}] Using shared HA Zeroconf instance")
+            except Exception as e:
+                _LOGGER.error(f"[{self.room}] Failed to get HA Zeroconf instance: {e}")
+                return  # STOP - do NOT create own instance!
             
             self._listener = OGBZeroconfListener(self._on_service_found, self.room)
             
