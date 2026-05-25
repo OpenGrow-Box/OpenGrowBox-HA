@@ -387,14 +387,19 @@ class OGBGrowPlanManager:
             # Update entities with the week data
             await self._update_entities_from_week_data()
         else:
-            # Keine Wochendaten gefunden - frage API an
+            # Keine Wochendaten gefunden - frage API an (nur wenn verbunden)
             _LOGGER.debug(f"🌱 {self.room} Keine Wochendaten für Woche {week_number} gefunden")
             if self.ws_client:
-                _LOGGER.debug(f"🌱 {self.room} Frage Wochendaten vom API an...")
-                try:
-                    await self.ws_client.request_grow_plans_week()
-                except Exception as e:
-                    _LOGGER.error(f"🌱 {self.room} Konnte Wochendaten nicht anfragen: {e}")
+                # Prüfe ob WebSocket verbunden ist
+                is_connected = getattr(self.ws_client, 'ws_connected', False) or getattr(self.ws_client.sio, 'connected', False)
+                if is_connected:
+                    _LOGGER.debug(f"🌱 {self.room} Frage Wochendaten vom API an...")
+                    try:
+                        await self.ws_client.request_grow_plans_week()
+                    except Exception as e:
+                        _LOGGER.error(f"🌱 {self.room} Konnte Wochendaten nicht anfragen: {e}")
+                else:
+                    _LOGGER.debug(f"🌱 {self.room} WebSocket nicht verbunden - überspringe API-Anfrage")
 
     def is_plan_active(self) -> bool:
         """Prüft ob ein Plan aktiv ist"""

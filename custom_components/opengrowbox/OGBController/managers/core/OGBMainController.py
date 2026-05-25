@@ -24,6 +24,7 @@ from ..medium.OGBMediumManager import OGBMediumManager
 from ..hydro.tank.OGBTankFeedManager import OGBTankFeedManager
 from ..OGBEnergyManager import OGBEnergyManager
 from ...RegistryListener import OGBRegistryEvenListener
+from .OGBDeviceRecognition import OGBDeviceRecognitionManager
 from ...utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,16 +33,18 @@ _LOGGER = logging.getLogger(__name__)
 class OGBMainController:
     """Main controller for OpenGrowBox system - orchestrates all managers and handles system initialization."""
 
-    def __init__(self, hass, room):
+    def __init__(self, hass, room, config_entry_id=None):
         """Initialize the main controller.
 
         Args:
             hass: Home Assistant instance
             room: Room identifier
+            config_entry_id: Home Assistant config entry ID
         """
         self.name = "OGB Main Controller"
         self.hass = hass
         self.room = room
+        self.config_entry_id = config_entry_id
         
         # Will be injected from OGB.py after construction
         self.config_manager = None
@@ -214,6 +217,12 @@ class OGBMainController:
         self.premium_manager = OGBPremiumIntegration(
             self.hass, self.data_store, self.event_manager, self.room
         )
+
+        # Device recognition and auto-discovery
+        self.device_recognition = OGBDeviceRecognitionManager(
+            self.hass, self.data_store, self.event_manager, self.room, self.config_entry_id
+        )
+        _LOGGER.debug(f"🔍 {self.room}: Device Recognition Manager initialized")
 
     def _register_event_handlers(self):
         """Register core event handlers."""

@@ -191,3 +191,53 @@ remove_select_options:
       example:
         - Lampe A
         - Lampe B
+
+accept_device_proposal:
+  name: Accept Device Proposal
+  description: Akzeptiert einen Gerätevorschlag und registriert das Gerät.
+  fields:
+    proposal_id:
+      name: Proposal ID
+      description: Die ID des Gerätevorschlags.
+      required: true
+      example: "abc-123-def-456"
+    room:
+      name: Room
+      description: Der Raum, in dem das Gerät gefunden wurde (optional).
+      required: false
+      example: dev_room
+    labels:
+      name: Labels
+      description: Labels, die dem Gerät zugewiesen werden sollen (z.B. ["light", "ogb_device"]).
+      required: false
+      example: ["light", "ogb_device"]
+    name:
+      name: Device Name
+      description: Benutzerdefinierter Gerätename (optional).
+      required: false
+      example: "Main Grow Light"
+
+ignore_device_proposal:
+  name: Ignore Device Proposal
+  description: Ignoriert einen Gerätevorschlag.
+  fields:
+    proposal_id:
+      name: Proposal ID
+      description: Die ID des Gerätevorschlags.
+      required: true
+      example: "abc-123-def-456"
+    room:
+      name: Room
+      description: Der Raum, in dem das Gerät gefunden wurde (optional).
+      required: false
+      example: dev_room
+
+get_device_proposals:
+  name: Get Device Proposals
+  description: Gibt alle ausstehenden Gerätevorschläge zurück.
+  fields:
+    room:
+      name: Room
+      description: Der Raum, für den Vorschläge abgefragt werden sollen (optional).
+      required: false
+      example: dev_room

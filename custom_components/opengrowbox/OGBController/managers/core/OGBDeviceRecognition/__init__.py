@@ -14,7 +14,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from .....const import DOMAIN
+from ....utils.ambient import is_ambient_room
+
 _LOGGER = logging.getLogger(__name__)
+
+# Device name blacklist - these services/devices are never useful for OGB
+_DISCOVERY_BLACKLIST = {
+    "octoprint",
+    "openmediavault",
+    "plex",
+    "homeassistant",
+    "hass",
+}
+
+# Active device types that are blocked for ambient rooms
+_AMBIENT_BLOCKED_DEVICE_TYPES = {"switch", "light", "relay", "pump", "fan", "valve", "climate", "cover", "generic_http"}
 
 
 @dataclass
@@ -41,7 +56,7 @@ class DeviceProposal:
 class OGBDeviceRecognitionManager:
     """Manages automatic device discovery and direct API communication."""
     
-    def __init__(self, hass, data_store, event_manager, room):
+    def __init__(self, hass, data_store, event_manager, room, config_entry_id=None):
         """Initialize the device recognition manager.
         
         Args:
@@ -49,11 +64,13 @@ class OGBDeviceRecognitionManager:
             data_store: Reference to the data store
             event_manager: Reference to the event manager
             room: Room identifier
+            config_entry_id: Home Assistant config entry ID for device registry
         """
         self.hass = hass
         self.data_store = data_store
         self.event_manager = event_manager
         self.room = room
+        self.config_entry_id = config_entry_id
         
         # Discovery state
         self._proposals: Dict[str, DeviceProposal] = {}
@@ -73,37 +90,7 @@ class OGBDeviceRecognitionManager:
         self._discovery_task = None
         self._cleanup_task = None
         
-        # Load persisted data
-        self._load_persisted_data()
-        
         _LOGGER.info(f"[{self.room}] OGBDeviceRecognitionManager initialized")
-    
-    def _load_persisted_data(self):
-        """Load previously discovered devices and ignored list."""
-        try:
-            stored = self.data_store.getDeep("deviceRecognition", {})
-            
-            # Load discovered devices
-            devices = stored.get("discovered_devices", {})
-            for key, data in devices.items():
-                self._discovered_devices[key] = data
-            
-            # Load ignored devices
-            ignored = stored.get("ignored_devices", [])
-            self._ignored_devices = set(ignored)
-            
-            # Load pending proposals
-            proposals = stored.get("proposals", {})
-            for prop_id, data in proposals.items():
-                if data.get("status") == "pending":
-                    self._proposals[prop_id] = DeviceProposal(**data)
-            
-            _LOGGER.debug(
-                f"[{self.room}] Loaded {len(self._discovered_devices)} discovered devices, "
-                f"{len(self._ignored_devices)} ignored, {len(self._proposals)} pending proposals"
-            )
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error loading persisted discovery data: {e}")
     
     async def start_discovery(self):
         """Start all discovery engines."""
@@ -132,14 +119,14 @@ class OGBDeviceRecognitionManager:
         """Start Zeroconf/mDNS discovery."""
         try:
             from .discovery.zeroconf_discovery import ZeroconfDiscovery
-            
+
             self._zeroconf_discovery = ZeroconfDiscovery(
                 self._on_device_discovered,
                 self.room,
                 self.hass
             )
             await self._zeroconf_discovery.start()
-            _LOGGER.debug(f"[{self.room}] Zeroconf discovery started")
+            _LOGGER.warning(f"[{self.room}] Zeroconf discovery started")
         except ImportError:
             _LOGGER.warning(f"[{self.room}] Zeroconf not available, skipping")
         except Exception as e:
@@ -159,7 +146,7 @@ class OGBDeviceRecognitionManager:
                 self.room
             )
             await self._network_scanner.start()
-            _LOGGER.debug(f"[{self.room}] Network scanner started")
+            _LOGGER.warning(f"[{self.room}] Network scanner started")
         except ImportError:
             _LOGGER.warning(f"[{self.room}] Network scanner not available")
         except Exception as e:
@@ -175,7 +162,7 @@ class OGBDeviceRecognitionManager:
                 self.room
             )
             await self._bluetooth_discovery.start()
-            _LOGGER.debug(f"[{self.room}] Bluetooth discovery started")
+            _LOGGER.warning(f"[{self.room}] Bluetooth discovery started")
         except ImportError:
             _LOGGER.warning(f"[{self.room}] Bluetooth not available, skipping")
         except Exception as e:
@@ -195,7 +182,30 @@ class OGBDeviceRecognitionManager:
             
             # Try to recognize the device
             proposal = await self._recognize_device(discovery_data)
+            
+            # If not recognized by any recognizer, create a minimal generic proposal
+            # so blacklist, ambient filter, and frontend notifications still work
             if not proposal:
+                proposal = self._create_generic_proposal(discovery_data)
+                if not proposal:
+                    return
+            
+            # Check blacklist by device name
+            name_lower = proposal.name.lower()
+            for blocked in _DISCOVERY_BLACKLIST:
+                if blocked in name_lower:
+                    _LOGGER.warning(
+                        f"[{self.room}] BLOCKED device (blacklist): {proposal.name} "
+                        f"({proposal.manufacturer}) via {proposal.discovery_method}"
+                    )
+                    return
+            
+            # For ambient rooms, only allow sensor-type devices
+            if is_ambient_room(self.room) and proposal.device_type in _AMBIENT_BLOCKED_DEVICE_TYPES:
+                _LOGGER.warning(
+                    f"[{self.room}] BLOCKED active device for ambient: {proposal.name} "
+                    f"(type={proposal.device_type}) via {proposal.discovery_method}"
+                )
                 return
             
             # Check if we already have this device
@@ -208,9 +218,6 @@ class OGBDeviceRecognitionManager:
             
             # Add to proposals
             self._proposals[proposal.id] = proposal
-            
-            # Persist
-            await self._persist_data()
             
             # Emit event to frontend
             await self.event_manager.emit(
@@ -232,7 +239,27 @@ class OGBDeviceRecognitionManager:
                 }
             )
             
-            _LOGGER.info(
+            # Also fire on HA event bus so the frontend can subscribe
+            if self.hass:
+                event_data = {
+                    "room": self.room,
+                    "proposal": {
+                        "id": proposal.id,
+                        "name": proposal.name,
+                        "ip_address": proposal.ip_address,
+                        "mac_address": proposal.mac_address,
+                        "device_type": proposal.device_type,
+                        "manufacturer": proposal.manufacturer,
+                        "model": proposal.model,
+                        "capabilities": proposal.capabilities,
+                        "suggested_room": proposal.suggested_room,
+                        "confidence": proposal.confidence_score,
+                        "discovery_method": proposal.discovery_method,
+                    }
+                }
+                self.hass.bus.async_fire("ogb_device_discovered", event_data)
+            
+            _LOGGER.warning(
                 f"[{self.room}] New device proposal: {proposal.name} "
                 f"({proposal.manufacturer} {proposal.model}) via {proposal.discovery_method}"
             )
@@ -266,6 +293,53 @@ class OGBDeviceRecognitionManager:
                 _LOGGER.debug(f"[{self.room}] {name} recognizer failed: {e}")
         
         return None
+    
+    def _create_generic_proposal(self, discovery_data: Dict[str, Any]) -> Optional[DeviceProposal]:
+        """Create a minimal proposal for unrecognized devices.
+        
+        This ensures all discovered devices (even unknown ones) go through
+        the blacklist, ambient filter, and frontend notification pipeline.
+        
+        Args:
+            discovery_data: Raw discovery data from the engine
+            
+        Returns:
+            DeviceProposal or None if data is insufficient
+        """
+        name = discovery_data.get("name", "")
+        ip = discovery_data.get("ip", "")
+        if not name and not ip:
+            return None
+        
+        service_type = discovery_data.get("service_type", "")
+        device_type = discovery_data.get("type", "") or "generic_http"
+        
+        # Clean up service name for display (remove service type suffix)
+        display_name = name
+        if service_type:
+            suffix = f".{service_type}"
+            if display_name.endswith(suffix):
+                display_name = display_name[:-len(suffix)]
+        
+        # Extract hostname from name if possible
+        hostname = discovery_data.get("hostname", display_name.split(".")[0] if "." in display_name else display_name)
+        
+        _LOGGER.debug(
+            f"[{self.room}] Created generic proposal for: {display_name} "
+            f"(type={device_type}, ip={ip})"
+        )
+        
+        return DeviceProposal(
+            name=display_name,
+            ip_address=ip if ip else None,
+            device_type=device_type,
+            manufacturer=device_type.capitalize(),
+            model=hostname,
+            capabilities=[],
+            discovery_method=discovery_data.get("method", "unknown"),
+            confidence_score=0.3,
+            raw_data=discovery_data,
+        )
     
     async def _recognize_tasmota(self, data: Dict[str, Any]) -> Optional[DeviceProposal]:
         """Recognize Tasmota device."""
@@ -567,18 +641,20 @@ class OGBDeviceRecognitionManager:
             existing["ip"] = proposal.ip_address
             existing["last_seen"] = datetime.now(timezone.utc).isoformat()
             self._discovered_devices[device_id] = existing
-            await self._persist_data()
             
             _LOGGER.debug(
                 f"[{self.room}] Updated IP for {existing.get('name')}: "
                 f"{proposal.ip_address}"
             )
     
-    async def accept_proposal(self, proposal_id: str) -> bool:
+    async def accept_proposal(self, proposal_id: str, room: str = None, labels: list = None, name: str = None) -> bool:
         """Accept a device proposal and register it.
         
         Args:
             proposal_id: ID of the proposal to accept
+            room: Target room (from ogb_rooms), optional
+            labels: List of labels to apply (e.g. ["light", "ogb_device"]), optional
+            name: Custom device name, optional
             
         Returns:
             True if successful
@@ -590,9 +666,11 @@ class OGBDeviceRecognitionManager:
                 return False
             
             proposal.status = "accepted"
+            target_room = room or proposal.suggested_room or self.room
+            device_name = name or proposal.name
             
-            # Register in HA (if configured)
-            await self._register_in_ha(proposal)
+            # Register in HA with labels and area
+            await self._register_in_ha(proposal, target_room, labels or [], device_name)
             
             # Store as discovered device
             device_key = proposal.mac_address or proposal.ip_address or proposal_id
@@ -605,7 +683,8 @@ class OGBDeviceRecognitionManager:
                 "manufacturer": proposal.manufacturer,
                 "model": proposal.model,
                 "capabilities": proposal.capabilities,
-                "room": proposal.suggested_room or self.room,
+                "room": target_room,
+                "labels": labels or [],
                 "status": "accepted",
                 "accepted_at": datetime.now(timezone.utc).isoformat(),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
@@ -614,24 +693,22 @@ class OGBDeviceRecognitionManager:
             # Remove from proposals
             del self._proposals[proposal_id]
             
-            # Persist
-            await self._persist_data()
-            
             # Emit event
             await self.event_manager.emit(
                 "DeviceAccepted",
                 {
-                    "room": self.room,
+                    "room": target_room,
                     "device": {
                         "id": proposal_id,
                         "name": proposal.name,
                         "type": proposal.device_type,
                         "manufacturer": proposal.manufacturer,
+                        "labels": labels or [],
                     }
                 }
             )
             
-            _LOGGER.info(f"[{self.room}] Accepted device: {proposal.name}")
+            _LOGGER.info(f"[{self.room}] Accepted device: {proposal.name} in room {target_room} with labels {labels}")
             return True
             
         except Exception as e:
@@ -662,9 +739,6 @@ class OGBDeviceRecognitionManager:
             # Remove from proposals
             del self._proposals[proposal_id]
             
-            # Persist
-            await self._persist_data()
-            
             _LOGGER.info(f"[{self.room}] Ignored device: {proposal.name}")
             return True
             
@@ -672,20 +746,351 @@ class OGBDeviceRecognitionManager:
             _LOGGER.error(f"[{self.room}] Error ignoring proposal {proposal_id}: {e}")
             return False
     
-    async def _register_in_ha(self, proposal: DeviceProposal):
-        """Register accepted device in Home Assistant.
+    async def _auto_setup_device(self, proposal: DeviceProposal) -> bool:
+        """Try to auto-setup device via its native integration.
         
-        This creates the necessary entities in HA's registry.
+        Returns:
+            True if auto-setup was triggered
+        """
+        try:
+            if not self.hass:
+                return False
+            
+            # Check if we can auto-setup this device type
+            if proposal.manufacturer and "shelly" in proposal.manufacturer.lower():
+                return await self._setup_shelly(proposal)
+            elif proposal.manufacturer and "tasmota" in proposal.manufacturer.lower():
+                return await self._setup_tasmota(proposal)
+            elif proposal.manufacturer and "esphome" in proposal.manufacturer.lower():
+                return await self._setup_esphome(proposal)
+            elif proposal.manufacturer and "govee" in proposal.manufacturer.lower():
+                return await self._setup_govee(proposal)
+            
+            return False
+            
+        except Exception as e:
+            _LOGGER.debug(f"[{self.room}] Auto-setup failed: {e}")
+            return False
+    
+    async def _setup_shelly(self, proposal: DeviceProposal) -> bool:
+        """Trigger Shelly integration config flow."""
+        try:
+            # Get device info from raw data
+            raw = proposal.raw_data or {}
+            host = proposal.ip_address
+            device_id = raw.get("id") or proposal.mac_address
+            model = raw.get("app", "").replace("shelly", "").upper()
+            gen = 2 if "plus" in raw.get("app", "") or "pro" in raw.get("app", "") else 1
+            
+            if not host:
+                return False
+            
+            _LOGGER.info(f"[{self.room}] Triggering Shelly auto-setup for {proposal.name} at {host}")
+            
+            # Try to use real ZeroconfServiceInfo if available
+            try:
+                from homeassistant.components.zeroconf import ZeroconfServiceInfo
+                
+                discovery_info = ZeroconfServiceInfo(
+                    host=host,
+                    addresses=[host],
+                    port=raw.get("port", 80) if isinstance(raw, dict) else 80,
+                    hostname=raw.get("hostname", "") if isinstance(raw, dict) else proposal.name,
+                    type="_http._tcp.local.",
+                    name=raw.get("hostname", proposal.name) if isinstance(raw, dict) else proposal.name,
+                    properties={
+                        "id": device_id,
+                        "arch": raw.get("app", "") if isinstance(raw, dict) else "",
+                        "fw_id": raw.get("fw_id", "") if isinstance(raw, dict) else "",
+                        "gen": str(gen),
+                    }
+                )
+                _LOGGER.info(f"[{self.room}] Using real ZeroconfServiceInfo for Shelly")
+            except (ImportError, TypeError) as import_err:
+                _LOGGER.info(f"[{self.room}] ZeroconfServiceInfo not available ({import_err}), using mock")
+                # Fallback: Create comprehensive mock with ALL possible attributes
+                from types import SimpleNamespace
+                
+                discovery_info = SimpleNamespace()
+                import ipaddress
+                discovery_info.host = host
+                discovery_info.ip_address = ipaddress.ip_address(host)
+                discovery_info.addresses = [host]
+                discovery_info.port = raw.get("port", 80) if isinstance(raw, dict) else 80
+                discovery_info.hostname = raw.get("hostname", "") if isinstance(raw, dict) else proposal.name
+                discovery_info.type = "_http._tcp.local."
+                discovery_info.name = raw.get("hostname", proposal.name) if isinstance(raw, dict) else proposal.name
+                discovery_info.properties = {
+                    "id": device_id,
+                    "arch": raw.get("app", "") if isinstance(raw, dict) else "",
+                    "fw_id": raw.get("fw_id", "") if isinstance(raw, dict) else "",
+                    "gen": str(gen),
+                }
+            
+            # Trigger Shelly config flow
+            _LOGGER.info(f"[{self.room}] Calling async_init for shelly with source=zeroconf")
+            result = await self.hass.config_entries.flow.async_init(
+                "shelly",
+                context={"source": "zeroconf"},
+                data=discovery_info
+            )
+            
+            _LOGGER.info(f"[{self.room}] Shelly config flow result: {result}")
+            return result is not None
+            
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Shelly setup failed: {e}", exc_info=True)
+            return False
+    
+    async def _setup_tasmota(self, proposal: DeviceProposal) -> bool:
+        """Trigger Tasmota integration config flow."""
+        try:
+            raw = proposal.raw_data or {}
+            host = proposal.ip_address
+            
+            if not host:
+                return False
+            
+            _LOGGER.info(f"[{self.room}] Triggering Tasmota auto-setup for {proposal.name}")
+            
+            from types import SimpleNamespace
+            discovery_info = SimpleNamespace()
+            discovery_info.ip = host
+            discovery_info.topic = raw.get("topic", "")
+            discovery_info.device_name = proposal.name
+            
+            result = await self.hass.config_entries.flow.async_init(
+                "tasmota",
+                context={"source": "discovery"},
+                data=discovery_info
+            )
+            
+            return result is not None
+            
+        except Exception as e:
+            _LOGGER.debug(f"[{self.room}] Tasmota setup failed: {e}")
+            return False
+    
+    async def _setup_esphome(self, proposal: DeviceProposal) -> bool:
+        """Trigger ESPHome integration config flow."""
+        try:
+            host = proposal.ip_address
+            
+            if not host:
+                return False
+            
+            _LOGGER.info(f"[{self.room}] Triggering ESPHome auto-setup for {proposal.name}")
+            
+            from types import SimpleNamespace
+            discovery_info = SimpleNamespace()
+            discovery_info.host = host
+            
+            result = await self.hass.config_entries.flow.async_init(
+                "esphome",
+                context={"source": "discovery"},
+                data=discovery_info
+            )
+            
+            return result is not None
+            
+        except Exception as e:
+            _LOGGER.debug(f"[{self.room}] ESPHome setup failed: {e}")
+            return False
+    
+    async def _setup_govee(self, proposal: DeviceProposal) -> bool:
+        """Trigger Govee integration config flow."""
+        try:
+            raw = proposal.raw_data or {}
+            
+            # Govee uses Bluetooth MAC address
+            mac = proposal.mac_address
+            if not mac:
+                return False
+            
+            _LOGGER.info(f"[{self.room}] Triggering Govee auto-setup for {proposal.name}")
+            
+            from types import SimpleNamespace
+            discovery_info = SimpleNamespace()
+            discovery_info.address = mac
+            discovery_info.name = proposal.name
+            discovery_info.model = proposal.model or raw.get("model", "")
+            discovery_info.manufacturer_data = raw.get("manufacturer_data", {})
+            
+            result = await self.hass.config_entries.flow.async_init(
+                "govee",
+                context={"source": "bluetooth"},
+                data=discovery_info
+            )
+            
+            return result is not None
+            
+        except Exception as e:
+            _LOGGER.debug(f"[{self.room}] Govee setup failed: {e}")
+            return False
+    
+    async def _register_in_ha(self, proposal: DeviceProposal, room: str, labels: list, name: str = None):
+        """Register accepted device in Home Assistant with labels and area.
+        
+        Args:
+            proposal: The device proposal
+            room: Target room name
+            labels: List of labels to apply
+            name: Custom device name
         """
         try:
             if not self.hass:
                 return
             
-            # For now, we rely on HA's existing integrations
-            # (MQTT Discovery, native integrations, etc.)
-            # In the future, we could create custom entities here
+            # First try auto-setup via native integration
+            auto_setup = await self._auto_setup_device(proposal)
+            if auto_setup:
+                _LOGGER.info(f"[{self.room}] Auto-setup triggered for {proposal.name}, waiting for device to appear...")
+                # Wait a moment for the device to be registered
+                await asyncio.sleep(2)
             
-            _LOGGER.debug(f"[{self.room}] Registered {proposal.name} in HA")
+            from homeassistant.helpers.label_registry import async_get as async_get_label_registry
+            from homeassistant.helpers.area_registry import async_get as async_get_area_registry
+            from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+            from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+            
+            # Get registries
+            label_registry = async_get_label_registry(self.hass)
+            area_registry = async_get_area_registry(self.hass)
+            device_registry = async_get_device_registry(self.hass)
+            entity_registry = async_get_entity_registry(self.hass)
+            
+            device_name = name or proposal.name
+            
+            # Find or create area
+            area = None
+            for existing_area in area_registry.areas.values():
+                if existing_area.name.lower() == room.lower():
+                    area = existing_area
+                    break
+            
+            if not area:
+                area = area_registry.async_create(room)
+                _LOGGER.debug(f"[{self.room}] Created area: {room}")
+            
+            # Ensure labels exist
+            for label_name in labels:
+                if label_name not in label_registry.labels:
+                    label_registry.async_create(label_name)
+            
+            # Try to find existing device in HA registry
+            # Shelly devices have identifiers like ("shelly", "shellyplus1-...")
+            # not ("opengrowbox", ...), so we need to search by name or IP
+            device = None
+            
+            _LOGGER.debug(
+                f"[{self.room}] Searching for device: name={proposal.name}, "
+                f"ip={proposal.ip_address}, mac={proposal.mac_address}"
+            )
+            
+            # Method 1: Search by IP in connections
+            if proposal.ip_address and not device:
+                for dev in device_registry.devices.values():
+                    if hasattr(dev, 'connections') and dev.connections:
+                        for conn in dev.connections:
+                            if len(conn) >= 2:
+                                conn_type, conn_value = conn[0], conn[1]
+                                if conn_type == "ip" and conn_value == proposal.ip_address:
+                                    device = dev
+                                    _LOGGER.debug(f"[{self.room}] Found device by IP: {dev.name} (ID: {dev.id})")
+                                    break
+                    if device:
+                        break
+            
+            # Method 2: Search by name (partial match)
+            if proposal.name and not device:
+                search_name = proposal.name.lower()
+                for dev in device_registry.devices.values():
+                    dev_name = (dev.name or "").lower()
+                    dev_name_by_user = (dev.name_by_user or "").lower()
+                    if search_name in dev_name or search_name in dev_name_by_user:
+                        device = dev
+                        _LOGGER.debug(f"[{self.room}] Found device by name: {dev.name} (ID: {dev.id})")
+                        break
+            
+            # Method 3: Search by hostname from raw_data
+            if not device and proposal.raw_data and proposal.raw_data.get("hostname"):
+                hostname = proposal.raw_data.get("hostname", "").lower()
+                for dev in device_registry.devices.values():
+                    dev_name = (dev.name or "").lower()
+                    if hostname in dev_name:
+                        device = dev
+                        _LOGGER.debug(f"[{self.room}] Found device by hostname: {dev.name} (ID: {dev.id})")
+                        break
+            
+            # Update device with area, labels and name
+            if device:
+                update_kwargs = {
+                    "area_id": area.id,
+                    "labels": set(labels) | set(device.labels or []),
+                }
+                if name:
+                    update_kwargs["name_by_user"] = name
+                
+                device_registry.async_update_device(device.id, **update_kwargs)
+                _LOGGER.info(f"[{self.room}] Updated existing device {device_name} (ID: {device.id}) with area {room}, labels {labels}" + (f" and name {name}" if name else ""))
+            else:
+                # Device not found in HA registry - create it!
+                _LOGGER.info(
+                    f"[{self.room}] Device {device_name} not found in HA registry, "
+                    f"creating new device entry..."
+                )
+                
+                # Build identifiers
+                identifiers = set()
+                if proposal.mac_address:
+                    identifiers.add((DOMAIN, proposal.mac_address))
+                if proposal.ip_address:
+                    identifiers.add((DOMAIN, proposal.ip_address))
+                if not identifiers:
+                    identifiers.add((DOMAIN, proposal.id))
+                
+                # Build connections
+                connections = set()
+                if proposal.mac_address:
+                    connections.add(("mac", proposal.mac_address))
+                if proposal.ip_address:
+                    connections.add(("ip", proposal.ip_address))
+                
+                # Create the device in HA registry
+                new_device = device_registry.async_get_or_create(
+                    config_entry_id=self.config_entry_id,
+                    identifiers=identifiers,
+                    connections=connections if connections else None,
+                    name=device_name,
+                    manufacturer=proposal.manufacturer or "Unknown",
+                    model=proposal.model or proposal.device_type or "Unknown",
+                    sw_version=proposal.raw_data.get("fw_version") if proposal.raw_data else None,
+                    suggested_area=room,
+                )
+                
+                # Set area and labels
+                if new_device:
+                    device_registry.async_update_device(
+                        new_device.id,
+                        area_id=area.id,
+                        labels=set(labels),
+                    )
+                    _LOGGER.info(
+                        f"[{self.room}] Created new HA device {device_name} "
+                        f"(ID: {new_device.id}) with area {room}, labels {labels}"
+                    )
+                    device = new_device
+                else:
+                    _LOGGER.error(f"[{self.room}] Failed to create device {device_name} in HA registry")
+            
+            # Also emit event so DeviceManager can pick it up
+            self.hass.bus.async_fire("ogb_device_accepted", {
+                "room": room,
+                "device_name": device_name,
+                "labels": labels,
+                "ip": proposal.ip_address,
+                "mac": proposal.mac_address,
+            })
             
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error registering in HA: {e}")
@@ -729,9 +1134,6 @@ class OGBDeviceRecognitionManager:
                     del self._proposals[prop_id]
                     _LOGGER.debug(f"[{self.room}] Expired proposal: {proposal.name}")
                 
-                if expired:
-                    await self._persist_data()
-                
                 await asyncio.sleep(3600)  # Check every hour
                 
             except asyncio.CancelledError:
@@ -739,37 +1141,6 @@ class OGBDeviceRecognitionManager:
             except Exception as e:
                 _LOGGER.error(f"[{self.room}] Cleanup loop error: {e}")
                 await asyncio.sleep(300)
-    
-    async def _persist_data(self):
-        """Persist discovery data to data store."""
-        try:
-            data = {
-                "discovered_devices": self._discovered_devices,
-                "ignored_devices": list(self._ignored_devices),
-                "proposals": {
-                    prop_id: {
-                        "id": prop.id,
-                        "name": prop.name,
-                        "ip_address": prop.ip_address,
-                        "mac_address": prop.mac_address,
-                        "device_type": prop.device_type,
-                        "manufacturer": prop.manufacturer,
-                        "model": prop.model,
-                        "capabilities": prop.capabilities,
-                        "suggested_room": prop.suggested_room,
-                        "discovery_method": prop.discovery_method,
-                        "confidence_score": prop.confidence_score,
-                        "status": prop.status,
-                        "discovered_at": prop.discovered_at.isoformat(),
-                    }
-                    for prop_id, prop in self._proposals.items()
-                }
-            }
-            
-            self.data_store.setDeep("deviceRecognition", data)
-            
-        except Exception as e:
-            _LOGGER.error(f"[{self.room}] Error persisting discovery data: {e}")
     
     async def get_direct_api(self, device_id: str) -> Optional[Any]:
         """Get direct API controller for a device.
@@ -812,9 +1183,6 @@ class OGBDeviceRecognitionManager:
             await self._network_scanner.stop()
         if self._bluetooth_discovery:
             await self._bluetooth_discovery.stop()
-        
-        # Persist final state
-        await self._persist_data()
         
         _LOGGER.info(f"[{self.room}] OGBDeviceRecognitionManager shutdown")
     

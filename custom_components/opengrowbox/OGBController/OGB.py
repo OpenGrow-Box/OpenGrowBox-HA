@@ -15,7 +15,7 @@ from .managers.core.OGBVPDManager import OGBVPDManager
 from .managers.OGBWizardManager import OGBWizardManager
 from .OGBOrchestrator import OGBOrchestrator
 from .RegistryListener import OGBRegistryEvenListener
-# OGBPremiumIntegration is now created by OGBMainController - no need to import here
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,27 +28,29 @@ class OpenGrowBox:
     but delegates all functionality to the modular managers.
     """
 
-    def __init__(self, hass, room):
+    def __init__(self, hass, room, config_entry_id=None):
         """
         Initialize OpenGrowBox with modular managers.
 
         Args:
             hass: Home Assistant instance
             room: Room identifier
+            config_entry_id: Home Assistant config entry ID
         """
         self.name = "OpenGrowBox Modular Controller"
         self.hass = hass
         self.room = room
+        self.config_entry_id = config_entry_id
 
         # Initialize modular managers FIRST
-        self.main_controller = OGBMainController(hass, room)
+        self.main_controller = OGBMainController(self.hass, room, config_entry_id)
 
         # Registry Listener for HA Events
-        self.registryListener = OGBRegistryEvenListener(hass, self.main_controller.data_store, self.main_controller.event_manager, room)
+        self.registryListener = OGBRegistryEvenListener(self.hass, self.main_controller.data_store, self.main_controller.event_manager, room)
 
         # Initialize orchestrator for control loop coordination
         self.orchestrator = OGBOrchestrator(
-            hass,
+            self.hass,
             self.main_controller.data_store,
             self.main_controller.event_manager,
             room
@@ -73,14 +75,14 @@ class OpenGrowBox:
             self.main_controller.data_store,
             self.main_controller.event_manager,
             room,
-            hass,
+            self.hass,
             self.prem_manager,  # Add prem_manager
         )
         self.config_manager = OGBConfigurationManager(
             self.main_controller.data_store,
             self.main_controller.event_manager,
             room,
-            hass,
+            self.hass,
         )
         self.wizard_manager = OGBWizardManager(
             hass,
@@ -135,6 +137,9 @@ class OpenGrowBox:
         # CO2 Manager - CRITICAL: This was missing and caused CO2 devices to not initialize properly
         self.co2Manager = self.main_controller.co2_manager
         self.co2_manager = self.main_controller.co2_manager
+
+        # Device Recognition Manager - migrated to main_controller
+        self.device_recognition = self.main_controller.device_recognition
 
         # Inject config_manager into main_controller for entity routing
         self.main_controller.config_manager = self.config_manager
@@ -220,14 +225,11 @@ class OpenGrowBox:
         await self.orchestrator.start()
         _LOGGER.debug(f"✅ {self.room} Orchestrator control loop started")
 
-        # Initialize device recognition and auto-discovery
+        # Start device recognition discovery
         try:
-            from .managers.core.OGBDeviceRecognition import OGBDeviceRecognitionManager
-            self.device_recognition = OGBDeviceRecognitionManager(
-                self.hass, self.data_store, self.event_manager, self.room
-            )
-            await self.device_recognition.start_discovery()
-            _LOGGER.debug(f"✅ {self.room} Device recognition started")
+            if hasattr(self.main_controller, 'device_recognition') and self.main_controller.device_recognition:
+                await self.main_controller.device_recognition.start_discovery()
+                _LOGGER.debug(f"✅ {self.room} Device recognition started")
         except Exception as e:
             _LOGGER.warning(f"Error starting device recognition: {e}")
 

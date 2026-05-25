@@ -7,6 +7,7 @@ import voluptuous as vol
 
 from homeassistant.helpers.area_registry import \
     async_get as async_get_area_registry
+from homeassistant.helpers.service import SupportsResponse
 from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
                                                       UpdateFailed)
 
@@ -28,7 +29,7 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_entry = config_entry
         self.room_name = config_entry.data["room_name"]
 
-        self.OGB = OpenGrowBox(hass, config_entry.data["room_name"])
+        self.OGB = OpenGrowBox(hass, config_entry.data["room_name"], config_entry.entry_id)
         self.is_ready = False
         self._started = False
 
@@ -392,4 +393,85 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 vol.Optional('humidity'): vol.Coerce(float),
                 vol.Optional('vpd'): vol.Coerce(float),
             }),
+        )
+
+        async def handle_accept_device_proposal(call: ServiceCall) -> None:
+            """Accept a device proposal."""
+            proposal_id = call.data.get('proposal_id')
+            room = call.data.get('room', None)
+            labels = call.data.get('labels', [])
+            name = call.data.get('name', None)
+            for entry_id, coordinator in self.hass.data[DOMAIN].items():
+                if isinstance(coordinator, OGBIntegrationCoordinator):
+                    if room and coordinator.room_name.lower() != room.lower():
+                        continue
+                    if hasattr(coordinator.OGB, 'device_recognition') and coordinator.OGB.device_recognition:
+                        await coordinator.OGB.device_recognition.accept_proposal(proposal_id, room, labels, name)
+
+        async def handle_ignore_device_proposal(call: ServiceCall) -> None:
+            """Ignore a device proposal."""
+            proposal_id = call.data.get('proposal_id')
+            room = call.data.get('room', None)
+            for entry_id, coordinator in self.hass.data[DOMAIN].items():
+                if isinstance(coordinator, OGBIntegrationCoordinator):
+                    if room and coordinator.room_name.lower() != room.lower():
+                        continue
+                    if hasattr(coordinator.OGB, 'device_recognition') and coordinator.OGB.device_recognition:
+                        await coordinator.OGB.device_recognition.ignore_proposal(proposal_id)
+
+        async def handle_get_device_proposals(call: ServiceCall) -> dict[str, Any]:
+            """Get pending device proposals."""
+            room = call.data.get('room', None)
+            proposals = []
+            for entry_id, coordinator in self.hass.data[DOMAIN].items():
+                if isinstance(coordinator, OGBIntegrationCoordinator):
+                    if room and coordinator.room_name.lower() != room.lower():
+                        continue
+                    if hasattr(coordinator.OGB, 'device_recognition') and coordinator.OGB.device_recognition:
+                        for prop in coordinator.OGB.device_recognition.pending_proposals:
+                            proposals.append({
+                                "id": prop.id,
+                                "name": prop.name,
+                                "ip_address": prop.ip_address,
+                                "mac_address": prop.mac_address,
+                                "device_type": prop.device_type,
+                                "manufacturer": prop.manufacturer,
+                                "model": prop.model,
+                                "capabilities": prop.capabilities,
+                                "suggested_room": prop.suggested_room,
+                                "confidence": prop.confidence_score,
+                                "discovery_method": prop.discovery_method,
+                            })
+            return {"proposals": proposals}
+
+        self.hass.services.async_register(
+            DOMAIN,
+            'accept_device_proposal',
+            handle_accept_device_proposal,
+            schema=vol.Schema({
+                vol.Required('proposal_id'): str,
+                vol.Optional('room'): str,
+                vol.Optional('labels'): vol.All(list, [str]),
+                vol.Optional('name'): str,
+            }),
+        )
+
+        self.hass.services.async_register(
+            DOMAIN,
+            'ignore_device_proposal',
+            handle_ignore_device_proposal,
+            schema=vol.Schema({
+                vol.Required('proposal_id'): str,
+                vol.Optional('room'): str,
+            }),
+        )
+
+        self.hass.services.async_register(
+            DOMAIN,
+            'get_device_proposals',
+            handle_get_device_proposals,
+            schema=vol.Schema({
+                vol.Optional('room'): str,
+            }),
+            supports_response=SupportsResponse.ONLY,
         )
