@@ -158,7 +158,7 @@ SENSOR_TRANSLATIONS = {
         "rh",
         "relative_humidity",
         "rel_humidity",
-        "luftfeucht",
+        # REMOVED: "luftfeucht" - too short, matches "luftbefeuchter" (humidifier) incorrectly
     ],
     "leaf":[
         # Leaf temperature sensors (special case)
