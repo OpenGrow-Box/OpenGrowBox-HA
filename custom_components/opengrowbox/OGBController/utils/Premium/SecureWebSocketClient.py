@@ -1142,6 +1142,26 @@ class OGBWebSocketConManager:
                     
                     logging.debug(f"✅ {self.ws_room} V1 session confirmed - encryption ready (AES-256-GCM) - sessions: {self.ogb_sessions}/{self.ogb_max_sessions}")
 
+                    # CRITICAL: Call auth callback if not already called
+                    # This notifies OGBPremiumIntegration that auth succeeded
+                    if self._pending_auth_callback and not self._auth_callback_called:
+                        logging.debug(f"🔄 {self.ws_room} Calling stored auth callback after V1 session confirmed")
+                        try:
+                            await self._pending_auth_callback(
+                                self._pending_event_id,
+                                "success",
+                                "V1 session confirmed",
+                                data
+                            )
+                            logging.debug(f"✅ {self.ws_room} Auth callback called successfully")
+                            self._auth_callback_called = True
+                        except Exception as e:
+                            logging.error(f"❌ {self.ws_room} Error calling auth callback: {e}")
+                        finally:
+                            # Clear callback after calling
+                            self._pending_auth_callback = None
+                            self._pending_event_id = None
+
                     # Proactively fetch grow plan data after successful connection
                     try:
                         await self.request_grow_plans_week()
