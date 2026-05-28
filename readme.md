@@ -175,10 +175,18 @@ services:
 
 ### Basic Setup
 
+OpenGrowBox requires logger diagnostics in `configuration.yaml`. You can manage
+the YAML manually, or enable **Update configuration.yaml automatically** during
+setup or from the integration's Configure screen. When enabled, OpenGrowBox adds
+missing logger entries and creates a `.ogb_config_bak` backup before writing.
+The setup and Configure screens show the current YAML status before making
+changes. After setup, the same setting is also available as the
+`OGB Auto Configure HA` switch entity for each OpenGrowBox room. If required
+logger YAML is missing, OpenGrowBox creates a persistent notification in Home
+Assistant.
+
 ```yaml
 # configuration.yaml
-# Loads default set of integrations. Do not remove.
-default_config:
 logger:
   default: info
   logs:
@@ -382,4 +390,3 @@ This project is licensed under the **OGBCL (OpenGrowBox Community License)**.
 *Built with ❤️ for the growing community. Happy growing! 🌱*
 
 ---
-

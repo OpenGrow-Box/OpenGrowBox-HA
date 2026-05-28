@@ -55,7 +55,7 @@ tail -f /config/home-assistant.log | grep -i "import\|module"
 
 #### 2. Configuration Errors
 ```yaml
-# Check configuration.yaml syntax
+# Required OpenGrowBox logger diagnostics in configuration.yaml
 logger:
   default: info
   logs:
@@ -64,16 +64,13 @@ logger:
     homeassistant.loader: debug
     custom_components.opengrowbox: debug
     custom_components.ogb-dev-env: debug
-
-default_config:
-
-frontend:
-  extra_module_url:
-  - /local/opengrowbox/ogb_icons.js
-
 ```
 
-**Fix:** Ensure basic configuration is present
+**Fix:** Ensure the logger diagnostics above are present. You can also enable
+**Update configuration.yaml automatically** in the OpenGrowBox integration
+options, or turn on the `OGB Auto Configure HA` switch entity, to let
+OpenGrowBox add missing logger entries after creating a backup. OpenGrowBox also
+creates a persistent notification that lists the exact missing logger settings.
 
 #### 3. Permission Issues
 - Check file permissions on OGB directory

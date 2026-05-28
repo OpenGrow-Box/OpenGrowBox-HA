@@ -2,7 +2,7 @@
 
 ## Quick Start (5 minutes)
 
-OpenGrowBox uses a simple integration-based setup - **no configuration.yaml needed**. One integration creates one complete grow room area.
+OpenGrowBox uses a simple integration-based setup. One integration creates one complete grow room area. OpenGrowBox does require logger diagnostics in `configuration.yaml`; the setup flow can check and add the logger entries automatically if you enable that option.
 
 ## Step 1: Install Integration
 

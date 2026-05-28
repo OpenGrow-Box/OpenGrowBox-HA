@@ -1,112 +1,31 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 from glob import glob
-from typing import Any
 
-import yaml as yaml_lib
-
-import voluptuous as vol
-
-try:
-    from yaml.constructor import ConstructorError as YAMLConstructorError
-except ImportError:
-    YAMLConstructorError = Exception
-
-from homeassistant.components.frontend import (add_extra_js_url,
-                                               async_remove_panel)
+from homeassistant.components.frontend import async_remove_panel
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
 from homeassistant.loader import async_get_integration
 
-from .const import DOMAIN
+from .const import CONF_AUTO_CONFIGURE_HA, DEFAULT_AUTO_CONFIGURE_HA, DOMAIN
 from .coordinator import OGBIntegrationCoordinator
 from .frontend import async_register_frontend
+from .ha_config_status import (
+    REQUIRED_LOGGER_DEFAULT,
+    REQUIRED_LOGGER_OVERRIDES,
+    get_ha_config_status,
+)
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "number", "select", "time", "switch", "date", "text"]
 _CONFIG_CHECK_FLAG = "__config_checked__"
+_CONFIG_AUTO_UPDATE_FLAG = "__config_auto_update_done__"
 _CLEANUP_DONE_FLAG = "__cleanup_done__"
 _AMBIENT_ENSURE_FLAG = "__ambient_ensure_done__"
-
-_REQUIRED_LOGGER_DEFAULT = "info"
-_REQUIRED_LOGGER_LEVEL = "debug"
-_REQUIRED_LOGGER_OVERRIDES = {
-    "homeassistant.config_entries": _REQUIRED_LOGGER_LEVEL,
-    "homeassistant.setup": _REQUIRED_LOGGER_LEVEL,
-    "homeassistant.loader": _REQUIRED_LOGGER_LEVEL,
-    "custom_components.opengrowbox": _REQUIRED_LOGGER_LEVEL,
-    "custom_components.ogb-dev-env": _REQUIRED_LOGGER_LEVEL,
-}
-
-
-def _load_configuration_yaml(path: str) -> dict[str, Any]:
-    """Load Home Assistant configuration.yaml as dict."""
-    if not os.path.exists(path):
-        return {}
-
-    with open(path, "r", encoding="utf-8") as file:
-        content = file.read()
-
-    try:
-        loaded = yaml_lib.safe_load(content)
-    except YAMLConstructorError as err:
-        err_msg = str(err)
-        if "!include" in err_msg or "tag:yaml.org,2002:python/object" in err_msg:
-            return _parse_yaml_with_ha_includes(content)
-        raise
-
-    if isinstance(loaded, dict):
-        return loaded
-    return {}
-
-
-def _parse_yaml_with_ha_includes(content: str) -> dict[str, Any]:
-    """Parse YAML handling Home Assistant !include tags by extracting logger config only."""
-    result = {}
-    found_logger = False
-    for line in content.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("logger:") and not found_logger:
-            result["logger"] = _extract_logger_block(content)
-            found_logger = True
-        if stripped.startswith("default_config:"):
-            result["default_config"] = {}
-    return result
-
-
-def _extract_logger_block(content: str) -> dict[str, Any]:
-    """Extract logger section from YAML content."""
-    logger_block = {}
-    in_logs = False
-    for line in content.split("\n"):
-        if line.strip().startswith("logger:"):
-            continue
-        if "logs:" in line and "logs" not in logger_block:
-            in_logs = True
-            continue
-        if in_logs and line and not line[0].isspace():
-            in_logs = False
-        if in_logs and ":" in line:
-            parts = line.split(":", 1)
-            if len(parts) == 2 and parts[0].strip():
-                logger_block["logs"] = logger_block.get("logs", {})
-                logger_block["logs"][parts[0].strip()] = parts[1].strip()
-        elif "default:" in line:
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                logger_block["default"] = parts[1].strip()
-    return logger_block
-
-
-def _as_level(value: Any) -> str:
-    """Normalize logger level value to lowercase string."""
-    if value is None:
-        return ""
-    return str(value).strip().lower()
+_CONFIG_NOTIFICATION_ID = "opengrowbox_required_ha_config"
 
 
 def _apply_minimal_log_fallback() -> None:
@@ -115,12 +34,41 @@ def _apply_minimal_log_fallback() -> None:
     logging.getLogger("custom_components.ogb-dev-env").setLevel(logging.WARNING)
 
 
-async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
-    """Validate required configuration.yaml entries for default_config and logger."""
+def _entry_auto_configure_ha(config_entry: ConfigEntry | None) -> bool:
+    """Return whether an entry allows OpenGrowBox to update configuration.yaml."""
+    if config_entry is None:
+        return DEFAULT_AUTO_CONFIGURE_HA
+
+    return bool(
+        config_entry.options.get(
+            CONF_AUTO_CONFIGURE_HA,
+            config_entry.data.get(CONF_AUTO_CONFIGURE_HA, DEFAULT_AUTO_CONFIGURE_HA),
+        )
+    )
+
+
+def _should_auto_update_ha_config(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+) -> bool:
+    """Return true if any OpenGrowBox entry opted in to automatic YAML updates."""
+    entries = list(hass.config_entries.async_entries(DOMAIN))
+    if config_entry not in entries:
+        entries.append(config_entry)
+
+    return any(_entry_auto_configure_ha(entry) for entry in entries)
+
+
+async def _check_required_ha_config(
+    hass: HomeAssistant,
+    *,
+    auto_update: bool = DEFAULT_AUTO_CONFIGURE_HA,
+) -> None:
+    """Validate required configuration.yaml entries and optionally add missing blocks."""
     config_path = hass.config.path("configuration.yaml")
 
     try:
-        config = await hass.async_add_executor_job(_load_configuration_yaml, config_path)
+        status = await hass.async_add_executor_job(get_ha_config_status, config_path)
     except Exception as err:
         _LOGGER.warning(
             "Could not read configuration.yaml (%s). Using minimal OpenGrowBox log level.",
@@ -129,207 +77,326 @@ async def _check_required_ha_logging_config(hass: HomeAssistant) -> None:
         _apply_minimal_log_fallback()
         return
 
-    has_default_config_key = "default_config" in config
-    logger_config = config.get("logger")
-    logger_default_ok = False
-    logger_overrides_ok = False
+    initial_missing_reasons = list(status.missing)
+    if status.error:
+        initial_missing_reasons.insert(0, status.error)
+    initial_missing_text = (
+        ", ".join(initial_missing_reasons) or "unknown configuration issue"
+    )
 
-    if isinstance(logger_config, dict):
-        logger_default_ok = _as_level(logger_config.get("default")) == _REQUIRED_LOGGER_DEFAULT
-        logs_block = logger_config.get("logs")
-        if isinstance(logs_block, dict):
-            logger_overrides_ok = all(
-                _as_level(logs_block.get(name)) == required_level
-                for name, required_level in _REQUIRED_LOGGER_OVERRIDES.items()
-            )
-
-    # Add all required config (default_config, logger, frontend) in one go
-    try:
-        await hass.async_add_executor_job(_add_required_config_to_yaml, config_path)
-        _LOGGER.debug("Updated configuration.yaml with required OpenGrowBox config")
-    except Exception as err:
-        _LOGGER.warning("Could not update configuration.yaml: %s", err)
-
-    if has_default_config_key and logger_default_ok and logger_overrides_ok:
+    if status.is_complete:
+        await _dismiss_ha_config_notification(hass)
         return
 
-    missing_reasons = []
-    if not has_default_config_key:
-        missing_reasons.append("default_config missing")
-    if not logger_default_ok:
-        missing_reasons.append("logger.default != info")
-    if not logger_overrides_ok:
-        missing_reasons.append("required logger.logs entries missing")
+    update_attempted = False
+    if auto_update:
+        # Add all required logger config in one go.
+        try:
+            update_attempted = await hass.async_add_executor_job(
+                _add_required_config_to_yaml,
+                config_path,
+            )
+            if update_attempted:
+                _LOGGER.debug("Updated configuration.yaml with required OpenGrowBox config")
+            else:
+                _LOGGER.debug("No automatic logger config update was applied")
+        except Exception as err:
+            _LOGGER.warning("Could not update configuration.yaml: %s", err)
 
-    _LOGGER.warning(
-        "configuration.yaml check failed (%s). "
-        "Expected: default_config and logger settings for OpenGrowBox diagnostics. "
-        "Applying minimal OpenGrowBox runtime log level (WARNING).",
-        ", ".join(missing_reasons),
-    )
+        if update_attempted:
+            try:
+                status = await hass.async_add_executor_job(get_ha_config_status, config_path)
+            except Exception as err:
+                _LOGGER.warning("Could not re-check configuration.yaml: %s", err)
+
+    if status.is_complete:
+        if update_attempted:
+            await _async_notify_ha_config_status(
+                hass,
+                initial_missing_text,
+                auto_update=auto_update,
+                update_attempted=True,
+            )
+            return
+
+        await _dismiss_ha_config_notification(hass)
+        return
+
+    missing_reasons = list(status.missing)
+    if status.error:
+        missing_reasons.insert(0, status.error)
+    missing_text = ", ".join(missing_reasons) or "unknown configuration issue"
+
+    if auto_update:
+        _LOGGER.warning(
+            "configuration.yaml check failed (%s). "
+            "OpenGrowBox attempted to add missing logger settings; "
+            "restart Home Assistant to load them. "
+            "Applying minimal OpenGrowBox runtime log level (WARNING).",
+            missing_text,
+        )
+    else:
+        _LOGGER.warning(
+            "configuration.yaml check failed (%s). "
+            "Expected: logger settings for OpenGrowBox diagnostics. "
+            "Automatic configuration.yaml updates are disabled; add the entries manually "
+            "or enable the OpenGrowBox automatic Home Assistant configuration option. "
+            "Applying minimal OpenGrowBox runtime log level (WARNING).",
+            missing_text,
+        )
+
     _apply_minimal_log_fallback()
 
+    await _async_notify_ha_config_status(
+        hass,
+        missing_text,
+        auto_update=auto_update,
+        update_attempted=update_attempted,
+    )
 
-def _add_required_config_to_yaml(config_path: str) -> None:
-    """Add default_config, logger, and frontend extra_module_url to configuration.yaml if missing.
-    
+
+async def _dismiss_ha_config_notification(hass: HomeAssistant) -> None:
+    """Dismiss the persistent YAML configuration notification if present."""
+    try:
+        await _ensure_persistent_notification(hass)
+        if not hass.services.has_service("persistent_notification", "dismiss"):
+            return
+        await hass.services.async_call(
+            "persistent_notification",
+            "dismiss",
+            {"notification_id": _CONFIG_NOTIFICATION_ID},
+            blocking=False,
+        )
+    except Exception as err:
+        _LOGGER.debug("Could not dismiss OpenGrowBox config notification: %s", err)
+
+
+async def _async_notify_ha_config_status(
+    hass: HomeAssistant,
+    missing_text: str,
+    *,
+    auto_update: bool,
+    update_attempted: bool = False,
+) -> None:
+    """Create or update a persistent notification for missing HA YAML settings."""
+    try:
+        await _ensure_persistent_notification(hass)
+        if not hass.services.has_service("persistent_notification", "create"):
+            return
+
+        if auto_update and update_attempted:
+            message = (
+                "OpenGrowBox updated `/config/configuration.yaml` with missing "
+                f"logger settings: {missing_text}. Restart Home Assistant so the YAML changes "
+                "are loaded. A backup was created at "
+                "`/config/configuration.yaml.ogb_config_bak`."
+            )
+        elif auto_update:
+            message = (
+                "OpenGrowBox is allowed to update `/config/configuration.yaml`, "
+                "but required settings are still missing: "
+                f"{missing_text}. Check file permissions and the Home Assistant log."
+            )
+        else:
+            message = (
+                "OpenGrowBox detected missing required Home Assistant YAML "
+                f"settings: {missing_text}. Add them manually, or turn on the "
+                "`OGB Auto Configure HA` switch for one OpenGrowBox room so "
+                "OpenGrowBox can create a backup and add the missing logger entries."
+            )
+
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": "OpenGrowBox configuration required",
+                "message": message,
+                "notification_id": _CONFIG_NOTIFICATION_ID,
+            },
+            blocking=False,
+        )
+    except Exception as err:
+        _LOGGER.debug("Could not create OpenGrowBox config notification: %s", err)
+
+
+async def _ensure_persistent_notification(hass: HomeAssistant) -> None:
+    """Load persistent_notification if it is not already available."""
+    if hass.services.has_service("persistent_notification", "create"):
+        return
+
+    try:
+        from homeassistant.setup import async_setup_component
+
+        await async_setup_component(hass, "persistent_notification", {})
+    except Exception as err:
+        _LOGGER.debug("Could not set up persistent_notification: %s", err)
+
+
+def _add_required_config_to_yaml(config_path: str) -> bool:
+    """Add required logger settings to configuration.yaml if missing.
+
     IMPORTANT: Only prepend missing blocks, do NOT overwrite existing content including
     !include directives (automations.yaml, scripts.yaml, scenes.yaml, themes, etc.)
     """
     if not os.path.exists(config_path):
-        return
+        return False
 
     with open(config_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    needs_default_config = "default_config:" not in content
-    needs_logger = not ("logger:" in content and "default:" in content and "logs:" in content)
-    needs_frontend = not ("extra_module_url:" in content and "/local/opengrowbox/ogb_icons.js" in content)
+    status = get_ha_config_status(config_path)
 
-    if not (needs_default_config or needs_logger or needs_frontend):
-        _LOGGER.debug("All required config already present in configuration.yaml")
-        return
+    if status.is_complete:
+        _LOGGER.debug("All required logger config already present in configuration.yaml")
+        return False
+
+    new_content = _merge_required_logger_config(content)
+
+    if new_content == content:
+        return False
 
     backup_path = config_path + ".ogb_config_bak"
     shutil.copy(config_path, backup_path)
 
-    prepend_lines = []
-
-    if needs_default_config:
-        prepend_lines.append("default_config:")
-
-    if needs_logger:
-        prepend_lines.append("""logger:
-  default: info
-  logs:
-    homeassistant.config_entries: debug
-    homeassistant.setup: debug
-    homeassistant.loader: debug
-    custom_components.opengrowbox: debug
-    custom_components.ogb-dev-env: debug""")
-
-    # For frontend: inject into existing frontend section instead of prepending
-    if needs_frontend:
-        if "frontend:" in content:
-            # Inject extra_module_url into existing frontend block
-            # Find the frontend: line and insert after it
-            lines = content.split('\n')
-            new_lines = []
-            frontend_inserted = False
-            for i, line in enumerate(lines):
-                new_lines.append(line)
-                if line.strip() == "frontend:" and not frontend_inserted:
-                    new_lines.append("  extra_module_url:")
-                    new_lines.append("    - /local/opengrowbox/ogb_icons.js")
-                    frontend_inserted = True
-            content = '\n'.join(new_lines)
-        else:
-            prepend_lines.append("""frontend:
-  extra_module_url:
-    - /local/opengrowbox/ogb_icons.js""")
-
-    # Write: prepend new lines before existing content (keeps !includes intact)
-    if prepend_lines:
-        content = "\n\n".join(prepend_lines) + "\n\n" + content
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    _LOGGER.debug("Updated configuration.yaml (backup at %s)", backup_path)
-
-
-def _add_default_config_to_yaml(config_path: str) -> None:
-    """Add default_config to configuration.yaml if missing."""
-    if not os.path.exists(config_path):
-        return
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    if "default_config:" in content:
-        return
-
-    backup_path = config_path + ".default_config_bak"
-    shutil.copy(config_path, backup_path)
-
-    new_content = "default_config:\n\n" + content
-
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(new_content)
 
-    _LOGGER.debug("Added default_config to configuration.yaml (backup at %s)", backup_path)
+    _LOGGER.debug("Updated configuration.yaml logger config (backup at %s)", backup_path)
+    return True
 
 
-def _add_logger_to_yaml(config_path: str) -> None:
-    """Add logger config to configuration.yaml if missing or incomplete."""
-    if not os.path.exists(config_path):
-        return
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    if "logger:" in content and "default:" in content and "logs:" in content:
-        return
-
-    backup_path = config_path + ".logger_bak"
-    shutil.copy(config_path, backup_path)
-
-    logger_block = f"""logger:
-  default: info
-  logs:
-    homeassistant.config_entries: debug
-    homeassistant.setup: debug
-    homeassistant.loader: debug
-    custom_components.opengrowbox: debug
-    custom_components.ogb-dev-env: debug
-
-"""
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(logger_block + content)
-
-    _LOGGER.debug("Added logger config to configuration.yaml (backup at %s)", backup_path)
+def _required_logger_yaml() -> str:
+    """Return the required logger YAML block."""
+    lines = [
+        "logger:",
+        f"  default: {REQUIRED_LOGGER_DEFAULT}",
+        "  logs:",
+        *(
+            f"    {name}: {level}"
+            for name, level in REQUIRED_LOGGER_OVERRIDES.items()
+        ),
+    ]
+    return "\n".join(lines)
 
 
-def _add_extra_module_url_to_yaml(config_path: str, icon_url: str) -> None:
-    """Add extra_module_url to configuration.yaml if not present."""
-    if not os.path.exists(config_path):
-        return
+def _merge_required_logger_config(content: str) -> str:
+    """Merge required logger settings into configuration.yaml content."""
+    lines = content.splitlines()
+    logger_index = _find_top_level_key(lines, "logger")
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        original_content = f.read()
+    if logger_index is None:
+        if not content:
+            return _required_logger_yaml() + "\n"
+        ending = "" if content.endswith("\n") else "\n"
+        return f"{_required_logger_yaml()}\n\n{content}{ending}"
 
-    try:
-        config = yaml_lib.safe_load(original_content) or {}
-    except Exception:
-        config = {}
+    if ":" in lines[logger_index] and lines[logger_index].split(":", 1)[1].strip():
+        _LOGGER.warning(
+            "Could not auto-update logger config because logger uses an inline value: %s",
+            lines[logger_index].strip(),
+        )
+        return content
 
-    needs_update = False
+    end_index = _find_top_level_block_end(lines, logger_index + 1)
+    block = lines[logger_index:end_index]
+    block = _merge_logger_block(block)
+    merged = lines[:logger_index] + block + lines[end_index:]
+    ending = "\n" if content.endswith("\n") else ""
+    return "\n".join(merged) + ending
 
-    if "frontend" not in config:
-        config["frontend"] = {"extra_module_url": [icon_url]}
-        _LOGGER.debug("Added frontend section with icon URL to configuration.yaml")
-        needs_update = True
-    elif "extra_module_url" not in config["frontend"]:
-        config["frontend"]["extra_module_url"] = [icon_url]
-        _LOGGER.debug("Added extra_module_url to existing frontend section")
-        needs_update = True
-    elif icon_url not in config["frontend"]["extra_module_url"]:
-        config["frontend"]["extra_module_url"].append(icon_url)
-        _LOGGER.debug("Appended icon URL to existing extra_module_url")
-        needs_update = True
+
+def _merge_logger_block(block: list[str]) -> list[str]:
+    """Return logger block lines with required default and logs settings."""
+    result = list(block)
+
+    default_index = _find_child_key(result, "default")
+    if default_index is None:
+        result.insert(1, f"  default: {REQUIRED_LOGGER_DEFAULT}")
     else:
-        _LOGGER.debug("Icon URL already present in configuration.yaml")
-        return
+        result[default_index] = f"  default: {REQUIRED_LOGGER_DEFAULT}"
 
-    if needs_update:
-        backup_path = config_path + ".ogb_frontend_bak"
-        shutil.copy(config_path, backup_path)
+    logs_index = _find_child_key(result, "logs")
+    if logs_index is None:
+        result.append("  logs:")
+        logs_index = len(result) - 1
+    elif ":" in result[logs_index] and result[logs_index].split(":", 1)[1].strip():
+        _LOGGER.warning(
+            "Could not auto-update logger logs because logger.logs uses an inline value: %s",
+            result[logs_index].strip(),
+        )
+        return result
 
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml_lib.dump(config, f, default_flow_style=False, allow_unicode=True)
+    logs_end = _find_child_block_end(result, logs_index + 1, parent_indent=2)
+    existing_log_lines = {
+        _line_key(line): index
+        for index, line in enumerate(result[logs_index + 1:logs_end], start=logs_index + 1)
+        if _line_key(line)
+    }
 
-        _LOGGER.debug("Added extra_module_url to configuration.yaml (backup at %s)", backup_path)
+    insert_lines = []
+    for name, level in REQUIRED_LOGGER_OVERRIDES.items():
+        line = f"    {name}: {level}"
+        if name in existing_log_lines:
+            result[existing_log_lines[name]] = line
+        else:
+            insert_lines.append(line)
+
+    if insert_lines:
+        result[logs_end:logs_end] = insert_lines
+
+    return result
+
+
+def _find_top_level_key(lines: list[str], key: str) -> int | None:
+    """Find a top-level YAML key line."""
+    pattern = re.compile(rf"^{re.escape(key)}\s*:")
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            return index
+    return None
+
+
+def _find_top_level_block_end(lines: list[str], start_index: int) -> int:
+    """Find the end of a top-level YAML block."""
+    for index in range(start_index, len(lines)):
+        line = lines[index]
+        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
+            return index
+    return len(lines)
+
+
+def _find_child_key(lines: list[str], key: str) -> int | None:
+    """Find a two-space indented child key."""
+    pattern = re.compile(rf"^  {re.escape(key)}\s*:")
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            return index
+    return None
+
+
+def _find_child_block_end(
+    lines: list[str],
+    start_index: int,
+    *,
+    parent_indent: int,
+) -> int:
+    """Find the end of a child YAML block."""
+    for index in range(start_index, len(lines)):
+        line = lines[index]
+        if not line or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= parent_indent:
+            return index
+    return len(lines)
+
+
+def _line_key(line: str) -> str | None:
+    """Extract a YAML key from a line."""
+    stripped = line.strip()
+    if ":" not in stripped or stripped.startswith("#"):
+        return None
+    return stripped.split(":", 1)[0].strip()
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -337,9 +404,18 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
-    if not hass.data[DOMAIN].get(_CONFIG_CHECK_FLAG):
-        await _check_required_ha_logging_config(hass)
+    auto_update_config = _should_auto_update_ha_config(hass, config_entry)
+    needs_config_check = not hass.data[DOMAIN].get(_CONFIG_CHECK_FLAG)
+    needs_auto_update = (
+        auto_update_config
+        and not hass.data[DOMAIN].get(_CONFIG_AUTO_UPDATE_FLAG)
+    )
+
+    if needs_config_check or needs_auto_update:
+        await _check_required_ha_config(hass, auto_update=auto_update_config)
         hass.data[DOMAIN][_CONFIG_CHECK_FLAG] = True
+        if auto_update_config:
+            hass.data[DOMAIN][_CONFIG_AUTO_UPDATE_FLAG] = True
 
     # Check if this entry is already set up to prevent duplicate initialization
     if config_entry.entry_id in hass.data[DOMAIN]:
@@ -347,6 +423,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
             f"Entry {config_entry.entry_id} already set up, skipping duplicate setup"
         )
         return True
+
+    config_entry.async_on_unload(config_entry.add_update_listener(_async_options_updated))
 
     # Verify that the frontend integration is available
     try:
@@ -390,6 +468,18 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     _LOGGER.debug(f"✅ Integration setup complete, waiting for sensor platform to register services")
 
     return True
+
+
+async def _async_options_updated(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+) -> None:
+    """Reload an entry after options change so configuration checks rerun."""
+    if DOMAIN in hass.data:
+        hass.data[DOMAIN].pop(_CONFIG_CHECK_FLAG, None)
+        hass.data[DOMAIN].pop(_CONFIG_AUTO_UPDATE_FLAG, None)
+
+    await hass.config_entries.async_reload(config_entry.entry_id)
 
 
 async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:

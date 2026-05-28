@@ -1,10 +1,10 @@
 import logging
 
 import voluptuous as vol
-from homeassistant.helpers.entity import ToggleEntity
+from homeassistant.helpers.entity import EntityCategory, ToggleEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN
+from .const import CONF_AUTO_CONFIGURE_HA, DEFAULT_AUTO_CONFIGURE_HA, DOMAIN
 from .naming import display_name_from_raw, legacy_entity_id, room_device_info
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,12 +76,94 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
             )
 
 
+class ConfigEntryOptionSwitch(ToggleEntity):
+    """Switch backed by a Home Assistant config-entry option."""
+
+    _attr_has_entity_name = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:file-cog"
+
+    def __init__(self, name, room_name, coordinator, option_key, default=False):
+        """Initialize the config-entry option switch."""
+        self._name = name
+        self._attr_name = display_name_from_raw(name, room_name)
+        self.room_name = room_name
+        self.coordinator = coordinator
+        self.config_entry = coordinator.config_entry
+        self.option_key = option_key
+        self.default = default
+        self._unique_id = f"{DOMAIN}_{self.config_entry.entry_id}_{option_key}"
+        self.entity_id = legacy_entity_id("switch", name)
+
+    @property
+    def unique_id(self):
+        """Return the unique ID for this entity."""
+        return self._unique_id
+
+    @property
+    def name(self):
+        """Return the name of the entity."""
+        return self._attr_name
+
+    @property
+    def is_on(self):
+        """Return the option state."""
+        return bool(
+            self.config_entry.options.get(
+                self.option_key,
+                self.config_entry.data.get(self.option_key, self.default),
+            )
+        )
+
+    @property
+    def device_info(self):
+        """Return device information to link this entity to a device."""
+        return room_device_info(self.room_name, "Configuration")
+
+    async def async_turn_on(self, **kwargs):
+        """Enable the config-entry option."""
+        await self._async_set_option(True)
+
+    async def async_turn_off(self, **kwargs):
+        """Disable the config-entry option."""
+        await self._async_set_option(False)
+
+    async def async_toggle(self, **kwargs):
+        """Toggle the config-entry option."""
+        await self._async_set_option(not self.is_on)
+
+    async def _async_set_option(self, enabled):
+        """Persist the option on the config entry."""
+        options = dict(self.config_entry.options)
+        options[self.option_key] = bool(enabled)
+        self.coordinator.hass.config_entries.async_update_entry(
+            self.config_entry,
+            options=options,
+        )
+        self.async_write_ha_state()
+
+        if self.option_key == CONF_AUTO_CONFIGURE_HA:
+            from . import _check_required_ha_config
+
+            await _check_required_ha_config(
+                self.coordinator.hass,
+                auto_update=bool(enabled),
+            )
+
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up switch entities."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]
 
     # Create switches with placeholders for customization
     switches = [
+        ConfigEntryOptionSwitch(
+            f"OGB_AutoConfigureHA_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            CONF_AUTO_CONFIGURE_HA,
+            DEFAULT_AUTO_CONFIGURE_HA,
+        ),
         # TemplateSwitch
         CustomSwitch(
             f"OGB_TemplateSwitch_{coordinator.room_name}",
