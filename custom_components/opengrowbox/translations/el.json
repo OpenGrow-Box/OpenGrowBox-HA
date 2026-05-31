@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Δημιουργία δωματίου",
-        "description": "Εισάγετε ένα όνομα για το δωμάτιο.",
+        "description": "Εισαγάγετε ένα όνομα για το δωμάτιο.\n\n{configuration_status}",
         "data": {
-          "room_name": "Όνομα δωματίου"
+          "room_name": "Όνομα δωματίου",
+          "auto_configure_ha": "Αυτόματη ενημέρωση του configuration.yaml"
         },
         "data_description": {
-          "room_name": "Επιτρεπόμενοι χαρακτήρες: a-z, A-Z, 0-9, _ ή -\nΜήκος: 1-50 χαρακτήρες\n\nΠαραδείγματα: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Επιτρεπόμενοι χαρακτήρες: a-z, A-Z, 0-9, _ ή -\nΜήκος: 1-50 χαρακτήρες\n\nΠαραδείγματα: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Όταν είναι ενεργό, το OpenGrowBox προσθέτει τις ελλείπουσες ρυθμίσεις YAML του OpenGrowBox στο configuration.yaml και δημιουργεί αντίγραφο ασφαλείας πριν από την εγγραφή."
         }
       }
     },
     "error": {
       "invalid_room_name": "Μη έγκυρο όνομα δωματίου. Επιτρέπονται μόνο γράμματα (a-z, A-Z), αριθμοί (0-9), κάτω παύλα (_) και ενωτικό (-).",
-      "invalid_length": "Το όνομα του δωματίου πρέπει να είναι μεταξύ 1 και 50 χαρακτήρων."
+      "invalid_length": "Το όνομα του δωματίου πρέπει να είναι μεταξύ 1 και 50 χαρακτήρων.",
+      "required_ha_config_missing": "Λείπουν οι απαιτούμενες ρυθμίσεις YAML του OpenGrowBox. Ενεργοποιήστε τις αυτόματες ενημερώσεις ή ενημερώστε χειροκίνητα το configuration.yaml πριν συνεχίσετε."
+    },
+    "abort": {
+      "required_ha_config_missing": "Λείπουν οι απαιτούμενες ρυθμίσεις YAML του OpenGrowBox. Ενεργοποιήστε τις αυτόματες ενημερώσεις ή ενημερώστε χειροκίνητα το configuration.yaml πριν συνεχίσετε."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Επιλογές OpenGrowBox",
+        "description": "Διαχειριστείτε τη συμπεριφορά σε επίπεδο ενσωμάτωσης.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Αυτόματη ενημέρωση του configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Όταν είναι ενεργό, το OpenGrowBox προσθέτει τις ελλείπουσες ρυθμίσεις YAML του OpenGrowBox στο configuration.yaml και δημιουργεί αντίγραφο ασφαλείας πριν από την εγγραφή."
+        }
+      }
     }
   }
 }

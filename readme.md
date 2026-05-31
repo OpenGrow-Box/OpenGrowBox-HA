@@ -175,18 +175,28 @@ services:
 
 ### Basic Setup
 
-OpenGrowBox requires logger diagnostics in `configuration.yaml`. You can manage
-the YAML manually, or enable **Update configuration.yaml automatically** during
-setup or from the integration's Configure screen. When enabled, OpenGrowBox adds
-missing logger entries and creates a `.ogb_config_bak` backup before writing.
-The setup and Configure screens show the current YAML status before making
-changes. After setup, the same setting is also available as the
-`OGB Auto Configure HA` switch entity for each OpenGrowBox room. If required
-logger YAML is missing, OpenGrowBox creates a persistent notification in Home
-Assistant.
+OpenGrowBox requires logger diagnostics and Home Assistant history support in
+`configuration.yaml`. This does not require `default_config:`; if
+`default_config:` is already present, it satisfies the history requirement. For
+custom icons on Home Assistant's default dashboard, also register the frontend
+icon module shown below. You can manage the YAML manually, or enable **Update
+configuration.yaml automatically** during setup or from the integration's
+Configure screen. When enabled, OpenGrowBox adds only missing OpenGrowBox YAML
+entries and creates a `.ogb_config_bak` backup before writing. The setup and
+Configure screens block on missing logger/history YAML, but not on the icon
+module. After setup, the same setting is also available as the `OGB Auto
+Configure HA` switch entity for each OpenGrowBox room. If required YAML is
+missing, OpenGrowBox creates a persistent notification in Home Assistant.
 
 ```yaml
 # configuration.yaml
+history:
+
+# Needed for custom icons on Home Assistant's default dashboard.
+frontend:
+  extra_module_url:
+    - /local/opengrowbox/ogb_icons.js
+
 logger:
   default: info
   logs:

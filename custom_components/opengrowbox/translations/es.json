@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Crear habitación",
-        "description": "Introduzca un nombre para la habitación.",
+        "description": "Introduzca un nombre para la habitación.\n\n{configuration_status}",
         "data": {
-          "room_name": "Nombre de la habitación"
+          "room_name": "Nombre de la habitación",
+          "auto_configure_ha": "Actualizar configuration.yaml automáticamente"
         },
         "data_description": {
-          "room_name": "Caracteres permitidos: a-z, A-Z, 0-9, _ o -\nLongitud: 1-50 caracteres\n\nEjemplos: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Caracteres permitidos: a-z, A-Z, 0-9, _ o -\nLongitud: 1-50 caracteres\n\nEjemplos: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Cuando está activado, OpenGrowBox añade la configuración YAML de OpenGrowBox que falta a configuration.yaml y crea una copia de seguridad antes de escribir."
         }
       }
     },
     "error": {
       "invalid_room_name": "Nombre de habitación inválido. Solo se permiten letras (a-z, A-Z), números (0-9), guiones bajos (_) y guiones (-).",
-      "invalid_length": "El nombre de la habitación debe tener entre 1 y 50 caracteres."
+      "invalid_length": "El nombre de la habitación debe tener entre 1 y 50 caracteres.",
+      "required_ha_config_missing": "Falta la configuración YAML requerida de OpenGrowBox. Active las actualizaciones automáticas o actualice configuration.yaml manualmente antes de continuar."
+    },
+    "abort": {
+      "required_ha_config_missing": "Falta la configuración YAML requerida de OpenGrowBox. Active las actualizaciones automáticas o actualice configuration.yaml manualmente antes de continuar."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de OpenGrowBox",
+        "description": "Gestionar el comportamiento de toda la integración.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Actualizar configuration.yaml automáticamente"
+        },
+        "data_description": {
+          "auto_configure_ha": "Cuando está activado, OpenGrowBox añade la configuración YAML de OpenGrowBox que falta a configuration.yaml y crea una copia de seguridad antes de escribir."
+        }
+      }
     }
   }
 }

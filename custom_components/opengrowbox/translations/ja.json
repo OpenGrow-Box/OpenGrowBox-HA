@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "部屋を作成",
-        "description": "部屋の名前を入力してください。",
+        "description": "部屋の名前を入力してください。\n\n{configuration_status}",
         "data": {
-          "room_name": "部屋名"
+          "room_name": "部屋名",
+          "auto_configure_ha": "configuration.yaml を自動的に更新する"
         },
         "data_description": {
-          "room_name": "許可文字: a-z, A-Z, 0-9, _ または -\n長さ: 1-50文字\n\n例: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "許可文字: a-z, A-Z, 0-9, _ または -\n長さ: 1-50文字\n\n例: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "有効にすると、OpenGrowBox は不足している OpenGrowBox YAML 設定を configuration.yaml に追加し、書き込み前にバックアップを作成します。"
         }
       }
     },
     "error": {
       "invalid_room_name": "無効な部屋名です。英字(a-z, A-Z)、数字(0-9)、アンダースコア(_)とハイフン(-)のみ許可されています。",
-      "invalid_length": "部屋名は1から50文字の間である必要があります。"
+      "invalid_length": "部屋名は1から50文字の間である必要があります。",
+      "required_ha_config_missing": "必要な OpenGrowBox YAML 設定が不足しています。続行する前に自動更新を有効にするか、configuration.yaml を手動で更新してください。"
+    },
+    "abort": {
+      "required_ha_config_missing": "必要な OpenGrowBox YAML 設定が不足しています。続行する前に自動更新を有効にするか、configuration.yaml を手動で更新してください。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox オプション",
+        "description": "インテグレーション全体の動作を管理します。\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "configuration.yaml を自動的に更新する"
+        },
+        "data_description": {
+          "auto_configure_ha": "有効にすると、OpenGrowBox は不足している OpenGrowBox YAML 設定を configuration.yaml に追加し、書き込み前にバックアップを作成します。"
+        }
+      }
     }
   }
 }

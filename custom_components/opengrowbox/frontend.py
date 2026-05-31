@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import filecmp
 import logging
 import os
 import shutil
 from typing import TYPE_CHECKING
 
-from homeassistant.components.frontend import async_register_built_in_panel
+from homeassistant.components.frontend import (
+    add_extra_js_url,
+    async_register_built_in_panel,
+)
 
-from .const import DOMAIN, URL_BASE
+from .const import DOMAIN, FRONTEND_EXTRA_MODULE_URL, URL_BASE
 from .OGBController.utils.workarounds import async_register_static_path
 
 if TYPE_CHECKING:
@@ -18,7 +22,7 @@ if TYPE_CHECKING:
     from .base import HacsBase
 
 _LOGGER = logging.getLogger(__name__)
-_LOVELACE_RESOURCE_URL = "/local/opengrowbox/ogb_icons.js"
+_LOVELACE_RESOURCE_URL = FRONTEND_EXTRA_MODULE_URL
 _LOVELACE_RESOURCE_TYPE = "module"
 
 
@@ -38,42 +42,25 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
     icon_js_src = os.path.join(
         hass.config.path("custom_components"), "opengrowbox", "frontend", "ogb_icons.js"
     )
-    www_path = hass.config.path("www")
-    icon_js_dest_dir = os.path.join(www_path, "opengrowbox")
-    icon_js_dest = os.path.join(icon_js_dest_dir, "ogb_icons.js")
+    www_opengrowbox_path = os.path.join(hass.config.path("www"), "opengrowbox")
+    icon_js_dest = os.path.join(www_opengrowbox_path, "ogb_icons.js")
 
     if os.path.exists(icon_js_src):
-        try:
-            os.makedirs(icon_js_dest_dir, exist_ok=True)
-            if not os.path.exists(icon_js_dest):
-                shutil.copy(icon_js_src, icon_js_dest)
-                _LOGGER.debug(f"Copied ogb_icons.js to {icon_js_dest}")
-            else:
-                _LOGGER.debug(f"ogb_icons.js already exists in {icon_js_dest_dir}")
-        except Exception as e:
-            _LOGGER.warning(f"Could not copy ogb_icons.js to www: {e}")
+        _copy_frontend_asset(icon_js_src, icon_js_dest, "ogb_icons.js")
 
     if os.path.exists(icon_js_dest):
+        _register_global_frontend_module(hass, _LOVELACE_RESOURCE_URL)
         await _async_register_lovelace_resource(hass, _LOVELACE_RESOURCE_URL)
 
     png_src = os.path.join(
         hass.config.path("custom_components"), "opengrowbox", "frontend", "ogb_tree.png"
     )
-    png_dest_dir = os.path.join(www_path, "opengrowbox")
-    png_dest = os.path.join(png_dest_dir, "ogb_tree.png")
+    png_dest = os.path.join(www_opengrowbox_path, "ogb_tree.png")
 
     if os.path.exists(png_src):
-        try:
-            os.makedirs(png_dest_dir, exist_ok=True)
-            if not os.path.exists(png_dest):
-                shutil.copy(png_src, png_dest)
-                _LOGGER.debug(f"Copied ogb_tree.png to {png_dest}")
-            else:
-                _LOGGER.debug(f"ogb_tree.png already exists in {png_dest_dir}")
-        except Exception as e:
-            _LOGGER.warning(f"Could not copy ogb_tree.png to www: {e}")
+        _copy_frontend_asset(png_src, png_dest, "ogb_tree.png")
 
-    sidebar_icon = "custom:ogb_tree"
+    sidebar_icon = "ogb:tree"
 
     if "ogb-gui" not in hass.data.get("frontend_panels", {}):
         async_register_built_in_panel(
@@ -97,6 +84,36 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.debug(f"Custom panel registered with icon: {sidebar_icon}")
     else:
         _LOGGER.debug("Custom panel already registered.")
+
+
+def _copy_frontend_asset(source: str, destination: str, name: str) -> None:
+    """Copy a frontend asset into /config/www when missing or outdated."""
+    try:
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        if os.path.exists(destination) and filecmp.cmp(
+            source,
+            destination,
+            shallow=False,
+        ):
+            _LOGGER.debug("%s already exists at %s", name, destination)
+            return
+
+        shutil.copy2(source, destination)
+        _LOGGER.debug("Copied %s to %s", name, destination)
+    except Exception as err:
+        _LOGGER.warning("Could not copy %s to www: %s", name, err)
+
+
+def _register_global_frontend_module(
+    hass: HomeAssistant,
+    module_url: str,
+) -> None:
+    """Register the icon module with Home Assistant's global frontend loader."""
+    try:
+        add_extra_js_url(hass, module_url)
+        _LOGGER.debug("Registered OpenGrowBox global frontend module: %s", module_url)
+    except Exception as err:
+        _LOGGER.debug("Could not register OpenGrowBox global frontend module: %s", err)
 
 
 async def _async_register_lovelace_resource(

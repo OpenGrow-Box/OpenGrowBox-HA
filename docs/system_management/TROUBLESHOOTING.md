@@ -55,7 +55,15 @@ tail -f /config/home-assistant.log | grep -i "import\|module"
 
 #### 2. Configuration Errors
 ```yaml
-# Required OpenGrowBox logger diagnostics in configuration.yaml
+# OpenGrowBox YAML settings in configuration.yaml
+history:
+
+# Needed for custom icons on Home Assistant's default dashboard.
+frontend:
+  extra_module_url:
+    - /local/opengrowbox/ogb_icons.js
+
+# Required for OpenGrowBox diagnostics.
 logger:
   default: info
   logs:
@@ -66,11 +74,14 @@ logger:
     custom_components.ogb-dev-env: debug
 ```
 
-**Fix:** Ensure the logger diagnostics above are present. You can also enable
+**Fix:** Ensure the logger diagnostics and history support above are present;
+`default_config:` is not required. If `default_config:` is already present, it
+satisfies the history requirement. You can also enable
 **Update configuration.yaml automatically** in the OpenGrowBox integration
 options, or turn on the `OGB Auto Configure HA` switch entity, to let
-OpenGrowBox add missing logger entries after creating a backup. OpenGrowBox also
-creates a persistent notification that lists the exact missing logger settings.
+OpenGrowBox add missing logger/history entries and the default dashboard icon
+resource after creating a backup. OpenGrowBox also creates a persistent
+notification that lists the exact missing required settings.
 
 #### 3. Permission Issues
 - Check file permissions on OGB directory

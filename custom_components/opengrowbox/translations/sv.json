@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Skapa rum",
-        "description": "Ange ett namn för rummet.",
+        "description": "Ange ett namn för rummet.\n\n{configuration_status}",
         "data": {
-          "room_name": "Rumsnamn"
+          "room_name": "Rumsnamn",
+          "auto_configure_ha": "Uppdatera configuration.yaml automatiskt"
         },
         "data_description": {
-          "room_name": "Tillåtna tecken: a-z, A-Z, 0-9, _ eller -\nLängd: 1-50 tecken\n\nExempel: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Tillåtna tecken: a-z, A-Z, 0-9, _ eller -\nLängd: 1-50 tecken\n\nExempel: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "När detta är aktiverat lägger OpenGrowBox till saknade OpenGrowBox YAML-inställningar i configuration.yaml och skapar en säkerhetskopia före skrivning."
         }
       }
     },
     "error": {
       "invalid_room_name": "Ogiltigt rumnamn. Endast bokstäver (a-z, A-Z), siffror (0-9), understreck (_) och bindestreck (-) är tillåtna.",
-      "invalid_length": "Rumnamnet måste vara mellan 1 och 50 tecken långt."
+      "invalid_length": "Rumnamnet måste vara mellan 1 och 50 tecken långt.",
+      "required_ha_config_missing": "Obligatoriska OpenGrowBox YAML-inställningar saknas. Aktivera automatiska uppdateringar eller uppdatera configuration.yaml manuellt innan du fortsätter."
+    },
+    "abort": {
+      "required_ha_config_missing": "Obligatoriska OpenGrowBox YAML-inställningar saknas. Aktivera automatiska uppdateringar eller uppdatera configuration.yaml manuellt innan du fortsätter."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox-alternativ",
+        "description": "Hantera beteendet för hela integrationen.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Uppdatera configuration.yaml automatiskt"
+        },
+        "data_description": {
+          "auto_configure_ha": "När detta är aktiverat lägger OpenGrowBox till saknade OpenGrowBox YAML-inställningar i configuration.yaml och skapar en säkerhetskopia före skrivning."
+        }
+      }
     }
   }
 }

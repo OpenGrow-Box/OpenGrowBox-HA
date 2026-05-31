@@ -21,11 +21,16 @@ async def _async_get_configuration_status_message(hass) -> str:
 
 
 async def _async_get_configuration_status(hass):
-    """Return current configuration.yaml logger status."""
+    """Return current configuration.yaml status."""
     if hass is None:
         return HAConfigStatus(
             path="configuration.yaml",
-            missing=("logger:", "logger.default: info", "logger.logs.*: debug"),
+            missing=(
+                "logger:",
+                "logger.default: info",
+                "logger.logs.*: debug",
+                "history:",
+            ),
             error="OpenGrowBox could not check configuration.yaml from this setup flow",
         )
 
@@ -54,10 +59,8 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _has_existing_entries(self) -> bool:
         """Check if any OpenGrowBox entries already exist."""
-        from homeassistant.core import HomeAssistant
-        
         # Get the hass instance from the flow context
-        if hasattr(self, 'hass') and self.hass:
+        if hasattr(self, "hass") and self.hass:
             entries = self.hass.config_entries.async_entries(DOMAIN)
             return len(entries) > 0
         return False
@@ -90,7 +93,7 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors = {}
         auto_configure_default = DEFAULT_AUTO_CONFIGURE_HA
-        
+
         if user_input is not None:
             room_name = self._normalize_room_name(user_input.get("room_name", ""))
             auto_configure_ha = self._as_bool(
@@ -100,26 +103,26 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             config_status = await _async_get_configuration_status(
                 getattr(self, "hass", None)
             )
-            
+
             # Validate room name format
             if not re.match(r"^[a-zA-Z0-9_-]+$", room_name):
                 errors["room_name"] = "invalid_room_name"
             elif len(room_name) < 1 or len(room_name) > 50:
                 errors["room_name"] = "invalid_length"
             elif not config_status.is_complete and not auto_configure_ha:
-                errors["base"] = "required_logger_missing"
+                errors["base"] = "required_ha_config_missing"
             else:
                 # CRITICAL: Ensure ambient exists FIRST on fresh install
                 # Check if this is the first room being created
                 existing_entries = []
-                if hasattr(self, 'hass') and self.hass:
+                if hasattr(self, "hass") and self.hass:
                     existing_entries = self.hass.config_entries.async_entries(DOMAIN)
-                
+
                 has_ambient = any(
                     str(entry.data.get("room_name", "")).strip().lower() == "ambient"
                     for entry in existing_entries
                 )
-                
+
                 # Only create ambient automatically on first setup (no existing entries)
                 # Skip if user explicitly names their room "ambient"
                 if not existing_entries and room_name.lower() != "ambient" and not has_ambient:
@@ -163,18 +166,18 @@ class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         config_status = await _async_get_configuration_status(getattr(self, "hass", None))
         if not config_status.is_complete and not auto_configure_ha:
-            return self.async_abort(reason="required_logger_missing")
+            return self.async_abort(reason="required_ha_config_missing")
 
         # Same logic for import: ensure ambient first if this is first room
         existing_entries = []
-        if hasattr(self, 'hass') and self.hass:
+        if hasattr(self, "hass") and self.hass:
             existing_entries = self.hass.config_entries.async_entries(DOMAIN)
-        
+
         has_ambient = any(
             str(entry.data.get("room_name", "")).strip().lower() == "ambient"
             for entry in existing_entries
         )
-        
+
         if not existing_entries and room_name.lower() != "ambient" and not has_ambient:
             _LOGGER.debug("Import setup (first room): Creating 'ambient' room first")
             await self._async_create_room_entry("ambient")

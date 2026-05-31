@@ -1,4 +1,4 @@
-"""Helpers for checking required Home Assistant logger configuration."""
+"""Helpers for checking required Home Assistant YAML configuration."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
     if not os.path.exists(path):
         return HAConfigStatus(
             path=path,
-            missing=_required_logger_settings(),
+            missing=_required_logger_settings() + _required_history_settings(),
             error="configuration.yaml was not found",
         )
 
@@ -97,6 +97,11 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
         return HAConfigStatus(path=path, error=str(err))
 
     missing = []
+    history_missing = (
+        []
+        if _history_is_configured(config)
+        else list(_required_history_settings())
+    )
 
     logger_config = config.get("logger")
     logger_line = _find_top_level_logger_line(content)
@@ -108,6 +113,7 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
         if logger_line_is_inline:
             return HAConfigStatus(
                 path=path,
+                missing=tuple(history_missing),
                 error=(
                     "logger is defined with an inline value or include and "
                     "cannot be verified or updated automatically: "
@@ -136,7 +142,7 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
             if logs_line and _line_has_inline_value(logs_line):
                 return HAConfigStatus(
                     path=path,
-                    missing=tuple(missing),
+                    missing=tuple(missing + history_missing),
                     error=(
                         "logger.logs is defined with an inline value or include "
                         "and cannot be verified or updated automatically: "
@@ -162,12 +168,14 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
     if missing and logger_line_is_inline:
         return HAConfigStatus(
             path=path,
-            missing=tuple(missing),
+            missing=tuple(missing + history_missing),
             error=(
                 "logger is defined with an inline mapping and cannot be "
                 f"updated automatically: {logger_line.strip()}"
             ),
         )
+
+    missing.extend(history_missing)
 
     return HAConfigStatus(path=path, missing=tuple(missing))
 
@@ -184,25 +192,35 @@ def _required_logger_settings() -> tuple[str, ...]:
     )
 
 
+def _required_history_settings() -> tuple[str, ...]:
+    """Return every required history setting in user-facing form."""
+    return ("history:",)
+
+
+def _history_is_configured(config: dict[str, Any]) -> bool:
+    """Return true if history is configured directly or through default_config."""
+    return "history" in config or "default_config" in config
+
+
 def format_ha_config_status_message(status: HAConfigStatus) -> str:
     """Return a short user-facing status message for config-flow forms."""
     if status.is_complete:
         return (
             "configuration.yaml already contains the required OpenGrowBox "
-            "logger diagnostics."
+            "logger diagnostics and history integration."
         )
 
     if status.error:
         if not status.missing:
             return (
                 f"Warning: OpenGrowBox could not verify {status.path}: "
-                f"{status.error}. Update the logger configuration manually, "
-                "or use a plain logger block in configuration.yaml before "
+                f"{status.error}. Update the required YAML settings manually, "
+                "or use a plain logger block plus history/default_config before "
                 "enabling automatic updates."
             )
         return (
             f"Warning: OpenGrowBox could not verify {status.path}: {status.error}. "
-            "Required logger settings: "
+            "Required settings: "
             f"{', '.join(status.missing)}. Add them manually, or enable automatic "
             "updates below."
         )
@@ -210,7 +228,7 @@ def format_ha_config_status_message(status: HAConfigStatus) -> str:
     return (
         "Warning: configuration.yaml is missing: "
         f"{', '.join(status.missing)}. Add them manually, or enable automatic "
-        "updates below so OpenGrowBox can create a backup and add the logger "
+        "updates below so OpenGrowBox can create a backup and add the missing "
         "settings."
     )
 
@@ -221,7 +239,13 @@ def _parse_yaml_with_ha_includes(content: str) -> dict[str, Any]:
     found_logger = False
     for line in content.split("\n"):
         stripped = line.strip()
-        if stripped.startswith("logger:") and not found_logger:
+        if not stripped or stripped.startswith("#") or line != line.lstrip():
+            continue
+        if stripped.startswith("default_config:"):
+            result["default_config"] = {}
+        elif stripped.startswith("history:"):
+            result["history"] = {}
+        elif stripped.startswith("logger:") and not found_logger:
             result["logger"] = _extract_logger_block(content)
             found_logger = True
     return result
@@ -275,34 +299,54 @@ def _format_expected_value(key: str, expected: str, current: Any) -> str:
 
 def _find_top_level_logger_line(content: str) -> str | None:
     """Return the top-level logger declaration line if present."""
+    return _find_top_level_line(content, "logger")
+
+
+def _find_top_level_line(content: str, key: str) -> str | None:
+    """Return a top-level YAML declaration line if present."""
+    prefix = f"{key}:"
     for line in content.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if line == line.lstrip() and stripped.startswith("logger:"):
+        if line == line.lstrip() and stripped.startswith(prefix):
             return line
     return None
 
 
 def _find_logger_child_line(content: str, child_key: str) -> str | None:
     """Return a direct child line from the top-level logger block."""
-    in_logger = False
+    return _find_child_line(content, "logger", child_key)
+
+
+def _find_child_line(content: str, parent_key: str, child_key: str) -> str | None:
+    """Return a direct child line from a top-level YAML block."""
+    in_parent = False
+    parent_prefix = f"{parent_key}:"
     child_prefix = f"{child_key}:"
     for line in content.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         if line == line.lstrip():
-            if stripped.startswith("logger:"):
-                in_logger = True
+            if stripped.startswith(parent_prefix):
+                in_parent = True
                 continue
-            if in_logger:
+            if in_parent:
                 break
-        if in_logger and stripped.startswith(child_prefix):
-            return line
+        if in_parent and line.startswith("  ") and not line.startswith("    "):
+            if stripped.startswith(child_prefix):
+                return line
     return None
+
+
+def _line_value_after_colon(line: str) -> str:
+    """Return an inline YAML value after a colon, ignoring comments."""
+    if ":" not in line:
+        return ""
+    return line.split(":", 1)[1].split("#", 1)[0].strip()
 
 
 def _line_has_inline_value(line: str) -> bool:
     """Return true when a YAML key line has a value after the colon."""
-    return bool(line.split(":", 1)[1].strip())
+    return bool(_line_value_after_colon(line))

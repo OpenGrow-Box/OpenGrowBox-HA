@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Create room",
-        "description": "Enter a name for the room.",
+        "description": "Masukkan nama untuk ruangan.\n\n{configuration_status}",
         "data": {
-          "room_name": "Room name"
+          "room_name": "Room name",
+          "auto_configure_ha": "Perbarui configuration.yaml secara otomatis"
         },
         "data_description": {
-          "room_name": "Allowed characters: a-z, A-Z, 0-9, _ or -\nLength: 1-50 characters\n\nExamples: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Allowed characters: a-z, A-Z, 0-9, _ or -\nLength: 1-50 characters\n\nExamples: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Jika diaktifkan, OpenGrowBox menambahkan pengaturan YAML OpenGrowBox yang hilang ke configuration.yaml dan membuat cadangan sebelum menulis."
         }
       }
     },
     "error": {
       "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between 1 and 50 characters long."
+      "invalid_length": "Room name must be between 1 and 50 characters long.",
+      "required_ha_config_missing": "Pengaturan YAML OpenGrowBox yang diperlukan belum ada. Aktifkan pembaruan otomatis atau perbarui configuration.yaml secara manual sebelum melanjutkan."
+    },
+    "abort": {
+      "required_ha_config_missing": "Pengaturan YAML OpenGrowBox yang diperlukan belum ada. Aktifkan pembaruan otomatis atau perbarui configuration.yaml secara manual sebelum melanjutkan."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opsi OpenGrowBox",
+        "description": "Kelola perilaku seluruh integrasi.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Perbarui configuration.yaml secara otomatis"
+        },
+        "data_description": {
+          "auto_configure_ha": "Jika diaktifkan, OpenGrowBox menambahkan pengaturan YAML OpenGrowBox yang hilang ke configuration.yaml dan membuat cadangan sebelum menulis."
+        }
+      }
     }
   }
 }

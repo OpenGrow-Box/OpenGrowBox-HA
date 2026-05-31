@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Creează cameră",
-        "description": "Introduceți un nume pentru cameră.",
+        "description": "Introduceți un nume pentru cameră.\n\n{configuration_status}",
         "data": {
-          "room_name": "Numele camerei"
+          "room_name": "Numele camerei",
+          "auto_configure_ha": "Actualizează automat configuration.yaml"
         },
         "data_description": {
-          "room_name": "Caractere permise: a-z, A-Z, 0-9, _ sau -\nLungime: 1-50 caractere\n\nExemple: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Caractere permise: a-z, A-Z, 0-9, _ sau -\nLungime: 1-50 caractere\n\nExemple: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Când este activat, OpenGrowBox adaugă setările YAML OpenGrowBox lipsă în configuration.yaml și creează o copie de rezervă înainte de scriere."
         }
       }
     },
     "error": {
       "invalid_room_name": "Nume de cameră invalid. Sunt permise doar litere (a-z, A-Z), cifre (0-9), liniuțe jos (_) și cratime (-).",
-      "invalid_length": "Numele camerei trebuie să aibă între 1 și 50 caractere."
+      "invalid_length": "Numele camerei trebuie să aibă între 1 și 50 caractere.",
+      "required_ha_config_missing": "Lipsesc setările YAML OpenGrowBox necesare. Activați actualizările automate sau actualizați manual configuration.yaml înainte de a continua."
+    },
+    "abort": {
+      "required_ha_config_missing": "Lipsesc setările YAML OpenGrowBox necesare. Activați actualizările automate sau actualizați manual configuration.yaml înainte de a continua."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni OpenGrowBox",
+        "description": "Gestionați comportamentul la nivelul integrării.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Actualizează automat configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Când este activat, OpenGrowBox adaugă setările YAML OpenGrowBox lipsă în configuration.yaml și creează o copie de rezervă înainte de scriere."
+        }
+      }
     }
   }
 }

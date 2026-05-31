@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Oda oluştur",
-        "description": "Oda için bir ad girin.",
+        "description": "Oda için bir ad girin.\n\n{configuration_status}",
         "data": {
-          "room_name": "Oda adı"
+          "room_name": "Oda adı",
+          "auto_configure_ha": "configuration.yaml dosyasını otomatik güncelle"
         },
         "data_description": {
-          "room_name": "İzin verilen karakterler: a-z, A-Z, 0-9, _ veya -\nUzunluk: 1-50 karakter\n\nÖrnekler: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "İzin verilen karakterler: a-z, A-Z, 0-9, _ veya -\nUzunluk: 1-50 karakter\n\nÖrnekler: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Etkinleştirildiğinde OpenGrowBox, eksik OpenGrowBox YAML ayarlarını configuration.yaml dosyasına ekler ve yazmadan önce yedek oluşturur."
         }
       }
     },
     "error": {
       "invalid_room_name": "Geçersiz oda adı. Sadece harfler (a-z, A-Z), rakamlar (0-9), alt çizgiler (_) ve tireler (-) izin verilir.",
-      "invalid_length": "Oda adı 1 ile 50 karakter uzunluğunda olmalıdır."
+      "invalid_length": "Oda adı 1 ile 50 karakter uzunluğunda olmalıdır.",
+      "required_ha_config_missing": "Gerekli OpenGrowBox YAML ayarları eksik. Devam etmeden önce otomatik güncellemeleri etkinleştirin veya configuration.yaml dosyasını elle güncelleyin."
+    },
+    "abort": {
+      "required_ha_config_missing": "Gerekli OpenGrowBox YAML ayarları eksik. Devam etmeden önce otomatik güncellemeleri etkinleştirin veya configuration.yaml dosyasını elle güncelleyin."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox seçenekleri",
+        "description": "Entegrasyon genelindeki davranışı yönetin.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "configuration.yaml dosyasını otomatik güncelle"
+        },
+        "data_description": {
+          "auto_configure_ha": "Etkinleştirildiğinde OpenGrowBox, eksik OpenGrowBox YAML ayarlarını configuration.yaml dosyasına ekler ve yazmadan önce yedek oluşturur."
+        }
+      }
     }
   }
 }

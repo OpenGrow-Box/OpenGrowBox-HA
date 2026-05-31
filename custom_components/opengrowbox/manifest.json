@@ -3,16 +3,23 @@
   "name": "OpenGrowBox",
   "codeowners": ["@OpenGrowBox"],
   "config_flow": true,
-  "dependencies": ["http", "frontend", "lovelace", "zeroconf", "persistent_notification"],
+  "dependencies": [
+    "http",
+    "frontend",
+    "lovelace",
+    "history",
+    "zeroconf",
+    "persistent_notification"
+  ],
   "documentation": "https://github.com/OpenGrow-Box/OpenGrowBox/wiki",
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues",
   "requirements": [
-     "pymodbus>=3.11.2,<4.0.0",
-      "cryptography>=45.0.7,<48.0.0",
-     "python-socketio>=5.10.0,<6.0.0",
-     "aiohttp>=3.12.15,<4.0.0"
-   ],
-   "version": "1.4.2"
+    "pymodbus>=3.11.2,<4.0.0",
+    "cryptography>=45.0.7,<48.0.0",
+    "python-socketio>=5.10.0,<6.0.0",
+    "aiohttp>=3.12.15,<4.0.0"
+  ],
+  "version": "1.4.2"
 }

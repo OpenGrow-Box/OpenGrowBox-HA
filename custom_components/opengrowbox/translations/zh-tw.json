@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "創建房間",
-        "description": "請輸入房間名稱。",
+        "description": "輸入房間名稱。\n\n{configuration_status}",
         "data": {
-          "room_name": "房間名稱"
+          "room_name": "房間名稱",
+          "auto_configure_ha": "自動更新 configuration.yaml"
         },
         "data_description": {
-          "room_name": "允許字符: a-z, A-Z, 0-9, _ 或 -\n長度: 1-50個字符\n\n範例: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "允許字符: a-z, A-Z, 0-9, _ 或 -\n長度: 1-50個字符\n\n範例: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "啟用後，OpenGrowBox 會將缺少的 OpenGrowBox YAML 設定新增至 configuration.yaml，並在寫入前建立備份。"
         }
       }
     },
     "error": {
       "invalid_room_name": "無效的房間名稱。僅允許字母(a-z, A-Z)、數字(0-9)、底線(_)和連字符(-)。",
-      "invalid_length": "房間名稱必須在1到50個字符之間。"
+      "invalid_length": "房間名稱必須在1到50個字符之間。",
+      "required_ha_config_missing": "缺少必要的 OpenGrowBox YAML 設定。請先啟用自動更新，或手動更新 configuration.yaml 後再繼續。"
+    },
+    "abort": {
+      "required_ha_config_missing": "缺少必要的 OpenGrowBox YAML 設定。請先啟用自動更新，或手動更新 configuration.yaml 後再繼續。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox 選項",
+        "description": "管理整個整合的行為。\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "自動更新 configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "啟用後，OpenGrowBox 會將缺少的 OpenGrowBox YAML 設定新增至 configuration.yaml，並在寫入前建立備份。"
+        }
+      }
     }
   }
 }

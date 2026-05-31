@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Ruimte maken",
-        "description": "Voer een naam in voor de ruimte.",
+        "description": "Voer een naam voor de ruimte in.\n\n{configuration_status}",
         "data": {
-          "room_name": "Naam ruimte"
+          "room_name": "Naam ruimte",
+          "auto_configure_ha": "configuration.yaml automatisch bijwerken"
         },
         "data_description": {
-          "room_name": "Toegestane tekens: a-z, A-Z, 0-9, _ of -\nLengte: 1-50 tekens\n\nVoorbeelden: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Toegestane tekens: a-z, A-Z, 0-9, _ of -\nLengte: 1-50 tekens\n\nVoorbeelden: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Wanneer ingeschakeld voegt OpenGrowBox ontbrekende OpenGrowBox YAML-instellingen toe aan configuration.yaml en maakt het een back-up voordat er wordt geschreven."
         }
       }
     },
     "error": {
       "invalid_room_name": "Ongeldige ruimtenaam. Alleen letters (a-z, A-Z), cijfers (0-9), underscores (_) en koppeltekens (-) zijn toegestaan.",
-      "invalid_length": "De ruimtenaam moet tussen 1 en 50 tekens lang zijn."
+      "invalid_length": "De ruimtenaam moet tussen 1 en 50 tekens lang zijn.",
+      "required_ha_config_missing": "Vereiste OpenGrowBox YAML-instellingen ontbreken. Schakel automatische updates in of werk configuration.yaml handmatig bij voordat u doorgaat."
+    },
+    "abort": {
+      "required_ha_config_missing": "Vereiste OpenGrowBox YAML-instellingen ontbreken. Schakel automatische updates in of werk configuration.yaml handmatig bij voordat u doorgaat."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox-opties",
+        "description": "Beheer gedrag voor de hele integratie.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "configuration.yaml automatisch bijwerken"
+        },
+        "data_description": {
+          "auto_configure_ha": "Wanneer ingeschakeld voegt OpenGrowBox ontbrekende OpenGrowBox YAML-instellingen toe aan configuration.yaml en maakt het een back-up voordat er wordt geschreven."
+        }
+      }
     }
   }
 }

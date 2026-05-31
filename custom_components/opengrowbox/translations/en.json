@@ -10,17 +10,17 @@
         },
         "data_description": {
           "room_name": "Allowed characters: a-z, A-Z, 0-9, _ or -\nLength: 1-50 characters\n\nExamples: GrowRoom1, grow_box, Grow-Room-1",
-          "auto_configure_ha": "When enabled, OpenGrowBox adds missing logger diagnostics to configuration.yaml and creates a backup before writing."
+          "auto_configure_ha": "When enabled, OpenGrowBox adds missing OpenGrowBox YAML settings to configuration.yaml and creates a backup before writing."
         }
       }
     },
     "error": {
       "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
       "invalid_length": "Room name must be between 1 and 50 characters long.",
-      "required_logger_missing": "Required logger settings are missing. Enable automatic updates or update configuration.yaml manually before continuing."
+      "required_ha_config_missing": "Required OpenGrowBox YAML settings are missing. Enable automatic updates or update configuration.yaml manually before continuing."
     },
     "abort": {
-      "required_logger_missing": "Required logger settings are missing. Enable automatic updates or update configuration.yaml manually before continuing."
+      "required_ha_config_missing": "Required OpenGrowBox YAML settings are missing. Enable automatic updates or update configuration.yaml manually before continuing."
     }
   },
   "options": {
@@ -32,7 +32,7 @@
           "auto_configure_ha": "Update configuration.yaml automatically"
         },
         "data_description": {
-          "auto_configure_ha": "When enabled, OpenGrowBox adds missing logger diagnostics to configuration.yaml and creates a backup before writing."
+          "auto_configure_ha": "When enabled, OpenGrowBox adds missing OpenGrowBox YAML settings to configuration.yaml and creates a backup before writing."
         }
       }
     }
