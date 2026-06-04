@@ -636,15 +636,18 @@ class OGBRegistryEvenListener:
         capabilities = self.data_store.get("capabilities") or {}
         
         # Find which capabilities this device belongs to
+        # Extract device name from entity_id (e.g., "switch.devdoor" -> "devdoor")
+        device_name = entry.entity_id.split(".", 1)[1] if "." in entry.entity_id else entry.entity_id
+        
         for cap, cap_data in capabilities.items():
-            if entry.entity_id in cap_data.get("devEntities", []):
+            if device_name in cap_data.get("devEntities", []):
                 # Remove device from capability
-                cap_data["devEntities"].remove(entry.entity_id)
+                cap_data["devEntities"].remove(device_name)
                 cap_data["count"] = len(cap_data["devEntities"])
 
                 # Remove from deviceData
-                if "deviceData" in cap_data and entry.entity_id in cap_data["deviceData"]:
-                    del cap_data["deviceData"][entry.entity_id]
+                if "deviceData" in cap_data and device_name in cap_data["deviceData"]:
+                    del cap_data["deviceData"][device_name]
 
                 # Update state if no devices left
                 if cap_data["count"] == 0:
@@ -654,7 +657,7 @@ class OGBRegistryEvenListener:
                 self.data_store.setDeep(f"capabilities.{cap}", cap_data)
                 
                 _LOGGER.debug(
-                    f"{self.room_name}: Removed disabled device {entry.entity_id} "
+                    f"{self.room_name}: Removed disabled device {device_name} "
                     f"from capability {cap}. Remaining: {cap_data['count']}"
                 )
 
@@ -681,14 +684,17 @@ class OGBRegistryEvenListener:
                     continue
                 
                 # Re-register device
-                if entry.entity_id not in current_cap["devEntities"]:
-                    current_cap["devEntities"].append(entry.entity_id)
+                # Extract device name from entity_id (e.g., "switch.devdoor" -> "devdoor")
+                device_name = entry.entity_id.split(".", 1)[1] if "." in entry.entity_id else entry.entity_id
+                
+                if device_name not in current_cap["devEntities"]:
+                    current_cap["devEntities"].append(device_name)
                     current_cap["count"] = len(current_cap["devEntities"])
                     current_cap["state"] = True
                     
                     self.data_store.setDeep(cap_path, current_cap)
                     
                     _LOGGER.debug(
-                        f"{self.room_name}: Re-enabled device {entry.entity_id} "
+                        f"{self.room_name}: Re-enabled device {device_name} "
                         f"in capability {cap}. Total: {current_cap['count']}"
                     )

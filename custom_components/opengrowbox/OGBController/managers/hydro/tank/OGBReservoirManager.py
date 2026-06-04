@@ -209,8 +209,26 @@ class OGBReservoirManager:
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error finding reservoir sensor: {e}")
     
+    def _extract_device_name_from_capability(self, capability_entry):
+        """Extract device name from capability entry (handles both device names and entity IDs)."""
+        if not capability_entry:
+            return None
+        
+        # If it's already a device name (no domain prefix), return as-is
+        if isinstance(capability_entry, str) and '.' not in capability_entry:
+            return capability_entry
+        
+        # If it's an entity ID (e.g., "switch.devwaterreservoir"), extract device name
+        if isinstance(capability_entry, str) and '.' in capability_entry:
+            return capability_entry.split('.', 1)[1]
+        
+        return str(capability_entry)
+    
     async def _find_reservoir_pump(self, log_missing: bool = True):
-        """Find reservoir fill pump entity via capability-based discovery"""
+        """Find reservoir fill pump via capability-based discovery or device scan.
+        
+        Returns the device NAME (not entity ID) for consistent event targeting.
+        """
         try:
             # Use capability-based discovery (like modes do)
             pump_capability = self.data_store.getDeep("capabilities.canReservoirFill")
@@ -218,12 +236,14 @@ class OGBReservoirManager:
             if pump_capability and pump_capability.get("state"):
                 dev_entities = pump_capability.get("devEntities", [])
                 if dev_entities:
-                    # Get the first available pump entity
-                    self.reservoir_pump_entity = dev_entities[0]
-                    _LOGGER.debug(
-                        f"[{self.room}] Found reservoir pump via capability: {self.reservoir_pump_entity}"
-                    )
-                    return
+                    # Get device name from capability entry (strip domain prefix if present)
+                    pump_device = self._extract_device_name_from_capability(dev_entities[0])
+                    if pump_device:
+                        self.reservoir_pump_entity = pump_device
+                        _LOGGER.debug(
+                            f"[{self.room}] Found reservoir pump via capability: {pump_device}"
+                        )
+                        return
             
             # Fallback: Check OGB devices directly
             devices = self.data_store.getDeep("devices", [])
@@ -231,23 +251,20 @@ class OGBReservoirManager:
                 # Handle both dict and Device object
                 if isinstance(device, dict):
                     device_type = device.get("deviceType", "").lower()
-                    entities = device.get("entities", [])
+                    device_name = device.get("name", "")
                     device_labels = device.get("labels", [])
                 else:
                     # Device object
                     device_type = getattr(device, "deviceType", "").lower()
-                    entities = getattr(device, "entities", [])
+                    device_name = getattr(device, "deviceName", "")
                     device_labels = getattr(device, "labels", [])
                 
                 # Check if device type is ReservoirPump
                 if device_type == "reservoirpump":
-                    if entities:
-                        if isinstance(entities[0], dict):
-                            self.reservoir_pump_entity = entities[0].get("entity_id")
-                        else:
-                            self.reservoir_pump_entity = str(entities[0])
+                    if device_name:
+                        self.reservoir_pump_entity = device_name
                         _LOGGER.debug(
-                            f"[{self.room}] Found reservoir pump by device type: {self.reservoir_pump_entity}"
+                            f"[{self.room}] Found reservoir pump by device type: {device_name}"
                         )
                         return
                 
@@ -259,13 +276,10 @@ class OGBReservoirManager:
                         label_name = str(lbl).lower()
                     
                     if label_name in ["reservoir_pump", "reservoirpump", "tank_fill", "fill_pump", "reservoir_fill", "water_fill"]:
-                        if entities:
-                            if isinstance(entities[0], dict):
-                                self.reservoir_pump_entity = entities[0].get("entity_id")
-                            else:
-                                self.reservoir_pump_entity = str(entities[0])
+                        if device_name:
+                            self.reservoir_pump_entity = device_name
                             _LOGGER.debug(
-                                f"[{self.room}] Found reservoir pump by label '{label_name}': {self.reservoir_pump_entity}"
+                                f"[{self.room}] Found reservoir pump by label '{label_name}': {device_name}"
                             )
                             return
             
@@ -278,9 +292,11 @@ class OGBReservoirManager:
                 if "switch" in entity_id or "pump" in entity_id:
                     if any(keyword in entity_id.lower() for keyword in 
                            ['reservoir_pump', 'reservoirpump', 'tank_fill', 'fill_pump', 'reservoir_fill', 'water_fill']):
-                        self.reservoir_pump_entity = entity_id
+                        # Extract device name from entity ID
+                        pump_device = entity_id.split('.', 1)[1] if '.' in entity_id else entity_id
+                        self.reservoir_pump_entity = pump_device
                         _LOGGER.debug(
-                            f"[{self.room}] Found reservoir pump by entity_id fallback: {entity_id}"
+                            f"[{self.room}] Found reservoir pump by entity_id fallback: {pump_device}"
                         )
                         return
             
@@ -298,6 +314,10 @@ class OGBReservoirManager:
         """Check if updated sensor is our reservoir sensor"""
         try:
             entity_id, state = self._extract_entity_state(data)
+
+            # Lazy pump discovery: if pump not found yet, try again
+            if not self.reservoir_pump_entity:
+                await self._find_reservoir_pump(log_missing=False)
 
             if entity_id and self.reservoir_pump_entity and entity_id == self.reservoir_pump_entity:
                 await self._handle_pump_state_update(state)
@@ -688,7 +708,7 @@ class OGBReservoirManager:
             await self._find_reservoir_pump()
         
         if not self.reservoir_pump_entity:
-            _LOGGER.error(f"[{self.room}] Cannot auto-fill: No reservoir pump configured")
+            _LOGGER.debug(f"[{self.room}] Cannot auto-fill: No reservoir pump configured")
             _LOGGER.debug(f"[{self.room}] Add a pump with label 'reservoir_pump' to enable auto-fill")
             return
         
@@ -914,6 +934,12 @@ class OGBReservoirManager:
             await self._deactivate_pump()
             return False
     
+    def _normalize_pump_target(self, pump_ref: str) -> str:
+        """Normalize pump reference to device name (strip domain prefix if present)."""
+        if isinstance(pump_ref, str) and '.' in pump_ref:
+            return pump_ref.split('.', 1)[1]
+        return pump_ref
+
     async def _activate_pump(self):
         """Activate reservoir fill pump via event (like modes do)"""
         try:
@@ -924,7 +950,7 @@ class OGBReservoirManager:
             if pump_capability and pump_capability.get("state"):
                 dev_entities = pump_capability.get("devEntities", [])
                 if dev_entities:
-                    pump_entity = dev_entities[0]
+                    pump_entity = self._normalize_pump_target(dev_entities[0])
                     
                     # Send event to pump device (like modes do)
                     await self.event_manager.emit(
@@ -941,16 +967,17 @@ class OGBReservoirManager:
             
             # Fallback: Try stored entity
             if self.reservoir_pump_entity:
+                pump_entity = self._normalize_pump_target(self.reservoir_pump_entity)
                 await self.event_manager.emit(
                     "ReservoirFillAction",
                     {
                         "Name": self.room,
                         "Action": "on",
-                        "Device": self.reservoir_pump_entity,
+                        "Device": pump_entity,
                         "Cycle": True
                     }
                 )
-                _LOGGER.debug(f"[{self.room}] Reservoir pump activation event sent (fallback): {self.reservoir_pump_entity}")
+                _LOGGER.debug(f"[{self.room}] Reservoir pump activation event sent (fallback): {pump_entity}")
             else:
                 _LOGGER.error(f"[{self.room}] No reservoir pump available to activate")
                 
@@ -968,7 +995,7 @@ class OGBReservoirManager:
             if pump_capability and pump_capability.get("state"):
                 dev_entities = pump_capability.get("devEntities", [])
                 if dev_entities:
-                    pump_entity = dev_entities[0]
+                    pump_entity = self._normalize_pump_target(dev_entities[0])
                     
                     # Send event to pump device (like modes do)
                     await self.event_manager.emit(
@@ -985,16 +1012,17 @@ class OGBReservoirManager:
             
             # Fallback: Try stored entity
             if self.reservoir_pump_entity:
+                pump_entity = self._normalize_pump_target(self.reservoir_pump_entity)
                 await self.event_manager.emit(
                     "ReservoirFillAction",
                     {
                         "Name": self.room,
                         "Action": "off",
-                        "Device": self.reservoir_pump_entity,
+                        "Device": pump_entity,
                         "Cycle": True
                     }
                 )
-                _LOGGER.debug(f"[{self.room}] Reservoir pump deactivation event sent (fallback): {self.reservoir_pump_entity}")
+                _LOGGER.debug(f"[{self.room}] Reservoir pump deactivation event sent (fallback): {pump_entity}")
             else:
                 _LOGGER.warning(f"[{self.room}] No reservoir pump available to deactivate")
                 
