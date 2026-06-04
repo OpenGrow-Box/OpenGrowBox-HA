@@ -118,7 +118,13 @@ class Pump(Device):
             action = getattr(data, "Action", "on").lower()
 
         if target_name != self.deviceName:
-            return  # Nicht für diese Pumpe bestimmt
+            # Auch Entity-ID Format prüfen (z.B. "switch.devwaterreservoir" -> "devwaterreservoir")
+            if isinstance(target_name, str) and '.' in target_name:
+                entity_name = target_name.split('.', 1)[1]
+                if entity_name != self.deviceName:
+                    return  # Nicht für diese Pumpe bestimmt
+            else:
+                return  # Nicht für diese Pumpe bestimmt
 
         if action in ["on", "start", "activate"]:
             self.log_action(f"TurnON [{self.pumpCapability}]")
@@ -136,7 +142,13 @@ class Pump(Device):
             target_name = getattr(data, "Device", None)
 
         if target_name != self.deviceName:
-            return  # Nicht für diese Pumpe bestimmt
+            # Auch Entity-ID Format prüfen (z.B. "switch.devwaterreservoir" -> "devwaterreservoir")
+            if isinstance(target_name, str) and '.' in target_name:
+                entity_name = target_name.split('.', 1)[1]
+                if entity_name != self.deviceName:
+                    return  # Nicht für diese Pumpe bestimmt
+            else:
+                return  # Nicht für diese Pumpe bestimmt
 
         self.log_action("TurnON ")
         await self.turn_on()
@@ -149,7 +161,13 @@ class Pump(Device):
             target_name = getattr(data, "Device", None)
 
         if target_name != self.deviceName:
-            return  # Nicht für diese Pumpe bestimmt
+            # Auch Entity-ID Format prüfen (z.B. "switch.devwaterreservoir" -> "devwaterreservoir")
+            if isinstance(target_name, str) and '.' in target_name:
+                entity_name = target_name.split('.', 1)[1]
+                if entity_name != self.deviceName:
+                    return  # Nicht für diese Pumpe bestimmt
+            else:
+                return  # Nicht für diese Pumpe bestimmt
 
         self.log_action("TurnOFF ")
         await self.turn_off()
