@@ -799,9 +799,11 @@ class OGBMediumManager:
         """
         Saves mediums to datastore with change detection to prevent spam.
         Only saves if data actually changed.
+        Also syncs the oldest medium's plant dates back to room-level plantDates
+        for backwards compatibility with Light.py DLI control.
         """
         mediums_as_dicts = [medium.to_dict() for medium in self.media]
-        
+
         # Log what we're about to save
         for md in mediums_as_dicts:
             _LOGGER.debug(
@@ -809,30 +811,77 @@ class OGBMediumManager:
                 f"plant_name={md.get('plant_name')}, breeder_name={md.get('breeder_name')}, "
                 f"breeder_bloom_days={md.get('breeder_bloom_days')}"
             )
-        
+
         # Create hash of current data for change detection
         try:
             import json
             current_hash = hash(json.dumps(mediums_as_dicts, sort_keys=True, default=str))
-            
+
             # Skip save if nothing changed
             if current_hash == self._last_save_hash:
                 _LOGGER.debug(f"[{self.room}] Skipping save - no changes detected (hash match)")
                 return
-            
+
             self._last_save_hash = current_hash
         except Exception as e:
             # If hashing fails, just save anyway
             _LOGGER.debug(f"[{self.room}] Could not hash data for change detection: {e}")
-        
+
         self._save_count += 1
         self.data_store.set("growMediums", mediums_as_dicts)
         _LOGGER.debug(
             f"[{self.room}] ✅ DATASTORE SAVED (save #{self._save_count}) - {len(mediums_as_dicts)} mediums"
         )
-        
+
+        # SYNC: Write oldest medium's plant dates back to room-level plantDates
+        # This keeps Light.py DLI control working without changes
+        self._sync_oldest_medium_to_plant_dates()
+
         # CRITICAL: Also persist to disk via SaveState event
         self._create_tracked_task(self.event_manager.emit("SaveState", {"source": "MediumManager"}))
+
+    def _sync_oldest_medium_to_plant_dates(self):
+        """Sync the oldest medium's plant dates back to room-level plantDates.
+
+        Finds the medium with the earliest grow_start_date and writes its
+        dates into the legacy plantDates keys so Light.py DLI control works.
+        """
+        if not self.media:
+            return
+
+        # Find medium with earliest grow_start_date (oldest plant)
+        oldest_medium = None
+        oldest_date = None
+
+        for medium in self.media:
+            if medium.grow_start_date:
+                if oldest_date is None or medium.grow_start_date < oldest_date:
+                    oldest_date = medium.grow_start_date
+                    oldest_medium = medium
+
+        if not oldest_medium:
+            _LOGGER.debug(f"[{self.room}] No medium with grow_start_date found, skipping plantDates sync")
+            return
+
+        # Sync dates back to room-level plantDates
+        grow_start_str = oldest_medium.grow_start_date.strftime("%Y-%m-%d") if oldest_medium.grow_start_date else ""
+        bloom_switch_str = oldest_medium.bloom_switch_date.strftime("%Y-%m-%d") if oldest_medium.bloom_switch_date else ""
+
+        self.data_store.setDeep("plantDates.growstartdate", grow_start_str)
+        self.data_store.setDeep("plantDates.bloomswitchdate", bloom_switch_str)
+        self.data_store.setDeep("plantDates.breederbloomdays", oldest_medium.breeder_bloom_days or 0)
+
+        # Also sync stage and type so Light.py has consistent data
+        if oldest_medium.plant_stage:
+            self.data_store.set("plantStage", oldest_medium.plant_stage)
+        if oldest_medium.plant_type:
+            self.data_store.set("plantType", oldest_medium.plant_type)
+
+        _LOGGER.debug(
+            f"[{self.room}] 📅 Synced oldest medium '{oldest_medium.name}' to plantDates: "
+            f"growstartdate={grow_start_str}, bloomswitchdate={bloom_switch_str}, "
+            f"stage={oldest_medium.plant_stage}, type={oldest_medium.plant_type}"
+        )
 
     async def _start_daily_update_timer(self):
         """Schedule daily update for media status"""

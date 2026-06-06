@@ -404,23 +404,89 @@ async def test_sunset_without_user_minmax_or_plant_stage():
     assert brightness_values[-1] == 20.0
 
 
-@pytest.mark.asyncio
-async def test_sunset_without_user_minmax_or_plant_stage():
-    """Test sunset without user minmax and without valid plant stage."""
-    light, brightness_values = _make_sunrise_light(
-        plant_stage="UnknownStage",
-        user_minmax_active=False
+# ===== DLI CONTROL ERROR HANDLING TESTS =====
+
+def _make_light_with_dates(growstartdate="", bloomswitchdate=""):
+    """Helper to create a Light with specific (possibly empty) plantDates."""
+    store = FakeDataStore(
+        {
+            "plantType": "Cannabis",
+            "plantStage": "EarlyVeg",
+            "plantDates": {
+                "growstartdate": growstartdate,
+                "bloomswitchdate": bloomswitchdate,
+            },
+            "controlOptions": {"lightControlType": "DLI"},
+            "Light": {
+                "plans": {
+                    "cannabis": {
+                        "veg": {
+                            "curve": [
+                                {"week": 1, "DLITarget": 20},
+                                {"week": 2, "DLITarget": 25},
+                            ]
+                        }
+                    }
+                }
+            },
+            "DeviceMinMax": {
+                "Light": {
+                    "active": True,
+                    "minVoltage": 20,
+                    "maxVoltage": 100,
+                }
+            },
+        }
     )
-    
-    light.maxVoltage = 100
-    light.initVoltage = 20
-    light.sunSetDuration = 0.1  # Short duration for fast test
-    light.sunset_phase_active = True
-    
-    await light._run_sunset()
-    
-    # Should start from maxVoltage (100%) and go to initVoltage (20%)
-    assert len(brightness_values) == 10
-    # voltage_step = (100-20)/10 = 8, step 1 = 100 - 8*1 = 92
-    assert brightness_values[0] == 92.0
-    assert brightness_values[-1] == 20.0
+
+    light = Light.__new__(Light)
+    light.deviceName = "main_light"
+    light.inRoom = "dev_room"
+    light.deviceType = "Light"
+    light.event_manager = FakeEventManager()
+    light.data_store = store
+    light.dataStore = store
+    light.sunrise_phase_active = False
+    light.sunset_phase_active = False
+    light.isDimmable = True
+    light.islightON = True
+    light.ogbLightControl = True
+    light.voltage = 50.0
+    light.log_action = lambda *_args, **_kwargs: None
+
+    async def fake_turn_on(**kwargs):
+        pass
+
+    light.turn_on = fake_turn_on
+    return light
+
+
+@pytest.mark.asyncio
+async def test_dli_gracefully_handles_empty_growstartdate():
+    """Regression test: empty growstartdate must not raise ValueError."""
+    light = _make_light_with_dates(growstartdate="", bloomswitchdate="")
+    # Must not raise — should log and return early
+    await light.updated_light_voltage_by_dli(10)
+    # Voltage stays unchanged because week calculation is skipped
+    assert light.voltage == 50.0
+
+
+@pytest.mark.asyncio
+async def test_dli_gracefully_handles_empty_bloomswitchdate():
+    """Regression test: empty bloomswitchdate in flower stage must not raise."""
+    light = _make_light_with_dates(growstartdate="", bloomswitchdate="")
+    # Force flower stage
+    light.data_store.set("plantStage", "EarlyFlower")
+    await light.updated_light_voltage_by_dli(10)
+    assert light.voltage == 50.0
+
+
+@pytest.mark.asyncio
+async def test_dli_works_with_valid_dates():
+    """Ensure normal operation still works with valid dates."""
+    now = real_datetime(2026, 4, 2)
+    growstart = (now - timedelta(days=8)).strftime("%Y-%m-%d")
+    light = _make_light_with_dates(growstartdate=growstart, bloomswitchdate="")
+    await light.updated_light_voltage_by_dli(10)
+    # DLI below target -> voltage should increase
+    assert light.voltage == 51.0

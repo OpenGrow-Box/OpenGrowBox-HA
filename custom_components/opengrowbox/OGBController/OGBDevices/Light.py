@@ -1055,19 +1055,27 @@ class Light(Device):
         # Hat plant_stage Veg im String
         if plant_stage.lower().find("veg") != -1:
             plant_stage = "veg"
+            grow_start = self.data_store.getDeep("plantDates.growstartdate")
+            if not grow_start:
+                _LOGGER.debug(
+                    f"💡 {self.deviceName}: No grow start date set. DLI Light Control not possible."
+                )
+                return
             week = (
                 datetime.now().date()
-                - datetime.strptime(
-                    self.data_store.getDeep("plantDates.growstartdate"), "%Y-%m-%d"
-                ).date()
+                - datetime.strptime(grow_start, "%Y-%m-%d").date()
             ).days // 7
         elif plant_stage.lower().find("flower") != -1:
             plant_stage = "flower"
+            bloom_switch = self.data_store.getDeep("plantDates.bloomswitchdate")
+            if not bloom_switch:
+                _LOGGER.debug(
+                    f"💡 {self.deviceName}: No bloom switch date set. DLI Light Control not possible."
+                )
+                return
             week = (
                 datetime.now().date()
-                - datetime.strptime(
-                    self.data_store.getDeep("plantDates.bloomswitchdate"), "%Y-%m-%d"
-                ).date()
+                - datetime.strptime(bloom_switch, "%Y-%m-%d").date()
             ).days // 7
         else:
             _LOGGER.debug(

@@ -18,6 +18,16 @@ Diese Anleitung erklärt den DLI-basierten Lichtsteuerungsmodus in OpenGrowBox (
    *HINWEIS: Wenn diese nicht gesetzt sind wird ein Bereich von 10-100% als mögliche Lichtstärke angenommen.*
 7. Licht Sensor muss für den Raum vorhanden sein. Das Updateintervall des Senssors darf nicht kleiner als 10 Sekunden. (Empfohen 1 Minute).
 
+## Mehrere Mediums (Grow-Zonen)
+
+Wenn du mehrere Mediums (z. B. mehrere Töpfe/Slabs) im selben Raum hast, kann jede Zone eigene Pflanzdaten (Startdatum, Blütenwechsel, Sorte, Phase) besitzen. Die DLI-Steuerung arbeitet aber raumweit mit einer einzigen Lichtquelle. Daher wird automatisch das **älteste Medium** (frühestes `grow_start_date`) als Referenz für die DLI-Berechnung verwendet.
+
+Das bedeutet:
+- Das Licht wird anhand des ältesten Mediums geregelt (höchster DLI-Bedarf).
+- Jüngere Pflanzen erhalten ggf. etwas mehr Licht als nötig — das ist unbedenklich.
+- Die Daten werden automatisch aus den Mediums in die legacy `plantDates`-Keys (`growstartdate`, `bloomswitchdate`, `breederbloomdays`, `plantStage`, `plantType`) synchronisiert.
+- Keine manuelle Eingabe mehr nötig, wenn du Mediums nutzt.
+
 ## UI / Einstellungs-Checkliste (Was prüfen, wenn DLI nicht wirkt)
 
 1. Ist OGB_LightControl auf DLI? (OGB → Einstellungen)
@@ -25,6 +35,7 @@ Diese Anleitung erklärt den DLI-basierten Lichtsteuerungsmodus in OpenGrowBox (
 3. Ist das Gerät dimmbar? Sonst ist DLI-Regelung nicht möglich.
 4. Ist ein OGB_LightPlan ausgewählt und enthält er eine passende Kurve (*veg/*flower)?
 5. Sind OGB_GrowStartDate bzw. OGB_BloomSwitchDate gesetzt? Diese werden zur Ermittlung der Woche benötigt.
+   **Hinweis:** Wenn du Mediums (Grow-Zonen) nutzt, werden diese Daten automatisch aus dem ältesten Medium synchronisiert.
 6. Sind OGB_Light_Volt_Min und OGB_Light_Volt_May sinnvoll gesetzt (z. B. 20–100)? Wenn OGB_Light_MinMax deaktiviert ist, nimmt OGB Standard 20–100%.
 7. Liefert der Sensor tatsächlich DLI (oder PPFD/Lux mit Umrechnung)? Prüfe `OGB_DLI` bzw. das Sensor-Log.
 8. Prüfe Logs: Das Light-Device loggt informative Zeilen (z. B. „DLI target for week ...“, Anpassungen, Gründe für Nicht-Anpassung).
@@ -102,7 +113,7 @@ Die Lichtwerte sind wie folgt vorkonfiguriert:
 - Keine Anpassungen: `controlOptions.lightControlType` nicht auf "DLI" oder `lightbyOGBControl` = false.
 - Kein DLITarget verfügbar: Plan fehlt oder für die aktuelle Woche kein Eintrag → es wird das letzte Wochen-Ziel genutzt oder es tritt ein Fehler auf (siehe Log).
 - Voltage bleibt am Minimum/Maximum: `DeviceMinMax.Light` begrenzt die Werte.
-- Falsche Woche: Prüfe `plantDates.*` (Datumformat: YYYY-MM-DD). OGB berechnet Wochen relativ zu diesen Daten.
+- Falsche Woche: Prüfe `plantDates.*` (Datumformat: YYYY-MM-DD). OGB berechnet Wochen relativ zu diesen Daten. **Wenn du Mediums nutzt:** Die Daten werden automatisch aus dem ältesten Medium synchronisiert — manuelle Eingabe ist nicht mehr nötig.
 - Messwerte unplausibel: Lux→PPFD Umrechnung ungenau; besser direkte PPFD/DLI-Sensoren verwenden.
 - Sonnenphasen (SunRise/SunSet) können während ihrer Sequenzen manuelle Änderungen blockieren oder verhindern (SunPhaseActive). OGB vermeidet Änderungen während SunPhases.
 
@@ -115,6 +126,7 @@ Die Lichtwerte sind wie folgt vorkonfiguriert:
 ## Testen (Kurz)
 
 1. Stelle `controlOptions.lightbyOGBControl` = true und `controlOptions.lightControlType` = "DLI".
-2. Wähle einen Light-Plan und setze `plantDates.growstartdate` so, dass die aktuelle Woche einen DLITarget-Eintrag hat.
+2. **Mit Mediums:** Lege mindestens ein Medium an und setze Grow-Startdatum & Blütenwechseldatum im Medium. OGB synchronisiert automatisch vom ältesten Medium.
+   **Ohne Mediums:** Setze `plantDates.growstartdate` manuell so, dass die aktuelle Woche einen DLITarget-Eintrag hat.
 3. Setze `Light.dli` testweise per Event oder Datastore auf einen Wert unter/über dem DLITarget und beobachte Logs und `voltage`-Änderungen.
 
