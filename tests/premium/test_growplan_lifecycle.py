@@ -242,6 +242,53 @@ async def test_growplan_command_pause_then_resume():
 
 
 @pytest.mark.asyncio
+async def test_status_change_resume_after_restart_uses_stored_active_plan():
+    """Simulate HA restart while plan is paused, then resume from webapp.
+
+    After a restart the manager has no active_grow_plan in memory, but the
+    activePlan snapshot was persisted by _on_new_grow_plans while the plan was
+    paused. The resume_plan event from the webapp only carries plan_id/name, so
+    the manager must fall back to the stored snapshot to keep the original
+    startDate.
+    """
+    manager, data_store, _, _ = _build_manager()
+    await asyncio.sleep(0)
+
+    # Plan was paused before restart; manager lost in-memory plan data
+    manager.active_grow_plan_id = None
+    manager.active_grow_plan = None
+    manager.plan_start_date = None
+    manager.managerActive = False
+    data_store.set("growManagerActive", False)
+
+    # Snapshot persisted by API while paused
+    stored_plan = {
+        "id": "plan-1",
+        "name": "Test Plan",
+        "startDate": "2026-01-01T00:00:00+00:00",
+        "weeks": data_store.get("growPlans")[0]["weeks"],
+    }
+    data_store.setDeep("growPlans", [stored_plan])
+    data_store.setDeep("growPlan.activePlan", stored_plan)
+
+    # Webapp resume event only carries id/name, no startDate
+    await manager._on_grow_plan_status_change(
+        {
+            "room": "test_room",
+            "action": "resume_plan",
+            "plan_id": "plan-1",
+            "plan_name": "Test Plan",
+        }
+    )
+
+    assert manager.managerActive is True
+    assert data_store.get("growManagerActive") is True
+    assert manager.active_grow_plan_id == "plan-1"
+    assert manager.plan_start_date is not None
+    assert manager.plan_start_date.year == 2026
+
+
+@pytest.mark.asyncio
 async def test_activate_idempotent_when_same_plan():
     manager, data_store, _, _ = _build_manager()
     await asyncio.sleep(0)

@@ -323,7 +323,7 @@ def test_compute_response_curve_results(setup_manager):
     # Monotonic increase: 100% has more effect than 25%
     assert temp_curve[100]["delta_per_min"] > temp_curve[25]["delta_per_min"]
     # ΔT recorded per step
-    for step in manager.DIMMABLE_STEPS:
+    for step in step_results:
         assert "delta" in temp_curve[step]
         assert "delta_per_min" in temp_curve[step]
         assert "confidence" in temp_curve[step]

@@ -534,6 +534,17 @@ class OGBGrowPlanManager:
                 return
             plans = self.data_store.getDeep("growPlans") or []
             plan_data = next((p for p in plans if p.get("id") == plan_id), None)
+
+            # Webapp resume events often only carry plan_id/name. Try to enrich
+            # from the last known activePlan snapshot stored by new_grow_plans.
+            if not plan_data:
+                stored_active = self.data_store.getDeep("growPlan.activePlan")
+                if isinstance(stored_active, dict) and stored_active.get("id") == plan_id:
+                    plan_data = stored_active
+                    _LOGGER.debug(
+                        f"🌱 {self.room} Using stored activePlan snapshot for {plan_id}"
+                    )
+
             if not plan_data and data:
                 # Fall back to building a minimal plan_data from the event
                 plan_data = {
@@ -635,16 +646,38 @@ class OGBGrowPlanManager:
             if plan_id:
                 plans = self.data_store.getDeep("growPlans") or []
                 plan_data = next((p for p in plans if p.get("id") == plan_id), None)
+                if not plan_data:
+                    stored_active = self.data_store.getDeep("growPlan.activePlan")
+                    if isinstance(stored_active, dict) and stored_active.get("id") == plan_id:
+                        plan_data = stored_active
+                        _LOGGER.debug(
+                            f"🌱 {self.room} Using stored activePlan snapshot for resume"
+                        )
                 if plan_data:
                     await self.activate_grow_plan_by_id(plan_id, plan_data)
+                else:
+                    _LOGGER.warning(
+                        f"🌱 {self.room} Cannot resume {plan_id} – no plan data available"
+                    )
         elif action == "stop":
             await self.deactivate_grow_plan(clear_plan_data=True)
         elif action == "activate":
             if plan_id:
                 plans = self.data_store.getDeep("growPlans") or []
                 plan_data = next((p for p in plans if p.get("id") == plan_id), None)
+                if not plan_data:
+                    stored_active = self.data_store.getDeep("growPlan.activePlan")
+                    if isinstance(stored_active, dict) and stored_active.get("id") == plan_id:
+                        plan_data = stored_active
+                        _LOGGER.debug(
+                            f"🌱 {self.room} Using stored activePlan snapshot for activate"
+                        )
                 if plan_data:
                     await self.activate_grow_plan_by_id(plan_id, plan_data)
+                else:
+                    _LOGGER.warning(
+                        f"🌱 {self.room} Cannot activate {plan_id} – no plan data available"
+                    )
 
     async def _update_current_week(self):
         """Aktualisiert die aktuelle Woche basierend auf dem Startdatum.

@@ -1468,6 +1468,13 @@ class OGBPremiumIntegration:
             plan_status = (active_plan.get("status") or "active").lower() if isinstance(active_plan, dict) else "active"
             plan_id = active_plan.get("id") if isinstance(active_plan, dict) else None
 
+            # Always persist the plan list so resume/activate events that only
+            # carry plan_id can find the full plan metadata (startDate, weeks).
+            plans = data.get("plans") or []
+            if plans:
+                self.data_store.setDeep("growPlans", plans)
+                _LOGGER.debug(f"🌱 {self.room} Stored {len(plans)} plan(s) from API response")
+
             # Respect pause/stop from the server before touching any entities.
             if plan_status in ("paused", "stopped"):
                 _LOGGER.info(
@@ -1491,11 +1498,14 @@ class OGBPremiumIntegration:
                             f"🌱 {self.room} Paused/stopped plan_id {plan_id} does not match "
                             f"local active plan {self.growPlanManager.active_grow_plan_id}"
                         )
-                # Still store the week data for reference, but do NOT apply it.
+                # Still store the week data and active plan for reference, but do
+                # NOT apply it to entities.
                 if current_week_data is not None:
                     self.data_store.setDeep("growPlan.currentWeekData", current_week_data)
                     if current_week:
                         self.data_store.setDeep("growPlan.currentWeek", current_week)
+                if active_plan:
+                    self.data_store.setDeep("growPlan.activePlan", active_plan)
                 return
 
             if current_week_data:
