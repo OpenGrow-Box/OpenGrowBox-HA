@@ -1639,7 +1639,10 @@ class OGBWebSocketConManager:
         async def on_grow_plan_status_change(data):
             """Handle grow plan status change from webapp (activate/pause/resume/stop/switch)"""
             logging.info(f"🌱 {self.ws_room} Grow plan status change from webapp: {data}")
-            await self._handle_grow_plan_status_change(data)
+            try:
+                await self._handle_grow_plan_status_change(data)
+            except Exception as e:
+                logging.error(f"❌ {self.ws_room} Error handling grow_plan_status_change: {e}")
 
         @self.sio.on("plant_view_need", namespace=ns)
         async def plant_view_need(data):
@@ -1991,9 +1994,20 @@ class OGBWebSocketConManager:
 
     async def _handle_api_usage_update(self, data: dict):
         """Handle API usage update from server with new consistent structure"""
+        # Defaults to avoid UnboundLocalError in exception handler
+        server_plan = None
+        features = {}
+        limits = {}
+        usage = {}
+        active_grow_plan = None
+        active_connections = 0
+        rooms_used = 0
+        active_rooms = []
+        normalized_current_room = str(self.ws_room).lower()
+
         try:
             logging.info(f"📊 {self.ws_room} Processing api_usage_update: {data}")
-            
+
             # New consistent API structure: { plan, features, limits, usage, activeGrowPlan, timestamp, ... }
             # API may send "plan" (snake_case) or "planName" (from API response)
             server_plan = data.get("plan") or data.get("plan_name")
@@ -2001,28 +2015,25 @@ class OGBWebSocketConManager:
             limits = data.get("limits", {})
             usage = data.get("usage", {})
             active_grow_plan = data.get("activeGrowPlan")
-            
+
             # Extract usage fields
             active_connections = usage.get("activeConnections", 0)
-            server_active_rooms = usage.get("activeRooms", [])
             rooms_used = usage.get("roomsUsed", 0)
-            
+
             # CRITICAL FIX: Always use current room if we have active connections
-            normalized_current_room = str(self.ws_room).lower()
-            
             if active_connections > 0:
                 # We have an active connection - we ARE a room!
                 active_rooms = [normalized_current_room]
             else:
                 active_rooms = []
-            
+
             # Update local session count
             self.ogb_sessions = active_connections
-            
+
             # CRITICAL FIX: Update subscription_data with FULL structure
             if not self.subscription_data:
                 self.subscription_data = {}
-            
+
             # Update plan from api_usage_update
             if server_plan:
                 self.subscription_data["plan_name"] = server_plan
@@ -2035,7 +2046,7 @@ class OGBWebSocketConManager:
             # Update usage
             if "usage" not in self.subscription_data:
                 self.subscription_data["usage"] = {}
-            
+
             # Merge ALL usage fields from server
             usage_fields = [
                 "roomsUsed", "activeConnections", "activeRooms", "maxSessions",
@@ -2043,17 +2054,17 @@ class OGBWebSocketConManager:
                 "billingPeriodStart", "billingPeriodEnd", "billingInterval",
                 "isYearlyPlan", "dataRetention"
             ]
-            
+
             for field in usage_fields:
                 value = usage.get(field)
                 if value is not None:
                     self.subscription_data["usage"][field] = value
-            
+
             # Override room-specific fields with validated values
             self.subscription_data["usage"]["activeConnections"] = active_connections
             self.subscription_data["usage"]["activeRooms"] = active_rooms
             self.subscription_data["usage"]["roomsUsed"] = len(active_rooms)
-            
+
             # Store active grow plan if present
             if active_grow_plan:
                 logging.info(
@@ -2078,10 +2089,10 @@ class OGBWebSocketConManager:
             await self._safe_emit("api_usage_update", emit_data, haEvent=True)
 
             logging.info(
-                f"📊 {self.ws_room} Processed api_usage_update: "
+                f"📊 {self.ws_room} Successfully emitted api_usage_update: "
                 f"plan={server_plan}, rooms={len(active_rooms)}, connections={active_connections}"
             )
-            
+
         except Exception as e:
             logging.error(f"❌ {self.ws_room} Error handling api_usage_update: {e}")
             import traceback
@@ -2097,12 +2108,12 @@ class OGBWebSocketConManager:
                 self.subscription_data["usage"]["activeConnections"] = active_connections
                 self.subscription_data["usage"]["activeRooms"] = active_rooms
                 logging.debug(f"📊 {self.ws_room} Updated subscription_data.usage with current values: rooms={len(active_rooms)}, connections={active_connections}")
-                
+
                 # CRITICAL: Update plan name in subscription_data when it changes
                 if server_plan and server_plan != "free":
                     self.subscription_data["plan_name"] = server_plan
                     logging.info(f"📊 {self.ws_room} Updated plan_name in subscription_data: {server_plan}")
-            
+
             # Wrap in 'usage' object for frontend compatibility
             # Frontend expects: { usage: {...}, timestamp: ..., lastEndpoint: ..., lastMethod: ... }
             emit_data = {
@@ -2116,19 +2127,14 @@ class OGBWebSocketConManager:
                     "plan_name": server_plan
                 },
                 "activeGrowPlan": active_grow_plan,
-                "timestamp": data.get("timestamp", time.time()),
-                "lastEndpoint": data.get("lastEndpoint"),
-                "lastMethod": data.get("lastMethod"),
+                "timestamp": data.get("timestamp", time.time()) if isinstance(data, dict) else time.time(),
+                "lastEndpoint": data.get("lastEndpoint") if isinstance(data, dict) else None,
+                "lastMethod": data.get("lastMethod") if isinstance(data, dict) else None,
             }
 
-            # Emit to Home Assistant frontend
+            # Emit to Home Assistant frontend so UI doesn't stay stale
             await self._safe_emit("api_usage_update", emit_data, haEvent=True)
-            logging.info(f"📊 {self.ws_room} Emitted api_usage_update to HA: plan={server_plan}, rooms={rooms_used}, activeConnections={active_connections}, apiCalls={emit_data['usage']['apiCallsThisMonth']}, storageGB={emit_data['usage']['storageUsedGB']}")
-            
-        except Exception as e:
-            logging.error(f"❌ {self.ws_room} Error handling api_usage_update: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
+            logging.info(f"📊 {self.ws_room} Emitted fallback api_usage_update to HA: plan={server_plan}, rooms={rooms_used}, activeConnections={active_connections}, apiCalls={emit_data['usage']['apiCallsThisMonth']}, storageGB={emit_data['usage']['storageUsedGB']}")
 
     # =================================================================
     # Subscription Lifecycle Handlers
@@ -2446,6 +2452,21 @@ class OGBWebSocketConManager:
 
             logging.info(f"🌱 {self.ws_room} Grow plan {action}: {plan_name} (week {current_week}/{total_weeks})")
 
+            # Diagnostic: log listener presence and ogbevents state so we can
+            # tell from HA logs whether the manager will receive this event.
+            if self.ogbevents and hasattr(self.ogbevents, "listeners"):
+                listener_count = len(self.ogbevents.listeners.get("WebappGrowPlanStatusChange", []))
+                logging.info(
+                    f"🌱 {self.ws_room} WebappGrowPlanStatusChange about to fire – "
+                    f"ogbevents={'present' if self.ogbevents else 'NONE'} "
+                    f"listeners={listener_count} haEvent=True"
+                )
+            else:
+                logging.warning(
+                    f"🌱 {self.ws_room} WebappGrowPlanStatusChange about to fire but "
+                    f"ogbevents not available – manager will not receive it!"
+                )
+
             # Update active grow plan tracking
             if action in ["activated", "resumed"]:
                 self.active_grow_plan = {
@@ -2462,6 +2483,25 @@ class OGBWebSocketConManager:
 
             # Emit to HA for grow plan manager to handle
             await self._safe_emit("WebappGrowPlanStatusChange", {
+                "room": self.ws_room,
+                "action": action,
+                "plan_id": plan_id,
+                "plan_name": plan_name,
+                "room_id": room_id,
+                "status": status,
+                "current_week": current_week,
+                "total_weeks": total_weeks,
+                "source": "webapp"
+            }, haEvent=True)
+
+            logging.info(
+                f"🌱 {self.ws_room} Successfully emitted WebappGrowPlanStatusChange: "
+                f"action={action}, plan_id={plan_id}, status={status}"
+            )
+
+            # Also emit under the original server event name so automations
+            # listening for grow_plan_status_change receive it directly.
+            await self._safe_emit("grow_plan_status_change", {
                 "room": self.ws_room,
                 "action": action,
                 "plan_id": plan_id,

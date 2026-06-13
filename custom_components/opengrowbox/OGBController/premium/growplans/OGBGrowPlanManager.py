@@ -13,9 +13,36 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from ...utils.Premium.ogb_state import _save_state_securely, _remove_state_file, _load_state_securely
-from ...utils.sensorUpdater import update_entity
-            
+from ...utils.sensorUpdater import update_entity, _update_specific_select
+
 _LOGGER = logging.getLogger(__name__)
+
+
+# Mapping of (entity_id, data_store_key) that the grow plan writes to on
+# activation. Used for both pre-plan snapshot (capture) and restore on
+# pause/stop. Keep in sync with _update_entities_from_week_data().
+_GROW_PLAN_ENTITY_SNAPSHOT_KEYS: list[tuple[str, str]] = [
+    ("select.ogb_tentmode", "tentMode"),
+    ("select.ogb_plantstage", "plantStage"),
+    ("number.ogb_maxtemp", "tentData.maxTemp"),
+    ("number.ogb_mintemp", "tentData.minTemp"),
+    ("number.ogb_maxhum", "tentData.maxHumidity"),
+    ("number.ogb_minhum", "tentData.minHumidity"),
+    ("number.ogb_vpdtarget", "tentData.targetVPD"),
+    ("number.ogb_co2targetvalue", "tentData.targetCO2"),
+    ("number.ogb_co2maxvalue", "tentData.maxCO2"),
+    ("number.ogb_co2minvalue", "tentData.minCO2"),
+    ("select.ogb_co2_control", "tentControls.co2Control"),
+    ("time.ogb_lightontime", "isPlantDay.lightOnTime"),
+    ("time.ogb_lightofftime", "isPlantDay.lightOffTime"),
+    ("time.ogb_sunrisetime", "isPlantDay.sunRiseTime"),
+    ("time.ogb_sunsettime", "isPlantDay.sunSetTime"),
+    ("number.ogb_light_volt_min", "DeviceMinMax.Light.minVoltage"),
+    ("number.ogb_light_volt_max", "DeviceMinMax.Light.maxVoltage"),
+    ("select.ogb_holdvpdnight", "tentControls.nightVpdHold"),
+    ("select.ogb_vpd_devicedampening", "tentControls.deviceDampening"),
+    ("select.ogb_vpd_determination", "tentControls.vpdDetermination"),
+]
 
 class OGBGrowPlanManager:
     def __init__(self, hass, dataStore, eventManager, room, ws_client=None):
@@ -56,6 +83,13 @@ class OGBGrowPlanManager:
 
         self._register_event_listener("SystemReady", self._on_system_ready)
 
+        # Register WebappGrowPlanStatusChange SYNCHRONOUSLY so the listener
+        # is in place before any WS event can fire (init() runs in a task and
+        # could miss early events). The other (less critical) listeners get
+        # added in init() via _setup_event_listeners().
+        self._register_event_listener("WebappGrowPlanStatusChange", self._on_grow_plan_status_change)
+        self._register_event_listener("ogb_growplan_command", self._on_growplan_command)
+
         self._init_task = asyncio.create_task(self.init())
             
     async def init(self):
@@ -66,16 +100,45 @@ class OGBGrowPlanManager:
         _LOGGER.warning(f"🌱 {self.room} SystemReady listener registered")
         await self._start_daily_update_timer()
         _LOGGER.debug(f"OGB Grow Plan Manager initialized for room: {self.room}")
-    
+
+    def _setup_event_listeners(self):
+        """Hook for future listener registration.
+
+        The critical listeners (WebappGrowPlanStatusChange and
+        ogb_growplan_command) are registered synchronously in __init__ to
+        avoid a race with early WS events. This method is kept so the
+        init() flow's call site still works without raising.
+        """
+        _LOGGER.debug(f"🌱 {self.room} _setup_event_listeners called (no-op)")
+
     async def _on_system_ready(self, data):
         """Handle SystemReady event - system initialization is complete."""
         event_room = data.get("room") if isinstance(data, dict) else None
         if event_room and event_room.lower() != self.room.lower():
             return
-        
+
         self._is_system_ready = True
-        _LOGGER.debug(f"🌱 {self.room} SystemReady received - processing {len(self._pending_updates)} pending updates")
-        
+
+        # If the grow plan is not active (e.g. paused while HA was starting or
+        # paused before the restart), discard any pending updates that were
+        # queued before the system was ready. Applying them would overwrite
+        # user setpoints with stale grow plan data.
+        is_active = self.managerActive and self.data_store.get("growManagerActive")
+        if not is_active:
+            if self._pending_updates:
+                _LOGGER.debug(
+                    f"🌱 {self.room} SystemReady received but grow plan is not active - "
+                    f"clearing {len(self._pending_updates)} pending updates"
+                )
+                self._pending_updates.clear()
+            else:
+                _LOGGER.debug(f"🌱 {self.room} SystemReady received - no pending updates")
+            return
+
+        _LOGGER.debug(
+            f"🌱 {self.room} SystemReady received - processing {len(self._pending_updates)} pending updates"
+        )
+
         # Process any pending updates
         while self._pending_updates:
             update_type = self._pending_updates.pop(0)
@@ -83,6 +146,12 @@ class OGBGrowPlanManager:
                 await self._update_entities_from_week_data()
             elif update_type == "_update_current_week":
                 await self._update_current_week()
+
+    def _is_grow_plan_active(self) -> bool:
+        """Return True only when both the manager flag and the data store agree
+        that a grow plan is currently active.
+        """
+        return bool(self.managerActive) and bool(self.data_store.get("growManagerActive"))
   
     def _register_bus_listener(self, event_name, callback):
         unsub = self.hass.bus.async_listen(event_name, callback)
@@ -92,12 +161,83 @@ class OGBGrowPlanManager:
         self.event_manager.on(event_name, callback)
         self._event_bindings.append((event_name, callback))        
             
-    #def _set_init_plan(self,plan):
-    #    self.active_grow_plan = plan
-    #    self.activate_grow_plan_by_id = plan.get('id')
-    #    self.plan_start_date = plan.get('startDate')
-    #    self.total_weeks = plan.get('maxWeeks')
-    #    #self.current_week = plan.get('elapsedWeeks') - plan.get('maxWeeks')
+    async def _capture_pre_plan_snapshot(self):
+        """Capture current entity/state values before a grow plan is activated.
+
+        Stores the snapshot under growPlan.snapshot so it can be restored when
+        the plan is paused or stopped.
+        """
+        try:
+            snapshot = {}
+            room_normalized = self.room.lower().replace(" ", "_")
+            for entity_base, data_store_key in _GROW_PLAN_ENTITY_SNAPSHOT_KEYS:
+                try:
+                    domain = entity_base.split(".")[0]
+                    base = entity_base.split(".", 1)[1]
+                    full_entity_id = f"{domain}.{base}_{room_normalized}"
+                    state_obj = self.hass.states.get(full_entity_id)
+                    if state_obj is not None and state_obj.state not in (None, "unavailable", "unknown"):
+                        value = state_obj.state
+                        # Convert numbers/selects to proper types
+                        if domain in ("number", "input_number"):
+                            try:
+                                value = float(value)
+                            except (ValueError, TypeError):
+                                pass
+                        snapshot[data_store_key] = value
+                except Exception as e:
+                    _LOGGER.debug(f"🌱 {self.room} Snapshot skip {data_store_key}: {e}")
+
+            # Also capture data_store values as fallback
+            for _, data_store_key in _GROW_PLAN_ENTITY_SNAPSHOT_KEYS:
+                if data_store_key not in snapshot:
+                    existing = self.data_store.getDeep(data_store_key)
+                    if existing is not None:
+                        snapshot[data_store_key] = existing
+
+            self.data_store.setDeep("growPlan.snapshot", snapshot)
+            _LOGGER.info(f"🌱 {self.room} Pre-plan snapshot captured: {snapshot}")
+        except Exception as e:
+            _LOGGER.error(f"🌱 {self.room} Failed to capture pre-plan snapshot: {e}")
+
+    async def _restore_pre_plan_snapshot(self):
+        """Restore entity/state values captured before the grow plan was activated.
+
+        Called when the plan is paused or stopped so the tent falls back to the
+        previous user-defined setpoints instead of keeping the plan values.
+        """
+        try:
+            snapshot = self.data_store.getDeep("growPlan.snapshot") or {}
+            if not snapshot:
+                _LOGGER.info(f"🌱 {self.room} No pre-plan snapshot to restore")
+                return False
+
+            _LOGGER.info(f"🌱 {self.room} Restoring pre-plan snapshot: {snapshot}")
+            restored_any = False
+
+            for entity_base, data_store_key in _GROW_PLAN_ENTITY_SNAPSHOT_KEYS:
+                value = snapshot.get(data_store_key)
+                if value is None:
+                    continue
+
+                # Update data_store first
+                self.data_store.setDeep(data_store_key, value)
+
+                # Update HA entity
+                try:
+                    result = await update_entity(entity_base, value, self.room, self.hass)
+                    if result:
+                        restored_any = True
+                except Exception as e:
+                    _LOGGER.debug(f"🌱 {self.room} Restore entity {entity_base} failed: {e}")
+
+            # Clear snapshot after successful restore so a future activation
+            # captures fresh values.
+            self.data_store.setDeep("growPlan.snapshot", None)
+            return restored_any
+        except Exception as e:
+            _LOGGER.error(f"🌱 {self.room} Failed to restore pre-plan snapshot: {e}")
+            return False
 
     async def _start_daily_update_timer(self):
         """Startet Timer für tägliche Aktualisierungen (00:00 und 12:00)"""
@@ -204,15 +344,24 @@ class OGBGrowPlanManager:
                 _LOGGER.warning(f"{self.room}: plan_id is a dict, extracting id field")
                 plan_data = plan_id
                 plan_id = plan_id.get("id")
-            
+
             if not plan_id:
                 _LOGGER.warning(f"{self.room}: No plan_id provided for activation")
                 return False
 
+            # Idempotent: if the same plan is already active, just re-evaluate week
+            if self.managerActive and self.active_grow_plan_id == plan_id:
+                _LOGGER.debug(f"🌱 {self.room} Plan {plan_id} already active – re-evaluating week")
+                await self._update_current_week()
+                return True
+
             # Aktiviere den Plan
             self.active_grow_plan_id = plan_id
             self.active_grow_plan = plan_data
-            
+
+            # Capture current tent values BEFORE overwriting them with plan values.
+            await self._capture_pre_plan_snapshot()
+
             # Setze Startdatum aus Plan-Daten (nicht datetime.now!)
             start_date_str = None
             if plan_data:
@@ -255,14 +404,251 @@ class OGBGrowPlanManager:
             })
             
             return True
-            
+
         except Exception as e:
             _LOGGER.error(f"Fehler bei der Aktivierung des Grow Plans: {e}")
             return False
 
+    async def deactivate_grow_plan(self, clear_plan_data: bool = True) -> bool:
+        """Deactivate the currently active grow plan.
+
+        Flips the `growManagerActive` flag off so OGBDatastore.get_active_value
+        and OGBConfigurationManager._plant_stage_to_vpd naturally fall back to
+        the regular tentData values (they were never overwritten while the
+        plan was active, thanks to the grow_plan_active gate in the
+        configuration manager). No entity snapshot/restore is needed.
+
+        Args:
+            clear_plan_data: if True (default), also clear active_grow_plan,
+                plan_start_date, current_week and the data store keys
+                `growPlan.currentWeekData` / `growPlan.currentWeek`. Pass
+                False to keep the plan data around (e.g. for a pause where
+                the user might resume).
+        """
+        try:
+            if not self.managerActive and not self.active_grow_plan_id:
+                _LOGGER.debug(f"🌱 {self.room} deactivate_grow_plan: no active plan")
+                return True
+
+            was_active = self.managerActive
+            plan_id = self.active_grow_plan_id
+            self.managerActive = False
+            self.data_store.set("growManagerActive", False)
+
+            # Restore the pre-plan snapshot so the tent falls back to the
+            # previous user-defined setpoints.
+            restored = await self._restore_pre_plan_snapshot()
+
+            # Trigger a configuration rebuild so all managers pick up the
+            # restored tentData values instead of the grow plan values.
+            current_plant_stage = self.data_store.get("plantStage") or "EarlyVeg"
+            await self.event_manager.emit("PlantStageChange", current_plant_stage)
+            _LOGGER.info(
+                f"🌱 {self.room} Emitted PlantStageChange after restore to refresh setpoints"
+            )
+
+            if clear_plan_data:
+                self.active_grow_plan = None
+                self.active_grow_plan_id = None
+                self.plan_start_date = None
+                self.total_weeks = None
+                self.current_week = None
+                self.current_week_data = None
+                self.data_store.setDeep("growPlan.currentWeekData", None)
+                self.data_store.setDeep("growPlan.currentWeek", None)
+
+            # Pause the daily update task if no plan remains
+            if clear_plan_data and self._daily_update_task and not self._daily_update_task.done():
+                self._daily_update_task.cancel()
+                self._daily_update_task = None
+                self._start_daily_update_timer()  # restart as idle
+
+            await self.event_manager.emit("SaveRequest", self.room)
+            self.hass.bus.async_fire(
+                "grow_plan_deactivated",
+                {"room": self.room, "plan_id": plan_id, "was_active": was_active},
+            )
+            _LOGGER.info(
+                f"🌱 {self.room} Grow plan deactivated (plan_id={plan_id}, "
+                f"clear_plan_data={clear_plan_data})"
+            )
+            return True
+        except Exception as e:
+            _LOGGER.error(f"🌱 {self.room} deactivate_grow_plan failed: {e}", exc_info=True)
+            return False
+
+    async def _on_grow_plan_status_change(self, data):
+        """Handle WebappGrowPlanStatusChange event from prem-api WebSocket.
+
+        Emitted by the SecureWebSocketClient whenever the webapp changes
+        a plan's status. Maps webapp actions to manager state transitions.
+        """
+        try:
+            if not isinstance(data, dict):
+                return
+            event_room = data.get("room")
+            if event_room and event_room.lower() != self.room.lower():
+                return
+            _LOGGER.info(
+                f"🌱 {self.room} _on_grow_plan_status_change FIRED: {data}"
+            )
+        except Exception as e:
+            _LOGGER.error(
+                f"🌱 {self.room} _on_grow_plan_status_change outer try failed: {e}",
+                exc_info=True,
+            )
+            return
+
+        try:
+            return await self._handle_status_change(data)
+        except Exception as e:
+            _LOGGER.error(
+                f"🌱 {self.room} _on_grow_plan_status_change handler failed: {e}",
+                exc_info=True,
+            )
+
+    async def _handle_status_change(self, data):
+        action = data.get("action")
+        plan_id = data.get("plan_id")
+        plan_name = data.get("plan_name")
+        status = data.get("status")
+        _LOGGER.info(
+            f"🌱 {self.room} Grow plan status change: action={action} plan_id={plan_id} "
+            f"status={status} name={plan_name}"
+        )
+
+        if action in ("activated", "activate_plan", "resumed", "resume_plan"):
+            is_resume = action in ("resumed", "resume_plan")
+            if self.active_grow_plan_id == plan_id and self.managerActive and not is_resume:
+                # Already active and not a resume – nothing to do.
+                _LOGGER.info(f"🌱 {self.room} Grow plan already active (plan_id={plan_id})")
+                return
+            if self.active_grow_plan_id == plan_id and self.managerActive and is_resume:
+                # Plan is already active; treat resume as a state refresh.
+                self.managerActive = True
+                self.data_store.set("growManagerActive", True)
+                self.hass.bus.async_fire(
+                    "grow_plan_resumed", {"room": self.room, "plan_id": plan_id}
+                )
+                _LOGGER.info(f"🌱 {self.room} Grow plan resumed (plan_id={plan_id})")
+                return
+            plans = self.data_store.getDeep("growPlans") or []
+            plan_data = next((p for p in plans if p.get("id") == plan_id), None)
+            if not plan_data and data:
+                # Fall back to building a minimal plan_data from the event
+                plan_data = {
+                    "id": plan_id,
+                    "name": plan_name,
+                    "startDate": data.get("startDate"),
+                    "weeks": [],
+                }
+            if plan_data:
+                await self.activate_grow_plan_by_id(plan_id, plan_data)
+                if is_resume:
+                    self.hass.bus.async_fire(
+                        "grow_plan_resumed", {"room": self.room, "plan_id": plan_id}
+                    )
+                    _LOGGER.info(f"🌱 {self.room} Grow plan resumed after activation (plan_id={plan_id})")
+                else:
+                    self.hass.bus.async_fire(
+                        "grow_plan_activated", {"room": self.room, "plan_id": plan_id}
+                    )
+                    _LOGGER.info(f"🌱 {self.room} Grow plan activated (plan_id={plan_id})")
+            else:
+                _LOGGER.warning(
+                    f"🌱 {self.room} Cannot activate {plan_id} – not in local growPlans"
+                )
+
+        elif action in ("paused", "pause_plan"):
+            # Freeze: keep plan data, just disable the active flag so
+            # OGB falls back to tentData targets. Restore previous values.
+            self.managerActive = False
+            self.data_store.set("growManagerActive", False)
+
+            # Discard any pending entity updates that may have been queued
+            # while the system was still initializing. They must not be applied
+            # once the plan is paused.
+            if self._pending_updates:
+                _LOGGER.debug(
+                    f"🌱 {self.room} Clearing {len(self._pending_updates)} pending updates on pause"
+                )
+                self._pending_updates.clear()
+
+            await self._restore_pre_plan_snapshot()
+
+            # Trigger a configuration rebuild so all managers pick up the
+            # restored tentData values instead of the grow plan values.
+            current_plant_stage = self.data_store.get("plantStage") or "EarlyVeg"
+            await self.event_manager.emit("PlantStageChange", current_plant_stage)
+            _LOGGER.info(
+                f"🌱 {self.room} Emitted PlantStageChange after pause to refresh setpoints"
+            )
+
+            self.hass.bus.async_fire(
+                "grow_plan_paused", {"room": self.room, "plan_id": plan_id}
+            )
+            _LOGGER.info(f"🌱 {self.room} Grow plan paused (plan_id={plan_id})")
+
+        elif action in ("stopped", "stop_plan"):
+            await self.deactivate_grow_plan(clear_plan_data=True)
+            self.hass.bus.async_fire(
+                "grow_plan_stopped", {"room": self.room, "plan_id": plan_id}
+            )
+            _LOGGER.info(f"🌱 {self.room} Grow plan stopped (plan_id={plan_id})")
+
+        elif action == "switched":
+            # Treat as stop + activate with the new plan
+            new_plan_id = data.get("new_plan_id") or data.get("plan_id")
+            await self.deactivate_grow_plan(clear_plan_data=True)
+            if new_plan_id:
+                plans = self.data_store.getDeep("growPlans") or []
+                plan_data = next((p for p in plans if p.get("id") == new_plan_id), None)
+                if plan_data:
+                    await self.activate_grow_plan_by_id(new_plan_id, plan_data)
+
+    async def _on_growplan_command(self, data):
+        """Handle ogb_growplan_command – local command bus for pause/stop/resume.
+
+        Expected data shape:
+            {"action": "pause" | "resume" | "stop" | "activate", "plan_id": str}
+        """
+        if not isinstance(data, dict):
+            return
+        event_room = data.get("room")
+        if event_room and event_room.lower() != self.room.lower():
+            return
+
+        action = data.get("action")
+        plan_id = data.get("plan_id") or self.active_grow_plan_id
+        if action == "pause":
+            self.managerActive = False
+            self.data_store.set("growManagerActive", False)
+            # Clear pending updates so a half-initialized system does not apply
+            # grow plan data after the pause command.
+            if self._pending_updates:
+                _LOGGER.debug(
+                    f"🌱 {self.room} Clearing {len(self._pending_updates)} pending updates on pause command"
+                )
+                self._pending_updates.clear()
+            await self._restore_pre_plan_snapshot()
+        elif action == "resume":
+            if plan_id:
+                plans = self.data_store.getDeep("growPlans") or []
+                plan_data = next((p for p in plans if p.get("id") == plan_id), None)
+                if plan_data:
+                    await self.activate_grow_plan_by_id(plan_id, plan_data)
+        elif action == "stop":
+            await self.deactivate_grow_plan(clear_plan_data=True)
+        elif action == "activate":
+            if plan_id:
+                plans = self.data_store.getDeep("growPlans") or []
+                plan_data = next((p for p in plans if p.get("id") == plan_id), None)
+                if plan_data:
+                    await self.activate_grow_plan_by_id(plan_id, plan_data)
+
     async def _update_current_week(self):
         """Aktualisiert die aktuelle Woche basierend auf dem Startdatum.
-        
+
         First checks for API-provided currentWeekData, then falls back to local plan data.
         Also triggers API fetch if week data is missing.
         """
@@ -272,7 +658,14 @@ class OGBGrowPlanManager:
             if "_update_current_week" not in self._pending_updates:
                 self._pending_updates.append("_update_current_week")
             return
-        
+
+        # Safety: never calculate or apply week data when the plan is paused/stopped.
+        if not self._is_grow_plan_active():
+            _LOGGER.debug(
+                f"🌱 {self.room} Grow plan not active - skipping week update"
+            )
+            return
+
         if not self.plan_start_date or not self.active_grow_plan:
             self.current_week = None
             self.current_week_data = None
@@ -405,6 +798,12 @@ class OGBGrowPlanManager:
         """Prüft ob ein Plan aktiv ist"""
         return self.active_grow_plan is not None and self.plan_start_date is not None
 
+    def _is_grow_plan_active(self) -> bool:
+        """Return True only when both the manager flag and the data store agree
+        that a grow plan is currently active.
+        """
+        return bool(self.managerActive) and bool(self.data_store.get("growManagerActive"))
+
     def get_current_week_data(self) -> Optional[Dict[str, Any]]:
         """Gibt die Daten der aktuellen Woche zurück.
         
@@ -440,7 +839,7 @@ class OGBGrowPlanManager:
 
     async def _update_entities_from_week_data(self):
         """Update Home Assistant entities with current week data.
-        
+
         This ensures all sensors and selects show the GrowPlan values.
         Called after week data is fetched or changed.
         """
@@ -448,9 +847,19 @@ class OGBGrowPlanManager:
             # Wait for system initialization if not ready
             if not self._is_system_ready:
                 _LOGGER.debug(f"{self.room} - System not ready yet, queuing entity update")
-                self._pending_updates.append("_update_entities_from_week_data")
+                if "_update_entities_from_week_data" not in self._pending_updates:
+                    self._pending_updates.append("_update_entities_from_week_data")
                 return
-            
+
+            # Safety: never apply grow plan week data when the plan is not active.
+            # This prevents paused plans from overwriting user setpoints after a
+            # restart or during race conditions.
+            if not self._is_grow_plan_active():
+                _LOGGER.debug(
+                    f"🌱 {self.room} Grow plan not active - skipping entity update from week data"
+                )
+                return
+
             week_data = self.data_store.getDeep("growPlan.currentWeekData")
             if not week_data:
                 _LOGGER.debug(f"{self.room} - No week data available for entity update")

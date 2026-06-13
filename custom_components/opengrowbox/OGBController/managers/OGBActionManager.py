@@ -1446,6 +1446,7 @@ class OGBActionManager:
             return
 
         actionMap = await self._apply_environment_guard(actionMap)
+        actionMap = self._apply_negative_pressure_guard(actionMap)
         _LOGGER.debug(f"{self.room}: Executing {len(actionMap)} validated actions")
 
         # CRITICAL: Send LogForClient as bundle (original format expected by UI)
@@ -1575,6 +1576,88 @@ class OGBActionManager:
         mainControl = self.data_store.get("mainControl")
         if mainControl == "Premium":
             await self.event_manager.emit("DataRelease", True)
+
+    def _apply_negative_pressure_guard(self, action_map: List) -> List:
+        """Ensure negative pressure when both intake and exhaust are available.
+
+        Only triggers when the room has both canIntake and canExhaust capabilities.
+        If the action map would push the tent into positive pressure
+        (Exhaust Reduce + Intake Increase), the intake Increase is rewritten to
+        Reduce so exhaust always dominates and air is pulled through the carbon
+        filter instead of leaking unfiltered through gaps.
+        """
+        if not action_map:
+            return action_map
+
+        guard_enabled = self.data_store.getDeep(
+            "controlOptions.negativePressureGuardEnabled", True
+        )
+        if not guard_enabled:
+            _LOGGER.debug(
+                f"{self.room}: NegativePressureGuard skipped - disabled"
+            )
+            return action_map
+
+        caps = self.data_store.get("capabilities") or {}
+        has_intake = caps.get("canIntake", {}).get("state", False)
+        has_exhaust = caps.get("canExhaust", {}).get("state", False)
+
+        if not has_intake or not has_exhaust:
+            _LOGGER.debug(
+                f"{self.room}: NegativePressureGuard skipped - need both "
+                f"canIntake and canExhaust (intake={has_intake}, exhaust={has_exhaust})"
+            )
+            return action_map
+
+        # Determine current fan action intents
+        exhaust_action = None
+        intake_action = None
+        intake_index = None
+
+        for idx, action in enumerate(action_map):
+            cap = getattr(action, "capability", None)
+            if cap == "canExhaust":
+                exhaust_action = getattr(action, "action", None)
+            elif cap == "canIntake":
+                intake_action = getattr(action, "action", None)
+                intake_index = idx
+
+        # The dangerous combination: less exhaust + more intake = positive pressure
+        if exhaust_action == "Reduce" and intake_action == "Increase":
+            if intake_index is None:
+                return action_map
+
+            original_action = action_map[intake_index]
+            old_message = getattr(original_action, "message", "")
+            new_message = (
+                f"{old_message} [NegativePressureGuard: Intake Increase -> Reduce "
+                f"to maintain negative pressure]"
+            ).strip()
+
+            try:
+                guarded_action = dataclasses.replace(
+                    original_action,
+                    action="Reduce",
+                    message=new_message,
+                    priority=getattr(original_action, "priority", "medium") or "medium",
+                )
+            except TypeError:
+                guarded_action = copy.copy(original_action)
+                guarded_action.action = "Reduce"
+                guarded_action.message = new_message
+                guarded_action.priority = (
+                    getattr(original_action, "priority", "medium") or "medium"
+                )
+
+            action_map = list(action_map)
+            action_map[intake_index] = guarded_action
+
+            _LOGGER.debug(
+                f"{self.room}: NegativePressureGuard corrected Intake Increase -> Reduce "
+                f"(Exhaust is Reduce; positive pressure / odor leak prevented)"
+            )
+
+        return action_map
 
     async def _apply_environment_guard(self, action_map: List) -> List:
         """Rewrite unsafe air-exchange increases to reductions under cold ambient risk.

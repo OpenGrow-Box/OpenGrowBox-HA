@@ -39,13 +39,13 @@ class OGBLightScheduler:
         self.current_plant_stage = ""
 
         self.plant_stage_min_max = {
-            "Germination": {"min": 20, "max": 30},
+            "Germination": {"min": 0, "max": 0},
             "Clones": {"min": 20, "max": 30},
-            "EarlyVeg": {"min": 30, "max": 40},
-            "MidVeg": {"min": 40, "max": 50},
-            "LateVeg": {"min": 50, "max": 65},
-            "EarlyFlower": {"min": 70, "max": 100},
-            "MidFlower": {"min": 70, "max": 100},
+            "EarlyVeg": {"min": 30, "max": 45},
+            "MidVeg": {"min": 45, "max": 60},
+            "LateVeg": {"min": 55, "max": 70},
+            "EarlyFlower": {"min": 65, "max": 80},
+            "MidFlower": {"min": 75, "max": 90},
             "LateFlower": {"min": 70, "max": 100},
         }
 

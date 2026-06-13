@@ -23,9 +23,32 @@ class OGBCalibManager:
     COOLDOWN_DURATION = 60      # 1 minute to turn off devices
 
     # Dimmable device step calibration
-    DIMMABLE_STEPS = [25, 50, 75, 100]
-    DIMMABLE_STEP_DURATION = 180  # 3 minutes per step (thermal stabilization)
-    DIMMABLE_FULL_DURATION = 300  # 5 minutes for 100% (max heat)
+    # Number of measurement points within the device's min..max range.
+    # Steps are generated dynamically from the first dimmable device's
+    # actual min/max (voltage for lights, duty cycle for fans/humidifiers).
+    # 4 points strikes a good balance: enough for slope/r², fast enough
+    # to keep total calibration time reasonable.
+    DIMMABLE_STEP_COUNT = 4
+    DIMMABLE_STEP_DURATION = 180  # 3 minutes per step (thermal/humidity stabilization)
+    DIMMABLE_FULL_DURATION = 300  # 5 minutes for the highest step (full power)
+
+    @classmethod
+    def _generate_steps(cls, min_val: float, max_val: float) -> List[int]:
+        """Generate N evenly distributed integer steps within [min_val, max_val].
+
+        Always includes min and max as the first/last step. If min == max,
+        returns a single step (degenerate range – caller should handle/skip).
+        """
+        min_v = max(0.0, min(100.0, float(min_val)))
+        max_v = max(0.0, min(100.0, float(max_val)))
+        if max_v < min_v:
+            min_v, max_v = max_v, min_v
+        n = cls.DIMMABLE_STEP_COUNT
+        if n < 2:
+            return [int(round(max_v))]
+        if max_v - min_v < 1:
+            return [int(round(max_v))]
+        return [int(round(min_v + (max_v - min_v) * i / (n - 1))) for i in range(n)]
 
     # Non-dimmable fallback durations
     EFFECT_DURATIONS = {
@@ -72,6 +95,18 @@ class OGBCalibManager:
         self._calibration_task: Optional[asyncio.Task] = None
         self._abort_requested = False
         self._original_tent_mode: Optional[str] = None
+        self._sequence_aborted = False
+
+        # Defensive: clear any stale persistent calibration flag on (re)start.
+        # The asyncio.Task cannot survive an HA restart, so a flag pointing at a
+        # non-existent task puts the user in a dead state until the JSON file
+        # is edited manually. This makes the manager self-healing on boot.
+        existing = self.data_store.getDeep("capCalibration.active")
+        if existing is not None:
+            _LOGGER.info(
+                f"[{self.room}] Clearing stale capCalibration.active on init: {existing}"
+            )
+            self.data_store.setDeep("capCalibration.active", None)
 
         # Listen for console commands
         self.hass.bus.async_listen("ogb_cap_calibration_command", self._handle_command)
@@ -147,6 +182,10 @@ class OGBCalibManager:
         from interrupting the sequence.
         """
         _LOGGER.debug(f"[{self.room}] start_calibration_for_sequence called for {cap}")
+        # Only reset the abort flag if no sequence-wide abort was requested.
+        # The console loop sets this to False once per sequence start.
+        if not self._sequence_aborted:
+            self._sequence_aborted = False
 
         # Validate capability
         capabilities = self.data_store.get("capabilities") or {}
@@ -189,9 +228,30 @@ class OGBCalibManager:
             self._original_tent_mode = None
 
     async def stop_calibration(self):
-        """Abort an active calibration and restore device states."""
+        """Abort an active calibration and restore device states.
+
+        Always flags the multi-cap sequence as aborted so cmd_calibrate_all_caps
+        will stop on its next iteration check (works even if cap_cal_stop is
+        called between calibrations when no task is running).
+
+        Also recovers from a "dead state" (persistent flag from a previous
+        process whose in-memory task no longer exists, e.g. after an HA
+        restart) by clearing the stale flag here.
+        """
+        self._sequence_aborted = True
         if not self._calibration_task or self._calibration_task.done():
-            await self._notify("ℹ️ No calibration is currently running.")
+            # Dead-state recovery: no live task but a persistent flag survived.
+            stale = self.data_store.getDeep("capCalibration.active")
+            if stale is not None:
+                self.data_store.setDeep("capCalibration.active", None)
+                await self.event_manager.emit("SaveState", True)
+                await self._notify(
+                    "ℹ️ No calibration is currently running – stale flag cleared."
+                )
+            else:
+                await self._notify(
+                    "ℹ️ No calibration is currently running."
+                )
             return
 
         self._abort_requested = True
@@ -224,6 +284,78 @@ class OGBCalibManager:
             getattr(d, "deviceName", None) in dev_entities and getattr(d, "isDimmable", False)
             for d in devices
         )
+
+    def _get_dimmable_range(self, cap: str) -> tuple[float, float]:
+        """Return (min, max) % range for the first dimmable device in the cap.
+
+        Resolution order (highest priority first):
+          1. Live device object attributes (minVoltage/maxVoltage or
+             minDuty/maxDuty) when they form a valid range (max > min).
+          2. Data store `DeviceMinMax.<deviceType>` explicit values.
+          3. Data store `DeviceMinMax.<deviceType>.Default.{min,max}` —
+             the per-type default envelope (e.g. Light → 20–50%).
+          4. Final fallback to (0, 100) so the calibration can still run.
+
+        This prevents calibrating outside a device's actual operating
+        envelope (e.g. running a 50%-max humidifier at 75%/100%).
+        """
+        capabilities = self.data_store.get("capabilities") or {}
+        cap_data = capabilities.get(cap, {})
+        dev_entities = cap_data.get("devEntities", [])
+        devices = self.data_store.get("devices") or []
+        device_type = None
+
+        for d in devices:
+            if getattr(d, "deviceName", None) in dev_entities and getattr(d, "isDimmable", False):
+                device_type = getattr(d, "deviceType", None)
+                # 1) Live device object
+                min_v = getattr(d, "minVoltage", None)
+                if min_v is None:
+                    min_v = getattr(d, "minDuty", None)
+                max_v = getattr(d, "maxVoltage", None)
+                if max_v is None:
+                    max_v = getattr(d, "maxDuty", None)
+                try:
+                    if min_v is not None and max_v is not None and float(max_v) > float(min_v):
+                        return (float(min_v), float(max_v))
+                except (ValueError, TypeError):
+                    pass
+                break
+
+        # 2) Data store explicit + 3) Default
+        if device_type:
+            ds = self.data_store.getDeep(f"DeviceMinMax.{device_type}") or {}
+            ds_min = ds.get("minDuty")
+            if ds_min is None:
+                ds_min = ds.get("minVoltage")
+            ds_max = ds.get("maxDuty")
+            if ds_max is None:
+                ds_max = ds.get("maxVoltage")
+            try:
+                if ds_min is not None and ds_max is not None and float(ds_max) > float(ds_min):
+                    return (float(ds_min), float(ds_max))
+            except (ValueError, TypeError):
+                pass
+            default = ds.get("Default") or {}
+            try:
+                dmin = default.get("min")
+                dmax = default.get("max")
+                if dmin is not None and dmax is not None and float(dmax) > float(dmin):
+                    return (float(dmin), float(dmax))
+            except (ValueError, TypeError):
+                pass
+
+        return (0.0, 100.0)
+
+    def _build_step_plan(self, cap: str) -> List[int]:
+        """Return the measurement step list for a dimmable cap.
+
+        Generates DIMMABLE_STEP_COUNT evenly distributed steps from the
+        device's min..max range. The final step (= max) gets the longer
+        FULL_DURATION for thermal stabilization.
+        """
+        min_v, max_v = self._get_dimmable_range(cap)
+        return self._generate_steps(min_v, max_v)
 
     # ------------------------------------------------------------------
     # Core calibration loop
@@ -290,12 +422,21 @@ class OGBCalibManager:
 
             if is_dimmable:
                 # Phase 2: Response curve steps
+                # Steps are generated from the device's min..max range so we
+                # never measure outside its actual operating envelope.
+                step_plan = self._build_step_plan(cap)
+                max_step = step_plan[-1] if step_plan else 100
                 step_results: Dict[int, Dict[str, List[float]]] = {}
-                for i, step in enumerate(self.DIMMABLE_STEPS):
-                    duration = self.DIMMABLE_FULL_DURATION if step == 100 else self.DIMMABLE_STEP_DURATION
+                await self._notify(
+                    f"📐 Step plan for {cap}: {step_plan}% "
+                    f"(device range {self._get_dimmable_range(cap)[0]:.0f}–"
+                    f"{self._get_dimmable_range(cap)[1]:.0f}%)"
+                )
+                for i, step in enumerate(step_plan):
+                    duration = self.DIMMABLE_FULL_DURATION if step == max_step else self.DIMMABLE_STEP_DURATION
                     self.data_store.setDeep("capCalibration.active.state", f"effect_{step}%")
                     await self._notify(
-                        f"Phase 2/{len(self.DIMMABLE_STEPS)}: Measuring effect at {step}% ({duration}s)"
+                        f"Phase 2/{len(step_plan)}: Measuring effect at {step}% ({duration}s)"
                     )
                     await self.event_manager.emit(
                         "CalibStart", {"room": self.room, "cap": cap, "level": step}
@@ -307,7 +448,7 @@ class OGBCalibManager:
 
                 # Compute response curve results
                 results = self._compute_response_curve_results(
-                    cap, baseline, step_results, metrics
+                    cap, baseline, step_results, metrics, step_plan
                 )
             else:
                 # Phase 2: Single on/off effect
@@ -469,12 +610,22 @@ class OGBCalibManager:
         baseline: Dict[str, List[float]],
         step_results: Dict[int, Dict[str, List[float]]],
         metrics: List[str],
+        step_plan: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
-        """Calculate response-curve results for dimmable devices."""
+        """Calculate response-curve results for dimmable devices.
+
+        Args:
+            step_plan: List of step % values that were actually measured
+                       (derived from the device's min..max range). Falls back
+                       to the legacy hardcoded DIMMABLE_STEPS for backwards
+                       compat with stored results.
+        """
         results: Dict[str, Any] = {
             "timestamp": datetime.now().isoformat(),
             "isDimmable": True,
         }
+        steps = step_plan if step_plan else [25, 50, 75, 100]
+        max_step = steps[-1] if steps else 100
 
         for metric in metrics:
             base_vals = baseline.get(metric, [])
@@ -487,9 +638,9 @@ class OGBCalibManager:
             xs = []
             ys = []
 
-            for step in self.DIMMABLE_STEPS:
+            for step in steps:
                 effect_vals = step_results.get(step, {}).get(metric, [])
-                duration = self.DIMMABLE_FULL_DURATION if step == 100 else self.DIMMABLE_STEP_DURATION
+                duration = self.DIMMABLE_FULL_DURATION if step == max_step else self.DIMMABLE_STEP_DURATION
                 if not effect_vals:
                     response_curve[step] = {"delta_per_min": 0.0, "confidence": 0.0, "note": "insufficient_data"}
                     continue
@@ -592,6 +743,10 @@ class OGBCalibManager:
     # ------------------------------------------------------------------
     # Status helpers (used by console)
     # ------------------------------------------------------------------
+
+    def is_sequence_aborted(self) -> bool:
+        """Return True if a multi-cap sequence was aborted via cap_cal_stop."""
+        return self._sequence_aborted
 
     def get_active_calibration(self) -> Optional[Dict[str, Any]]:
         """Return the currently active calibration info, if any."""

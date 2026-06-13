@@ -139,6 +139,45 @@ async def test_stop_calibration_restores_mode(setup_manager):
 
 
 @pytest.mark.asyncio
+async def test_stop_calibration_deadstate_clears_stale_flag(setup_manager):
+    """When no live task exists but a persistent flag survived (e.g. HA restart),
+    cap_cal_stop must clear the stale flag so the user is not stuck."""
+    manager, data_store, event_manager, hass = setup_manager
+    # Simulate the dead state: persistent flag present, no live task
+    data_store.setDeep(
+        "capCalibration.active", {"cap": "canHeat", "state": "baseline"}
+    )
+    assert manager._calibration_task is None  # no live task
+
+    await manager.stop_calibration()
+
+    # The stale flag must be cleared, NOT left behind
+    assert data_store.getDeep("capCalibration.active") is None
+    # A SaveState should fire so the cleared flag is persisted to disk
+    assert any(e["event_name"] == "SaveState" for e in event_manager.emitted)
+
+
+@pytest.mark.asyncio
+async def test_init_clears_stale_calibration_flag(setup_manager):
+    """Defensive: a fresh OGBCalibManager must heal a stale persistent flag on
+    init, so a user who restarts HA mid-calibration is not stuck."""
+    # Pre-populate the data store with a stale flag (simulates prior session)
+    setup_manager[1].setDeep(
+        "capCalibration.active", {"cap": "canHeat", "state": "baseline"}
+    )
+
+    # Build a fresh manager — its __init__ should clear the stale flag
+    from custom_components.opengrowbox.OGBController.managers.OGBCalibManager import (
+        OGBCalibManager,
+    )
+    fresh = OGBCalibManager(
+        setup_manager[3], setup_manager[1], setup_manager[2], "test_room"
+    )
+
+    assert setup_manager[1].getDeep("capCalibration.active") is None
+
+
+@pytest.mark.asyncio
 async def test_run_calibration_full_flow(setup_manager):
     manager, data_store, event_manager, hass = setup_manager
     heater = FakeDevice("climate.heater")
@@ -279,8 +318,17 @@ def test_compute_response_curve_results(setup_manager):
     temp_curve = results["temperature"]["response_curve"]
     assert 25 in temp_curve
     assert 100 in temp_curve
+    # All 4 steps present
+    assert len(temp_curve) == 4
+    # Monotonic increase: 100% has more effect than 25%
     assert temp_curve[100]["delta_per_min"] > temp_curve[25]["delta_per_min"]
+    # ΔT recorded per step
+    for step in manager.DIMMABLE_STEPS:
+        assert "delta" in temp_curve[step]
+        assert "delta_per_min" in temp_curve[step]
+        assert "confidence" in temp_curve[step]
     assert results["temperature"]["slope_per_percent"] > 0
+    assert results["temperature"]["r_squared"] > 0
 
 
 @pytest.mark.asyncio
@@ -294,6 +342,124 @@ async def test_handle_command_event_wrong_room(setup_manager):
 
     await manager._handle_command(FakeEvent())
     assert called == []
+
+
+# ----------------------------------------------------------------------
+# Step plan / dimmable range tests
+# ----------------------------------------------------------------------
+
+
+class _DimmableDevice:
+    def __init__(self, name, device_type, min_v, max_v, kind="duty"):
+        self.deviceName = name
+        self.deviceType = device_type
+        self.isDimmable = True
+        if kind == "voltage":
+            self.minVoltage = min_v
+            self.maxVoltage = max_v
+            self.minDuty = None
+            self.maxDuty = None
+        else:
+            self.minDuty = min_v
+            self.maxDuty = max_v
+            self.minVoltage = None
+            self.maxVoltage = None
+
+
+def test_generate_steps_evenly_distributed():
+    manager, _, _, _ = _fresh_manager()
+    # 0..100 with 4 steps → 0, 33, 67, 100
+    assert manager._generate_steps(0.0, 100.0) == [0, 33, 67, 100]
+    # 20..80 with 4 steps → 20, 40, 60, 80
+    assert manager._generate_steps(20.0, 80.0) == [20, 40, 60, 80]
+    # min==max → single step
+    assert manager._generate_steps(50.0, 50.0) == [50]
+
+
+def test_get_dimmable_range_uses_device_object(setup_manager):
+    manager, data_store, _, _ = setup_manager
+    dev = _DimmableDevice("climate.humidifier1", "Humidifier", 20.0, 80.0)
+    data_store.data["devices"] = [dev]
+    data_store.data["capabilities"]["canHumidify"]["devEntities"] = [
+        "climate.humidifier1"
+    ]
+    assert manager._get_dimmable_range("canHumidify") == (20.0, 80.0)
+
+
+def test_get_dimmable_range_uses_data_store_when_device_unset(setup_manager):
+    manager, data_store, _, _ = setup_manager
+    # Device object has no min/max
+    dev = _DimmableDevice("climate.humidifier1", "Humidifier", None, None)
+    # But the data store has an explicit envelope
+    data_store.data["devices"] = [dev]
+    data_store.data["capabilities"]["canHumidify"]["devEntities"] = [
+        "climate.humidifier1"
+    ]
+    data_store.setDeep(
+        "DeviceMinMax.Humidifier",
+        {"minDuty": 25.0, "maxDuty": 75.0, "Default": {"min": 0, "max": 100}},
+    )
+    assert manager._get_dimmable_range("canHumidify") == (25.0, 75.0)
+
+
+def test_get_dimmable_range_falls_back_to_default(setup_manager):
+    manager, data_store, _, _ = setup_manager
+    # No live min/max on device, no explicit in data store, but Default set
+    dev = _DimmableDevice("climate.light1", "Light", None, None, kind="voltage")
+    data_store.data["devices"] = [dev]
+    data_store.data["capabilities"]["canLight"] = {
+        "state": True,
+        "count": 1,
+        "devEntities": ["climate.light1"],
+    }
+    data_store.setDeep(
+        "DeviceMinMax.Light",
+        {"minVoltage": 0, "maxVoltage": 0, "Default": {"min": 20, "max": 50}},
+    )
+    assert manager._get_dimmable_range("canLight") == (20.0, 50.0)
+
+
+def test_get_dimmable_range_final_fallback(setup_manager):
+    manager, data_store, _, _ = setup_manager
+    # Nothing configured at all → 0..100
+    dev = _DimmableDevice("climate.fan1", "Exhaust", None, None)
+    data_store.data["devices"] = [dev]
+    data_store.data["capabilities"]["canExhaust"] = {
+        "state": True,
+        "count": 1,
+        "devEntities": ["climate.fan1"],
+    }
+    assert manager._get_dimmable_range("canExhaust") == (0.0, 100.0)
+
+
+def test_build_step_plan_for_humidifier_uses_data_store_default(setup_manager):
+    """User's reported case: a Humidifier that has Default={min:20,max:80} must
+    produce 4 steps within that range, not 0..100."""
+    manager, data_store, _, _ = setup_manager
+    dev = _DimmableDevice("climate.humidifier1", "Humidifier", None, None)
+    data_store.data["devices"] = [dev]
+    data_store.data["capabilities"]["canHumidify"]["devEntities"] = [
+        "climate.humidifier1"
+    ]
+    data_store.setDeep(
+        "DeviceMinMax.Humidifier",
+        {"minDuty": None, "maxDuty": None, "Default": {"min": 20, "max": 80}},
+    )
+    plan = manager._build_step_plan("canHumidify")
+    assert plan == [20, 40, 60, 80]
+
+
+def _fresh_manager():
+    """Helper for the pure-classmethod tests that don't need a full data store."""
+    from custom_components.opengrowbox.OGBController.managers.OGBCalibManager import (
+        OGBCalibManager,
+    )
+    return (
+        OGBCalibManager(FakeHass(), FakeDataStore(), FakeEventManager(), "x"),
+        None,
+        None,
+        None,
+    )
 
 
 @pytest.mark.asyncio

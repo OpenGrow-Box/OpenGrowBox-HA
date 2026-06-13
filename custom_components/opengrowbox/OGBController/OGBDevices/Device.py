@@ -840,7 +840,7 @@ class Device:
                 currentCap["deviceData"][self.deviceName] = {
                     "on_off": self.isRunning,
                     "is_dimmable": self.isDimmable,
-                    "dimm_value": getattr(self, 'dutyCycle', None),
+                    "dimm_value": self._get_dim_value(),
                     "min_duty": getattr(self, 'minDuty', None),
                     "max_duty": getattr(self, 'maxDuty', None),
                     "minmax_active": getattr(self, 'is_minmax_active', False)
@@ -851,6 +851,15 @@ class Device:
 
         # Log final capabilities state
         _LOGGER.debug(f"{self.deviceName}: Final capabilities: {self.dataStore.get('capabilities')}")
+
+    def _get_dim_value(self):
+        """Get the current dim value for this device.
+        
+        Light types use voltage, all others use dutyCycle.
+        """
+        if 'light' in self.deviceType.lower():
+            return getattr(self, 'voltage', None)
+        return getattr(self, 'dutyCycle', None)
 
     def _update_deviceData_in_capabilities(self):
         """Update deviceData in all capabilities this device belongs to."""
@@ -865,7 +874,7 @@ class Device:
                     currentCap["deviceData"][self.deviceName] = {
                         "on_off": self.isRunning,
                         "is_dimmable": self.isDimmable,
-                        "dimm_value": getattr(self, 'dutyCycle', None),
+                        "dimm_value": self._get_dim_value(),
                         "min_duty": getattr(self, 'minDuty', None),
                         "max_duty": getattr(self, 'maxDuty', None),
                         "minmax_active": getattr(self, 'is_minmax_active', False)
@@ -929,6 +938,13 @@ class Device:
                     _LOGGER.warning(f"{self.inRoom} - Unexpected Switch state '{switch_value}' for {self.deviceName}")
                     self.isRunning = None
                     return
+
+        # For dimmable devices: override switch-based isRunning if dim value is active
+        # (light may be dimming via voltage/brightness while switch entity shows "off")
+        if self.isDimmable:
+            dim_value = getattr(self, 'voltage', None) if 'light' in self.deviceType.lower() else getattr(self, 'dutyCycle', None)
+            if dim_value is not None and dim_value > 0:
+                self.isRunning = True
 
     # Überprüfe, ob das Gerät dimmbar ist
     def identifyIfDimmable(self):

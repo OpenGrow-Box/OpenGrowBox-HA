@@ -166,6 +166,30 @@ class OGBConsoleManager:
         )
 
         self.register_command(
+            "growplan_stop",
+            self.cmd_growplan_stop,
+            "Deactivates the active grow plan and restores tentData defaults",
+            "growplan_stop",
+            ["growplan_stop"],
+        )
+
+        self.register_command(
+            "growplan_pause",
+            self.cmd_growplan_pause,
+            "Pauses the active grow plan (frozen – resume to continue)",
+            "growplan_pause",
+            ["growplan_pause"],
+        )
+
+        self.register_command(
+            "growplan_resume",
+            self.cmd_growplan_resume,
+            "Resumes the most recently active grow plan",
+            "growplan_resume",
+            ["growplan_resume"],
+        )
+
+        self.register_command(
             "get_tentdata",
             self.cmd_get_tentdata,
             "Shows current tentData and VPD values",
@@ -896,6 +920,46 @@ class OGBConsoleManager:
 
         await self._send_response("🛑 Stop signal sent for active calibration.")
 
+    # ------------------------------------------------------------------
+    # Grow plan console commands
+    # ------------------------------------------------------------------
+
+    async def cmd_growplan_stop(self, params: List[str]):
+        """Deactivate the active grow plan and clear its data.
+
+        OGBDataStore.get_active_value + OGBConfigurationManager._plant_stage_to_vpd
+        will naturally fall back to tentData values once `growManagerActive` is
+        False. The active plan data is cleared so the next activate starts fresh.
+        """
+        await self._emit_growplan_command("stop")
+        await self._send_response(
+            "🛑 Grow plan stop requested – tentData targets will resume."
+        )
+
+    async def cmd_growplan_pause(self, params: List[str]):
+        """Pause the active grow plan – freeze state, keep plan data."""
+        await self._emit_growplan_command("pause")
+        await self._send_response(
+            "⏸️ Grow plan pause requested – use 'growplan_resume' to continue."
+        )
+
+    async def cmd_growplan_resume(self, params: List[str]):
+        """Resume the most recently active grow plan."""
+        await self._emit_growplan_command("resume")
+        await self._send_response(
+            "▶️ Grow plan resume requested."
+        )
+
+    async def _emit_growplan_command(self, action: str):
+        """Helper: fire ogb_growplan_command to the manager via the OGB event bus."""
+        if not self.event_manager:
+            await self._send_response("⚠️ Event manager not available.")
+            return
+        await self.event_manager.emit(
+            "ogb_growplan_command",
+            {"room": self.room, "action": action},
+        )
+
     async def cmd_get_tentdata(self, params: List[str]):
         """Shows current tentData and VPD values."""
         tent_data = self.data_store.get("tentData") or {}
@@ -1267,23 +1331,77 @@ class OGBConsoleManager:
             return
 
         # Send initial message
+        # Calculate accurate time per cap based on dimmable detection
+        # and the actual constants in OGBCalibManager.
+        from .OGBCalibManager import OGBCalibManager
+
+        devices = self.data_store.get("devices") or []
+
+        def _is_dimmable_cap(cap: str) -> bool:
+            cap_data = capabilities.get(cap, {})
+            dev_entities = cap_data.get("devEntities", [])
+            return any(
+                getattr(d, "deviceName", None) in dev_entities
+                and getattr(d, "isDimmable", False)
+                for d in devices
+            )
+
+        def _cap_step_plan(cap: str) -> list:
+            """Mirror OGBCalibManager._build_step_plan for the estimate."""
+            if not _is_dimmable_cap(cap):
+                return []
+            for d in devices:
+                cap_data = capabilities.get(cap, {})
+                if getattr(d, "deviceName", None) in cap_data.get("devEntities", []) and getattr(d, "isDimmable", False):
+                    min_v = getattr(d, "minVoltage", None) or getattr(d, "minDuty", None) or 0.0
+                    max_v = getattr(d, "maxVoltage", None) or getattr(d, "maxDuty", None) or 100.0
+                    return OGBCalibManager._generate_steps(float(min_v), float(max_v))
+            return OGBCalibManager._generate_steps(0.0, 100.0)
+
+        def _cap_time(cap: str) -> int:
+            if _is_dimmable_cap(cap):
+                steps = _cap_step_plan(cap)
+                n = len(steps)
+                # (n-1) regular steps × STEP_DURATION + 1 final step × FULL_DURATION
+                return (
+                    OGBCalibManager.BASELINE_DURATION
+                    + max(0, n - 1) * OGBCalibManager.DIMMABLE_STEP_DURATION
+                    + OGBCalibManager.DIMMABLE_FULL_DURATION
+                    + OGBCalibManager.COOLDOWN_DURATION
+                )
+            return (
+                OGBCalibManager.BASELINE_DURATION
+                + OGBCalibManager.EFFECT_DURATIONS.get(cap, 180)
+                + OGBCalibManager.COOLDOWN_DURATION
+            )
+
+        # Reset sequence-abort flag at the start of a fresh sequence
+        self.calib_manager._sequence_aborted = False
+
         total_time = 0
         for cap in caps_to_calibrate:
-            if cap == "canLight":
-                total_time += 900  # 15 min
-            elif cap in ("canHeat", "canCool", "canHumidify", "canDehumidify", "canIntake", "canExhaust"):
-                total_time += 300  # 5 min each
-            elif cap == "canVentilation":
-                total_time += 180  # 3 min (faster)
-        total_time += 180  # baseline
-        total_time += 60   # cooldown
+            total_time += _cap_time(cap)
+        total_time += 10  # initial stabilization (per sequence, not per cap)
+
+        # Per-cap breakdown for transparency
+        breakdown_lines = []
+        for cap in caps_to_calibrate:
+            t = _cap_time(cap)
+            if _is_dimmable_cap(cap):
+                steps = _cap_step_plan(cap)
+                mode = f"dimmable, steps {steps}%"
+            else:
+                mode = "on/off"
+            breakdown_lines.append(f"   • {cap}: ~{t // 60} min ({mode})")
 
         await self._send_response(
             f"🔄 Starting full calibration sequence...\n"
             f"📋 Capabilities: {', '.join(caps_to_calibrate)}\n"
             f"⏱️ Estimated time: ~{total_time // 60} minutes\n"
+            f"📊 Per-capability:\n" + "\n".join(breakdown_lines) + "\n"
             f"🚫 Skipped (no devices): {', '.join(skipped) if skipped else 'none'}\n\n"
-            f"Tent mode will stay disabled during entire sequence!"
+            f"Tent mode will stay disabled during entire sequence!\n"
+            f"Use 'cap_cal_stop' to abort the whole sequence at any time."
         )
 
         # Run calibrations sequentially
@@ -1291,6 +1409,13 @@ class OGBConsoleManager:
         failed = []
 
         for i, cap in enumerate(caps_to_calibrate):
+            # Check sequence abort at the top of every iteration
+            if self.calib_manager.is_sequence_aborted():
+                await self._send_response(
+                    f"🛑 Sequence aborted before {cap} – stopping."
+                )
+                break
+
             # Verify devices exist for this capability
             cap_data = capabilities.get(cap, {})
             dev_entities = cap_data.get("devEntities", [])
@@ -1330,10 +1455,11 @@ class OGBConsoleManager:
                     break
                 await asyncio.sleep(5)
                 wait_count += 1
-                # Timeout after 20 minutes per calibration
-                if wait_count > 240:
-                    await self._send_response(f"⚠️ Timeout waiting for {cap}, stopping...")
+                # Timeout after 30 minutes per calibration
+                if wait_count > 360:
+                    await self._send_response(f"⚠️ Timeout waiting for {cap}, stopping sequence...")
                     await self.calib_manager.stop_calibration()
+                    self.calib_manager._sequence_aborted = True
                     break
 
             # Check results AFTER calibration is complete
@@ -1344,6 +1470,13 @@ class OGBConsoleManager:
             else:
                 failed.append(cap)
                 await self._send_response(f"❌ {cap} failed! Check HA logs for details.")
+
+            # If user aborted the sequence via cap_cal_stop, stop here
+            if self.calib_manager.is_sequence_aborted():
+                await self._send_response(
+                    f"🛑 Sequence aborted by user after {cap} – stopping."
+                )
+                break
 
             # Small delay between calibrations to let system stabilize
             await asyncio.sleep(2)

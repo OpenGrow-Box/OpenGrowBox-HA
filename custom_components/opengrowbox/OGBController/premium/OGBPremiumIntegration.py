@@ -336,6 +336,12 @@ class OGBPremiumIntegration:
         # Grow plan week data from API - CRITICAL for week data loading
         self._register_event_listener("new_grow_plans", self._on_new_grow_plans)
 
+        # Grow plan lifecycle from webapp (pause/resume/stop/activate) – the
+        # OGBGrowPlanManager has its own listener too; this is the bridge for
+        # logging / cross-cutting concerns and ensures the event is observed
+        # even if the manager hasn't fully initialised yet.
+        self._register_event_listener("WebappGrowPlanStatusChange", self._on_webapp_growplan_status_change)
+
         # Cross-room authentication
         self._register_bus_listener("isAuthenticated", self._handle_authenticated)
 
@@ -835,20 +841,67 @@ class OGBPremiumIntegration:
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Webapp plant_stage_change handler error: {e}")
 
+    async def _on_webapp_growplan_status_change(self, data):
+        """Bridge for WebappGrowPlanStatusChange (logging + cross-cutting).
+
+        The OGBGrowPlanManager listens to this event itself and applies the
+        state transition. This handler is here for logging and to keep the
+        integration in sync with the rest of premium data (subscription
+        data, last_event_id, etc.).
+        """
+        try:
+            if not isinstance(data, dict):
+                return
+            action = data.get("action")
+            plan_id = data.get("plan_id")
+            plan_name = data.get("plan_name")
+            status = data.get("status")
+            event_ts = data.get("timestamp") or time.time()
+            _LOGGER.info(
+                f"🌱 {self.room} WebappGrowPlanStatusChange bridge: "
+                f"action={action} plan_id={plan_id} name={plan_name} status={status}"
+            )
+            # Remember the timestamp of the most recent plan status event so
+            # api_usage_update (which always reports status='active' because
+            # the webapp does not persist pause/resume in the DB) cannot
+            # overwrite a newer local state.
+            if not hasattr(self, "_last_grow_plan_event_ts"):
+                self._last_grow_plan_event_ts = 0
+            if event_ts > self._last_grow_plan_event_ts:
+                self._last_grow_plan_event_ts = event_ts
+
+            # Reflect the latest known status in subscription_data so the
+            # frontend can read it without having to wait for the next
+            # api_usage_update.
+            try:
+                if self.subscription_data is None:
+                    self.subscription_data = {}
+                if plan_id and action in ("activated", "resumed", "paused", "stopped",
+                                           "activate_plan", "resume_plan", "pause_plan", "stop_plan"):
+                    self.subscription_data["active_grow_plan"] = {
+                        "id": plan_id,
+                        "name": plan_name,
+                        "status": status or action,
+                    }
+            except Exception:
+                pass
+        except Exception as e:
+            _LOGGER.error(f"❌ {self.room} _on_webapp_growplan_status_change error: {e}")
+
     async def _on_webapp_drying_mode_change(self, data):
         """Handle drying mode change from webapp."""
         try:
             drying_mode = data.get("dryingMode")
-            
+
             if not drying_mode:
                 return
-            
+
             _LOGGER.debug(f"🍂 {self.room} Webapp drying mode change: {drying_mode}")
-            
+
             # Update data_store with new drying mode
             self.data_store.set("dryingMode", drying_mode)
             self.data_store.setDeep("drying.currentDryMode", drying_mode)
-            
+
             # Update Home Assistant select entity directly (more reliable than service call)
             try:
                 from custom_components.opengrowbox import DOMAIN
@@ -866,7 +919,7 @@ class OGBPremiumIntegration:
                 _LOGGER.warning(
                     f"⚠️ {self.room} Could not update drying mode entity to '{drying_mode}': {entity_error}"
                 )
-            
+
             # Emit event for mode manager and other listeners
             await self.event_manager.emit("DryingModeChange", {
                 "room": self.room,
@@ -934,11 +987,38 @@ class OGBPremiumIntegration:
                 self.data_store.setDeep("growPlan.totalWeeks", active_grow_plan.get('maxWeeks'))
                 
                 # Activate grow plan or refresh week data
-                if self.growPlanManager and plan_id:
-                    if self.growPlanManager.active_grow_plan_id == plan_id and self.growPlanManager.managerActive:
+                # IMPORTANT: The webapp only sends pause/resume/stop/activate via
+                # grow_plan_status_change events; it does NOT persist these states
+                # in the API database. Therefore api_usage_update always reports
+                # status='active'. We must not let it overwrite a local pause state
+                # that was set by a more recent event.
+                api_update_ts = data.get("timestamp") or time.time()
+                event_is_newer = (
+                    not hasattr(self, "_last_grow_plan_event_ts")
+                    or self._last_grow_plan_event_ts is None
+                    or api_update_ts >= self._last_grow_plan_event_ts
+                )
+
+                if self.growPlanManager and plan_id and event_is_newer:
+                    plan_status = (active_grow_plan.get("status") or "active").lower()
+                    if plan_status in ("paused", "stopped"):
+                        # Server says this plan is paused/stopped – make the
+                        # local state match instead of blindly re-activating.
+                        if self.growPlanManager.active_grow_plan_id == plan_id:
+                            if plan_status == "paused":
+                                self.growPlanManager.managerActive = False
+                                self.data_store.set("growManagerActive", False)
+                            else:  # stopped
+                                await self.growPlanManager.deactivate_grow_plan(clear_plan_data=True)
+                    elif self.growPlanManager.active_grow_plan_id == plan_id and self.growPlanManager.managerActive:
                         await self.growPlanManager._update_current_week()
-                    else:
+                    elif plan_status == "active":
                         await self.growPlanManager.activate_grow_plan_by_id(plan_id, active_grow_plan)
+                elif self.growPlanManager and plan_id and not event_is_newer:
+                    _LOGGER.debug(
+                        f"🌱 {self.room} Ignoring active_grow_plan from api_usage_update "
+                        f"because a more recent grow_plan_status_change event was received"
+                    )
 
 
             # Get active connections from usage
@@ -1365,39 +1445,76 @@ class OGBPremiumIntegration:
 
     async def _on_new_grow_plans(self, data):
         """Handle new grow plan week data from API.
-        
+
         CRITICAL: This receives week data from the API and stores it in the data_store
         so that climate controllers can read min/max temperature, humidity, etc.
+
+        The activePlan status is respected: if the server reports the plan as
+        paused or stopped, the local manager is put into the matching inactive
+        state and NO entity updates are applied from the week data. This
+        prevents a paused plan from overwriting user setpoints after a HA restart.
         """
         try:
             _LOGGER.debug(f"🌱 {self.room} Received new_grow_plans event with keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}")
-            
+
             if not isinstance(data, dict):
                 _LOGGER.warning(f"🌱 {self.room} new_grow_plans data is not a dict: {type(data)}")
                 return
-            
+
             # Extract week data from the event
             current_week_data = data.get("currentWeekData")
             current_week = data.get("currentWeek")
             active_plan = data.get("activePlan")
-            
+            plan_status = (active_plan.get("status") or "active").lower() if isinstance(active_plan, dict) else "active"
+            plan_id = active_plan.get("id") if isinstance(active_plan, dict) else None
+
+            # Respect pause/stop from the server before touching any entities.
+            if plan_status in ("paused", "stopped"):
+                _LOGGER.info(
+                    f"🌱 {self.room} Grow plan reported as '{plan_status}' by API - "
+                    f"keeping entities unchanged"
+                )
+                if self.growPlanManager and plan_id:
+                    if self.growPlanManager.active_grow_plan_id == plan_id:
+                        if plan_status == "paused":
+                            self.growPlanManager.managerActive = False
+                            self.data_store.set("growManagerActive", False)
+                            # Discard any pending entity updates that might have
+                            # been queued while the system was still starting.
+                            self.growPlanManager._pending_updates.clear()
+                            _LOGGER.info(f"🌱 {self.room} Local grow plan paused (from new_grow_plans)")
+                        else:  # stopped
+                            await self.growPlanManager.deactivate_grow_plan(clear_plan_data=True)
+                            _LOGGER.info(f"🌱 {self.room} Local grow plan stopped (from new_grow_plans)")
+                    else:
+                        _LOGGER.debug(
+                            f"🌱 {self.room} Paused/stopped plan_id {plan_id} does not match "
+                            f"local active plan {self.growPlanManager.active_grow_plan_id}"
+                        )
+                # Still store the week data for reference, but do NOT apply it.
+                if current_week_data is not None:
+                    self.data_store.setDeep("growPlan.currentWeekData", current_week_data)
+                    if current_week:
+                        self.data_store.setDeep("growPlan.currentWeek", current_week)
+                return
+
             if current_week_data:
                 _LOGGER.debug(f"🌱 {self.room} Storing currentWeekData in data_store")
                 self.data_store.setDeep("growPlan.currentWeekData", current_week_data)
-                
+
                 if current_week:
                     self.data_store.setDeep("growPlan.currentWeek", current_week)
-                
+
                 # Also update the grow plan manager if available
                 if self.growPlanManager:
                     self.growPlanManager.current_week_data = current_week_data
                     if current_week:
                         self.growPlanManager.current_week = current_week
-                    
+
                     # Trigger entity updates from week data
                     await self.growPlanManager._update_entities_from_week_data()
                     _LOGGER.debug(f"🌱 {self.room} Updated entities from week data")
-                
+
             elif active_plan:
                 _LOGGER.debug(f"🌱 {self.room} Received activePlan without week data")
                 # Store basic plan info
@@ -1405,7 +1522,7 @@ class OGBPremiumIntegration:
                 self.data_store.setDeep("growPlan.name", active_plan.get("name"))
             else:
                 _LOGGER.debug(f"🌱 {self.room} new_grow_plans event has no currentWeekData or activePlan")
-                
+
         except Exception as e:
             _LOGGER.error(f"❌ {self.room} Error handling new_grow_plans: {e}", exc_info=True)
 
@@ -3708,10 +3825,10 @@ class OGBPremiumIntegration:
             self.ogb_login_email = None
             self.is_primary_auth_room = False
 
-            # Reset grow plan manager
+            # Reset grow plan manager – use the new method so data store
+            # flags + plan data + active state are all cleared consistently.
             if self.growPlanManager:
-                self.growPlanManager.active_grow_plan = None
-                self.growPlanManager.managerActive = False
+                await self.growPlanManager.deactivate_grow_plan(clear_plan_data=True)
 
             # Reset mainControl to HomeAssistant if currently Premium
             try:
