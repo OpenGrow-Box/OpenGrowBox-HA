@@ -66,6 +66,11 @@ def setup_manager():
                     "count": 1,
                     "devEntities": ["climate.main"],
                 },
+                "canHumidify": {
+                    "state": True,
+                    "count": 1,
+                    "devEntities": [],
+                },
             },
             "devices": [],
             "capCalibration": {"active": None, "results": {}},
