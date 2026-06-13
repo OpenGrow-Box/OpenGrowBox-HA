@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import filecmp
 import logging
 import os
 import shutil
 from typing import TYPE_CHECKING
 
-from homeassistant.components.frontend import async_register_built_in_panel
+from homeassistant.components.frontend import (
+    add_extra_js_url,
+    async_register_built_in_panel,
+)
 
-from .const import DOMAIN, URL_BASE
+from .const import DOMAIN, FRONTEND_EXTRA_MODULE_URL, URL_BASE
 from .OGBController.utils.workarounds import async_register_static_path
 
 if TYPE_CHECKING:
@@ -18,6 +22,8 @@ if TYPE_CHECKING:
     from .base import HacsBase
 
 _LOGGER = logging.getLogger(__name__)
+_LOVELACE_RESOURCE_URL = FRONTEND_EXTRA_MODULE_URL
+_LOVELACE_RESOURCE_TYPE = "module"
 
 
 async def async_register_frontend(hass: HomeAssistant) -> None:
@@ -25,7 +31,8 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         hass.config.path("custom_components"), "opengrowbox", "frontend", "static"
     )
 
-    if not os.path.exists(static_path):
+    static_path_exists = await hass.async_add_executor_job(os.path.exists, static_path)
+    if not static_path_exists:
         _LOGGER.error("Static path not found: %s", static_path)
         return
 
@@ -36,37 +43,25 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
     icon_js_src = os.path.join(
         hass.config.path("custom_components"), "opengrowbox", "frontend", "ogb_icons.js"
     )
-    www_path = hass.config.path("www")
-    icon_js_dest_dir = os.path.join(www_path, "opengrowbox")
-    icon_js_dest = os.path.join(icon_js_dest_dir, "ogb_icons.js")
+    www_opengrowbox_path = os.path.join(hass.config.path("www"), "opengrowbox")
+    icon_js_dest = os.path.join(www_opengrowbox_path, "ogb_icons.js")
 
-    if os.path.exists(icon_js_src):
-        try:
-            os.makedirs(icon_js_dest_dir, exist_ok=True)
-            if not os.path.exists(icon_js_dest):
-                shutil.copy(icon_js_src, icon_js_dest)
-                _LOGGER.debug(f"Copied ogb_icons.js to {icon_js_dest}")
-            else:
-                _LOGGER.debug(f"ogb_icons.js already exists in {icon_js_dest_dir}")
-        except Exception as e:
-            _LOGGER.warning(f"Could not copy ogb_icons.js to www: {e}")
+    icon_js_ready = await _async_copy_frontend_asset(
+        hass,
+        icon_js_src,
+        icon_js_dest,
+        "ogb_icons.js",
+    )
+    if icon_js_ready:
+        _register_global_frontend_module(hass, _LOVELACE_RESOURCE_URL)
+        await _async_register_lovelace_resource(hass, _LOVELACE_RESOURCE_URL)
 
     png_src = os.path.join(
         hass.config.path("custom_components"), "opengrowbox", "frontend", "ogb_tree.png"
     )
-    png_dest_dir = os.path.join(www_path, "opengrowbox")
-    png_dest = os.path.join(png_dest_dir, "ogb_tree.png")
+    png_dest = os.path.join(www_opengrowbox_path, "ogb_tree.png")
 
-    if os.path.exists(png_src):
-        try:
-            os.makedirs(png_dest_dir, exist_ok=True)
-            if not os.path.exists(png_dest):
-                shutil.copy(png_src, png_dest)
-                _LOGGER.debug(f"Copied ogb_tree.png to {png_dest}")
-            else:
-                _LOGGER.debug(f"ogb_tree.png already exists in {png_dest_dir}")
-        except Exception as e:
-            _LOGGER.warning(f"Could not copy ogb_tree.png to www: {e}")
+    await _async_copy_frontend_asset(hass, png_src, png_dest, "ogb_tree.png")
 
     sidebar_icon = "custom:ogb_tree"
 
@@ -92,3 +87,119 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.debug(f"Custom panel registered with icon: {sidebar_icon}")
     else:
         _LOGGER.debug("Custom panel already registered.")
+
+
+async def _async_copy_frontend_asset(
+    hass: HomeAssistant,
+    source: str,
+    destination: str,
+    name: str,
+) -> bool:
+    """Copy a frontend asset from an executor to avoid blocking the event loop."""
+    return await hass.async_add_executor_job(
+        _copy_frontend_asset,
+        source,
+        destination,
+        name,
+    )
+
+
+def _copy_frontend_asset(source: str, destination: str, name: str) -> bool:
+    """Copy a frontend asset into /config/www when missing or outdated."""
+    try:
+        if not os.path.exists(source):
+            return False
+
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        if os.path.exists(destination) and filecmp.cmp(
+            source,
+            destination,
+            shallow=False,
+        ):
+            _LOGGER.debug("%s already exists at %s", name, destination)
+            return True
+
+        shutil.copy2(source, destination)
+        _LOGGER.debug("Copied %s to %s", name, destination)
+        return True
+    except Exception as err:
+        _LOGGER.warning("Could not copy %s to www: %s", name, err)
+        return False
+
+
+def _register_global_frontend_module(
+    hass: HomeAssistant,
+    module_url: str,
+) -> None:
+    """Register the icon module with Home Assistant's global frontend loader."""
+    try:
+        add_extra_js_url(hass, module_url)
+        _LOGGER.debug("Registered OpenGrowBox global frontend module: %s", module_url)
+    except Exception as err:
+        _LOGGER.debug("Could not register OpenGrowBox global frontend module: %s", err)
+
+
+async def _async_register_lovelace_resource(
+    hass: HomeAssistant,
+    resource_url: str,
+) -> None:
+    """Register OpenGrowBox frontend assets as Lovelace resources in storage mode."""
+    try:
+        resources = _get_lovelace_resources(hass)
+        if resources is None:
+            _LOGGER.debug("Lovelace resources are not available; skipping OGB resource setup")
+            return
+
+        if not getattr(resources, "loaded", False):
+            await resources.async_load()
+            if hasattr(resources, "loaded"):
+                resources.loaded = True
+
+        resource_base = _resource_base_url(resource_url)
+        for item in resources.async_items():
+            if _resource_base_url(str(item.get("url", ""))) != resource_base:
+                continue
+
+            item_type = item.get("res_type", item.get("type"))
+            if item_type != _LOVELACE_RESOURCE_TYPE and item.get("id") and getattr(
+                resources,
+                "async_update_item",
+                None,
+            ):
+                await resources.async_update_item(
+                    item["id"],
+                    {"res_type": _LOVELACE_RESOURCE_TYPE, "url": resource_url},
+                )
+                _LOGGER.debug("Updated OpenGrowBox Lovelace resource: %s", resource_url)
+            else:
+                _LOGGER.debug("OpenGrowBox Lovelace resource already exists: %s", item["url"])
+            return
+
+        if not getattr(resources, "async_create_item", None):
+            _LOGGER.debug(
+                "Lovelace resource storage is not writable; add %s manually if needed",
+                resource_url,
+            )
+            return
+
+        await resources.async_create_item(
+            {"res_type": _LOVELACE_RESOURCE_TYPE, "url": resource_url}
+        )
+        _LOGGER.debug("Registered OpenGrowBox Lovelace resource: %s", resource_url)
+    except Exception as err:
+        _LOGGER.debug("Could not register OpenGrowBox Lovelace resource: %s", err)
+
+
+def _resource_base_url(resource_url: str) -> str:
+    """Return resource URL without cache-busting query string."""
+    return resource_url.split("?", 1)[0]
+
+
+def _get_lovelace_resources(hass: HomeAssistant):
+    """Return the Lovelace resource collection across HA storage shapes."""
+    lovelace_data = hass.data.get("lovelace")
+    if lovelace_data is None:
+        return None
+    if isinstance(lovelace_data, dict):
+        return lovelace_data.get("resources")
+    return getattr(lovelace_data, "resources", None)

@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "สร้างห้อง",
-        "description": "ป้อนชื่อสำหรับห้อง",
+        "description": "ป้อนชื่อสำหรับห้อง\n\n{configuration_status}",
         "data": {
-          "room_name": "ชื่อห้อง"
+          "room_name": "ชื่อห้อง",
+          "auto_configure_ha": "อัปเดต configuration.yaml โดยอัตโนมัติ"
         },
         "data_description": {
-          "room_name": "ตัวอักษรที่อนุญาติ: a-z, A-Z, 0-9, _ หรือ -\nความยาว: 1-50 ตัวอักษร\n\nตัวอย่าง: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "ตัวอักษรที่อนุญาติ: a-z, A-Z, 0-9, _ หรือ -\nความยาว: 1-50 ตัวอักษร\n\nตัวอย่าง: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "เมื่อเปิดใช้งาน OpenGrowBox จะเพิ่มการตั้งค่า YAML ของ OpenGrowBox ที่ขาดหายไปลงใน configuration.yaml และสร้างข้อมูลสำรองก่อนเขียนไฟล์"
         }
       }
     },
     "error": {
       "invalid_room_name": "ชื่อห้องไม่ถูกต้อง อนุญาติเฉพาะตัวอักษร (a-z, A-Z), ตัวเลข (0-9), ขีดล่าง (_) และ ขีดกลาง (-)",
-      "invalid_length": "ชื่อห้องต้องมีความยาวระหว่าง 1 ถึง 50 ตัวอักษร"
+      "invalid_length": "ชื่อห้องต้องมีความยาวระหว่าง 1 ถึง 50 ตัวอักษร",
+      "required_ha_config_missing": "ไม่มีการตั้งค่า YAML ของ OpenGrowBox ที่จำเป็น เปิดใช้งานการอัปเดตอัตโนมัติหรืออัปเดต configuration.yaml ด้วยตนเองก่อนดำเนินการต่อ"
+    },
+    "abort": {
+      "required_ha_config_missing": "ไม่มีการตั้งค่า YAML ของ OpenGrowBox ที่จำเป็น เปิดใช้งานการอัปเดตอัตโนมัติหรืออัปเดต configuration.yaml ด้วยตนเองก่อนดำเนินการต่อ"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ตัวเลือก OpenGrowBox",
+        "description": "จัดการลักษณะการทำงานของอินทิเกรชันทั้งหมด\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "อัปเดต configuration.yaml โดยอัตโนมัติ"
+        },
+        "data_description": {
+          "auto_configure_ha": "เมื่อเปิดใช้งาน OpenGrowBox จะเพิ่มการตั้งค่า YAML ของ OpenGrowBox ที่ขาดหายไปลงใน configuration.yaml และสร้างข้อมูลสำรองก่อนเขียนไฟล์"
+        }
+      }
     }
   }
 }

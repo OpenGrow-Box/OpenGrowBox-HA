@@ -2,7 +2,7 @@
 
 ## Quick Start (5 minutes)
 
-OpenGrowBox uses a simple integration-based setup - **no configuration.yaml needed**. One integration creates one complete grow room area.
+OpenGrowBox uses a simple integration-based setup. One integration creates one complete grow room area. OpenGrowBox requires logger diagnostics and Home Assistant history support in `configuration.yaml`; this does not require `default_config:`. If `default_config:` is already present, it satisfies the history requirement. For custom icons on Home Assistant's default dashboard, OpenGrowBox can also add its frontend icon module when automatic configuration updates are enabled. The setup flow blocks on missing logger/history YAML, but not on the icon module.
 
 ## Step 1: Install Integration
 

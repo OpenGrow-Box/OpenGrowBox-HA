@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Створити кімнату",
-        "description": "Введіть назву для кімнати.",
+        "description": "Введіть назву кімнати.\n\n{configuration_status}",
         "data": {
-          "room_name": "Назва кімнати"
+          "room_name": "Назва кімнати",
+          "auto_configure_ha": "Автоматично оновлювати configuration.yaml"
         },
         "data_description": {
-          "room_name": "Дозволені символи: a-z, A-Z, 0-9, _ або -\nДовжина: 1-50 символів\n\nПриклади: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Дозволені символи: a-z, A-Z, 0-9, _ або -\nДовжина: 1-50 символів\n\nПриклади: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Якщо ввімкнено, OpenGrowBox додає відсутні YAML-налаштування OpenGrowBox до configuration.yaml і створює резервну копію перед записом."
         }
       }
     },
     "error": {
       "invalid_room_name": "Неприпустима назва кімнати. Дозволені лише латинські літери (a-z, A-Z), цифри (0-9), підкреслення (_) і дефіси (-).",
-      "invalid_length": "Назва кімнати повинна мати від 1 до 50 символів."
+      "invalid_length": "Назва кімнати повинна мати від 1 до 50 символів.",
+      "required_ha_config_missing": "Відсутні обов’язкові YAML-налаштування OpenGrowBox. Увімкніть автоматичні оновлення або вручну оновіть configuration.yaml, перш ніж продовжити."
+    },
+    "abort": {
+      "required_ha_config_missing": "Відсутні обов’язкові YAML-налаштування OpenGrowBox. Увімкніть автоматичні оновлення або вручну оновіть configuration.yaml, перш ніж продовжити."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Параметри OpenGrowBox",
+        "description": "Керування поведінкою всієї інтеграції.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Автоматично оновлювати configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Якщо ввімкнено, OpenGrowBox додає відсутні YAML-налаштування OpenGrowBox до configuration.yaml і створює резервну копію перед записом."
+        }
+      }
     }
   }
 }

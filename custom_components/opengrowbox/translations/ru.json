@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Создать комнату",
-        "description": "Введите название для комнаты.",
+        "description": "Введите название комнаты.\n\n{configuration_status}",
         "data": {
-          "room_name": "Название комнаты"
+          "room_name": "Название комнаты",
+          "auto_configure_ha": "Автоматически обновлять configuration.yaml"
         },
         "data_description": {
-          "room_name": "Разрешённые символы: a-z, A-Z, 0-9, _ или -\nДлина: 1-50 символов\n\nПримеры: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Разрешённые символы: a-z, A-Z, 0-9, _ или -\nДлина: 1-50 символов\n\nПримеры: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Если включено, OpenGrowBox добавляет недостающие YAML-настройки OpenGrowBox в configuration.yaml и создает резервную копию перед записью."
         }
       }
     },
     "error": {
       "invalid_room_name": "Недопустимое название комнаты. Разрешены только буквы (a-z, A-Z), цифры (0-9), подчёркивания (_) и дефисы (-).",
-      "invalid_length": "Название комнаты должно содержать от 1 до 50 символов."
+      "invalid_length": "Название комнаты должно содержать от 1 до 50 символов.",
+      "required_ha_config_missing": "Отсутствуют обязательные YAML-настройки OpenGrowBox. Включите автоматическое обновление или вручную обновите configuration.yaml перед продолжением."
+    },
+    "abort": {
+      "required_ha_config_missing": "Отсутствуют обязательные YAML-настройки OpenGrowBox. Включите автоматическое обновление или вручную обновите configuration.yaml перед продолжением."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Параметры OpenGrowBox",
+        "description": "Управление поведением всей интеграции.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Автоматически обновлять configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Если включено, OpenGrowBox добавляет недостающие YAML-настройки OpenGrowBox в configuration.yaml и создает резервную копию перед записью."
+        }
+      }
     }
   }
 }

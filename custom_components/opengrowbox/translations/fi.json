@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Luo huone",
-        "description": "Anna huoneelle nimi.",
+        "description": "Anna huoneen nimi.\n\n{configuration_status}",
         "data": {
-          "room_name": "Huoneen nimi"
+          "room_name": "Huoneen nimi",
+          "auto_configure_ha": "Päivitä configuration.yaml automaattisesti"
         },
         "data_description": {
-          "room_name": "Sallitut merkit: a-z, A-Z, 0-9, _ tai -\nPituus: 1-50 merkkiä\n\nEsimerkkejä: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Sallitut merkit: a-z, A-Z, 0-9, _ tai -\nPituus: 1-50 merkkiä\n\nEsimerkkejä: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Kun tämä on käytössä, OpenGrowBox lisää puuttuvat OpenGrowBoxin YAML-asetukset configuration.yaml-tiedostoon ja luo varmuuskopion ennen kirjoittamista."
         }
       }
     },
     "error": {
       "invalid_room_name": "Virheellinen huoneen nimi. Vain kirjaimet (a-z, A-Z), numerot (0-9), alaviivat (_) ja tavuviivat (-) ovat sallittuja.",
-      "invalid_length": "Huoneen nimen pituuden on oltava 1-50 merkkiä."
+      "invalid_length": "Huoneen nimen pituuden on oltava 1-50 merkkiä.",
+      "required_ha_config_missing": "Vaaditut OpenGrowBoxin YAML-asetukset puuttuvat. Ota automaattiset päivitykset käyttöön tai päivitä configuration.yaml käsin ennen jatkamista."
+    },
+    "abort": {
+      "required_ha_config_missing": "Vaaditut OpenGrowBoxin YAML-asetukset puuttuvat. Ota automaattiset päivitykset käyttöön tai päivitä configuration.yaml käsin ennen jatkamista."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox-asetukset",
+        "description": "Hallitse koko integraation toimintaa.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Päivitä configuration.yaml automaattisesti"
+        },
+        "data_description": {
+          "auto_configure_ha": "Kun tämä on käytössä, OpenGrowBox lisää puuttuvat OpenGrowBoxin YAML-asetukset configuration.yaml-tiedostoon ja luo varmuuskopion ennen kirjoittamista."
+        }
+      }
     }
   }
 }
