@@ -21,7 +21,9 @@ from .frontend import async_register_frontend
 from .ha_config_status import (
     REQUIRED_LOGGER_DEFAULT,
     REQUIRED_LOGGER_OVERRIDES,
+    apply_runtime_ha_config_status,
     get_ha_config_status,
+    history_component_loaded,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,7 +82,7 @@ async def _check_required_ha_config(
     config_path = hass.config.path("configuration.yaml")
 
     try:
-        status = await hass.async_add_executor_job(get_ha_config_status, config_path)
+        status = await _async_get_ha_config_status(hass, config_path)
     except Exception as err:
         _LOGGER.warning(
             "Could not read configuration.yaml (%s). Using minimal OpenGrowBox log level.",
@@ -112,7 +114,7 @@ async def _check_required_ha_config(
 
         if update_attempted:
             try:
-                status = await hass.async_add_executor_job(get_ha_config_status, config_path)
+                status = await _async_get_ha_config_status(hass, config_path)
             except Exception as err:
                 _LOGGER.warning("Could not re-check configuration.yaml: %s", err)
 
@@ -167,6 +169,18 @@ async def _check_required_ha_config(
         missing_text,
         auto_update=auto_update,
         update_attempted=update_attempted,
+    )
+
+
+async def _async_get_ha_config_status(
+    hass: HomeAssistant,
+    config_path: str,
+):
+    """Return required HA config status, accounting for already-loaded runtime state."""
+    status = await hass.async_add_executor_job(get_ha_config_status, config_path)
+    return apply_runtime_ha_config_status(
+        status,
+        history_loaded=history_component_loaded(hass),
     )
 
 

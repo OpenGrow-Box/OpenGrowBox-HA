@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,14 @@ REQUIRED_LOGGER_OVERRIDES = {
     "homeassistant.loader": REQUIRED_LOGGER_LEVEL,
     "custom_components.opengrowbox": REQUIRED_LOGGER_LEVEL,
     "custom_components.ogb-dev-env": REQUIRED_LOGGER_LEVEL,
+}
+
+_LOGGER_LEVEL_VALUES = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
 }
 
 
@@ -103,11 +112,14 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
         else list(_required_history_settings())
     )
 
-    logger_config = config.get("logger")
     logger_line = _find_top_level_logger_line(content)
     logger_line_is_inline = bool(logger_line and _line_has_inline_value(logger_line))
+    logger_config = _merge_logger_configs(
+        config.get("logger"),
+        _extract_logger_block(content) if logger_line and not logger_line_is_inline else None,
+    )
 
-    if "logger" not in config:
+    if "logger" not in config and logger_line is None:
         missing.extend(_required_logger_settings())
     elif not isinstance(logger_config, dict):
         if logger_line_is_inline:
@@ -180,6 +192,53 @@ def get_ha_config_status(path: str) -> HAConfigStatus:
     return HAConfigStatus(path=path, missing=tuple(missing))
 
 
+def apply_runtime_ha_config_status(
+    status: HAConfigStatus,
+    *,
+    history_loaded: bool = False,
+) -> HAConfigStatus:
+    """Use loaded HA runtime state to avoid false raw-YAML missing reports."""
+    missing = list(status.missing)
+    error = status.error
+
+    raw_logger_missing = [item for item in missing if _is_logger_setting(item)]
+    if raw_logger_missing or _is_logger_error(error):
+        runtime_logger_missing = list(get_runtime_logger_missing())
+        missing = [item for item in missing if not _is_logger_setting(item)]
+        missing[:0] = runtime_logger_missing
+        if not runtime_logger_missing and _is_logger_error(error):
+            error = None
+
+    if history_loaded:
+        missing = [item for item in missing if item != "history:"]
+
+    return HAConfigStatus(
+        path=status.path,
+        missing=tuple(dict.fromkeys(missing)),
+        error=error,
+    )
+
+
+def get_runtime_logger_missing() -> tuple[str, ...]:
+    """Return logger diagnostics missing from the active Python logging state."""
+    missing = []
+    if _effective_level("homeassistant") > _level_value(REQUIRED_LOGGER_DEFAULT):
+        missing.append(f"logger.default: {REQUIRED_LOGGER_DEFAULT}")
+
+    for name, level in REQUIRED_LOGGER_OVERRIDES.items():
+        if _effective_level(name) > _level_value(level):
+            missing.append(f"logger.logs.{name}: {level}")
+
+    return tuple(missing)
+
+
+def history_component_loaded(hass: Any) -> bool:
+    """Return true when Home Assistant has loaded history/default_config."""
+    hass_config = getattr(hass, "config", None)
+    components = getattr(hass_config, "components", ())
+    return "history" in components or "default_config" in components
+
+
 def _required_logger_settings() -> tuple[str, ...]:
     """Return every required logger setting in user-facing form."""
     return (
@@ -195,6 +254,26 @@ def _required_logger_settings() -> tuple[str, ...]:
 def _required_history_settings() -> tuple[str, ...]:
     """Return every required history setting in user-facing form."""
     return ("history:",)
+
+
+def _is_logger_setting(item: str) -> bool:
+    """Return true for user-facing logger config status items."""
+    return item == "logger:" or item.startswith("logger.")
+
+
+def _is_logger_error(error: str | None) -> bool:
+    """Return true when a status error is about logger verification."""
+    return bool(error and str(error).startswith("logger"))
+
+
+def _level_value(level: str) -> int:
+    """Return a logging level number for a required lowercase level string."""
+    return _LOGGER_LEVEL_VALUES.get(str(level).strip().lower(), logging.INFO)
+
+
+def _effective_level(logger_name: str) -> int:
+    """Return the active effective level for a logger name."""
+    return logging.getLogger(logger_name).getEffectiveLevel()
 
 
 def _history_is_configured(config: dict[str, Any]) -> bool:
@@ -258,7 +337,7 @@ def _extract_logger_block(content: str) -> dict[str, Any] | str:
     in_logger = False
     for line in content.split("\n"):
         stripped = line.strip()
-        if stripped.startswith("logger:"):
+        if line == line.lstrip() and stripped.startswith("logger:"):
             inline = line.split(":", 1)[1].strip()
             if inline:
                 return inline
@@ -281,6 +360,32 @@ def _extract_logger_block(content: str) -> dict[str, Any] | str:
             if len(parts) == 2:
                 logger_block["default"] = parts[1].strip()
     return logger_block
+
+
+def _merge_logger_configs(
+    primary: Any,
+    fallback: Any,
+) -> Any:
+    """Return parsed logger config with text-extracted values filling parser gaps."""
+    if not isinstance(fallback, dict):
+        return primary
+    if not isinstance(primary, dict):
+        return fallback
+
+    merged = dict(fallback)
+    merged.update(primary)
+
+    fallback_logs = fallback.get("logs")
+    primary_logs = primary.get("logs")
+    if isinstance(fallback_logs, dict) or isinstance(primary_logs, dict):
+        logs = {}
+        if isinstance(fallback_logs, dict):
+            logs.update(fallback_logs)
+        if isinstance(primary_logs, dict):
+            logs.update(primary_logs)
+        merged["logs"] = logs
+
+    return merged
 
 
 def _as_level(value: Any) -> str:
