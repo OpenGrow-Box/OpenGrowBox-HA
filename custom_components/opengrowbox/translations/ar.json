@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "إنشاء غرفة",
-        "description": "أدخل اسمًا للغرفة.",
+        "description": "أدخل اسمًا للغرفة.\n\n{configuration_status}",
         "data": {
-          "room_name": "اسم الغرفة"
+          "room_name": "اسم الغرفة",
+          "auto_configure_ha": "تحديث configuration.yaml تلقائيًا"
         },
         "data_description": {
-          "room_name": "الأحرف المسموح بها: a-z, A-Z, 0-9, _ أو -\nالطول: 1-50 حرف\n\nأمثلة: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "الأحرف المسموح بها: a-z, A-Z, 0-9, _ أو -\nالطول: 1-50 حرف\n\nأمثلة: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "عند التفعيل، يضيف OpenGrowBox إعدادات YAML الخاصة بـ OpenGrowBox المفقودة إلى configuration.yaml وينشئ نسخة احتياطية قبل الكتابة."
         }
       }
     },
     "error": {
       "invalid_room_name": "اسم الغرفة غير صالح. يُسمح فقط بالأحرف الإنجليزية (a-z, A-Z)، الأرقام (0-9)، الشرطة السفلية (_) والشرطة (-).",
-      "invalid_length": "يجب أن يكون اسم الغرفة بين 1 و 50 حرفًا."
+      "invalid_length": "يجب أن يكون اسم الغرفة بين 1 و 50 حرفًا.",
+      "required_ha_config_missing": "إعدادات YAML الخاصة بـ OpenGrowBox المطلوبة مفقودة. فعّل التحديثات التلقائية أو حدّث configuration.yaml يدويًا قبل المتابعة."
+    },
+    "abort": {
+      "required_ha_config_missing": "إعدادات YAML الخاصة بـ OpenGrowBox المطلوبة مفقودة. فعّل التحديثات التلقائية أو حدّث configuration.yaml يدويًا قبل المتابعة."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "خيارات OpenGrowBox",
+        "description": "إدارة السلوك على مستوى التكامل.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "تحديث configuration.yaml تلقائيًا"
+        },
+        "data_description": {
+          "auto_configure_ha": "عند التفعيل، يضيف OpenGrowBox إعدادات YAML الخاصة بـ OpenGrowBox المفقودة إلى configuration.yaml وينشئ نسخة احتياطية قبل الكتابة."
+        }
+      }
     }
   }
 }

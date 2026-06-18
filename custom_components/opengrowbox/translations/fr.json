@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Créer une pièce",
-        "description": "Entrez un nom pour la pièce.",
+        "description": "Entrez un nom pour la pièce.\n\n{configuration_status}",
         "data": {
-          "room_name": "Nom de la pièce"
+          "room_name": "Nom de la pièce",
+          "auto_configure_ha": "Mettre à jour configuration.yaml automatiquement"
         },
         "data_description": {
-          "room_name": "Caractères autorisés: a-z, A-Z, 0-9, _ ou -\nLongueur: 1-50 caractères\n\nExemples: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Caractères autorisés: a-z, A-Z, 0-9, _ ou -\nLongueur: 1-50 caractères\n\nExemples: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Lorsque cette option est activée, OpenGrowBox ajoute les paramètres YAML OpenGrowBox manquants à configuration.yaml et crée une sauvegarde avant l’écriture."
         }
       }
     },
     "error": {
       "invalid_room_name": "Nom de pièce invalide. Seules les lettres (a-z, A-Z), les chiffres (0-9), les tirets bas (_) et les traits d'union (-) sont autorisés.",
-      "invalid_length": "Le nom de la pièce doit comporter entre 1 et 50 caractères."
+      "invalid_length": "Le nom de la pièce doit comporter entre 1 et 50 caractères.",
+      "required_ha_config_missing": "Des paramètres YAML OpenGrowBox requis sont manquants. Activez les mises à jour automatiques ou modifiez configuration.yaml manuellement avant de continuer."
+    },
+    "abort": {
+      "required_ha_config_missing": "Des paramètres YAML OpenGrowBox requis sont manquants. Activez les mises à jour automatiques ou modifiez configuration.yaml manuellement avant de continuer."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options OpenGrowBox",
+        "description": "Gérer le comportement global de l’intégration.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Mettre à jour configuration.yaml automatiquement"
+        },
+        "data_description": {
+          "auto_configure_ha": "Lorsque cette option est activée, OpenGrowBox ajoute les paramètres YAML OpenGrowBox manquants à configuration.yaml et crée une sauvegarde avant l’écriture."
+        }
+      }
     }
   }
 }

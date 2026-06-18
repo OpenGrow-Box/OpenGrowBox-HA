@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Vytvořit místnost",
-        "description": "Zadejte název místnosti.",
+        "description": "Zadejte název místnosti.\n\n{configuration_status}",
         "data": {
-          "room_name": "Název místnosti"
+          "room_name": "Název místnosti",
+          "auto_configure_ha": "Automaticky aktualizovat configuration.yaml"
         },
         "data_description": {
-          "room_name": "Povolené znaky: a-z, A-Z, 0-9, _ nebo -\nDélka: 1-50 znaků\n\nPříklady: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Povolené znaky: a-z, A-Z, 0-9, _ nebo -\nDélka: 1-50 znaků\n\nPříklady: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Je-li povoleno, OpenGrowBox doplní chybějící nastavení YAML pro OpenGrowBox do configuration.yaml a před zápisem vytvoří zálohu."
         }
       }
     },
     "error": {
       "invalid_room_name": "Neplatný název místnosti. Jsou povoleny pouze písmena (a-z, A-Z), čísla (0-9), podtržítka (_) a pomlčky (-).",
-      "invalid_length": "Název místnosti musí mít délku od 1 do 50 znaků."
+      "invalid_length": "Název místnosti musí mít délku od 1 do 50 znaků.",
+      "required_ha_config_missing": "Chybí požadovaná nastavení YAML pro OpenGrowBox. Před pokračováním povolte automatické aktualizace nebo ručně upravte configuration.yaml."
+    },
+    "abort": {
+      "required_ha_config_missing": "Chybí požadovaná nastavení YAML pro OpenGrowBox. Před pokračováním povolte automatické aktualizace nebo ručně upravte configuration.yaml."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti OpenGrowBox",
+        "description": "Spravovat chování celé integrace.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Automaticky aktualizovat configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Je-li povoleno, OpenGrowBox doplní chybějící nastavení YAML pro OpenGrowBox do configuration.yaml a před zápisem vytvoří zálohu."
+        }
+      }
     }
   }
 }

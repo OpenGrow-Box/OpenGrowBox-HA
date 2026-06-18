@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Create room",
-        "description": "Enter a name for the room.",
+        "description": "कमरे के लिए एक नाम दर्ज करें।\n\n{configuration_status}",
         "data": {
-          "room_name": "Room name"
+          "room_name": "Room name",
+          "auto_configure_ha": "configuration.yaml को अपने-आप अपडेट करें"
         },
         "data_description": {
-          "room_name": "Allowed characters: a-z, A-Z, 0-9, _ or -\nLength: 1-50 characters\n\nExamples: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Allowed characters: a-z, A-Z, 0-9, _ or -\nLength: 1-50 characters\n\nExamples: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "सक्रिय होने पर, OpenGrowBox गुम OpenGrowBox YAML सेटिंग्स को configuration.yaml में जोड़ता है और लिखने से पहले बैकअप बनाता है।"
         }
       }
     },
     "error": {
       "invalid_room_name": "Invalid room name. Only letters (a-z, A-Z), numbers (0-9), underscores (_) and hyphens (-) are allowed.",
-      "invalid_length": "Room name must be between 1 and 50 characters long."
+      "invalid_length": "Room name must be between 1 and 50 characters long.",
+      "required_ha_config_missing": "आवश्यक OpenGrowBox YAML सेटिंग्स गुम हैं। जारी रखने से पहले स्वचालित अपडेट सक्षम करें या configuration.yaml को मैन्युअल रूप से अपडेट करें।"
+    },
+    "abort": {
+      "required_ha_config_missing": "आवश्यक OpenGrowBox YAML सेटिंग्स गुम हैं। जारी रखने से पहले स्वचालित अपडेट सक्षम करें या configuration.yaml को मैन्युअल रूप से अपडेट करें।"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox विकल्प",
+        "description": "पूरे इंटीग्रेशन के व्यवहार को प्रबंधित करें।\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "configuration.yaml को अपने-आप अपडेट करें"
+        },
+        "data_description": {
+          "auto_configure_ha": "सक्रिय होने पर, OpenGrowBox गुम OpenGrowBox YAML सेटिंग्स को configuration.yaml में जोड़ता है और लिखने से पहले बैकअप बनाता है।"
+        }
+      }
     }
   }
 }

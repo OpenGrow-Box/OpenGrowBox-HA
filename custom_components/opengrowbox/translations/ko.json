@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "룸 생성",
-        "description": "룸 이름을 입력하세요.",
+        "description": "방 이름을 입력하세요.\n\n{configuration_status}",
         "data": {
-          "room_name": "룸 이름"
+          "room_name": "룸 이름",
+          "auto_configure_ha": "configuration.yaml 자동 업데이트"
         },
         "data_description": {
-          "room_name": "허용 문자: a-z, A-Z, 0-9, _ 또는 -\n길이: 1-50자\n\n예시: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "허용 문자: a-z, A-Z, 0-9, _ 또는 -\n길이: 1-50자\n\n예시: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "활성화하면 OpenGrowBox가 누락된 OpenGrowBox YAML 설정을 configuration.yaml에 추가하고 쓰기 전에 백업을 생성합니다."
         }
       }
     },
     "error": {
       "invalid_room_name": "유효하지 않은 룸 이름입니다. 영문(a-z, A-Z), 숫자(0-9), 밑줄(_)과 하이픈(-)만 허용됩니다.",
-      "invalid_length": "룸 이름은 1에서 50자 사이여야 합니다."
+      "invalid_length": "룸 이름은 1에서 50자 사이여야 합니다.",
+      "required_ha_config_missing": "필수 OpenGrowBox YAML 설정이 없습니다. 계속하기 전에 자동 업데이트를 활성화하거나 configuration.yaml을 수동으로 업데이트하세요."
+    },
+    "abort": {
+      "required_ha_config_missing": "필수 OpenGrowBox YAML 설정이 없습니다. 계속하기 전에 자동 업데이트를 활성화하거나 configuration.yaml을 수동으로 업데이트하세요."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox 옵션",
+        "description": "통합 전체 동작을 관리합니다.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "configuration.yaml 자동 업데이트"
+        },
+        "data_description": {
+          "auto_configure_ha": "활성화하면 OpenGrowBox가 누락된 OpenGrowBox YAML 설정을 configuration.yaml에 추가하고 쓰기 전에 백업을 생성합니다."
+        }
+      }
     }
   }
 }

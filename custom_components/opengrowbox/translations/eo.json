@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Krei ĉambron",
-        "description": "Enigu nomon por la ĉambro.",
+        "description": "Enigu nomon por la ĉambro.\n\n{configuration_status}",
         "data": {
-          "room_name": "Ĉambronomo"
+          "room_name": "Ĉambronomo",
+          "auto_configure_ha": "Aŭtomate ĝisdatigi configuration.yaml"
         },
         "data_description": {
-          "room_name": "Permesitaj karakteroj: a-z, A-Z, 0-9, _ aŭ -\nLongo: 1-50 signoj\n\nEkzemploj: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Permesitaj karakteroj: a-z, A-Z, 0-9, _ aŭ -\nLongo: 1-50 signoj\n\nEkzemploj: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Kiam ebligita, OpenGrowBox aldonas mankantajn OpenGrowBox YAML-agordojn al configuration.yaml kaj kreas sekurkopion antaŭ skribado."
         }
       }
     },
     "error": {
       "invalid_room_name": "Nevalida ĉambronomo. Nur literoj (a-z, A-Z), ciferoj (0-9), substrekoj (_) kaj dividstrekoj (-) estas permesitaj.",
-      "invalid_length": "La ĉambro nomo devas esti inter 1 kaj 50 signojn longa."
+      "invalid_length": "La ĉambro nomo devas esti inter 1 kaj 50 signojn longa.",
+      "required_ha_config_missing": "Bezonataj OpenGrowBox YAML-agordoj mankas. Ebligu aŭtomatajn ĝisdatigojn aŭ mane ĝisdatigu configuration.yaml antaŭ ol daŭrigi."
+    },
+    "abort": {
+      "required_ha_config_missing": "Bezonataj OpenGrowBox YAML-agordoj mankas. Ebligu aŭtomatajn ĝisdatigojn aŭ mane ĝisdatigu configuration.yaml antaŭ ol daŭrigi."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcioj de OpenGrowBox",
+        "description": "Administri konduton por la tuta integriĝo.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Aŭtomate ĝisdatigi configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Kiam ebligita, OpenGrowBox aldonas mankantajn OpenGrowBox YAML-agordojn al configuration.yaml kaj kreas sekurkopion antaŭ skribado."
+        }
+      }
     }
   }
 }

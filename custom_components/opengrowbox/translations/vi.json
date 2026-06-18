@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Tạo phòng",
-        "description": "Nhập tên cho phòng.",
+        "description": "Nhập tên cho phòng.\n\n{configuration_status}",
         "data": {
-          "room_name": "Tên phòng"
+          "room_name": "Tên phòng",
+          "auto_configure_ha": "Tự động cập nhật configuration.yaml"
         },
         "data_description": {
-          "room_name": "Ký tự được phép: a-z, A-Z, 0-9, _ hoặc -\nĐộ dài: 1-50 ký tự\n\nVí dụ: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Ký tự được phép: a-z, A-Z, 0-9, _ hoặc -\nĐộ dài: 1-50 ký tự\n\nVí dụ: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Khi bật, OpenGrowBox thêm các cài đặt YAML OpenGrowBox còn thiếu vào configuration.yaml và tạo bản sao lưu trước khi ghi."
         }
       }
     },
     "error": {
       "invalid_room_name": "Tên phòng không hợp lệ. Chỉ cho phép chữ cái (a-z, A-Z), số (0-9), gạch dưới (_) và gạch nối (-).",
-      "invalid_length": "Tên phòng phải từ 1 đến 50 ký tự."
+      "invalid_length": "Tên phòng phải từ 1 đến 50 ký tự.",
+      "required_ha_config_missing": "Thiếu các cài đặt YAML OpenGrowBox bắt buộc. Bật cập nhật tự động hoặc cập nhật configuration.yaml thủ công trước khi tiếp tục."
+    },
+    "abort": {
+      "required_ha_config_missing": "Thiếu các cài đặt YAML OpenGrowBox bắt buộc. Bật cập nhật tự động hoặc cập nhật configuration.yaml thủ công trước khi tiếp tục."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tùy chọn OpenGrowBox",
+        "description": "Quản lý hành vi trên toàn bộ tích hợp.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Tự động cập nhật configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "Khi bật, OpenGrowBox thêm các cài đặt YAML OpenGrowBox còn thiếu vào configuration.yaml và tạo bản sao lưu trước khi ghi."
+        }
+      }
     }
   }
 }

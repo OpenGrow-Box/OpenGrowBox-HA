@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Criar sala",
-        "description": "Digite um nome para a sala.",
+        "description": "Insira um nome para a divisão.\n\n{configuration_status}",
         "data": {
-          "room_name": "Nome da sala"
+          "room_name": "Nome da sala",
+          "auto_configure_ha": "Atualizar configuration.yaml automaticamente"
         },
         "data_description": {
-          "room_name": "Caracteres permitidos: a-z, A-Z, 0-9, _ ou -\nComprimento: 1-50 caracteres\n\nExemplos: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Caracteres permitidos: a-z, A-Z, 0-9, _ ou -\nComprimento: 1-50 caracteres\n\nExemplos: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Quando ativado, o OpenGrowBox adiciona as definições YAML do OpenGrowBox em falta ao configuration.yaml e cria uma cópia de segurança antes de escrever."
         }
       }
     },
     "error": {
       "invalid_room_name": "Nome de sala inválido. Apenas letras (a-z, A-Z), números (0-9), sublinhados (_) e hífens (-) são permitidos.",
-      "invalid_length": "O nome da sala deve ter entre 1 e 50 caracteres."
+      "invalid_length": "O nome da sala deve ter entre 1 e 50 caracteres.",
+      "required_ha_config_missing": "Faltam definições YAML obrigatórias do OpenGrowBox. Ative as atualizações automáticas ou atualize manualmente o configuration.yaml antes de continuar."
+    },
+    "abort": {
+      "required_ha_config_missing": "Faltam definições YAML obrigatórias do OpenGrowBox. Ative as atualizações automáticas ou atualize manualmente o configuration.yaml antes de continuar."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções do OpenGrowBox",
+        "description": "Gerir o comportamento de toda a integração.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Atualizar configuration.yaml automaticamente"
+        },
+        "data_description": {
+          "auto_configure_ha": "Quando ativado, o OpenGrowBox adiciona as definições YAML do OpenGrowBox em falta ao configuration.yaml e cria uma cópia de segurança antes de escrever."
+        }
+      }
     }
   }
 }

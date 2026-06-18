@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "ایجاد اتاق",
-        "description": "نامی اتاق را وارد کنید.",
+        "description": "نامی برای اتاق وارد کنید.\n\n{configuration_status}",
         "data": {
-          "room_name": "نام اتاق"
+          "room_name": "نام اتاق",
+          "auto_configure_ha": "به‌روزرسانی خودکار configuration.yaml"
         },
         "data_description": {
-          "room_name": "کاراکترهای مجاز: a-z, A-Z, 0-9، _ یا -\nطول: 1-50 کاراکتر\n\nنمونه‌ها: GrowRoom1، grow_box، Grow-Room-1"
+          "room_name": "کاراکترهای مجاز: a-z, A-Z, 0-9، _ یا -\nطول: 1-50 کاراکتر\n\nنمونه‌ها: GrowRoom1، grow_box، Grow-Room-1",
+          "auto_configure_ha": "در صورت فعال بودن، OpenGrowBox تنظیمات YAML موردنیاز و مفقود OpenGrowBox را به configuration.yaml اضافه می‌کند و پیش از نوشتن، نسخه پشتیبان ایجاد می‌کند."
         }
       }
     },
     "error": {
       "invalid_room_name": "نام اتاق نامعتبر است. فقط حروف انگلیسی (a-z, A-Z)، اعداد (0-9)، زیرخط (_) و خط فاصله (-) مجاز هستند.",
-      "invalid_length": "نام اتاق باید بین 1 تا 50 کاراکتر باشد."
+      "invalid_length": "نام اتاق باید بین 1 تا 50 کاراکتر باشد.",
+      "required_ha_config_missing": "تنظیمات YAML موردنیاز OpenGrowBox موجود نیست. پیش از ادامه، به‌روزرسانی خودکار را فعال کنید یا configuration.yaml را دستی به‌روزرسانی کنید."
+    },
+    "abort": {
+      "required_ha_config_missing": "تنظیمات YAML موردنیاز OpenGrowBox موجود نیست. پیش از ادامه، به‌روزرسانی خودکار را فعال کنید یا configuration.yaml را دستی به‌روزرسانی کنید."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "گزینه‌های OpenGrowBox",
+        "description": "مدیریت رفتار در سطح یکپارچه‌سازی.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "به‌روزرسانی خودکار configuration.yaml"
+        },
+        "data_description": {
+          "auto_configure_ha": "در صورت فعال بودن، OpenGrowBox تنظیمات YAML موردنیاز و مفقود OpenGrowBox را به configuration.yaml اضافه می‌کند و پیش از نوشتن، نسخه پشتیبان ایجاد می‌کند."
+        }
+      }
     }
   }
 }

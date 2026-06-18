@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Opprett rom",
-        "description": "Skriv inn et navn for rommet.",
+        "description": "Skriv inn et navn for rommet.\n\n{configuration_status}",
         "data": {
-          "room_name": "Romnavn"
+          "room_name": "Romnavn",
+          "auto_configure_ha": "Oppdater configuration.yaml automatisk"
         },
         "data_description": {
-          "room_name": "Tillatte tegn: a-z, A-Z, 0-9, _ eller -\nLengde: 1-50 tegn\n\nEksempler: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Tillatte tegn: a-z, A-Z, 0-9, _ eller -\nLengde: 1-50 tegn\n\nEksempler: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Når dette er aktivert, legger OpenGrowBox til manglende OpenGrowBox YAML-innstillinger i configuration.yaml og oppretter en sikkerhetskopi før skriving."
         }
       }
     },
     "error": {
       "invalid_room_name": "Ugyldig romnavn. Kun bokstaver (a-z, A-Z), tall (0-9), understreker (_) og bindestreker (-) er tillatt.",
-      "invalid_length": "Romnavnet må være mellom 1 og 50 tegn langt."
+      "invalid_length": "Romnavnet må være mellom 1 og 50 tegn langt.",
+      "required_ha_config_missing": "Påkrevde OpenGrowBox YAML-innstillinger mangler. Aktiver automatiske oppdateringer eller oppdater configuration.yaml manuelt før du fortsetter."
+    },
+    "abort": {
+      "required_ha_config_missing": "Påkrevde OpenGrowBox YAML-innstillinger mangler. Aktiver automatiske oppdateringer eller oppdater configuration.yaml manuelt før du fortsetter."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox-alternativer",
+        "description": "Administrer oppførselen for hele integrasjonen.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "Oppdater configuration.yaml automatisk"
+        },
+        "data_description": {
+          "auto_configure_ha": "Når dette er aktivert, legger OpenGrowBox til manglende OpenGrowBox YAML-innstillinger i configuration.yaml og oppretter en sikkerhetskopi før skriving."
+        }
+      }
     }
   }
 }

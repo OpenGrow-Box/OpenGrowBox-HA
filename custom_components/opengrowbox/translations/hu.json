@@ -3,18 +3,38 @@
     "step": {
       "user": {
         "title": "Szoba létrehozása",
-        "description": "Adjon meg egy nevet a szobának.",
+        "description": "Adjon meg egy nevet a helyiségnek.\n\n{configuration_status}",
         "data": {
-          "room_name": "Szobanév"
+          "room_name": "Szobanév",
+          "auto_configure_ha": "configuration.yaml automatikus frissítése"
         },
         "data_description": {
-          "room_name": "Engedélyezett karakterek: a-z, A-Z, 0-9, _ vagy -\nHossz: 1-50 karakter\n\nPéldák: GrowRoom1, grow_box, Grow-Room-1"
+          "room_name": "Engedélyezett karakterek: a-z, A-Z, 0-9, _ vagy -\nHossz: 1-50 karakter\n\nPéldák: GrowRoom1, grow_box, Grow-Room-1",
+          "auto_configure_ha": "Ha engedélyezve van, az OpenGrowBox hozzáadja a hiányzó OpenGrowBox YAML-beállításokat a configuration.yaml fájlhoz, és írás előtt biztonsági mentést készít."
         }
       }
     },
     "error": {
       "invalid_room_name": "Érvénytelen szobanév. Csak betűk (a-z, A-Z), számok (0-9), aláhúzások (_) és kötőjelek (-) engedélyezettek.",
-      "invalid_length": "A szobanévnek 1 és 50 karakter között kell lennie."
+      "invalid_length": "A szobanévnek 1 és 50 karakter között kell lennie.",
+      "required_ha_config_missing": "Hiányoznak a szükséges OpenGrowBox YAML-beállítások. Folytatás előtt engedélyezze az automatikus frissítéseket, vagy frissítse kézzel a configuration.yaml fájlt."
+    },
+    "abort": {
+      "required_ha_config_missing": "Hiányoznak a szükséges OpenGrowBox YAML-beállítások. Folytatás előtt engedélyezze az automatikus frissítéseket, vagy frissítse kézzel a configuration.yaml fájlt."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenGrowBox beállítások",
+        "description": "Az integráció egészére vonatkozó viselkedés kezelése.\n\n{configuration_status}",
+        "data": {
+          "auto_configure_ha": "configuration.yaml automatikus frissítése"
+        },
+        "data_description": {
+          "auto_configure_ha": "Ha engedélyezve van, az OpenGrowBox hozzáadja a hiányzó OpenGrowBox YAML-beállításokat a configuration.yaml fájlhoz, és írás előtt biztonsági mentést készít."
+        }
+      }
     }
   }
 }
