@@ -2755,13 +2755,18 @@ class Device:
                 _LOGGER.debug(f"{self.deviceName}: Bounds geladen aber kein turn_on – noch nicht initialisiert")
 
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+            min_duty_val = minMaxSets.get("minDuty")
+            max_duty_val = minMaxSets.get("maxDuty")
+            if min_duty_val is None or max_duty_val is None:
+                _LOGGER.debug(f"{self.deviceName}: Skipping DeviceSetMinMax – values not yet set (min={min_duty_val}, max={max_duty_val})")
+                return
             try:
                 old_min, old_max = self.minDuty, self.maxDuty
-                self.minDuty = float(minMaxSets.get("minDuty"))
-                self.maxDuty = float(minMaxSets.get("maxDuty"))
+                self.minDuty = float(min_duty_val)
+                self.maxDuty = float(max_duty_val)
                 _LOGGER.debug(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {minMaxSets.get('minDuty')}, {minMaxSets.get('maxDuty')}")
+                _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {min_duty_val}, {max_duty_val}")
                 return
 
             # Nur clampen + turn_on wenn bereits initialisiert
@@ -2817,10 +2822,15 @@ class Device:
 
         elif self.deviceType in {"Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}:
             if "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
+                min_duty_val = minMaxSets.get("minDuty")
+                max_duty_val = minMaxSets.get("maxDuty")
+                if min_duty_val is None or max_duty_val is None:
+                    _LOGGER.debug(f"{self.deviceName}: Skipping MinMaxControlEnabled – values not yet set (min={min_duty_val}, max={max_duty_val})")
+                    return
                 try:
                     old_min, old_max = self.minDuty, self.maxDuty
-                    self.minDuty = float(minMaxSets.get("minDuty"))
-                    self.maxDuty = float(minMaxSets.get("maxDuty"))
+                    self.minDuty = float(min_duty_val)
+                    self.maxDuty = float(max_duty_val)
                     _LOGGER.debug(f"{self.deviceName}: Restored duty min/max: min={old_min}→{self.minDuty}, max={old_max}→{self.maxDuty}")
                 except (ValueError, TypeError):
                     return

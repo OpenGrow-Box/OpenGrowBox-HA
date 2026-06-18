@@ -740,10 +740,8 @@ class OGBModeManager:
         )
         
         # Emit MinMaxControlDisabled for all device types to ensure safe state
-        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Light"})
-        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Ventilation"})
-        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Exhaust"})
-        await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": "Intake"})
+        for dt in ["Light", "Ventilation", "Exhaust", "Intake", "Heater", "Cooler", "Humidifier", "Dehumidifier"]:
+            await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": dt})
         
         _LOGGER.debug(f"🔴 {self.room}: All control actions disabled")
         

@@ -416,13 +416,13 @@ class OGBGrowPlanManager:
             # Speichere Zustand
             await self.event_manager.emit("SaveRequest",self.room) 
             
+            self.managerActive = True
+            self.data_store.set("growManagerActive",True)
+            
             # Aktualisiere aktuelle Woche (triggert API-Anfrage wenn keine Daten)
             await self._update_current_week()
             
             _LOGGER.info(f"🌱 {self.room} Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}, Woche: {self.current_week}")
-            
-            self.managerActive = True
-            self.data_store.set("growManagerActive",True)
             
             # Event senden
             self.hass.bus.async_fire("grow_plan_activated", {
@@ -940,30 +940,16 @@ class OGBGrowPlanManager:
                 _LOGGER.warning(f"🌱 {self.room} Setting tentMode to: {tent_mode}")
                 await update_entity("select.ogb_tentmode", tent_mode , self.room, self.hass)
 
-            if plant_stage:
+            # Only set plantStage when NOT in VPDTarget mode, otherwise the
+            # plantStage callbacks would overwrite user-defined temp/hum values.
+            if plant_stage and tent_mode and tent_mode.lower() != "vpdtarget":
                 _LOGGER.warning(f"🌱 {self.room} Setting PlantStage to: {plant_stage}")
                 await update_entity("select.ogb_plantstage", plant_stage , self.room, self.hass)
-
-            # Update temperature targets (handle both old and new format)
-            temp = env.get("temperature", {})
-            if isinstance(temp, dict):
-                day_temp = temp.get("day")
-                night_temp = temp.get("night")
-                
-                # Handle new format with min/max/optimal
-                if isinstance(day_temp, dict):
-                    if day_temp.get("max") is not None:
-                        await update_entity("number.ogb_maxtemp", day_temp["max"], self.room, self.hass )
-                    if day_temp.get("min") is not None:
-                        await update_entity("number.ogb_mintemp", day_temp["min"], self.room, self.hass )
-                #elif day_temp is not None:
-                #    await update_entity("ogb_current_temp_target", day_temp)
-                    
-                #if isinstance(night_temp, dict):
-                #    if night_temp.get("min") is not None:
-                #        await update_entity("ogb_current_temp_target_min", night_temp["min"])
-                #elif night_temp is not None:
-                #    await update_entity("ogb_current_temp_target_min", night_temp)
+            elif plant_stage and tent_mode and tent_mode.lower() == "vpdtarget":
+                _LOGGER.debug(f"🌱 {self.room} Skipping PlantStage in VPDTarget mode")
+            elif plant_stage and not tent_mode:
+                _LOGGER.warning(f"🌱 {self.room} Setting PlantStage to: {plant_stage}")
+                await update_entity("select.ogb_plantstage", plant_stage , self.room, self.hass)
             
             # Update humidity targets (supports both old and new format)
             humidity = env.get("humidity", {})
@@ -974,11 +960,17 @@ class OGBGrowPlanManager:
                         # New format: {min, max, optimal}
                         if day_hum.get("max") is not None:
                             await update_entity("number.ogb_maxhum", day_hum["max"], self.room, self.hass)
+                            self.data_store.setDeep("controlOptionData.minmax.maxHum", float(day_hum["max"]))
+                            self.data_store.setDeep("tentData.maxHumidity", float(day_hum["max"]))
+                        if day_hum.get("min") is not None:
+                            await update_entity("number.ogb_minhum", day_hum["min"], self.room, self.hass)
+                            self.data_store.setDeep("controlOptionData.minmax.minHum", float(day_hum["min"]))
+                            self.data_store.setDeep("tentData.minHumidity", float(day_hum["min"]))
                     else:
                         # Old format: direct number
                         await update_entity("number.ogb_maxhum", day_hum, self.room, self.hass)
-                #if humidity.get("night") is not None:
-                #    await update_entity("number.ogb_minhum", humidity["night"])
+                        self.data_store.setDeep("controlOptionData.minmax.maxHum", float(day_hum))
+                        self.data_store.setDeep("tentData.maxHumidity", float(day_hum))
             
             # Update VPD target (supports both old and new format)
             vpd = env.get("vpd", {})
@@ -995,13 +987,21 @@ class OGBGrowPlanManager:
             if isinstance(co2, dict):
                 if co2.get("optimal") is not None:
                     await update_entity("number.ogb_co2targetvalue", co2["optimal"], self.room, self.hass)
+                    self.data_store.setDeep("controlOptionData.co2ppm.target", float(co2["optimal"]))
                 if co2.get("max") is not None:
                     await update_entity("number.ogb_co2maxvalue", co2["max"], self.room, self.hass)
+                    self.data_store.setDeep("controlOptionData.co2ppm.maxPPM", float(co2["max"]))
                 if co2.get("min") is not None:
                     await update_entity("number.ogb_co2minvalue", co2["min"], self.room, self.hass)
+                    self.data_store.setDeep("controlOptionData.co2ppm.minPPM", float(co2["min"]))
                 if co2.get("enabled") is not None:
                     await update_entity("select.ogb_co2_control", co2["enabled"], self.room, self.hass)
+                    self.data_store.setDeep("controlOptions.co2Control", co2["enabled"])
             
+            # Enable OGB light control before setting any light parameters
+            await update_entity("select.ogb_lightcontrol", "YES", self.room, self.hass)
+            self.data_store.setDeep("controlOptions.lightbyOGBControl", True)
+
             # Update light times
             if light_cycle:
                 start_hour = light_cycle.get("startTime")
@@ -1022,14 +1022,22 @@ class OGBGrowPlanManager:
                 if sunset_val:
                     await update_entity("time.ogb_sunsettime", sunset_val, self.room, self.hass)
             
-            # Update light intensity
             if isinstance(light_intensity, dict):
                 if light_intensity.get("min") is not None:
                     await update_entity("number.ogb_light_volt_min", light_intensity["min"], self.room, self.hass)
+                    self.data_store.setDeep("DeviceMinMax.Light.minVoltage", float(light_intensity["min"]))
                 if light_intensity.get("max") is not None:
                     await update_entity("number.ogb_light_volt_max", light_intensity["max"], self.room, self.hass)
+                    self.data_store.setDeep("DeviceMinMax.Light.maxVoltage", float(light_intensity["max"]))
+                self.data_store.setDeep("DeviceMinMax.Light.active", True)
+                await update_entity("select.ogb_light_minmax", "YES", self.room, self.hass)
+                await self.event_manager.emit("SetDeviceMinMax", "Light")
             elif isinstance(light_intensity, (int, float)):
                 await update_entity("number.ogb_light_volt_max", light_intensity, self.room, self.hass)
+                self.data_store.setDeep("DeviceMinMax.Light.maxVoltage", float(light_intensity))
+                self.data_store.setDeep("DeviceMinMax.Light.active", True)
+                await update_entity("select.ogb_light_minmax", "YES", self.room, self.hass)
+                await self.event_manager.emit("SetDeviceMinMax", "Light")
             
             # Update tent controls
             tent_controls = week_data.get("tentControls", {})
@@ -1046,6 +1054,24 @@ class OGBGrowPlanManager:
                 if vpd_det.get("mode") is not None:
                     await update_entity("select.ogb_vpd_determination", vpd_det["mode"], self.room, self.hass)
                 
+            
+            # Temperature MUST be set LAST after tentMode, plantStage and all
+            # other settings so plant-stage callbacks don't overwrite the values.
+            temp = env.get("temperature", {})
+            if isinstance(temp, dict):
+                day_temp = temp.get("day")
+                if isinstance(day_temp, dict):
+                    if day_temp.get("max") is not None:
+                        await update_entity("number.ogb_maxtemp", day_temp["max"], self.room, self.hass)
+                        self.data_store.setDeep("controlOptionData.minmax.maxTemp", float(day_temp["max"]))
+                        self.data_store.setDeep("tentData.maxTemp", float(day_temp["max"]))
+                    if day_temp.get("min") is not None:
+                        await update_entity("number.ogb_mintemp", day_temp["min"], self.room, self.hass)
+                        self.data_store.setDeep("controlOptionData.minmax.minTemp", float(day_temp["min"]))
+                        self.data_store.setDeep("tentData.minTemp", float(day_temp["min"]))
+
+            # Activate min/max control so the grow plan values take effect
+            await update_entity("select.ogb_minmax_control", "YES", self.room, self.hass)
             
             _LOGGER.warning(f"🌱 {self.room} Entity update completed")
             

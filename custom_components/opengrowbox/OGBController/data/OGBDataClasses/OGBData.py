@@ -684,20 +684,20 @@ class OGBConf:
             },
             "Cooler": {
                 "active": False,
-                "minDuty": None,
-                "maxDuty": None,
+                "minDuty": 0,
+                "maxDuty": 0,
                 "Default": {"min": 0, "max": 100},
             },
             "Humidifier": {
                 "active": False,
-                "minDuty": None,
-                "maxDuty": None,
+                "minDuty": 0,
+                "maxDuty": 0,
                 "Default": {"min": 0, "max": 100},
             },
             "Dehumidifier": {
                 "active": False,
-                "minDuty": None,
-                "maxDuty": None,
+                "minDuty": 0,
+                "maxDuty": 0,
                 "Default": {"min": 0, "max": 100},
             },
         }

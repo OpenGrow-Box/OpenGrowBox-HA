@@ -422,7 +422,7 @@ class OGBModbusDevice(Device):
 
     async def on_minmax_control_enabled(self, data) -> None:
         """Handle MinMaxControlEnabled event."""
-        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
+        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}
         if self.deviceType not in minmax_device_types:
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlEnabled")
             return
@@ -441,7 +441,7 @@ class OGBModbusDevice(Device):
 
     async def on_minmax_control_disabled(self, data) -> None:
         """Handle MinMaxControlDisabled event."""
-        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation"}
+        minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}
         if self.deviceType not in minmax_device_types:
             _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring MinMaxControlDisabled")
             return
