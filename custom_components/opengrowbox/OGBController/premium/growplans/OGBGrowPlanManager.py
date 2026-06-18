@@ -247,44 +247,72 @@ class OGBGrowPlanManager:
         self._daily_update_task = asyncio.create_task(self._daily_update_loop())
 
     async def _daily_update_loop(self):
-        """Tägliche Aktualisierung der aktuellen Woche um 00:00 und 12:00"""
+        """Tägliche Aktualisierung der aktuellen Woche um 00:00 und 12:00.
 
-        if sel.room.lower == "ambient":
+        The ambient room does not run its own grow plan, so skip it.
+        For all other rooms: when a plan is active, request fresh week data
+        from the API, recalculate the current week and re-apply the plan
+        settings so the tent is always on the correct schedule.
+        """
+
+        if self.room.lower() == "ambient":
             return
-
 
         while True:
             try:
                 now = datetime.now(timezone.utc)
-                
-                # Berechne nächsten Zeitpunkt (00:00 oder 12:00)
+
+                # Next scheduled update: 12:00 today or 00:00 tomorrow
                 if now.hour < 12:
-                    # Nächster Zeitpunkt: 12:00 heute
                     next_update = now.replace(hour=12, minute=0, second=0, microsecond=0)
                 else:
-                    # Nächster Zeitpunkt: 00:00 morgen
                     next_update = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                
-                # Berechne Sekunden bis zum nächsten Update
+
                 sleep_seconds = (next_update - now).total_seconds()
-                _LOGGER.warning(f"🌱 {self.room} Nächstes API-Update um {next_update.strftime('%H:%M')} Uhr (in {sleep_seconds/3600:.1f} Stunden)")
-                
+                _LOGGER.info(
+                    f"🌱 {self.room} Next scheduled grow plan update at "
+                    f"{next_update.strftime('%H:%M')} UTC (in {sleep_seconds/3600:.1f} hours)"
+                )
+
                 await asyncio.sleep(sleep_seconds)
-                
-                # Aktualisiere aktuelles Datum und Woche
+
                 self.currentDate = datetime.now(timezone.utc)
-                
-                # Nur aktualisieren wenn ein GrowPlan aktiv ist
-                if self.managerActive and self.active_grow_plan:
-                    _LOGGER.warning(f"🌱 {self.room} Geplantes API-Update um {self.currentDate.strftime('%H:%M')} (Plan aktiv)")
-                else:
-                    _LOGGER.warning(f"🌱 {self.room} Geplantes Update übersprungen - kein aktiver Grow Plan")
-                    
+
+                if not self._is_grow_plan_active():
+                    _LOGGER.info(
+                        f"🌱 {self.room} Scheduled update skipped - no active grow plan"
+                    )
+                    continue
+
+                _LOGGER.info(
+                    f"🌱 {self.room} Running scheduled grow plan update at "
+                    f"{self.currentDate.strftime('%H:%M')} UTC"
+                )
+
+                # Fetch fresh data from the API first, then re-evaluate locally.
+                if self.ws_client:
+                    try:
+                        await self.ws_client.request_grow_plans_week()
+                        _LOGGER.debug(f"🌱 {self.room} Requested fresh grow plan week data")
+                    except Exception as e:
+                        _LOGGER.warning(
+                            f"🌱 {self.room} Failed to request fresh plan data: {e}"
+                        )
+
+                await self._update_current_week()
+                await self._eval_plan_settings(self.active_grow_plan)
+                await self._update_entities_from_week_data()
+
+                _LOGGER.info(
+                    f"🌱 {self.room} Scheduled grow plan update complete "
+                    f"(week={self.current_week})"
+                )
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                _LOGGER.error(f"Fehler im täglichen Update-Loop: {e}")
-                await asyncio.sleep(3600)  # Warte 1 Stunde bei Fehlern
+                _LOGGER.error(f"🌱 {self.room} Error in daily update loop: {e}", exc_info=True)
+                await asyncio.sleep(3600)  # Retry in 1 hour on error
 
     ## Workers
     async def _eval_plan_settings(self, plan_data: Dict[str, Any]):

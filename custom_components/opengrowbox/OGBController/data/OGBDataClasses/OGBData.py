@@ -218,7 +218,6 @@ class OGBConf:
         }
     )
     devices: List[Any] = field(default_factory=list)
-    ownDeviceList: List[Any] = field(default_factory=list)
     capabilities: Dict[str, Dict[str, Any]] = field(
         default_factory=lambda: {
             "canHeat": {"state": False, "count": 0, "devEntities": [], "deviceData": {}},

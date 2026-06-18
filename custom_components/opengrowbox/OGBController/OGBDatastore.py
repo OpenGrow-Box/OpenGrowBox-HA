@@ -55,7 +55,6 @@ class DataStore(SimpleEventEmitter):
         "media",
         # Device lists (reconstructed at startup) - these are BIG!
         "devices",       # Top-level device list (~25KB)
-        "ownDeviceList", # Own device list
         "Devices",       # workData.Devices (~8KB)
         # Callback functions
         "callback",

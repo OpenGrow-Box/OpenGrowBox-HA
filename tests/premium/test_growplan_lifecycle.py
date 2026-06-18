@@ -370,3 +370,105 @@ async def test_system_ready_processes_pending_updates_when_active():
     assert manager._is_system_ready is True
     assert "_update_entities_from_week_data" not in manager._pending_updates
 
+
+@pytest.mark.asyncio
+async def test_daily_update_loop_skips_ambient():
+    manager, data_store, event_manager, hass = _build_manager(room="ambient")
+    await asyncio.sleep(0)
+
+    # Replace sleep so the loop would exit quickly if it did not return early
+    sleeps = []
+    manager.ws_client = object()
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        raise asyncio.CancelledError()
+
+    original_sleep = asyncio.sleep
+    asyncio.sleep = fake_sleep
+    try:
+        await manager._daily_update_loop()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        asyncio.sleep = original_sleep
+
+    # ambient must return immediately without sleeping
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_daily_update_loop_refreshes_active_plan():
+    manager, data_store, event_manager, hass = _build_manager()
+    await asyncio.sleep(0)
+
+    plan = data_store.get("growPlans")[0]
+    await manager.activate_grow_plan_by_id("plan-1", plan)
+    manager._is_system_ready = True
+
+    requested = []
+    updated_week = []
+    evaluated = []
+    updated_entities = []
+
+    class FakeWsClient:
+        async def request_grow_plans_week(self):
+            requested.append(True)
+
+    manager.ws_client = FakeWsClient()
+    manager._update_current_week = lambda: updated_week.append(True)
+    manager._eval_plan_settings = lambda plan: evaluated.append(plan)
+    manager._update_entities_from_week_data = lambda: updated_entities.append(True)
+
+    async def fake_sleep(seconds):
+        # Cancel after the first scheduled wait to end the loop
+        raise asyncio.CancelledError()
+
+    original_sleep = asyncio.sleep
+    asyncio.sleep = fake_sleep
+    try:
+        await manager._daily_update_loop()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        asyncio.sleep = original_sleep
+
+    assert requested == [True]
+    assert updated_week == [True]
+    assert evaluated == [manager.active_grow_plan]
+    assert updated_entities == [True]
+
+
+@pytest.mark.asyncio
+async def test_daily_update_loop_skips_when_paused():
+    manager, data_store, event_manager, hass = _build_manager()
+    await asyncio.sleep(0)
+
+    plan = data_store.get("growPlans")[0]
+    await manager.activate_grow_plan_by_id("plan-1", plan)
+    manager.managerActive = False
+    data_store.set("growManagerActive", False)
+    manager._is_system_ready = True
+
+    requested = []
+
+    class FakeWsClient:
+        async def request_grow_plans_week(self):
+            requested.append(True)
+
+    manager.ws_client = FakeWsClient()
+
+    async def fake_sleep(seconds):
+        raise asyncio.CancelledError()
+
+    original_sleep = asyncio.sleep
+    asyncio.sleep = fake_sleep
+    try:
+        await manager._daily_update_loop()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        asyncio.sleep = original_sleep
+
+    assert requested == []
+
