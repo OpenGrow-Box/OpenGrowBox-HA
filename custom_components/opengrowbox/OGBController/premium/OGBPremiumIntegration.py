@@ -1468,13 +1468,6 @@ class OGBPremiumIntegration:
             plan_status = (active_plan.get("status") or "active").lower() if isinstance(active_plan, dict) else "active"
             plan_id = active_plan.get("id") if isinstance(active_plan, dict) else None
 
-            # Always persist the plan list so resume/activate events that only
-            # carry plan_id can find the full plan metadata (startDate, weeks).
-            plans = data.get("plans") or []
-            if plans:
-                self.data_store.setDeep("growPlans", plans)
-                _LOGGER.debug(f"🌱 {self.room} Stored {len(plans)} plan(s) from API response")
-
             # Respect pause/stop from the server before touching any entities.
             if plan_status in ("paused", "stopped"):
                 _LOGGER.info(

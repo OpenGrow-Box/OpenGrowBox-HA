@@ -227,28 +227,37 @@ class OGBFallBackManager:
         """
         now = datetime.now()
 
+        _LOGGER.debug(f"{self.room}: FB _check_running_but_off_devices scanning {len(self._monitored_entities)} entities")
+
         for entity_id, state in list(self._monitored_entities.items()):
             if state.entity_type != "device":
                 continue
 
+            _LOGGER.debug(f"{self.room}: FB checking device '{state.device_name}' type={state.device_type} last_value={state.last_value} has_ref={state.device_ref is not None}")
+
             # Only check devices that are supposed to be off
             if str(state.last_value).lower() not in ["off", "false", "0", "none"]:
+                _LOGGER.debug(f"{self.room}: FB skip '{state.device_name}' – last_value '{state.last_value}' is not off")
                 continue
 
             # Check if device has a reference and power sensor
             if not state.device_ref:
+                _LOGGER.debug(f"{self.room}: FB skip '{state.device_name}' – no device_ref")
                 continue
 
             device_name = state.device_name or state.context
             if not device_name:
+                _LOGGER.debug(f"{self.room}: FB skip entity {entity_id} – no device_name")
                 continue
 
             power_sensor = self._find_power_sensor(device_name)
+            _LOGGER.debug(f"{self.room}: FB power sensor lookup for '{device_name}': {power_sensor}")
             if not power_sensor:
                 continue
 
             try:
                 current_power = await self._get_power_value(power_sensor)
+                _LOGGER.debug(f"{self.room}: FB '{device_name}' power via {power_sensor}: {current_power}W (threshold={self.RELIABILITY_POWER_ON_THRESHOLD_WATTS}W)")
                 if current_power is None:
                     continue
 
@@ -273,6 +282,8 @@ class OGBFallBackManager:
 
                     # Send notification (with rate limiting)
                     await self._notify_suspected_defect(device_name, current_power)
+                else:
+                    _LOGGER.debug(f"{self.room}: FB '{device_name}' power {current_power}W below threshold, OK")
 
             except Exception as e:
                 _LOGGER.debug(
@@ -419,11 +430,12 @@ class OGBFallBackManager:
                 device_type=device_type,
                 device_ref=device_ref,
                 last_update=datetime.now(),
+                last_value="off",
             )
 
             _LOGGER.debug(
                 f"🔌 {self.room} Registered device for monitoring: "
-                f"{device_name} (Type: {device_type}, Label: {context}) - {entity_id}"
+                f"{device_name} (Type: {device_type}, Label: {context}) - {entity_id} ref={device_ref is not None}"
             )
 
         except Exception as e:
@@ -443,7 +455,9 @@ class OGBFallBackManager:
                 state.last_update = datetime.now()
                 state.last_value = event_data.get("new_state")
 
-                _LOGGER.debug(f"{self.room} Updated tracking for device {entity_id}")
+                _LOGGER.debug(f"{self.room} Updated tracking for device {entity_id} → last_value={state.last_value}")
+            else:
+                _LOGGER.debug(f"{self.room} FB DeviceStateChange entity_id '{entity_id}' not in monitored (keys: {list(self._monitored_entities.keys())[:5]})")
 
         except Exception as e:
             _LOGGER.error(f"Error handling device state change: {e}", exc_info=True)
@@ -592,12 +606,17 @@ class OGBFallBackManager:
             f"sensor.{device_name.lower()}_watt",
         ]
 
+        _LOGGER.debug(f"{self.room}: FB _find_power_sensor for '{device_name}' trying patterns: {patterns}")
+
         for pattern in patterns:
-            if self.hass and self.hass.states.get(pattern):
+            state = self.hass.states.get(pattern) if self.hass else None
+            _LOGGER.debug(f"{self.room}: FB   pattern '{pattern}' → {state.state if state else 'not found'}")
+            if state:
                 return pattern
 
         # Search in energy context of device
         # (This would need device reference to check its sensors)
+        _LOGGER.debug(f"{self.room}: FB no power sensor found for '{device_name}'")
         return None
 
     async def _get_power_value(self, entity_id: str) -> Optional[float]:
