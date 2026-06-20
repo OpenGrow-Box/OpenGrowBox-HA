@@ -250,7 +250,7 @@ class OGBFallBackManager:
                 _LOGGER.debug(f"{self.room}: FB skip entity {entity_id} – no device_name")
                 continue
 
-            power_sensor = self._find_power_sensor(device_name)
+            power_sensor = self._find_power_sensor(device_name, state.device_ref)
             _LOGGER.debug(f"{self.room}: FB power sensor lookup for '{device_name}': {power_sensor}")
             if not power_sensor:
                 continue
@@ -597,9 +597,19 @@ class OGBFallBackManager:
         except Exception as e:
             _LOGGER.error(f"{self.room}: Failed to send reliability notification: {e}")
 
-    def _find_power_sensor(self, device_name: str) -> Optional[str]:
+    def _find_power_sensor(self, device_name: str, device_ref=None) -> Optional[str]:
         """Find associated power sensor for device."""
-        # Try common patterns
+        # Try device's own comprehensive sensor discovery first
+        if device_ref and hasattr(device_ref, '_find_power_sensor'):
+            try:
+                dev_sensor = device_ref._find_power_sensor()
+                if dev_sensor:
+                    _LOGGER.debug(f"{self.room}: FB power sensor via device_ref._find_power_sensor(): {dev_sensor}")
+                    return dev_sensor
+            except Exception as e:
+                _LOGGER.debug(f"{self.room}: FB device_ref._find_power_sensor failed: {e}")
+
+        # Try common patterns as fallback
         patterns = [
             f"sensor.{device_name.lower()}_power",
             f"sensor.{device_name.lower()}_energy",
@@ -614,8 +624,6 @@ class OGBFallBackManager:
             if state:
                 return pattern
 
-        # Search in energy context of device
-        # (This would need device reference to check its sensors)
         _LOGGER.debug(f"{self.room}: FB no power sensor found for '{device_name}'")
         return None
 

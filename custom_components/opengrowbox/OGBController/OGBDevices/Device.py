@@ -968,8 +968,6 @@ class Device:
 
     def checkForControlValue(self, force_update: bool = False) -> None:
         import time
-        # Check if we're within the control lock period (prevents HA state updates
-        # from overwriting our recently sent control values)
         control_lock_until = getattr(self, '_control_lock_until', 0)
         if control_lock_until and time.time() < control_lock_until and not force_update:
             _LOGGER.debug(f"{self.deviceName}: Skipping checkForControlValue - control lock active for {control_lock_until - time.time():.1f}s")
@@ -984,12 +982,11 @@ class Device:
             return
 
         if not self.sensors and not self.options:
-            _LOGGER.debug(f"{self.deviceName}: NO Sensor data or Options found")
-            self._set_default_control_values()
-            return
+            _LOGGER.debug(f"{self.deviceName}: NO Sensor data or Options, will try HA state fallback")
 
         relevant_keys = ["_duty", "_intensity", "_dutyCycle"]
         duty_types    = {"Exhaust", "Intake", "Ventilation", "Humidifier", "Dehumidifier", "Heater", "Cooler"}
+        light_types   = {"Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"}
 
         def convert_to_int(value, multiply_by_10: bool = False) -> int | None:
             try:
@@ -1022,7 +1019,7 @@ class Device:
             if not any(key in entity_id.lower() for key in relevant_keys):
                 continue
 
-            if self.deviceType == "Light" and "_duty" in entity_id.lower():
+            if self.deviceType in light_types and "_duty" in entity_id.lower():
                 _LOGGER.debug(f"{self.deviceName}: Skipping duty sensor for Light: {entity_id}")
                 continue
 
@@ -1040,7 +1037,7 @@ class Device:
                 _LOGGER.debug(f"{self.deviceName}: Init – sensor {entity_id} hat Wert 0, überspringe (warte auf echten Wert via deviceUpdater)")
                 continue
 
-            if self.deviceType == "Light":
+            if self.deviceType in light_types:
                 old = self.voltage
                 self.voltage = converted
                 control_value_found = True
@@ -1111,7 +1108,7 @@ class Device:
 
                 raw_value = option.get("value", 0)
 
-                if self.deviceType == "Light":
+                if self.deviceType in light_types:
                     self.voltageFromNumber = True
                     converted = convert_to_int(raw_value, multiply_by_10=True)
                     if converted is None:
@@ -1188,6 +1185,56 @@ class Device:
                             turn_on_kwargs = {"percentage": self.dutyCycle}
                     break
 
+        # ── HA State Machine Fallback für fan./light. Switches ───────────────────────
+        if not control_value_found:
+            for switch in self.switches:
+                entity_id = switch.get("entity_id", "")
+                state = self.hass.states.get(entity_id)
+                if not state:
+                    continue
+
+                _LOGGER.debug(f"{self.deviceName}: HA state fallback {entity_id}: state={state.state}, percentage={state.attributes.get('percentage')}, brightness={state.attributes.get('brightness')}")
+
+                if entity_id.startswith("fan.") and self.deviceType in duty_types:
+                    pct = state.attributes.get("percentage")
+                    if pct is not None:
+                        old = self.dutyCycle
+                        self.dutyCycle = float(pct)
+                        control_value_found = True
+                        _LOGGER.debug(f"{self.deviceName}: DutyCycle from HA fan state: {self.dutyCycle}%")
+
+                        if force_update and self.isRunning and old != self.dutyCycle and not needs_turn_on:
+                            needs_turn_on = True
+                            if self.isSpecialDevice:
+                                turn_on_kwargs = {"brightness_pct": float(self.dutyCycle)}
+                            else:
+                                turn_on_kwargs = {"percentage": self.dutyCycle}
+                        break
+
+                elif entity_id.startswith("light."):
+                    brightness = state.attributes.get("brightness")
+                    if brightness is not None:
+                        pct = (float(brightness) / 255.0) * 100.0
+                        if self.deviceType in light_types:
+                            old = self.voltage
+                            self.voltage = pct
+                            _LOGGER.debug(f"{self.deviceName}: Voltage from HA light state: {pct}%")
+                            if force_update and self.isRunning and old != self.voltage and not needs_turn_on:
+                                needs_turn_on = True
+                                turn_on_kwargs = {"brightness_pct": self.voltage}
+                        elif self.deviceType in duty_types:
+                            old = self.dutyCycle
+                            self.dutyCycle = pct
+                            _LOGGER.debug(f"{self.deviceName}: DutyCycle from HA light state: {pct}%")
+                            if force_update and self.isRunning and old != self.dutyCycle and not needs_turn_on:
+                                needs_turn_on = True
+                                if self.isSpecialDevice:
+                                    turn_on_kwargs = {"brightness_pct": float(self.dutyCycle)}
+                                else:
+                                    turn_on_kwargs = {"percentage": self.dutyCycle}
+                        control_value_found = True
+                        break
+
         # ── Set defaults ONLY if no control value was found ────────────────────────
         if not control_value_found:
             self._set_default_control_values()
@@ -1200,7 +1247,7 @@ class Device:
 
     def _set_default_control_values(self) -> None:
         """Set default control values ONLY when no actual control values were found."""
-        if self.deviceType == "Light":
+        if self.deviceType in ("Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"):
             if self.voltage is None:
                 self.voltage = 20.0  # Default light voltage (sunrise starts at 20%)
                 _LOGGER.debug(f"{self.deviceName}: No control value found - using default voltage: {self.voltage}%")
