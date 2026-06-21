@@ -1020,6 +1020,15 @@ class OGBPremiumIntegration:
                         f"because a more recent grow_plan_status_change event was received"
                     )
 
+            elif self.growPlanManager and self.growPlanManager.managerActive and not self.growPlanManager.active_grow_plan:
+                saved_plan = (self.subscription_data or {}).get("active_grow_plan")
+                if isinstance(saved_plan, dict) and saved_plan.get("id") and saved_plan.get("tentMode"):
+                    saved_plan_id = saved_plan["id"]
+                    _LOGGER.info(
+                        f"🌱 {self.room} Restoring grow plan from saved state: "
+                        f"{saved_plan.get('name')} (tentMode={saved_plan.get('tentMode')})"
+                    )
+                    await self.growPlanManager.activate_grow_plan_by_id(saved_plan_id, saved_plan)
 
             # Get active connections from usage
             active_connections = usage.get("activeConnections", 0)
@@ -3160,6 +3169,7 @@ class OGBPremiumIntegration:
                 "subscription_data": self.subscription_data or {},
                 "strain_name": StrainName,
                 "growmanager_state": self.growPlanManager.managerActive if self.growPlanManager else None,
+                "active_grow_plan_id": self.growPlanManager.active_grow_plan_id if self.growPlanManager else None,
                 "ogb_login_token": self.ogb_login_token,
                 "ogb_login_email": self.ogb_login_email,
                 "ws_data": {

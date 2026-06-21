@@ -418,9 +418,15 @@ class OGBGrowPlanManager:
             
             self.managerActive = True
             self.data_store.set("growManagerActive",True)
-            
-            # Aktualisiere aktuelle Woche (triggert API-Anfrage wenn keine Daten)
+
+            # Immer frische Wochen-Daten holen + anwenden (tentMode, PlantStage, Environment)
+            if self.ws_client:
+                try:
+                    await self.ws_client.request_grow_plans_week()
+                except Exception:
+                    pass
             await self._update_current_week()
+            await self._update_entities_from_week_data()
             
             _LOGGER.info(f"🌱 {self.room} Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}, Woche: {self.current_week}")
             
@@ -923,8 +929,16 @@ class OGBGrowPlanManager:
 
             week_data = self.data_store.getDeep("growPlan.currentWeekData")
             if not week_data:
-                _LOGGER.debug(f"{self.room} - No week data available for entity update")
-                return
+                week_data = getattr(self, 'current_week_data', None)
+                if not week_data:
+                    if self.active_grow_plan and self.active_grow_plan.get("tentMode"):
+                        week_data = {"tentMode": self.active_grow_plan["tentMode"]}
+                        _LOGGER.warning(
+                            f"🌱 {self.room} Fallback: using active_grow_plan tentMode={week_data['tentMode']}"
+                        )
+                    else:
+                        _LOGGER.debug(f"{self.room} - No week data available for entity update")
+                        return
             
             # Log the complete week data for debugging
             env = week_data.get("environment", {})
