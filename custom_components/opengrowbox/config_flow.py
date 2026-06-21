@@ -7,8 +7,10 @@ from homeassistant.core import callback
 from .const import CONF_AUTO_CONFIGURE_HA, DEFAULT_AUTO_CONFIGURE_HA, DOMAIN
 from .ha_config_status import (
     HAConfigStatus,
+    apply_runtime_ha_config_status,
     format_ha_config_status_message,
     get_ha_config_status,
+    history_component_loaded,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,7 +37,11 @@ async def _async_get_configuration_status(hass):
         )
 
     config_path = hass.config.path("configuration.yaml")
-    return await hass.async_add_executor_job(get_ha_config_status, config_path)
+    status = await hass.async_add_executor_job(get_ha_config_status, config_path)
+    return apply_runtime_ha_config_status(
+        status,
+        history_loaded=history_component_loaded(hass),
+    )
 
 
 class IntegrationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
