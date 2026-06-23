@@ -160,6 +160,12 @@ class OGBLightScheduler:
         plant_stage = self.data_store.get("plantStage")
         self.current_plant_stage = plant_stage
 
+        if not plant_stage:
+            _LOGGER.debug(
+                f"{self.device_name}: plantStage not initialized yet, skipping plant stage light adjustment"
+            )
+            return None
+
         if plant_stage in self.plant_stage_min_max:
             percent_range = self.plant_stage_min_max[plant_stage]
             min_voltage = percent_range["min"]
@@ -171,7 +177,7 @@ class OGBLightScheduler:
             )
             return min_voltage, max_voltage
 
-        _LOGGER.error(
+        _LOGGER.warning(
             f"{self.device_name}: Unknown plant phase '{plant_stage}'. Standard values will be used."
         )
         return None
@@ -292,7 +298,7 @@ class OGBLightScheduler:
                 plant_stage = self.data_store.get("plantStage")
                 self.current_plant_stage = plant_stage
 
-                if plant_stage in self.plant_stage_min_max:
+                if plant_stage and plant_stage in self.plant_stage_min_max:
                     percent_range = self.plant_stage_min_max[plant_stage]
                     # Update voltage ranges if needed
 

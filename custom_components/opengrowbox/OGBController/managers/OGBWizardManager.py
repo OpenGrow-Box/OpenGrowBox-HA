@@ -223,7 +223,7 @@ class OGBWizardManager:
             self.data_store.set("plantStageSource", "custom")
             self.data_store.set("plantStages", normalized)
             self.data_store.set("lightPlantStages", normalized_light)
-            await self._emit_current_stage_reapply("custom")
+            await self._reapply_current_plant_stage("custom")
             return normalized, normalized_light
 
         if normalized_mode == "live":
@@ -243,7 +243,7 @@ class OGBWizardManager:
             self.data_store.set("plantStageSource", "live")
             self.data_store.set("plantStages", normalized)
             self.data_store.set("lightPlantStages", normalized_light)
-            await self._emit_current_stage_reapply("live")
+            await self._reapply_current_plant_stage("live")
             return normalized, normalized_light
 
         default_config = deepcopy(self.default_plant_stages or self._get_plant_config())
@@ -255,10 +255,10 @@ class OGBWizardManager:
         self.data_store.set("plantStageSource", "default")
         self.data_store.set("plantStages", default_config)
         self.data_store.set("lightPlantStages", default_light_config)
-        await self._emit_current_stage_reapply("default")
+        await self._reapply_current_plant_stage("default")
         return default_config, default_light_config
 
-    async def _emit_current_stage_reapply(self, source):
+    async def _reapply_current_plant_stage(self, source):
         """Re-emit current plant stage so listeners apply updated stage presets immediately."""
         current_stage = self.data_store.get("plantStage")
         if not current_stage:

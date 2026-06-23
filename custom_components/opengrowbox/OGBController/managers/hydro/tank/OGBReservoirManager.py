@@ -54,6 +54,12 @@ class OGBReservoirManager:
         self.last_alert_type: Optional[str] = None  # "low" or "high"
         self.alert_cooldown = timedelta(minutes=30)  # Minimum time between alerts
         
+        # Sensor jump validation
+        self._last_valid_level: Optional[float] = None
+        self._level_ema: Optional[float] = None  # Exponential moving average
+        self._ema_alpha = 0.3  # Smoothing factor (0-1); lower = smoother
+        self._max_single_update_change = 25.0  # Reject jumps > 25% per update
+        
         # Sensor entity tracking
         self.reservoir_sensor_entity: Optional[str] = None
         
@@ -481,6 +487,27 @@ class OGBReservoirManager:
                 self.current_level = raw_value
                 _LOGGER.warning(f"[{self.room}] Unknown reservoir level unit: {unit}")
             
+            # Validate and smooth sensor reading
+            validated_level = self._validate_and_smooth_level(self.current_level)
+            if validated_level is None:
+                _LOGGER.warning(
+                    f"[{self.room}] Reservoir level {self.current_level:.1f}% rejected as implausible "
+                    f"(last valid: {self._last_valid_level:.1f}%)"
+                )
+                return
+            
+            self.current_level = validated_level
+            
+            # Hard safety cap: anything at or above 95% is treated as overflow risk
+            if self.current_level >= 95.0:
+                _LOGGER.critical(
+                    f"[{self.room}] Reservoir level {self.current_level:.1f}% reached critical overflow "
+                    f"limit (95%). Stopping pump and blocking autofill."
+                )
+                await self._stop_fill("Level reached critical overflow limit (95%)")
+                await self._block_fill(f"Critical level {self.current_level:.1f}% reached")
+                # Still store the value so it is visible, but do not use it for fill decisions
+
             # Store in dataStore
             self.data_store.setDeep("Hydro.ReservoirLevel", self.current_level)
             self.data_store.setDeep("Hydro.ReservoirLevelRaw", self.current_level_raw)
@@ -533,20 +560,33 @@ class OGBReservoirManager:
             
             # Convert to cm if needed
             if unit == "m":
-                distance = distance * 100
-                max_distance = max_distance * 100
-                min_distance = min_distance * 100
+                distance_cm = distance * 100
+                max_distance_cm = max_distance * 100
+                min_distance_cm = min_distance * 100
             elif unit == "mm":
-                distance = distance / 10
-                max_distance = max_distance / 10
-                min_distance = min_distance / 10
+                distance_cm = distance / 10
+                max_distance_cm = max_distance / 10
+                min_distance_cm = min_distance / 10
+            elif unit == "cm":
+                distance_cm = distance
+                max_distance_cm = max_distance
+                min_distance_cm = min_distance
+            else:
+                _LOGGER.warning(f"[{self.room}] Unsupported distance unit '{unit}', treating as cm")
+                distance_cm = distance
+                max_distance_cm = max_distance
+                min_distance_cm = min_distance
             
             # Calculate percentage
             # Distance decreases as water level rises
-            if max_distance <= min_distance:
-                return 50.0  # Fallback
+            if max_distance_cm <= min_distance_cm:
+                _LOGGER.warning(
+                    f"[{self.room}] Invalid reservoir calibration: max_distance ({max_distance_cm}) "
+                    f"<= min_distance ({min_distance_cm}). Using 50%."
+                )
+                return 50.0
             
-            percentage = ((max_distance - distance) / (max_distance - min_distance)) * 100
+            percentage = ((max_distance_cm - distance_cm) / (max_distance_cm - min_distance_cm)) * 100
             percentage = max(0.0, min(100.0, percentage))  # Clamp to 0-100
             
             return percentage
@@ -555,6 +595,42 @@ class OGBReservoirManager:
             _LOGGER.error(f"[{self.room}] Error converting distance: {e}")
             return 50.0  # Fallback
     
+    def _validate_and_smooth_level(self, new_level: float) -> Optional[float]:
+        """Validate sensor reading for plausibility and apply smoothing.
+
+        Returns the validated/smoothed level or None if the reading should be rejected.
+        """
+        if new_level is None:
+            return None
+        
+        # Clamp physically impossible values
+        if new_level < 0.0 or new_level > 100.0:
+            _LOGGER.warning(
+                f"[{self.room}] Reservoir level {new_level:.1f}% outside physical range 0-100, clamping"
+            )
+            new_level = max(0.0, min(100.0, new_level))
+        
+        # First reading - accept as-is
+        if self._last_valid_level is None:
+            self._last_valid_level = new_level
+            self._level_ema = new_level
+            return new_level
+        
+        # Check for implausible single-update jumps
+        change = abs(new_level - self._last_valid_level)
+        if change > self._max_single_update_change:
+            _LOGGER.warning(
+                f"[{self.room}] Implausible reservoir level jump: "
+                f"{self._last_valid_level:.1f}% -> {new_level:.1f}% (change {change:.1f}%). "
+                f"Rejecting reading."
+            )
+            return None
+        
+        # Apply exponential moving average to reduce noise
+        self._level_ema = (self._ema_alpha * new_level) + ((1 - self._ema_alpha) * self._level_ema)
+        self._last_valid_level = self._level_ema
+        return self._level_ema
+
     async def _check_thresholds(self):
         """Check if current level triggers alerts or auto-fill"""
         if self.current_level is None:
@@ -592,6 +668,14 @@ class OGBReservoirManager:
                 await self._send_high_level_alert()
                 self.last_alert_time = now
                 self.last_alert_type = "high"
+            # Always stop fill if we are above high threshold - independent of alert state
+            if self._is_filling:
+                _LOGGER.warning(
+                    f"[{self.room}] Reservoir level {self.current_level:.1f}% above high threshold "
+                    f"({high_thresh:.1f}%) during fill - stopping pump"
+                )
+                await self._stop_fill("High threshold reached during fill")
+                await self._block_fill(f"High level {self.current_level:.1f}% reached during autofill")
         
         else:
             # Level is back in normal range, reset alert type

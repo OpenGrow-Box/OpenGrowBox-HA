@@ -132,10 +132,18 @@ async def update_entity(entity: str, value, room: str, hass) -> bool:
 
     # Normalize room: lowercase + spaces → underscores
     room_normalized = room.lower().replace(" ", "_")
-    
+
     domain = entity.split(".")[0]
     base   = entity.split(".", 1)[1]          # e.g. "ogb_co2_control"
     full_entity_id = f"{domain}.{base}_{room_normalized}"
+
+    # Skip empty/unavailable values for domains that cannot accept them
+    if domain in ("select", "time", "input_datetime", "number", "input_number"):
+        if value is None or str(value).lower() in ("", "unavailable", "unknown", "none"):
+            _LOGGER.debug(
+                f"update_entity: skipping '{full_entity_id}' because value is empty/unavailable ({value!r})"
+            )
+            return False
 
     # Check if entity exists and is available
     if hass and hass.states:

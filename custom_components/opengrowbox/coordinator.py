@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
 from .const import DOMAIN
 from .OGBController.OGB import OpenGrowBox
 from .OGBController.RegistryListener import OGBRegistryEvenListener
+from .OGBController.utils.ambient import is_ambient_room
 from .select import OpenGrowBoxRoomSelector
 from .text import OpenGrowBoxAccessToken
 
@@ -194,9 +195,12 @@ class OGBIntegrationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 await self.OGB.data_storeManager.async_init()
                 _LOGGER.debug(f"✅ {self.room_name}: Restored saved state from disk (async)")
-                if hasattr(self.OGB, 'wizard_manager') and self.OGB.wizard_manager:
-                    await self.OGB.wizard_manager.restore_active_plant_stage_config()
-                    _LOGGER.debug(f"✅ {self.room_name}: Restored active plant stage source")
+                if not is_ambient_room(self.room_name):
+                    if hasattr(self.OGB, 'wizard_manager') and self.OGB.wizard_manager:
+                        await self.OGB.wizard_manager.restore_active_plant_stage_config()
+                        _LOGGER.debug(f"✅ {self.room_name}: Restored active plant stage source")
+                else:
+                    _LOGGER.debug(f"ℹ️ {self.room_name}: Ambient room - skipping plant stage config restore")
             except Exception as e:
                 _LOGGER.warning(f"⚠️ {self.room_name}: Could not load saved state: {e}")
             

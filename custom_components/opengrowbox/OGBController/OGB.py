@@ -15,6 +15,7 @@ from .managers.core.OGBVPDManager import OGBVPDManager
 from .managers.OGBWizardManager import OGBWizardManager
 from .OGBOrchestrator import OGBOrchestrator
 from .RegistryListener import OGBRegistryEvenListener
+from .utils.ambient import is_ambient_room
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -458,33 +459,36 @@ class OpenGrowBox:
         return self.main_controller.__repr__()
 
     async def get_weather_data(self):
-        """Fetch weather data for outdoor conditions."""
-        try:
-            # For now, use a simple weather API or mock data
-            # In production, this would integrate with a weather service
-            _LOGGER.debug(f"Fetching weather data for {self.room}")
+        """Fetch weather data for outdoor conditions.
 
-            # Mock weather data - replace with actual API call
-            weather_data = {
-                "temperature": 20.5,
-                "humidity": 65.0,
-                "wind_speed": 5.2,
-                "description": "Partly cloudy"
-            }
+        Deprecated: weather data is fetched by OGBVPDManager and consumed via
+        the OutsiteData bus event. This method is kept for backwards compatibility.
+        """
+        _LOGGER.debug(
+            "%s: get_weather_data is deprecated; weather is updated via OutsiteData events",
+            self.room,
+        )
 
-            # Store in data store
-            self.data_store.setDeep("weather.temperature", weather_data["temperature"])
-            self.data_store.setDeep("weather.humidity", weather_data["humidity"])
-            self.data_store.setDeep("weather.wind_speed", weather_data["wind_speed"])
-            self.data_store.setDeep("weather.description", weather_data["description"])
+    async def _handle_outsite_data(self, event):
+        """Handle outside weather data and mirror it to the weather store."""
+        if is_ambient_room(self.room):
+            return
 
-            # Emit weather update event
-            await self.event_manager.emit("WeatherUpdate", weather_data)
+        payload = event.data if hasattr(event, "data") else event
+        temp = payload.get("temperature")
+        hum = payload.get("humidity")
 
-            _LOGGER.debug(f"Weather data updated for {self.room}: {weather_data}")
+        self.data_store.setDeep("weather.temperature", temp)
+        self.data_store.setDeep("weather.humidity", hum)
+        self.data_store.setDeep("weather.wind_speed", payload.get("wind_speed", 0))
+        self.data_store.setDeep("weather.description", payload.get("description", ""))
 
-        except Exception as e:
-            _LOGGER.error(f"Error fetching weather data for {self.room}: {e}")
+        _LOGGER.debug(
+            "🌍 %s Received OutsiteData: Temp=%s°C, Hum=%s%% -> weather.* updated",
+            self.room,
+            temp,
+            hum,
+        )
 
     async def emergency_stop(self):
         """Emergency stop all systems."""

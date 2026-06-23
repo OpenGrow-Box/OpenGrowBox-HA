@@ -60,7 +60,14 @@ def _match_translation(value):
         # (e.g. "v" from voltage matching "ventilation").
         if not translation or len(translation) < 3:
             continue
-        if translation in normalized:
+        # Require word boundaries for short substring matches to avoid false
+        # positives like "hum" matching inside "dehumidifier". Still allow
+        # matches at the start of a longer word (e.g. "hum" in "humidite").
+        if len(translation) <= 4:
+            pattern = r"(?:^|[^a-z0-9])" + re.escape(translation) + r"(?:[^a-z0-9]|$|[a-z0-9])"
+            if re.search(pattern, normalized):
+                return canonical_type
+        elif translation in normalized:
             return canonical_type
 
     return None
