@@ -290,6 +290,7 @@ class OGBCastManager:
             sysmessage = "Hydro mode is OFFLINE"
             self.data_store.setDeep("Hydro.Active", False)
             await self.event_manager.emit("PumpAction", {"action": "off"})
+            await self._ensure_air_pump(False)
 
         elif mode == "Hydro":
             sysmessage = "Hydro mode active"
@@ -298,8 +299,9 @@ class OGBCastManager:
             self.data_store.setDeep("CropSteering.Mode", None)
             self.data_store.setDeep("CropSteering.Active", False)
             await self.hydro_Mode(cycle, intervall, duration, PumpDevices)
-            # Start retrieve system alongside hydro
+            # Start retrieve system and air pump alongside hydro
             await self._ensure_retrieve_system("hydro")
+            await self._ensure_air_pump(True)
 
         elif mode == "Crop-Steering":
             sysmessage = "Crop-Steering mode active"
@@ -324,6 +326,7 @@ class OGBCastManager:
             await self.CropSteeringManager.handle_mode_change(pumpAction)
             # Start retrieve system alongside crop-steering
             await self._ensure_retrieve_system("crop_steering")
+            await self._ensure_air_pump(False)
 
         elif mode == "Plant-Watering":
             sysmessage = "Plant watering mode active"
@@ -334,7 +337,9 @@ class OGBCastManager:
             await self.hydro_PlantWatering(intervall, duration, PumpDevices)
             # Start retrieve system alongside plant-watering
             await self._ensure_retrieve_system("plant_watering")
+            await self._ensure_air_pump(False)
         elif mode == "Config":
+            await self._ensure_air_pump(False)
             return
         else:
             sysmessage = f"Unknown mode: {mode}"
@@ -625,6 +630,31 @@ class OGBCastManager:
                     )
         
         return active_pumps
+
+    async def _find_air_pumps(self) -> list:
+        """Find air pump devices (airpump, luftpumpe, belüfter) for oxygenation."""
+        air_pump_cap = self.data_store.getDeep("capabilities.canAirPump")
+        if not air_pump_cap or "devEntities" not in air_pump_cap:
+            return []
+        pumps = air_pump_cap["devEntities"]
+        if pumps:
+            _LOGGER.debug(f"[{self.room}] Found air pumps: {pumps}")
+        return pumps
+
+    async def _ensure_air_pump(self, turn_on: bool):
+        """Turn air pump on (all hydro modes) or off (when leaving hydro)."""
+        pumps = await self._find_air_pumps()
+        if not pumps:
+            return
+        action = "on" if turn_on else "off"
+        for pump_id in pumps:
+            _LOGGER.debug(f"[{self.room}] Air pump {pump_id} → {action}")
+            await self.event_manager.emit(
+                "PumpAction",
+                OGBHydroAction(
+                    Name=self.room, Action=action, Device=pump_id, Cycle="false"
+                ),
+            )
 
     async def retrive_Mode(
         self,

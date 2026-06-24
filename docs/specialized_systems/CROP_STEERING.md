@@ -367,8 +367,8 @@ The CropSteering system requires calibration to understand the VWC (Volumetric W
 
 | Type | Purpose | Trigger |
 |------|---------|---------|
-| **VWC Max** | Find saturation point | `cs_calibrate max` or auto during P1 |
-| **VWC Min** | Find safe minimum | `cs_calibrate min` |
+| **VWC Max** | Find saturation point | `cs_calibrate max` or auto during P1/P2 |
+| **VWC Min** | Find safe dryback minimum | `cs_calibrate min` or auto during P3 |
 
 #### Console Commands for Calibration
 
@@ -484,13 +484,71 @@ Calibration values are stored in the DataStore and persisted to disk:
 
 **Important**: Calibration values are now persisted across HA restarts.
 
-#### Auto-Calibration During P1 Phase
+#### Auto-Calibration During Regular Operation
+
+The system automatically calibrates VWC values during normal operation across multiple phases:
+
+| Phase | Value | Method | Conditions |
+|-------|-------|--------|------------|
+| **P1** | VWCMax | Stagnation detection | VWC stops increasing after 3+ shots, VWC >= 25% |
+| **P2** | VWCMax | Post-irrigation peak tracking | 3+ consistent peaks within 2% tolerance, 3+ cycles |
+| **P3** | VWCMin | Night dryback minimum | 2+ consistent night minima within 2% tolerance |
+
+##### P1: VWC Max via Stagnation Detection
 
 During the P1 (Saturation) phase, the system automatically calibrates VWCMax when:
-- VWC stops increasing after irrigation (stagnation detected)
-- Maximum irrigation attempts reached
+- VWC stops increasing after irrigation (stagnation detected, VWC >= 25%)
+- Maximum irrigation attempts reached at a reasonable VWC level
 
 This is a "passive" calibration that happens as part of normal operation.
+
+##### P2: VWC Max via Post-Irrigation Peak Tracking
+
+During P2 (Maintenance), each irrigation shot raises VWC. The system tracks the peak VWC reached after each shot. When the same peak is observed consistently across multiple cycles, it is saved as the calibrated VWCMax for P2.
+
+```python
+# Peak tracking logic
+peaks = []  # Rolling list of post-irrigation VWC peaks (max 5)
+if len(peaks) >= 3 and irrigation_count >= 3:
+    if max(peaks) - min(peaks) <= 2.0:  # Within 2% tolerance
+        save_calibration("p2", "VWCMax", avg(peaks))
+```
+
+**This means**: If your maintenance irrigation consistently brings the medium to ~72% VWC after each shot across 3 irrigation cycles, P2 VWCMax is automatically set to 72%.
+
+##### P3: VWC Min via Night Dryback Observation
+
+At the end of each night (P3→P0 transition), the current VWC represents the natural dryback minimum. The system tracks this value across multiple nights. When consistent minima are observed, VWCMin is auto-calibrated.
+
+```python
+# Night minimum tracking
+night_mins = []  # Rolling list of end-of-night VWC values (max 5)
+if len(night_mins) >= 2:
+    if max(night_mins) - min(night_mins) <= 2.0:  # Within 2% tolerance
+        save_calibration("p3", "VWCMin", avg(night_mins))
+```
+
+**This means**: If the medium naturally dries back to ~38% for two consecutive nights, P3 VWCMin is automatically set to 38%.
+
+#### First-Start Calibration Indicator
+
+On first startup (or when no calibrations exist for a phase), the system emits a `CSWARNING` log message once per day listing all phases that need calibration:
+
+```
+⚠ Calibration needed: P1, P2, P3 — run VWC calibration cycle
+```
+
+This runs once per day to avoid spamming the logs.
+
+#### Periodic Re-Calibration Reminder
+
+When a calibration is older than 4 weeks, the system emits a reminder:
+
+```
+⚠ Re-calibration recommended: P1 (32d old), P2 (45d old) — older than 4 weeks
+```
+
+This encourages users to keep calibrations current as the growing medium and root structure change over time.
 
 #### Advanced Sensor Processing
 
@@ -1201,6 +1259,10 @@ $ cs_calibrate -h
 - **Medium-Specific Adjustments**: Rockwool, coco, soil, perlite, aero, water
 - **Growth Phase Optimization**: Vegetative vs generative watering strategies
 - **VWC Calibration**: Dedicated CalibrationManager with persistence
+- **Auto-Calibration P1**: VWCMax via stagnation detection during saturation
+- **Auto-Calibration P2**: VWCMax via post-irrigation peak tracking
+- **Auto-Calibration P3**: VWCMin via night dryback minimum observation
+- **Calibration Status Monitoring**: First-start indicator + 4-week re-cal reminder
 - **Console Commands**: `cs_status`, `cs_calibrate` for user interaction
 - **Advanced Sensor Processing**: TDR-style polynomial calculations
 - **EC Management**: Pore water EC with temperature normalization
@@ -1221,9 +1283,20 @@ $ cs_calibrate -h
 
 ---
 
-**Last Updated**: January 6, 2026
-**Version**: 3.3 (Phase Extraction, Pump Filtering & User Timing Fixes)
-**Status**: ✅ **PRODUCTION READY** - All critical bugs fixed, enhanced user control
+**Last Updated**: June 24, 2026
+**Version**: 3.4 (Auto-Calibration for P2/P3, Calibration Status Monitoring)
+**Status**: ✅ **PRODUCTION READY**
+
+### Changelog v3.4 (June 24, 2026)
+- **Added**: P2 VWC Max auto-calibration via post-irrigation peak tracking (3+ consistent peaks within 2%)
+- **Added**: P3 VWC Min auto-detection via night dryback minimum observation (2+ consistent nights within 2%)
+- **Added**: First-start calibration indicator — warns when no calibrations exist yet
+- **Added**: Periodic re-calibration reminder — warns when calibration older than 4 weeks
+- **Added**: `_track_p2_vwc_peak()` method for P2 peak detection and calibration
+- **Added**: `_check_calibration_status()` method for daily calibration health check
+- **Updated**: Reset methods `_reset_p2_state_tracking()` and `_reset_p3_state_tracking()` to clear irrigation timer
+- **Updated**: P2 handler now saves `p2_last_irrigation_time` for accurate peak window detection
+- **Updated**: P3→P0 transition now tracks `p3_night_vwc_mins` rolling list for auto-calibration
 
 ### Changelog v3.3 (January 6, 2026)
 - **Fixed**: Manual mode phase extraction bug - now correctly reads from CropPhase selector (P1 vs p0)

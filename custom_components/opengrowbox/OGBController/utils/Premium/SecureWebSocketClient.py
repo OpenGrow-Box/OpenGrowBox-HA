@@ -2065,6 +2065,11 @@ class OGBWebSocketConManager:
             self.subscription_data["usage"]["activeRooms"] = active_rooms
             self.subscription_data["usage"]["roomsUsed"] = len(active_rooms)
 
+            # Persist connections status from the backend (e.g. StrainDB).
+            connections = data.get("connections")
+            if connections is not None:
+                self.subscription_data["connections"] = connections
+
             # Store active grow plan if present
             if active_grow_plan:
                 logging.info(
@@ -2082,6 +2087,7 @@ class OGBWebSocketConManager:
                 "limits": limits,
                 "usage": self.subscription_data.get("usage", {}),
                 "activeGrowPlan": active_grow_plan,
+                "connections": self.subscription_data.get("connections"),
                 "timestamp": data.get("timestamp", time.time()),
                 "source": data.get("source", "WebSocket")
             }
@@ -2126,6 +2132,7 @@ class OGBWebSocketConManager:
                     "activeRooms": active_rooms if isinstance(active_rooms, list) else [],
                     "plan_name": server_plan
                 },
+                "connections": self.subscription_data.get("connections"),
                 "activeGrowPlan": active_grow_plan,
                 "timestamp": data.get("timestamp", time.time()) if isinstance(data, dict) else time.time(),
                 "lastEndpoint": data.get("lastEndpoint") if isinstance(data, dict) else None,

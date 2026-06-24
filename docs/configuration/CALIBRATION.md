@@ -252,13 +252,21 @@ CropSteering.Calibration.p1.VWCMin = 32.1    # Safe minimum with buffer
 CropSteering.Calibration.p1.timestamp = "2026-01-03T16:30:00"
 ```
 
-#### Auto-Calibration During P1 Phase
+#### Auto-Calibration During Regular Operation
 
-The CropSteering system also performs automatic VWCMax calibration during the P1 (Saturation) phase. This happens when:
-- VWC stops increasing after irrigation (stagnation)
-- Maximum irrigation attempts reached
+The CropSteering system also performs automatic calibration during normal operation across multiple phases:
 
-This "passive" calibration updates VWCMax as part of normal operation.
+| Phase | Value | Method |
+|-------|-------|--------|
+| **P1** (Saturation) | VWCMax | Stagnation detection — VWC stops increasing after 3+ shots |
+| **P2** (Maintenance) | VWCMax | Post-irrigation peak tracking — 3+ consistent peaks within 2% |
+| **P3** (Night Dryback) | VWCMin | Night minimum observation — 2+ consistent nights within 2% |
+
+This "passive" calibration updates VWC values as part of normal operation without user intervention.
+
+Additionally, the system provides:
+- **First-start indicator**: Warns when a phase has no calibration yet (runs once per day)
+- **Periodic reminder**: Warns when calibration is older than 4 weeks (runs once per day)
 
 ### Capability Calibration (Device Impact Profiling)
 

@@ -547,6 +547,7 @@ class OGBCSManager:
         _LOGGER.debug(f"{self.room} - Resetting P3 state tracking")
         self.data_store.setDeep("CropSteering.p3_emergency_count", 0)
         self.data_store.setDeep("CropSteering.p3_last_emergency_time", None)
+        self.data_store.setDeep("CropSteering.p3_last_irrigation_time", None)
 
     def _reset_p2_state_tracking(self):
         """Reset P2 state tracking variables.
@@ -558,6 +559,7 @@ class OGBCSManager:
         _LOGGER.debug(f"{self.room} - Resetting P2 state tracking (checks will start fresh)")
         self.data_store.setDeep("CropSteering.p2_last_check_time", None)
         self.data_store.setDeep("CropSteering.p2_shot_count", 0)
+        self.data_store.setDeep("CropSteering.p2_last_irrigation_time", None)
 
     # ==================== MODE PARSING ====================
 
@@ -1340,6 +1342,9 @@ class OGBCSManager:
                     except Exception as emit_err:
                         _LOGGER.debug(f"{self.room} - CSSensorUpdate emit error (non-critical): {emit_err}")
 
+                    # Check calibration status periodically (once per day)
+                    await self._check_calibration_status()
+
                     # Phase logic with presets
                     if current_phase == "p0":
                         await self._handle_phase_p0_auto(vwc, ec, preset)
@@ -1363,6 +1368,58 @@ class OGBCSManager:
         except Exception as e:
             _LOGGER.error(f"{self.room} - Automatic cycle FATAL error: {e}", exc_info=True)
             await self._emergency_stop()
+
+    async def _check_calibration_status(self):
+        """
+        Check calibration status and emit reminders if needed.
+        - First-start: warn if any calibrations are missing
+        - Periodic: remind to re-calibrate if calibration is > 4 weeks old
+        Runs at most once per day to avoid spamming.
+        """
+        last_check = self.data_store.getDeep("CropSteering._last_calibration_check_time")
+        now_ts = datetime.now().timestamp()
+        one_day_sec = 86400
+
+        if last_check and (now_ts - last_check) < one_day_sec:
+            return
+        self.data_store.setDeep("CropSteering._last_calibration_check_time", now_ts)
+
+        four_weeks_sec = 2419200  # 28 days
+        missing = []
+        stale = []
+
+        for phase in ("p1", "p2", "p3"):
+            cal_max = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMax")
+            cal_min = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMin")
+            cal_ts = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.timestamp")
+
+            if cal_max is None and cal_min is None:
+                missing.append(phase)
+            elif cal_ts:
+                try:
+                    age = now_ts - datetime.fromisoformat(cal_ts).timestamp()
+                    if age > four_weeks_sec:
+                        stale.append(f"{phase} ({int(age/86400)}d old)")
+                except (ValueError, TypeError):
+                    pass
+
+        if missing:
+            msg = f"Calibration needed: {', '.join(m.upper() for m in missing)} — run VWC calibration cycle"
+            _LOGGER.warning(f"{self.room} - {msg}")
+            await self.event_manager.emit(
+                "LogForClient",
+                {"Name": self.room, "Type": "CSWARNING", "Message": msg},
+                haEvent=True,
+            )
+
+        if stale:
+            msg = f"Re-calibration recommended: {', '.join(stale)} — older than 4 weeks"
+            _LOGGER.warning(f"{self.room} - {msg}")
+            await self.event_manager.emit(
+                "LogForClient",
+                {"Name": self.room, "Type": "CSWARNING", "Message": msg},
+                haEvent=True,
+            )
 
     async def _handle_phase_p0_auto(self, vwc, ec, preset):
         """P0: Monitoring phase - Wait for Dryback Signal
@@ -1757,6 +1814,7 @@ class OGBCSManager:
                         await self._irrigate(duration=shot_duration)
                         p2_shot_count += 1
                         self.data_store.setDeep("CropSteering.p2_shot_count", p2_shot_count)
+                        self.data_store.setDeep("CropSteering.p2_last_irrigation_time", now)
                     await self.event_manager.emit(
                         "LogForClient",
                         {
@@ -1774,6 +1832,12 @@ class OGBCSManager:
                     _LOGGER.debug(
                         f"{self.room} - P2 maintenance: VWC {vwc:.1f}% (hold at {hold_threshold:.1f}%, OK)"
                     )
+                    # Auto-calibration: track post-irrigation VWC peak
+                    p2_last_irrigation_time = self.data_store.getDeep("CropSteering.p2_last_irrigation_time")
+                    if p2_last_irrigation_time:
+                        time_since_p2_irrigation = (now - p2_last_irrigation_time).total_seconds()
+                        if time_since_p2_irrigation <= check_interval_seconds * 2:
+                            await self._track_p2_vwc_peak(vwc)
             else:
                 # STAGE-CHECKER: Light is off -> Switch to P3
                 _LOGGER.debug(f"{self.room} - P2: Light OFF → Switching to P3")
@@ -1792,6 +1856,49 @@ class OGBCSManager:
                 f"{self.room} - P2: Waiting for next check, {time_until_next_check:.0f}s remaining "
                 f"(interval: {check_interval_minutes:.0f}min)"
             )
+
+    async def _track_p2_vwc_peak(self, vwc: float):
+        """
+        Track post-irrigation VWC peaks in P2 for automatic VWCMax calibration.
+        When a consistent peak is observed across multiple irrigation cycles,
+        save it as the calibrated VWCMax for P2.
+        """
+        tolerance = 2.0
+        min_peaks = 3
+        min_cycles = 3
+
+        peaks = self.data_store.getDeep("CropSteering.p2_irrigation_peaks") or []
+        irrigation_count = self.data_store.getDeep("CropSteering.p2_shot_count") or 0
+
+        peaks.append(round(vwc, 1))
+        if len(peaks) > 5:
+            peaks.pop(0)
+        self.data_store.setDeep("CropSteering.p2_irrigation_peaks", peaks)
+
+        if len(peaks) >= min_peaks and irrigation_count >= min_cycles:
+            if max(peaks) - min(peaks) <= tolerance:
+                avg_vwc = sum(peaks) / len(peaks)
+                _LOGGER.debug(
+                    f"{self.room} - P2: Consistent post-irrigation peak {avg_vwc:.1f}% - auto-calibrating VWCMax"
+                )
+                self.data_store.setDeep(
+                    "CropSteering.Calibration.p2.VWCMax", round(avg_vwc, 1)
+                )
+                self.data_store.setDeep(
+                    "CropSteering.Calibration.p2.timestamp",
+                    datetime.now().isoformat()
+                )
+                await self._update_number_entity("VWCMax", "p2", avg_vwc)
+                await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
+                await self.event_manager.emit(
+                    "LogForClient",
+                    {
+                        "Name": self.room,
+                        "Type": "CSLOG",
+                        "Message": f"P2: Auto-calibrated VWCMax to {avg_vwc:.1f}% (based on {len(peaks)} consistent irrigation peaks)",
+                    },
+                    haEvent=True,
+                )
 
     async def _handle_phase_p3_auto(self, vwc, ec, is_light_on, preset):
         """
@@ -1952,6 +2059,38 @@ class OGBCSManager:
             self.data_store.setDeep(
                 "CropSteering.startNightMoisture", None
             )  # Reset for next night
+
+            # Auto-calibration: track night minimum VWC for VWCMin
+            p3_vwc_mins = self.data_store.getDeep("CropSteering.p3_night_vwc_mins") or []
+            p3_vwc_mins.append(round(vwc, 1))
+            if len(p3_vwc_mins) > 5:
+                p3_vwc_mins.pop(0)
+            self.data_store.setDeep("CropSteering.p3_night_vwc_mins", p3_vwc_mins)
+
+            if len(p3_vwc_mins) >= 2:
+                if max(p3_vwc_mins) - min(p3_vwc_mins) <= 2.0:
+                    avg_vwc = sum(p3_vwc_mins) / len(p3_vwc_mins)
+                    _LOGGER.debug(
+                        f"{self.room} - P3: Consistent night minimum {avg_vwc:.1f}% - auto-calibrating VWCMin"
+                    )
+                    self.data_store.setDeep(
+                        "CropSteering.Calibration.p3.VWCMin", round(avg_vwc, 1)
+                    )
+                    self.data_store.setDeep(
+                        "CropSteering.Calibration.p3.timestamp",
+                        datetime.now().isoformat()
+                    )
+                    await self._update_number_entity("VWCMin", "p3", avg_vwc)
+                    await self.event_manager.emit("SaveState", {"source": "CropSteeringCalibration"})
+                    await self.event_manager.emit(
+                        "LogForClient",
+                        {
+                            "Name": self.room,
+                            "Type": "CSLOG",
+                            "Message": f"P3: Auto-calibrated VWCMin to {avg_vwc:.1f}% (based on {len(p3_vwc_mins)} consistent night minima)",
+                        },
+                        haEvent=True,
+                    )
 
             # Emit dryback complete event for AI learning
             night_duration = None

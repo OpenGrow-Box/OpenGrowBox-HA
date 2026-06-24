@@ -4,6 +4,41 @@
 
 The current hydro feeding implementation uses three modes in `OGBTankFeedManager` and `OGBFeedLogicManager`.
 
+## Air Pump Auto-Activation
+
+When the system is in **Hydro mode** (`Hydro.Mode == "Hydro"`), any pump device matching the name patterns `airpump`, `luftpumpe`, `belüfter`, `air_pump`, `air pump`, or `lüfterpumpe` is automatically turned on for reservoir oxygenation.
+
+### How It Works
+
+1. **Device Detection**: During startup, HA entities with matching names are classified as `AirPump` type and stored in `capabilities.canAirPump.devEntities`.
+2. **Auto-Activation**: When `Hydro.Mode == "Hydro"` is activated (or on startup if already set), the air pump is turned on via `PumpAction` event.
+3. **Auto-Deactivation**: When Hydro mode is changed to OFF, Crop-Steering, Plant-Watering, or Config, the air pump is turned off.
+4. **No Configuration Needed**: Detection and activation are fully automatic — no user setters or UI entities required.
+
+### Supported Mode
+
+| Mode | Air Pump State |
+|------|---------------|
+| **Hydro** | ON (auto-activated) |
+| OFF | OFF |
+| Crop-Steering | OFF |
+| Plant-Watering | OFF |
+| Config | OFF |
+
+### Device Naming Examples
+
+Any HA switch entity with these keywords in its entity_id will be auto-detected:
+
+- `switch.airpump_growbox` ✅
+- `switch.luftpumpe_reservoir` ✅
+- `switch.belüfter_aquarium` ✅
+- `switch.air_pump_main` ✅
+- `switch.water_pump` ❌ (not an air pump)
+
+### Monitoring
+
+Air pump state (on/off) is tracked through the standard HA switch entity. Power consumption estimation is available via `OGBEnergyManager` with a default of 5.0W for `airpump`. No additional monitoring entities are required.
+
 ## Modes
 
 ### Disabled

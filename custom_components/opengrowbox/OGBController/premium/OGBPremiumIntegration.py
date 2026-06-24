@@ -985,6 +985,11 @@ class OGBPremiumIntegration:
                 # Also store in data_store for frontend access
                 self.data_store.setDeep("growPlan.id", active_grow_plan.get('id'))
                 self.data_store.setDeep("growPlan.totalWeeks", active_grow_plan.get('maxWeeks'))
+                # Use the server's elapsedWeeks as the authoritative week number
+                elapsed = active_grow_plan.get('elapsedWeeks')
+                if elapsed is not None:
+                    self.data_store.setDeep("growPlan.currentWeek", elapsed)
+                    _LOGGER.debug(f"🌱 {self.room} Stored currentWeek={elapsed} from active_grow_plan.elapsedWeeks")
                 
                 # Activate grow plan or refresh week data
                 # IMPORTANT: The webapp only sends pause/resume/stop/activate via
@@ -1089,6 +1094,14 @@ class OGBPremiumIntegration:
             self.subscription_data["usage"]["activeConnections"] = usage.get("activeConnections", 0)
             self.subscription_data["usage"]["activeRooms"] = usage.get("activeRooms", [])
             self.subscription_data["usage"]["roomsUsed"] = usage.get("roomsUsed", len(usage.get("activeRooms", [])))
+            
+            # Persist connections status from the backend (e.g. StrainDB).
+            connections = data.get("connections")
+            if connections is not None:
+                self.subscription_data["connections"] = connections
+                _LOGGER.debug(
+                    f"📊 {self.room} Updated connections: {connections}"
+                )
             
             # Sync with WebSocket client's subscription_data
             if self.ogb_ws:

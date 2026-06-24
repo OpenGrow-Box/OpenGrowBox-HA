@@ -719,6 +719,7 @@ class OGBGrowPlanManager:
         First checks for API-provided currentWeekData, then falls back to local plan data.
         Also triggers API fetch if week data is missing.
         """
+        self.currentDate = datetime.now(timezone.utc)
         # Wait for system initialization if not ready
         if not self._is_system_ready:
             _LOGGER.debug(f"{self.room} - System not ready yet, queuing week update")

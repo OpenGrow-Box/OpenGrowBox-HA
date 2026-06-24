@@ -98,6 +98,7 @@ DEVICE_TYPE_MAPPING = {
     "AeroPump": ["aero", "aeroponic", "aero_pump", "mist", "misting", "aeroponik"],
     "DWCPump": ["dwc", "deep_water", "dwc_pump", "recirculating", " DWC"],
     "ClonerPump": ["cloner", "clone", "cloner_pump", "propagation", "steckling", "kloner"],
+    "AirPump": ["airpump", "luftpumpe", "belüfter", "air_pump", "air pump", "lüfterpumpe"],
     "Switch": ["generic", "switch"],
     "Fridge": ["fridge", "kuehlschrank"],
     "Door": ["door", "tuer", "tür", "kontakt", "contact", "entry"],
@@ -131,6 +132,7 @@ CAP_MAPPING = {
     "canAero": ["aeropump"],
     "canDWC": ["dwcpump"],
     "canClone": ["clonerpump"],
+    "canAirPump": ["airpump"],
     "canWatch": ["camera"],
 }
 
