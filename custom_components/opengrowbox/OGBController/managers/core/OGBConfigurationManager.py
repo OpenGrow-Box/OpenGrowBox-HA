@@ -1410,6 +1410,13 @@ class OGBConfigurationManager:
             _LOGGER.error(f"{self.room}: Unknown device type for min/max control: {name}")
             return
 
+        # Block Light min/max toggle when OGB Light Control is off
+        if device_type == "Light":
+            light_control = self.data_store.getDeep("controlOptions.lightbyOGBControl")
+            if not light_control:
+                _LOGGER.debug(f"{self.room}: Light min/max toggle blocked — OGBLightControl is OFF")
+                return
+
         # Check current value and update if changed
         current_value = self.data_store.getDeep(active_path)
         if current_value != active_bool:
@@ -1474,6 +1481,13 @@ class OGBConfigurationManager:
         else:
             _LOGGER.error(f"{self.room}: Unknown device limit control: {name}")
             return
+
+        # Block Light min/max changes when OGB Light Control is off
+        if device_type == "Light":
+            light_control = self.data_store.getDeep("controlOptions.lightbyOGBControl")
+            if not light_control:
+                _LOGGER.debug(f"{self.room}: Light min/max setter blocked — OGBLightControl is OFF")
+                return
 
         # Ensure min/max active flag is set when setting values
         self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
