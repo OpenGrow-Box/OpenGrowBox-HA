@@ -495,6 +495,14 @@ class Light(Device):
         
         while True:
             try:
+                # Skip sunrise/sunset when OGB light control is off
+                ogb_control = self.dataStore.getDeep("controlOptions.lightbyOGBControl")
+                if not ogb_control:
+                    if self.sunrise_phase_active or self.sunset_phase_active:
+                        await self.stop_sun_phases()
+                    await asyncio.sleep(60)
+                    continue
+
                 # Täglichen Reset überprüfen
                 self._check_should_reset_phases()
                 
@@ -613,6 +621,12 @@ class Light(Device):
             return
         self._sunrise_running = True
 
+        # Block sunrise when OGB light control is off
+        if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+            _LOGGER.debug(f"{self.deviceName}: Sunrise blocked — OGBLightControl is OFF")
+            self._sunrise_running = False
+            return
+
         original_min = self.minVoltage
         original_max = self.maxVoltage
 
@@ -704,6 +718,11 @@ class Light(Device):
 
     async def _run_sunset(self):
         """Führt die Sonnenuntergangssequenz als separate Task aus."""
+        # Block sunset when OGB light control is off
+        if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+            _LOGGER.debug(f"{self.deviceName}: Sunset blocked — OGBLightControl is OFF")
+            return
+
         original_min = self.minVoltage
         original_max = self.maxVoltage
 
