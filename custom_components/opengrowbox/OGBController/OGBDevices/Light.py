@@ -366,6 +366,10 @@ class Light(Device):
             if self.islightON:
                 if self.sunPhaseActive:
                     return
+                # Block when OGB light control is off
+                if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                    _LOGGER.debug(f"{self.deviceName}: setPlanStageLight blocked — OGBLightControl is OFF")
+                    return
                 await self.turn_on(brightness_pct=self.maxVoltage)
 
             _LOGGER.debug(

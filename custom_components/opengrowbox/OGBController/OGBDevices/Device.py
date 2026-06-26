@@ -1241,9 +1241,15 @@ class Device:
 
         # ── turn_on wenn force_update und Wert geändert oder geclampt ─────────────
         if needs_turn_on:
-            _LOGGER.warning(f"{self.deviceName}: External state change detected - forcing control value update")
-            self._last_turn_on_time = 0
-            asyncio.ensure_future(self.safe_turn_on(**turn_on_kwargs))
+            # Block when OGB light control is off
+            if self.deviceType == "Light":
+                if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                    _LOGGER.debug(f"{self.deviceName}: checkForControlValue blocked — OGBLightControl is OFF")
+                    needs_turn_on = False
+            if needs_turn_on:
+                _LOGGER.warning(f"{self.deviceName}: External state change detected - forcing control value update")
+                self._last_turn_on_time = 0
+                asyncio.ensure_future(self.safe_turn_on(**turn_on_kwargs))
 
     def _set_default_control_values(self) -> None:
         """Set default control values ONLY when no actual control values were found."""
@@ -2410,6 +2416,10 @@ class Device:
         _LOGGER.debug(f"{self.deviceName}: CalibOn received room={room}")
         if room != self.room:
             return
+        # Block when OGB light control is off
+        if self.deviceType == "Light" and not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+            _LOGGER.debug(f"{self.deviceName}: CalibOn blocked — OGBLightControl is OFF")
+            return
         try:
             await self.turn_on()
         except Exception as e:
@@ -2427,6 +2437,11 @@ class Device:
         cap_data = capabilities.get(cap, {})
         dev_entities = cap_data.get("devEntities", [])
         if self.deviceName not in dev_entities:
+            return
+
+        # Block when OGB light control is off
+        if self.deviceType == "Light" and not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+            _LOGGER.debug(f"{self.deviceName}: CalibStart blocked — OGBLightControl is OFF")
             return
 
         try:
@@ -2663,6 +2678,10 @@ class Device:
                     if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
                         await self.eventManager.emit("pauseSunPhase", False)
                         return
+                    # Block when OGB light control is off
+                    if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                        _LOGGER.debug(f"{self.deviceName}: WorkMode ON blocked — OGBLightControl is OFF")
+                        return
                     # minVoltage nutzen wenn gesetzt, sonst initVoltage
                     try:
                         if self.minVoltage is not None and self.maxVoltage is not None:
@@ -2699,6 +2718,10 @@ class Device:
                 if self.deviceType == "Light":
                     if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
                         await self.eventManager.emit("resumeSunPhase", False)
+                        return
+                    # Block when OGB light control is off
+                    if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                        _LOGGER.debug(f"{self.deviceName}: WorkMode OFF blocked — OGBLightControl is OFF")
                         return
                     try:
                         self.voltage = float(self.maxVoltage)
@@ -2792,6 +2815,12 @@ class Device:
                 _LOGGER.error(f"{self.deviceName}: Ungültige Voltage-Werte: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
                 return
 
+            # Block when OGB light control is off
+            if self.deviceType == "Light":
+                if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                    _LOGGER.debug(f"{self.deviceName}: DeviceSetMinMax blocked — OGBLightControl is OFF")
+                    return
+
             # Nur clampen + turn_on wenn bereits initialisiert
             if self.isInitialized:
                 if self.isRunning:
@@ -2850,6 +2879,11 @@ class Device:
             return
 
         if self.deviceType == "Light":
+            # Block when OGB light control is off
+            if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                _LOGGER.debug(f"{self.deviceName}: MinMaxControlEnabled blocked — OGBLightControl is OFF")
+                return
+
             if "minVoltage" in minMaxSets and "maxVoltage" in minMaxSets:
                 try:
                     old_min, old_max = self.minVoltage, self.maxVoltage
@@ -2919,6 +2953,11 @@ class Device:
         _LOGGER.debug(f"{self.deviceName}: MinMax control disabled - resetting to default values")
 
         if self.deviceType == "Light":
+            # Block when OGB light control is off
+            if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                _LOGGER.debug(f"{self.deviceName}: MinMaxControlDisabled blocked — OGBLightControl is OFF")
+                return
+
             try:
                 plant_stage = self.dataStore.get("plantStage")
             except AttributeError:

@@ -561,6 +561,13 @@ class OGBFallBackManager:
 
     async def _execute_retrigger(self, device_ref, expected_state: str):
         """Execute retrigger sequence for unreliable device."""
+        # Block light retrigger when OGB light control is off
+        if hasattr(device_ref, 'deviceType') and device_ref.deviceType == "Light":
+            light_control = self.data_store.getDeep("controlOptions.lightbyOGBControl")
+            if not light_control:
+                _LOGGER.debug(f"{self.room}: Retrigger blocked for Light — OGBLightControl is OFF")
+                return
+
         try:
             if expected_state == "off":
                 # Turn on briefly then off again
