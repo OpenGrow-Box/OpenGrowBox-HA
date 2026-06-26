@@ -367,7 +367,7 @@ class Light(Device):
                 if self.sunPhaseActive:
                     return
                 # Block when OGB light control is off
-                if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+                if self.ogbLightControl == False:
                     _LOGGER.debug(f"{self.deviceName}: setPlanStageLight blocked — OGBLightControl is OFF")
                     return
                 await self.turn_on(brightness_pct=self.maxVoltage)
@@ -626,7 +626,7 @@ class Light(Device):
         self._sunrise_running = True
 
         # Block sunrise when OGB light control is off
-        if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+        if self.ogbLightControl == False:
             _LOGGER.debug(f"{self.deviceName}: Sunrise blocked — OGBLightControl is OFF")
             self._sunrise_running = False
             return
@@ -723,7 +723,7 @@ class Light(Device):
     async def _run_sunset(self):
         """Führt die Sonnenuntergangssequenz als separate Task aus."""
         # Block sunset when OGB light control is off
-        if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
+        if self.ogbLightControl == False:
             _LOGGER.debug(f"{self.deviceName}: Sunset blocked — OGBLightControl is OFF")
             return
 
