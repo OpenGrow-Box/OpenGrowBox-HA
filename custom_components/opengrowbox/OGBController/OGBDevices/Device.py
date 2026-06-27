@@ -33,6 +33,7 @@ class Device:
         self.inWorkMode = False
         self.isInitialized = False
         self.reliability_manager = None  # Will be set by main controller
+        self._commanded_state: str | None = None  # "on" / "off" / None — what we last commanded, not HA state
         
         # Additional attributes for compatibility with modular code
         self.voltage = None
@@ -1320,12 +1321,16 @@ class Device:
         """Schaltet das Gerät ein."""
         import time
         
+        self._commanded_state = "on"
+        
         # Store power before action for reliability validation
         power_before = await self._get_current_power()
         if self.reliability_manager:
-            state = self.reliability_manager._device_reliability.get(self.deviceName)
-            if state:
-                state.last_power_before_action = power_before
+            rel = self.reliability_manager._device_reliability
+            if self.deviceName not in rel:
+                from ..managers.OGBFallBackManager import DeviceReliabilityState
+                rel[self.deviceName] = DeviceReliabilityState(device_name=self.deviceName)
+            rel[self.deviceName].last_power_before_action = power_before
         
         # Flag to prevent sensor from overwriting our control value
         self._in_active_control = True
@@ -1953,8 +1958,17 @@ class Device:
         """Schaltet das Gerät aus."""
         import time
         
+        self._commanded_state = "off"
+        
         # Store power before action for reliability validation
         power_before = await self._get_current_power()
+        if self.reliability_manager:
+            rel = self.reliability_manager._device_reliability
+            if self.deviceName not in rel:
+                from ..managers.OGBFallBackManager import DeviceReliabilityState
+                rel[self.deviceName] = DeviceReliabilityState(device_name=self.deviceName)
+            if power_before is not None:
+                rel[self.deviceName].last_power_before_action = power_before
         
         # Set control lock to prevent HA state updates from overwriting
         # our recently sent control value (5 second lock)
