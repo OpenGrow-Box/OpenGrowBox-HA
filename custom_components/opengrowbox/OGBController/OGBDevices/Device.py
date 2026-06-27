@@ -806,6 +806,28 @@ class Device:
                 cap: {"state": False, "count": 0, "devEntities": [], "deviceData": {}} for cap in CAP_MAPPING
             })
 
+        # CLEANUP: Remove this device from any capability it no longer matches.
+        # Stale entries can remain in saved state and cause wrong behaviour
+        # (e.g. a ReservoirPump incorrectly present in canAirPump).
+        matching_caps = {
+            cap for cap, deviceTypes in CAP_MAPPING.items()
+            if self.deviceType.lower() in (dt.lower() for dt in deviceTypes)
+        }
+        for cap in CAP_MAPPING.keys():
+            if cap in matching_caps:
+                continue
+            capPath = f"capabilities.{cap}"
+            currentCap = self.dataStore.getDeep(capPath)
+            if currentCap and self.deviceName in currentCap.get("devEntities", []):
+                currentCap["devEntities"].remove(self.deviceName)
+                currentCap["deviceData"].pop(self.deviceName, None)
+                currentCap["count"] = max(0, currentCap["count"] - 1)
+                currentCap["state"] = currentCap["count"] > 0
+                self.dataStore.setDeep(capPath, currentCap)
+                _LOGGER.debug(
+                    f"{self.deviceName}: Removed stale registration from capability '{cap}'"
+                )
+
         # Find matching capability for this device type
         for cap, deviceTypes in CAP_MAPPING.items():
             if self.deviceType.lower() in (dt.lower() for dt in deviceTypes):

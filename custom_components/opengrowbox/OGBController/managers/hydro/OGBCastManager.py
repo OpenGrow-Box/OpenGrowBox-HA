@@ -632,14 +632,67 @@ class OGBCastManager:
         return active_pumps
 
     async def _find_air_pumps(self) -> list:
-        """Find air pump devices (airpump, luftpumpe, belüfter) for oxygenation."""
+        """Find air pump devices (airpump, luftpumpe, belüfter) for oxygenation.
+
+        Validates that candidates are real AirPump devices by type, name, or label.
+        Stale capability entries (e.g. a ReservoirPump saved in canAirPump) are ignored.
+        """
+        from ....OGBController.data.OGBParams.OGBParams import DEVICE_TYPE_MAPPING
+
         air_pump_cap = self.data_store.getDeep("capabilities.canAirPump")
         if not air_pump_cap or "devEntities" not in air_pump_cap:
             return []
-        pumps = air_pump_cap["devEntities"]
-        if pumps:
-            _LOGGER.debug(f"[{self.room}] Found air pumps: {pumps}")
-        return pumps
+
+        candidate_ids = air_pump_cap["devEntities"]
+        if not candidate_ids:
+            return []
+
+        air_pump_keywords = set(DEVICE_TYPE_MAPPING.get("AirPump", []))
+        valid_pumps = []
+        devices = self.data_store.get("devices") or []
+
+        for pump_id in candidate_ids:
+            # Find device reference
+            device_ref = None
+            for dev in devices:
+                if getattr(dev, "deviceName", None) == pump_id:
+                    device_ref = dev
+                    break
+
+            if not device_ref:
+                _LOGGER.warning(
+                    f"[{self.room}] canAirPump contains stale entry '{pump_id}' — no device reference found, skipping"
+                )
+                continue
+
+            device_type = getattr(device_ref, "deviceType", "")
+            device_name = getattr(device_ref, "deviceName", "").lower()
+            labels = [
+                lbl.get("name", "").lower()
+                for lbl in getattr(device_ref, "labelMap", []) or []
+            ]
+
+            # Primary: exact device type match
+            if device_type == "AirPump":
+                valid_pumps.append(pump_id)
+                continue
+
+            # Fallback: name or label contains an air-pump keyword
+            name_matches = any(kw in device_name for kw in air_pump_keywords)
+            label_matches = any(kw in lbl for kw in air_pump_keywords for lbl in labels)
+
+            if name_matches or label_matches:
+                valid_pumps.append(pump_id)
+                continue
+
+            _LOGGER.warning(
+                f"[{self.room}] canAirPump contains invalid entry '{pump_id}' "
+                f"(type={device_type}, labels={labels}) — not an air pump, skipping"
+            )
+
+        if valid_pumps:
+            _LOGGER.debug(f"[{self.room}] Validated air pumps: {valid_pumps}")
+        return valid_pumps
 
     async def _ensure_air_pump(self, turn_on: bool):
         """Turn air pump on (all hydro modes) or off (when leaving hydro)."""
@@ -648,6 +701,18 @@ class OGBCastManager:
             return
         action = "on" if turn_on else "off"
         for pump_id in pumps:
+            # Final safety guard: never turn on a non-AirPump device
+            devices = self.data_store.get("devices") or []
+            device_ref = next(
+                (d for d in devices if getattr(d, "deviceName", None) == pump_id), None
+            )
+            if device_ref and getattr(device_ref, "deviceType", None) != "AirPump":
+                _LOGGER.error(
+                    f"[{self.room}] SAFETY BLOCK: refusing to turn {action} '{pump_id}' "
+                    f"via air-pump logic — device type is {getattr(device_ref, 'deviceType', '?')}, not AirPump"
+                )
+                continue
+
             _LOGGER.debug(f"[{self.room}] Air pump {pump_id} → {action}")
             await self.event_manager.emit(
                 "PumpAction",
