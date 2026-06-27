@@ -770,6 +770,9 @@ class Device:
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
+                    # AcInfinity: trotzdem registrieren, da die Entität später verfügbar wird
+                    if self.isAcInfinDev and entityID.startswith(("select.", "number.")):
+                        self.options.append(entity)
                     continue
                         
                 if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.", "cover.")):
