@@ -2002,19 +2002,11 @@ class Device:
                                 "option": "Off"
                             },
                         )
-                        self.isRunning = False
-                        # Zusatzaktionen je nach Gerätetyp
-                        if self.deviceType in ["Light", "Humidifier","Exhaust","Ventilation"]:
-                            await self.hass.services.async_call(
-                                domain="number",
-                                service="set_value",
-                                service_data={
-                                    "entity_id": entity_id,
-                                    "value": 0  # Use 0 to fully turn off AcInfinity devices
-                                },
-                            )
-                            self.isRunning = False
-                        _LOGGER.debug(f"{self.deviceName}: AcInfinity über select OFF.")
+                    # Set numeric value to 0 (uses number.* entity via set_value, NOT select entity_id)
+                    if self.deviceType in ["Light", "Humidifier","Exhaust","Ventilation"]:
+                        await self.set_value(0)
+                    self.isRunning = False
+                    _LOGGER.debug(f"{self.deviceName}: AcInfinity über select OFF.")
                     return
 
                 _LOGGER.warning(f"{self.deviceName}: AcInfinity without select entity - using standard fallback off path")

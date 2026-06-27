@@ -194,6 +194,53 @@ device_labels:
 - Verify action events are firing
 - Debug event handler execution
 
+### **"Device still running after OGB turned it off" (Runaway)**
+
+**Symptoms:**
+- Device shows OFF in HA but physically stays ON
+- Power consumption > 0 W while device should be OFF
+- "Runaway" CRITICAL notifications from OGB
+- Pump continues running after hydro interval ends
+
+**Cause:**
+A relay/switch that fails to physically open when HA sends `turn_off`. This can happen due to:
+- Network issues between HA and the smart plug/relay
+- Firmware bugs in the relay hardware
+- Relay driver failure (stuck closed)
+
+**Automatic Recovery:**
+The FallBack Manager automatically handles this:
+1. Detects the mismatch: `_commanded_state == "off"` but power > threshold
+2. Retries `turn_off()` up to 3 times (each sends a CRITICAL notification)
+3. After 3 failures: performs **toggle-reset** (turn ON briefly → wait → turn OFF)
+4. Final CRITICAL notification warns you to check the device manually
+
+**Debug:**
+```bash
+# Check for runaway events in HA logs
+grep -i "runaway\|retrigger\|toggle-reset" /config/home-assistant.log
+
+# Check power readings for the device
+curl http://localhost:8123/api/states | jq '.[] | select(.entity_id | contains("_power") or contains("_watt")) | {entity_id, state}'
+
+# Verify current commanded state
+# The device's _commanded_state and current power are logged at debug level
+grep -i "commanded.*off\|power.*threshold" /config/home-assistant.log
+```
+
+**Prevention:**
+- Use quality smart plugs/relays with relay-state feedback
+- Ensure stable WiFi/Zigbee/Z-Wave connectivity
+- Avoid cheap relays that lack physical feedback (some report OFF even when stuck ON)
+- For pumps: a power monitoring plug (`current_power_w` attribute) is required for runaway detection
+
+**Power Monitoring Requirements:**
+| Power Source | Example | Required for Runaway Detection |
+|-------------|---------|-------------------------------|
+| Dedicated power sensor | `sensor.mistpump_power` | Yes — works out of box |
+| Switch/plug current_power_w attribute | Smart plug with energy monitoring | Yes — works out of box |
+| No power data | Dumb relay without monitoring | No — detection skipped |
+
 ### **"FridgeGrow devices not working"**
 
 **Symptoms:**
@@ -544,5 +591,10 @@ rm -f /config/.storage/opengrowbox_premium*
 - [ ] Alert configuration
 - [ ] Backup procedures in place
 - [ ] Documentation updated
+
+---
+
+**Last Updated**: June 27, 2026
+**New**: Runaway device detection section — "Device still running after OGB turned it off"
 
 This comprehensive troubleshooting guide should resolve most OpenGrowBox issues. If problems persist, gather the required diagnostic information and seek help from the community or commercial support channels.

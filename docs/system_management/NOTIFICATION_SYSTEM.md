@@ -411,6 +411,69 @@ def record_user_interaction(self, notification_id: str, action: str, timestamp: 
     })
 ```
 
+## FallBack Manager Integration
+
+### OGBFallBackManager (`OGBFallBackManager.py`)
+
+The FallBack Manager is responsible for device and sensor health monitoring. It runs a periodic loop (every 60s) that checks:
+
+1. **Sensor Staleness**: Detects sensors that haven't reported data for 30+ minutes
+2. **Runaway Device Detection**: Detects devices commanded OFF but still consuming power
+
+It triggers notifications via the notificator:
+
+| Detection | Level | Method | Rate Limit |
+|-----------|-------|--------|------------|
+| Stale sensor | `critical` | `notificator.critical()` | 60 min cooldown per entity |
+| Stale sensor recovered | `info` | `notificator.info()` | Same entity |
+| Runaway device (retry n/3) | `critical` | `notificator.critical()` | Always (every retry) |
+| Runaway device (toggle-reset) | `critical` | `notificator.critical()` | Always |
+
+### Runaway Device Detection
+
+When a device is turned off via `turn_off()`, the controller sets `_commanded_state = "off"`. The FallBack Manager compares this against actual power consumption:
+
+```python
+# Detection flow
+1. Device commanded OFF (_commanded_state == "off")
+2. Current power read via power sensor or switch.current_power_w attribute
+3. Dynamic threshold: max(2W, last_power_before_action * 0.3) or generic 5W
+4. If power > threshold → RUNWAY
+
+# Recovery flow
+5. Retry 1-3: device_ref.turn_off() + CRITICAL notification
+6. After 3 failed retries: toggle-reset (turn_on → 2s wait → turn_off) + CRITICAL notification
+```
+
+The threshold is per-device dynamic: it uses the power reading taken just before `turn_off()` was called (30% of that value, minimum 2W). This adapts to pumps of different sizes (15W mist pump vs 5W air pump).
+
+### Reliability Manager Wiring
+
+Each device gets `reliability_manager` wired via the `DeviceInitialized` event handler:
+
+```python
+device_ref.reliability_manager = self  # self = OGBFallBackManager instance
+```
+
+This enables `validate_device_state()` after every `turn_on()` / `turn_off()`, providing an additional async validation layer that checks power consumption after a 5-second delay.
+
+### Event Flow
+
+```
+Device.turn_off()
+  ├─ sets _commanded_state = "off"
+  ├─ stores power_before → DeviceReliabilityState
+  └─ (async) reliability_manager.validate_device_state()
+       └─ waits 5s → reads power → validates → retries if failed
+
+FallBackManager._monitoring_loop() [every 60s]
+  └─ _check_runaway_devices()
+       └─ iterates devices with _commanded_state == "off"
+       └─ reads current power
+       └─ compares to dynamic threshold
+       └─ _handle_runaway_device() if runaway
+```
+
 ## System Integration
 
 ### Event-Driven Notifications
@@ -508,6 +571,6 @@ NOTIFICATION_CONFIG_SCHEMA = {
 
 ---
 
-**Last Updated**: December 24, 2025
-**Version**: 2.0 (Intelligent Notification Management)
+**Last Updated**: June 27, 2026
+**Version**: 2.1 (FallBack Manager Integration — Runaway Detection, Sensor Health, Reliability Wiring)
 **Status**: Production Ready
