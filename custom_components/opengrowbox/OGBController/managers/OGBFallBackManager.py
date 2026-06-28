@@ -143,72 +143,9 @@ class OGBFallBackManager:
         self._is_running = True
         self.is_initialized = True
 
-        # Register devices that were initialized before this manager was created.
-        # DeviceInitialized events are emitted once per device; if we miss them
-        # (e.g. manager recreated after startup), runaway detection won't work.
-        await self._register_existing_devices()
-
         if self._check_task is None or self._check_task.done():
             self._check_task = asyncio.create_task(self._monitoring_loop())
             _LOGGER.debug(f"🔍 {self.room} FallBack Manager monitoring started")
-
-    async def _register_existing_devices(self):
-        """Scan existing devices in dataStore and register them for monitoring."""
-        try:
-            devices = self.data_store.get("devices") or []
-            if not devices:
-                _LOGGER.debug(f"{self.room}: No existing devices to register")
-                return
-
-            registered = 0
-            for device_ref in devices:
-                if not hasattr(device_ref, "deviceName"):
-                    continue
-
-                device_name = device_ref.deviceName
-                device_type = getattr(device_ref, "deviceType", "unknown")
-                room = getattr(device_ref, "inRoom", None)
-
-                if room and room.lower() != self.room.lower():
-                    continue
-
-                entity_id = f"device.{device_name}"
-                if entity_id in self._monitored_entities:
-                    continue
-
-                self._monitored_entities[entity_id] = MonitoredEntityState(
-                    entity_id=entity_id,
-                    entity_type="device",
-                    device_name=device_name,
-                    context=getattr(device_ref, "deviceLabel", device_type),
-                    device_type=device_type,
-                    device_ref=device_ref,
-                    last_update=datetime.now(),
-                    last_value="off",
-                )
-
-                # Wire reliability_manager
-                if (
-                    hasattr(device_ref, "reliability_manager")
-                    and device_ref.reliability_manager is None
-                ):
-                    device_ref.reliability_manager = self
-
-                registered += 1
-                _LOGGER.debug(
-                    f"🔌 {self.room} Registered existing device for monitoring: "
-                    f"{device_name} (Type: {device_type})"
-                )
-
-            if registered > 0:
-                _LOGGER.info(
-                    f"{self.room}: FallBack Manager registered {registered} existing devices"
-                )
-
-        except Exception as e:
-            _LOGGER.error(
-                f"{self.room}: Error registering existing devices: {e}", exc_info=True
-            )
 
     async def stop_monitoring(self):
         """Stop the monitoring loop."""
@@ -751,7 +688,6 @@ class OGBFallBackManager:
         # Try common patterns as fallback
         patterns = [
             f"sensor.{device_name.lower()}_power",
-            f"sensor.{device_name.lower()}_energy_power",
             f"sensor.{device_name.lower()}_energy",
             f"sensor.{device_name.lower()}_watt",
         ]
