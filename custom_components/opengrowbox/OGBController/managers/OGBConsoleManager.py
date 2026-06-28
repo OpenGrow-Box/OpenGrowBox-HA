@@ -198,6 +198,14 @@ class OGBConsoleManager:
         )
 
         self.register_command(
+            "medium_sensors",
+            self.cmd_medium_sensors,
+            "Shows current grow medium sensor readings",
+            "medium_sensors [medium_name]",
+            ["medium_sensors", "medium_sensors coco_1"],
+        )
+
+        self.register_command(
             "get_week",
             self.cmd_get_week,
             "Shows current grow plan week data",
@@ -1021,6 +1029,92 @@ class OGBConsoleManager:
         
         response = "\n".join(lines)
         await self._send_response(response)
+
+    async def cmd_medium_sensors(self, params: List[str]):
+        """Shows current grow medium sensor readings."""
+        grow_mediums = self.data_store.get("growMediums") or []
+
+        if not grow_mediums:
+            # Fallback to CropSteering runtime values if no medium objects exist
+            vwc = self.data_store.getDeep("CropSteering.vwc_current")
+            ec = self.data_store.getDeep("CropSteering.ec_current")
+            weight = self.data_store.getDeep("CropSteering.weight_current")
+
+            if vwc is None and ec is None and weight is None:
+                await self._send_response(
+                    "📦 No grow mediums configured and no CropSteering sensor data available."
+                )
+                return
+
+            lines = [
+                "🌱 Medium Sensors (CropSteering fallback):",
+                "━━━━━━━━━━━━━━━━━━━━━━━",
+                f"💧 VWC: {vwc:.1f}%" if vwc is not None else "💧 VWC: N/A",
+                f"⚡ EC: {ec:.2f} mS/cm" if ec is not None else "⚡ EC: N/A",
+                f"⚖️  Weight: {weight:.2f} kg" if weight is not None else "⚖️  Weight: N/A",
+            ]
+            await self._send_response("\n".join(lines))
+            return
+
+        requested_name = params[0].lower() if params else None
+        matched_mediums = []
+
+        for medium in grow_mediums:
+            name = getattr(medium, "name", "unknown")
+            if requested_name is None or str(name).lower() == requested_name:
+                matched_mediums.append(medium)
+
+        if requested_name and not matched_mediums:
+            available = ", ".join(
+                str(getattr(m, "name", "unknown")) for m in grow_mediums
+            )
+            await self._send_response(
+                f"⚠️ Medium '{params[0]}' not found.\n"
+                f"Available: {available}"
+            )
+            return
+
+        lines = ["🌱 Medium Sensor Readings:", "━━━━━━━━━━━━━━━━━━━━━━━"]
+
+        for medium in matched_mediums:
+            values = medium.get_all_medium_values()
+            plant_info = values.get("plant", {})
+
+            lines.extend([
+                "",
+                f"📦 {values.get('medium_type', 'Unknown').upper()} — {values.get('Name', 'Unknown').replace(self.room + ' - Medium: ', '')}",
+                f"   Plant: {plant_info.get('plant_name', 'N/A')} ({plant_info.get('breeder_name', 'N/A')})",
+                f"   Stage: {plant_info.get('plant_stage', 'N/A')}",
+                f"   Grow days: {plant_info.get('total_grow_days', 'N/A')} | Bloom days: {plant_info.get('bloom_days', 'N/A')}",
+                "",
+                "   📈 Current Readings:",
+            ])
+
+            ec = values.get("medium_ec")
+            ph = values.get("medium_ph")
+            moisture = values.get("medium_moisture")
+            temp = values.get("medium_temp")
+            light = values.get("medium_light")
+
+            lines.append(f"      💧 VWC/Moisture: {moisture:.1f}%" if moisture is not None else "      💧 VWC/Moisture: N/A")
+            lines.append(f"      ⚡ EC: {ec:.3f} mS/cm ({values.get('medium_ec_source_unit', 'auto')})" if ec is not None else "      ⚡ EC: N/A")
+            lines.append(f"      🧪 pH: {ph:.2f}" if ph is not None else "      🧪 pH: N/A")
+            lines.append(f"      🌡️  Temp: {temp:.1f}°C" if temp is not None else "      🌡️  Temp: N/A")
+            lines.append(f"      💡 Light: {light}" if light is not None else "      💡 Light: N/A")
+
+            sensors = values.get("medium_sensors", {})
+            if sensors:
+                lines.append("")
+                lines.append(f"   🔌 Registered Sensors ({values.get('medium_sensors_total', 0)}):")
+                for sensor_type, entity_ids in sensors.items():
+                    for entity_id in entity_ids:
+                        lines.append(f"      • {sensor_type}: {entity_id}")
+
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("💡 Use 'medium_sensors <name>' to filter a single medium.")
+
+        await self._send_response("\n".join(lines))
 
     async def cmd_get_week(self, params: List[str]):
         """Shows current grow plan week data from the API."""
