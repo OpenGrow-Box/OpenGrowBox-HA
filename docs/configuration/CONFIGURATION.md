@@ -130,6 +130,7 @@ Access through any of these methods:
 - VPD (Vapor Pressure Deficit) control
 - CO2 enrichment settings
 - Safety limits and emergency stops
+- **Night Set Control**: Separate night-time temperature, humidity and VPD targets
 
 **Lighting Control**
 - Automatic sunrise/sunset transitions
@@ -193,6 +194,41 @@ All advanced settings are available through the web interface:
 - Environmental response automation
 - Backup and restore settings
 - Schedule-based adjustments
+
+### Night Set Control
+
+When enabled, OpenGrowBox switches to separate temperature, humidity and VPD
+targets during the dark phase. This is useful because plants typically need
+lower temperature, slightly higher humidity and a lower VPD at night.
+
+#### Required Select Entity
+
+- `OGB_NightSet_Control_<room>` (`select.ogb_nightset_control_<room>`)  
+  Enable (`YES`) or disable (`NO`) night set control. Default is `NO`.
+
+#### Number Entities (only stored when Night Set Control is enabled)
+
+- `OGB_NightMinTemp_<room>` (`number.ogb_nightmintemp_<room>`)  
+  Minimum temperature target during night.
+- `OGB_NightMaxTemp_<room>` (`number.ogb_nightmaxtemp_<room>`)  
+  Maximum temperature target during night.
+- `OGB_NightMinHum_<room>` (`number.ogb_nightminhum_<room>`)  
+  Minimum humidity target during night.
+- `OGB_NightMaxHum_<room>` (`number.ogb_nightmaxhum_<room>`)  
+  Maximum humidity target during night.
+- `OGB_NightVPD_<room>` (`number.ogb_nightvpd_<room>`)  
+  VPD target used at night when Tent Mode is set to `VPD Target`.
+
+#### How it works
+
+- Day values are kept in `controlOptionData.minmax` and `vpd.targeted`.
+- Night values are stored in `controlOptionData.nightMinmax` and `vpd.NightVPD`.
+- When the light turns off and Night Set Control is enabled, the active limits
+  in `tentData` and the VPD Target are automatically switched to the night values.
+- When the light turns on again, the previous day values are restored.
+- Plant stages also provide default night values (`nightMinTemp`, `nightMaxTemp`,
+  `nightMinHumidity`, `nightMaxHumidity`, `nightVpdRange`) which populate these
+  setters automatically.
 
 ### Air Exchange Cold Guard (Advanced)
 

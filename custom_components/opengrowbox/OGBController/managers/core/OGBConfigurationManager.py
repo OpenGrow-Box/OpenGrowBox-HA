@@ -2,6 +2,8 @@ import asyncio
 import logging
 from datetime import datetime
 
+from typing import Any, Dict, List, Optional, Union
+
 from ...data.OGBDataClasses.OGBPublications import OGBInitData
 from ...utils.calcs import calculate_perfect_vpd
 from ...utils.sensorUpdater import _update_specific_number, _update_specific_sensor
@@ -64,7 +66,7 @@ class OGBConfigurationManager:
         str_value = str(value).lower().strip()
         return str_value in ("unavailable", "unknown", "none", "")
 
-    def _coerce_float(self, value, *, context: str = "value") -> float | None:
+    def _coerce_float(self, value, *, context: str = "value") -> Optional[float]:
         """Convert HA-style values to float without raising during init."""
         if self._is_unavailable_state(value):
             return None
@@ -85,6 +87,7 @@ class OGBConfigurationManager:
             f"ogb_maincontrol_{self.room.lower()}": self._update_control_option,
             f"ogb_notifications_{self.room.lower()}": self._update_notify_option,
             f"ogb_vpdtolerance_{self.room.lower()}": self._update_vpd_tolerance,
+            f"ogb_vpddeadband_{self.room.lower()}": self._update_vpd_deadband,
             f"ogb_plantstage_{self.room.lower()}": self._update_plant_stage,
             f"ogb_planttype_{self.room.lower()}": self._update_plant_type,
             f"ogb_plantspecies_{self.room.lower()}": self._update_plant_species,
@@ -124,10 +127,16 @@ class OGBConfigurationManager:
             f"ogb_dryingmodes_{self.room.lower()}": self._update_drying_mode,
             # MINMAX
             f"ogb_minmax_control_{self.room.lower()}": self._update_min_max_control,
+            f"ogb_nightset_control_{self.room.lower()}": self._update_night_set_control,
             f"ogb_mintemp_{self.room.lower()}": self._update_min_temp,
             f"ogb_minhum_{self.room.lower()}": self._update_min_humidity,
             f"ogb_maxtemp_{self.room.lower()}": self._update_max_temp,
             f"ogb_maxhum_{self.room.lower()}": self._update_max_humidity,
+            f"ogb_nightmintemp_{self.room.lower()}": self._update_night_min_temp,
+            f"ogb_nightminhum_{self.room.lower()}": self._update_night_min_humidity,
+            f"ogb_nightmaxtemp_{self.room.lower()}": self._update_night_max_temp,
+            f"ogb_nightmaxhum_{self.room.lower()}": self._update_night_max_humidity,
+            f"ogb_nightvpd_{self.room.lower()}": self._update_night_vpd,
             # Hydro
             f"ogb_hydro_mode_{self.room.lower()}": self._update_hydro_mode,
             f"ogb_hydro_cycle_{self.room.lower()}": self._update_hydro_mode_cycle,
@@ -396,6 +405,82 @@ class OGBConfigurationManager:
         elif value == "Enabled":
             self.event_manager.change_notify_set(True)
 
+    async def _apply_vpd_target_day_night(self):
+        """
+        Apply the correct VPD Target values based on day/night state and night set control.
+        For VPD Target mode at night with nightSetControl enabled, use vpd.NightVPD.
+        Otherwise restore the stored day values.
+        """
+        mode = self.data_store.get("tentMode")
+        if mode != "VPD Target":
+            return
+
+        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+
+        if is_light_on is None:
+            _LOGGER.debug(f"{self.room}: Light state unknown, skipping VPD target day/night update")
+            return
+
+        if not is_light_on and night_set_control:
+            night_vpd = self.data_store.getDeep("vpd.NightVPD")
+            if night_vpd is None:
+                _LOGGER.debug(f"{self.room}: Night VPD not set, skipping night VPD target update")
+                return
+            try:
+                target = float(night_vpd)
+            except (TypeError, ValueError):
+                _LOGGER.warning(f"{self.room}: Invalid night VPD value: {night_vpd}")
+                return
+            label = "night"
+        else:
+            day_targeted = self.data_store.getDeep("vpd.dayTargeted")
+            if day_targeted is None:
+                day_targeted = self.data_store.getDeep("vpd.targeted")
+            if day_targeted is None:
+                _LOGGER.debug(f"{self.room}: No day VPD target available, skipping restore")
+                return
+            try:
+                target = float(day_targeted)
+            except (TypeError, ValueError):
+                _LOGGER.warning(f"{self.room}: Invalid day VPD target value: {day_targeted}")
+                return
+            label = "day"
+
+        tolerance_raw = self.data_store.getDeep("vpd.tolerance")
+        try:
+            tolerance_percent = float(tolerance_raw)
+            if tolerance_percent <= 0:
+                raise ValueError("tolerance too small")
+        except (TypeError, ValueError):
+            tolerance_percent = 10.0
+            _LOGGER.debug(f"{self.room}: No valid VPD tolerance set, using default 10%")
+
+        tolerance_value = target * (tolerance_percent / 100)
+        min_vpd = round(target - tolerance_value, 2)
+        max_vpd = round(target + tolerance_value, 2)
+
+        self.data_store.setDeep("vpd.targeted", target)
+        self.data_store.setDeep("vpd.targetedMin", min_vpd)
+        self.data_store.setDeep("vpd.targetedMax", max_vpd)
+
+        await _update_specific_sensor(
+            "ogb_current_vpd_target_", self.room, target, self.hass
+        )
+        await _update_specific_sensor(
+            "ogb_current_vpd_target_min_", self.room, min_vpd, self.hass
+        )
+        await _update_specific_sensor(
+            "ogb_current_vpd_target_max_", self.room, max_vpd, self.hass
+        )
+
+        _LOGGER.debug(
+            f"{self.room}: Applied {label} VPD target "
+            f"(target={target}, min={min_vpd}, max={max_vpd})"
+        )
+
     async def _update_vpd_tolerance(self, data):
         """Update VPD tolerance."""
         value = data.newState[0]
@@ -411,19 +496,37 @@ class OGBConfigurationManager:
                 _LOGGER.warning(f"{self.room}: Invalid VPD tolerance value: {value}")
                 return
 
-            targeted = self.data_store.getDeep("vpd.targeted")
-            if targeted is not None:
+            # Apply day/night aware target update for VPD Target mode
+            await self._apply_vpd_target_day_night()
+
+            perfection = self.data_store.getDeep("vpd.perfection")
+            if perfection is not None:
                 try:
-                    targeted_value = float(targeted)
+                    perfection_value = float(perfection)
                 except (TypeError, ValueError):
-                    _LOGGER.warning(f"{self.room}: Invalid targeted VPD value: {targeted}")
+                    _LOGGER.warning(f"{self.room}: Invalid perfection VPD value: {perfection}")
                     return
 
-                tol_val = targeted_value * (new_tolerance / 100)
-                targeted_min = round(targeted_value - tol_val, 2)
-                targeted_max = round(targeted_value + tol_val, 2)
-                self.data_store.setDeep("vpd.targetedMin", targeted_min)
-                self.data_store.setDeep("vpd.targetedMax", targeted_max)
+                tol_val = perfection_value * (new_tolerance / 100)
+                perfect_min = round(perfection_value - tol_val, 2)
+                perfect_max = round(perfection_value + tol_val, 2)
+                self.data_store.setDeep("vpd.perfectMin", perfect_min)
+                self.data_store.setDeep("vpd.perfectMax", perfect_max)
+
+    async def _update_vpd_deadband(self, data):
+        """Update VPD deadband."""
+        value = data.newState[0]
+        if value is None:
+            return
+        current_value = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband")
+        if current_value != value:
+            try:
+                new_deadband = float(value)
+            except (TypeError, ValueError):
+                _LOGGER.warning(f"{self.room}: Invalid VPD deadband value: {value}")
+                return
+            self.data_store.setDeep("controlOptionData.deadband.vpdDeadband", new_deadband)
+            _LOGGER.debug(f"{self.room}: Update VPD deadband to {new_deadband}")
 
     # Plant stage and type methods
     async def _update_plant_stage(self, data):
@@ -627,26 +730,47 @@ class OGBConfigurationManager:
 
         if current_value != value or current_min is None or current_max is None:
             _LOGGER.debug(f"{self.room}: Update Target VPD to {value}")
-            self.data_store.setDeep("vpd.targeted", value)
 
-            tolerance_percent = float(self.data_store.getDeep("vpd.tolerance") or 0)
+            tolerance_raw = self.data_store.getDeep("vpd.tolerance")
+            try:
+                tolerance_percent = float(tolerance_raw)
+                if tolerance_percent <= 0:
+                    raise ValueError("tolerance too small")
+            except (TypeError, ValueError):
+                tolerance_percent = 10.0
+                _LOGGER.debug(
+                    f"{self.room}: No valid VPD tolerance set, using default 10%"
+                )
             tolerance_value = value * (tolerance_percent / 100)
 
             min_vpd = round(value - tolerance_value, 2)
             max_vpd = round(value + tolerance_value, 2)
 
-            self.data_store.setDeep("vpd.targetedMin", min_vpd)
-            self.data_store.setDeep("vpd.targetedMax", max_vpd)
+            # Always store the user-set target as the day target snapshot
+            self.data_store.setDeep("vpd.dayTargeted", value)
+            self.data_store.setDeep("vpd.dayTargetedMin", min_vpd)
+            self.data_store.setDeep("vpd.dayTargetedMax", max_vpd)
 
-            await _update_specific_sensor(
-                "ogb_current_vpd_target_", self.room, value, self.hass
+            is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+            night_set_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.nightSetControl")
             )
-            await _update_specific_sensor(
-                "ogb_current_vpd_target_min_", self.room, min_vpd, self.hass
-            )
-            await _update_specific_sensor(
-                "ogb_current_vpd_target_max_", self.room, max_vpd, self.hass
-            )
+
+            # Only write active targeted values if day or night set control disabled
+            if is_light_on is True or not night_set_control:
+                self.data_store.setDeep("vpd.targeted", value)
+                self.data_store.setDeep("vpd.targetedMin", min_vpd)
+                self.data_store.setDeep("vpd.targetedMax", max_vpd)
+
+                await _update_specific_sensor(
+                    "ogb_current_vpd_target_", self.room, value, self.hass
+                )
+                await _update_specific_sensor(
+                    "ogb_current_vpd_target_min_", self.room, min_vpd, self.hass
+                )
+                await _update_specific_sensor(
+                    "ogb_current_vpd_target_max_", self.room, max_vpd, self.hass
+                )
 
     async def _update_energy_price(self, data):
         """Update energy price per kWh."""
@@ -800,9 +924,30 @@ class OGBConfigurationManager:
 
             self.data_store.setDeep("vpd.range", vpd_range)
 
+            # Update day defaults from plant stage
+            self.data_store.setDeep("controlOptionData.minmax.minTemp", float(min_temp))
+            self.data_store.setDeep("controlOptionData.minmax.maxTemp", float(max_temp))
+            self.data_store.setDeep("controlOptionData.minmax.minHum", float(min_humidity))
+            self.data_store.setDeep("controlOptionData.minmax.maxHum", float(max_humidity))
+
+            # Update night defaults from plant stage
+            night_min_temp = stage_values.get("nightMinTemp", min_temp - 2)
+            night_max_temp = stage_values.get("nightMaxTemp", max_temp - 2)
+            night_min_hum = stage_values.get("nightMinHumidity", min_humidity + 5)
+            night_max_hum = stage_values.get("nightMaxHumidity", max_humidity + 5)
+            night_vpd_range = stage_values.get("nightVpdRange", vpd_range)
+
+            self.data_store.setDeep("controlOptionData.nightMinmax.minTemp", float(night_min_temp))
+            self.data_store.setDeep("controlOptionData.nightMinmax.maxTemp", float(night_max_temp))
+            self.data_store.setDeep("controlOptionData.nightMinmax.minHum", float(night_min_hum))
+            self.data_store.setDeep("controlOptionData.nightMinmax.maxHum", float(night_max_hum))
+
+            night_perfections = calculate_perfect_vpd(night_vpd_range, tolerance)
+            self.data_store.setDeep("vpd.NightVPD", night_perfections["perfection"])
+
             # Check if GrowPlan is active - if so, don't overwrite tentData values
             grow_plan_active = self.data_store.get("growManagerActive")
-            
+
             if grow_plan_active:
                 _LOGGER.debug(
                     f"{self.room}: GrowPlan is active, skipping tentData overwrite. "
@@ -825,6 +970,10 @@ class OGBConfigurationManager:
                 self.data_store.setDeep("vpd.perfectMin", perfect_vpd_min)
                 self.data_store.setDeep("vpd.perfectMax", perfect_vpd_max)
 
+                # Apply night values if active
+                await self._apply_day_night_limits()
+                await self._apply_vpd_target_day_night()
+
                 # Would call update_min_max_sensors here
                 await self.event_manager.emit("PlantStageChange", plant_stage)
                 _LOGGER.debug(
@@ -834,6 +983,11 @@ class OGBConfigurationManager:
                 self.data_store.setDeep("vpd.perfection", perfect_vpd)
                 self.data_store.setDeep("vpd.perfectMin", perfect_vpd_min)
                 self.data_store.setDeep("vpd.perfectMax", perfect_vpd_max)
+
+                # Apply night values if active
+                await self._apply_day_night_limits()
+                await self._apply_vpd_target_day_night()
+
                 await self.event_manager.emit("PlantStageChange", plant_stage)
 
         except KeyError as e:
@@ -1096,11 +1250,12 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.debug(f"{self.room}: Update min temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minTemp", float(value))
-            # Only update tentData if Min/Max Control is active
-            min_max_control = self._string_to_bool(
-                self.data_store.getDeep("controlOptions.minMaxControl")
+            # Only update tentData if it currently holds day values
+            is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+            night_set_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.nightSetControl")
             )
-            if min_max_control:
+            if is_light_on is True or not night_set_control:
                 self.data_store.setDeep("tentData.minTemp", float(value))
 
     async def _update_min_humidity(self, data):
@@ -1114,11 +1269,12 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.debug(f"{self.room}: Update min humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minHum", float(value))
-            # Only update tentData if Min/Max Control is active
-            min_max_control = self._string_to_bool(
-                self.data_store.getDeep("controlOptions.minMaxControl")
+            # Only update tentData if it currently holds day values
+            is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+            night_set_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.nightSetControl")
             )
-            if min_max_control:
+            if is_light_on is True or not night_set_control:
                 self.data_store.setDeep("tentData.minHumidity", float(value))
 
     async def _update_max_temp(self, data):
@@ -1132,11 +1288,12 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.debug(f"{self.room}: Update max temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxTemp", float(value))
-            # Only update tentData if Min/Max Control is active
-            min_max_control = self._string_to_bool(
-                self.data_store.getDeep("controlOptions.minMaxControl")
+            # Only update tentData if it currently holds day values
+            is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+            night_set_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.nightSetControl")
             )
-            if min_max_control:
+            if is_light_on is True or not night_set_control:
                 self.data_store.setDeep("tentData.maxTemp", float(value))
 
     async def _update_max_humidity(self, data):
@@ -1150,12 +1307,192 @@ class OGBConfigurationManager:
         if float(current_value) != float(value):
             _LOGGER.debug(f"{self.room}: Update max humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxHum", float(value))
-            # Only update tentData if Min/Max Control is active
-            min_max_control = self._string_to_bool(
-                self.data_store.getDeep("controlOptions.minMaxControl")
+            # Only update tentData if it currently holds day values
+            is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+            night_set_control = self._string_to_bool(
+                self.data_store.getDeep("controlOptions.nightSetControl")
             )
-            if min_max_control:
+            if is_light_on is True or not night_set_control:
                 self.data_store.setDeep("tentData.maxHumidity", float(value))
+
+    async def _apply_day_night_limits(self):
+        """
+        Apply the correct min/max temp/humidity limits to tentData based on
+        day/night state and night set control. Existing logic continues to read
+        tentData.*, so this is the single point where day/night switching happens.
+        """
+        is_light_on = self.data_store.getDeep("isPlantDay.islightON")
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+
+        if is_light_on is None:
+            _LOGGER.debug(f"{self.room}: Light state unknown, skipping day/night limit update")
+            return
+
+        if not is_light_on and night_set_control:
+            source = "controlOptionData.nightMinmax"
+            label = "night"
+        else:
+            source = "controlOptionData.minmax"
+            label = "day"
+
+        min_temp = self.data_store.getDeep(f"{source}.minTemp")
+        max_temp = self.data_store.getDeep(f"{source}.maxTemp")
+        min_hum = self.data_store.getDeep(f"{source}.minHum")
+        max_hum = self.data_store.getDeep(f"{source}.maxHum")
+
+        if min_temp is not None:
+            self.data_store.setDeep("tentData.minTemp", float(min_temp))
+        if max_temp is not None:
+            self.data_store.setDeep("tentData.maxTemp", float(max_temp))
+        if min_hum is not None:
+            self.data_store.setDeep("tentData.minHumidity", float(min_hum))
+        if max_hum is not None:
+            self.data_store.setDeep("tentData.maxHumidity", float(max_hum))
+
+        # Also update VPD target for VPD Target mode
+        await self._apply_vpd_target_day_night()
+
+        _LOGGER.debug(
+            f"{self.room}: Applied {label} limits to tentData "
+            f"(minTemp={min_temp}, maxTemp={max_temp}, "
+            f"minHum={min_hum}, maxHum={max_hum})"
+        )
+
+    async def _update_night_set_control(self, data):
+        """
+        Update night set control enable flag.
+        Only when enabled the night min/max number entities accept values.
+        """
+        value = data.newState[0]
+        current_value = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+        if current_value != value:
+            bool_value = self._string_to_bool(value)
+            self.data_store.setDeep("controlOptions.nightSetControl", bool_value)
+            _LOGGER.debug(f"{self.room}: Update night set control to {bool_value}")
+            await self._apply_day_night_limits()
+            await self._apply_vpd_target_day_night()
+
+    async def _update_night_min_temp(self, data):
+        """
+        Update night min temperature.
+        Only stored when night set control is enabled.
+        """
+        value = data.newState[0]
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+        if not night_set_control:
+            _LOGGER.warning(
+                f"{self.room}: Night set control disabled - ignoring night min temp update"
+            )
+            return
+        current_value = self.data_store.getDeep("controlOptionData.nightMinmax.minTemp")
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
+            _LOGGER.debug(f"{self.room}: Update night min temp to {value}")
+            self.data_store.setDeep(
+                "controlOptionData.nightMinmax.minTemp", float(value)
+            )
+            await self._apply_day_night_limits()
+
+    async def _update_night_max_temp(self, data):
+        """
+        Update night max temperature.
+        Only stored when night set control is enabled.
+        """
+        value = data.newState[0]
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+        if not night_set_control:
+            _LOGGER.warning(
+                f"{self.room}: Night set control disabled - ignoring night max temp update"
+            )
+            return
+        current_value = self.data_store.getDeep("controlOptionData.nightMinmax.maxTemp")
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
+            _LOGGER.debug(f"{self.room}: Update night max temp to {value}")
+            self.data_store.setDeep(
+                "controlOptionData.nightMinmax.maxTemp", float(value)
+            )
+            await self._apply_day_night_limits()
+
+    async def _update_night_min_humidity(self, data):
+        """
+        Update night min humidity.
+        Only stored when night set control is enabled.
+        """
+        value = data.newState[0]
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+        if not night_set_control:
+            _LOGGER.warning(
+                f"{self.room}: Night set control disabled - ignoring night min humidity update"
+            )
+            return
+        current_value = self.data_store.getDeep("controlOptionData.nightMinmax.minHum")
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
+            _LOGGER.debug(f"{self.room}: Update night min humidity to {value}")
+            self.data_store.setDeep(
+                "controlOptionData.nightMinmax.minHum", float(value)
+            )
+            await self._apply_day_night_limits()
+
+    async def _update_night_max_humidity(self, data):
+        """
+        Update night max humidity.
+        Only stored when night set control is enabled.
+        """
+        value = data.newState[0]
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+        if not night_set_control:
+            _LOGGER.warning(
+                f"{self.room}: Night set control disabled - ignoring night max humidity update"
+            )
+            return
+        current_value = self.data_store.getDeep("controlOptionData.nightMinmax.maxHum")
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
+            _LOGGER.debug(f"{self.room}: Update night max humidity to {value}")
+            self.data_store.setDeep(
+                "controlOptionData.nightMinmax.maxHum", float(value)
+            )
+            await self._apply_day_night_limits()
+
+    async def _update_night_vpd(self, data):
+        """
+        Update night VPD target.
+        Only stored when night set control is enabled.
+        """
+        value = data.newState[0]
+        night_set_control = self._string_to_bool(
+            self.data_store.getDeep("controlOptions.nightSetControl")
+        )
+        if not night_set_control:
+            _LOGGER.warning(
+                f"{self.room}: Night set control disabled - ignoring night VPD update"
+            )
+            return
+        current_value = self.data_store.getDeep("vpd.NightVPD")
+        if current_value is None:
+            current_value = 0
+        if float(current_value) != float(value):
+            _LOGGER.debug(f"{self.room}: Update night VPD to {value}")
+            self.data_store.setDeep("vpd.NightVPD", float(value))
+            await self._apply_vpd_target_day_night()
 
     # Hydroponics methods
     async def _update_hydro_mode(self, data):

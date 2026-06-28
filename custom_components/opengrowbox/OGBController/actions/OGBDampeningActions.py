@@ -160,7 +160,7 @@ class OGBDampeningActions:
         # Handle empty action list after dampening
         if not dampened_actions:
             await self._handle_blocked_actions(
-                enhanced_action_map, emergency_conditions, temp_deviation, hum_deviation
+                enhanced_action_map, emergency_conditions, real_temp_dev, real_hum_dev
             )
             await self.ogb.eventManager.emit(
                 "LogForClient",
@@ -169,8 +169,8 @@ class OGBDampeningActions:
                     "message": "VPD Perfection chain: all actions blocked by dampening/cooldown",
                     "incomingActions": len(action_map),
                     "enhancedActions": len(enhanced_action_map),
-                    "tempDeviation": temp_deviation,
-                    "humDeviation": hum_deviation,
+                    "tempDeviation": real_temp_dev,
+                    "humDeviation": real_hum_dev,
                     "vpdCurrent": current_vpd,
                     "vpdTarget": target_vpd,
                     "vpdTargetMin": target_min,
@@ -198,8 +198,8 @@ class OGBDampeningActions:
                 "filteredActions": len(dampened_actions),
                 "finalActions": len(final_actions),
                 "vpdStatus": vpd_status,
-                "tempDeviation": temp_deviation,
-                "humDeviation": hum_deviation,
+                "tempDeviation": real_temp_dev,
+                "humDeviation": real_hum_dev,
                 "vpdCurrent": current_vpd,
                 "vpdTarget": target_vpd,
                 "vpdTargetMin": target_min,
@@ -765,10 +765,20 @@ class OGBDampeningActions:
         if not tent_data:
             return "low"
 
-        # Get current VPD and target
+        # Get current VPD and target (mode-dependent)
         current_vpd = tent_data.get("vpd", 0)
-        target_vpd = tent_data.get("targetVpd", 0)
-        vpd_deviation = abs(current_vpd - target_vpd)
+        mode = self.ogb.dataStore.get("tentMode")
+        if mode == "VPD Target":
+            target_vpd = self.ogb.dataStore.getDeep("vpd.targeted") or tent_data.get("targetVpd", 0)
+        elif mode == "VPD Perfection":
+            target_vpd = self.ogb.dataStore.getDeep("vpd.perfection") or tent_data.get("targetVpd", 0)
+        else:
+            target_vpd = tent_data.get("targetVpd", 0)
+
+        try:
+            vpd_deviation = abs(float(current_vpd) - float(target_vpd))
+        except (TypeError, ValueError):
+            return "low"
 
         # Determine status based on VPD deviation only
         # These thresholds are chosen based on typical VPD ranges:
@@ -1799,7 +1809,7 @@ class OGBDampeningActions:
                 await self._execute_actions([critical_action])
                 # Register the emergency action
                 deviation = max(abs(temp_deviation), abs(hum_deviation))
-                self.action_manager._registerAction(
+                await self.action_manager._registerAction(
                     critical_action.capability, critical_action.action, deviation
                 )
 

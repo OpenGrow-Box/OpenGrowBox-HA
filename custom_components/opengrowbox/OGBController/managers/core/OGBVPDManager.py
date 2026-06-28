@@ -264,7 +264,7 @@ class OGBVPDManager:
                                 "temperature": avgTemp if avgTemp != "unavailable" else None,
                                 "humidity": avgHum if avgHum != "unavailable" else None,
                                 "dewpoint": avgDew if avgDew else None,
-                                "target_vpd": self.data_store.getDeep("vpd.target"),
+                                "target_vpd": self.data_store.getDeep("vpd.targeted") if self.data_store.get("tentMode") == "VPD Target" else self.data_store.getDeep("vpd.perfection"),
                             })
                     except Exception as e:
                         _LOGGER.debug(f"📊 {self.room} VPD analytics submission failed: {e}")
@@ -769,9 +769,16 @@ class OGBVPDManager:
 
     def get_vpd_status(self):
         """Get current VPD status information."""
+        mode = self.data_store.get("tentMode")
+        if mode == "VPD Target":
+            target_vpd = self.data_store.getDeep("vpd.targeted")
+        elif mode == "VPD Perfection":
+            target_vpd = self.data_store.getDeep("vpd.perfection")
+        else:
+            target_vpd = None
         return {
             "current_vpd": self.data_store.getDeep("vpd.current"),
-            "target_vpd": self.data_store.getDeep("vpd.targeted"),
+            "target_vpd": target_vpd,
             "vpd_range": self.data_store.getDeep("vpd.range"),
             "perfection": self.data_store.getDeep("vpd.perfection"),
             "tolerance": self.data_store.getDeep("vpd.tolerance"),

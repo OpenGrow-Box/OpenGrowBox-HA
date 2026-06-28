@@ -174,7 +174,16 @@ class OGBModeManager:
         
         # Calculate trend
         vpd_values = [entry["vpd"] for entry in self._vpd_history]
-        target_vpd = self.data_store.getDeep("vpd.target") or self.data_store.getDeep("vpd.perfection") or 1.2
+        mode = self.data_store.get("tentMode")
+        if mode == "VPD Target":
+            target_vpd = self.data_store.getDeep("vpd.targeted")
+        elif mode == "VPD Perfection":
+            target_vpd = self.data_store.getDeep("vpd.perfection")
+        else:
+            target_vpd = None
+        if target_vpd is None:
+            target_vpd = 1.2
+        target_vpd = float(target_vpd)
         
         # Check if getting closer to target
         current_deviation = abs(vpd_values[-1] - target_vpd)
@@ -638,7 +647,9 @@ class OGBModeManager:
         # Berechne Abweichung in Prozent
         if max_value is not None and min_value is not None:
             range_value = max_value - min_value
-            if current_value > max_value:
+            if range_value <= 0:
+                deviation_pct = 50  # Fallback bei identischen oder ungültigen Grenzen
+            elif current_value > max_value:
                 deviation_pct = min(100, ((current_value - max_value) / range_value) * 100)
             elif current_value < min_value:
                 deviation_pct = min(100, ((min_value - current_value) / range_value) * 100)
@@ -803,7 +814,9 @@ class OGBModeManager:
         capabilities = self.data_store.get("capabilities")
 
         # SMART DEADBAND CHECK für VPD Perfection
-        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
+        deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband")
+        if deadband is None:
+            deadband = 0.05
         deviation = abs(float(currentVPD) - float(perfectionVPD))
 
         if deviation <= deadband:
@@ -822,18 +835,22 @@ class OGBModeManager:
             # Außerhalb Deadband - Reset Deadband State
             self._reset_deadband_state()
 
-        # FIX: Eliminate Gray Zone - act immediately when VPD leaves deadband
-        # Instead of waiting for perfectMin/Max, react as soon as VPD drifts from target
-        if float(currentVPD) < float(perfectionVPD):
+        # Steuern nur wenn ausserhalb des konfigurierten Min/Max-Bands
+        if float(currentVPD) < float(perfectionMinVPD):
             _LOGGER.debug(
-                f"{self.room}: Current VPD ({currentVPD}) below target ({perfectionVPD}). Increasing VPD."
+                f"{self.room}: Current VPD ({currentVPD}) below minimum ({perfectionMinVPD}). Increasing VPD."
             )
             await self.event_manager.emit("increase_vpd", capabilities)
-        elif float(currentVPD) > float(perfectionVPD):
+        elif float(currentVPD) > float(perfectionMaxVPD):
             _LOGGER.debug(
-                f"{self.room}: Current VPD ({currentVPD}) above target ({perfectionVPD}). Reducing VPD."
+                f"{self.room}: Current VPD ({currentVPD}) above maximum ({perfectionMaxVPD}). Reducing VPD."
             )
             await self.event_manager.emit("reduce_vpd", capabilities)
+        else:
+            _LOGGER.debug(
+                f"{self.room}: Current VPD ({currentVPD}) within target band "
+                f"({perfectionMinVPD} - {perfectionMaxVPD}). No correction needed."
+            )
 
         if self.data_store.getDeep("controlOptions.co2Control"):
             await self.event_manager.emit("maintain_co2", capabilities)
@@ -899,7 +916,9 @@ class OGBModeManager:
                 return
 
             # SMART DEADBAND CHECK - Wenn VPD im Deadband ist
-            deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+            deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband")
+            if deadband is None:
+                deadband = 0.05
             deviation = abs(currentVPD - targetedVPD)
 
             if deviation <= deadband:
@@ -917,17 +936,22 @@ class OGBModeManager:
                 # Außerhalb Deadband - Reset Deadband State
                 self._reset_deadband_state()
 
-            # VPD steuern basierend auf dem Target (nicht den Bounds) - wie VPD Perfection
-            if currentVPD < targetedVPD:
+            # VPD steuern basierend auf dem konfigurierten Min/Max-Band
+            if currentVPD < min_vpd:
                 _LOGGER.debug(
-                    f"{self.room}: Current VPD ({currentVPD}) is below target ({targetedVPD}). Increasing VPD."
+                    f"{self.room}: Current VPD ({currentVPD}) is below minimum ({min_vpd}). Increasing VPD."
                 )
                 await self.event_manager.emit("vpdt_increase_vpd", capabilities)
-            elif currentVPD > targetedVPD:
+            elif currentVPD > max_vpd:
                 _LOGGER.debug(
-                    f"{self.room}: Current VPD ({currentVPD}) is above target ({targetedVPD}). Reducing VPD."
+                    f"{self.room}: Current VPD ({currentVPD}) is above maximum ({max_vpd}). Reducing VPD."
                 )
                 await self.event_manager.emit("vpdt_reduce_vpd", capabilities)
+            else:
+                _LOGGER.debug(
+                    f"{self.room}: Current VPD ({currentVPD}) within target band "
+                    f"({min_vpd} - {max_vpd}). No correction needed."
+                )
 
         except ValueError as e:
             _LOGGER.error(

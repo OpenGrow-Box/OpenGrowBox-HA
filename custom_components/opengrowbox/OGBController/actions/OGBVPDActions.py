@@ -574,6 +574,16 @@ class OGBVPDActions:
             _LOGGER.warning(f"{self.ogb.room}: VPD values not available for fine-tuning (current={current_vpd}, perfect={perfection_vpd})")
             return
 
+        try:
+            current_vpd = float(current_vpd)
+            perfection_vpd = float(perfection_vpd)
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                f"{self.ogb.room}: Invalid VPD values for fine-tuning "
+                f"(current={current_vpd}, perfect={perfection_vpd})"
+            )
+            return
+
         # Calculate delta and round to two decimal places
         delta = round(perfection_vpd - current_vpd, 2)
 
@@ -816,10 +826,18 @@ class OGBVPDActions:
         Returns:
             Dictionary with VPD action status
         """
+        mode = self.ogb.dataStore.get("tentMode")
+        if mode == "VPD Target":
+            target_vpd = self.ogb.dataStore.getDeep("vpd.targeted")
+        elif mode == "VPD Perfection":
+            target_vpd = self.ogb.dataStore.getDeep("vpd.perfection")
+        else:
+            target_vpd = None
+
         return {
             "room": self.ogb.room,
             "current_vpd": self.ogb.dataStore.getDeep("vpd.current"),
-            "target_vpd": self.ogb.dataStore.getDeep("vpd.target"),
+            "target_vpd": target_vpd,
             "targeted_vpd": self.ogb.dataStore.getDeep("vpd.targeted"),
             "targeted_vpd_min": self.ogb.dataStore.getDeep("vpd.targetedMin"),
             "targeted_vpd_max": self.ogb.dataStore.getDeep("vpd.targetedMax"),

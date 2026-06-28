@@ -170,10 +170,10 @@ async def test_increase_vpd_skips_co2_when_control_disabled():
         {
             "controlOptions": {
                 "vpdLightControl": False,
-                "co2Control": True,
+                "co2Control": False,
             },
             "isPlantDay": {"islightON": True},
-            "vpd": {"current": 1.5, "targeted": 1.1},
+            "vpd": {"current": 1.5, "perfection": 1.1},
         }
     )
     ogb = FakeOGB(data_store)

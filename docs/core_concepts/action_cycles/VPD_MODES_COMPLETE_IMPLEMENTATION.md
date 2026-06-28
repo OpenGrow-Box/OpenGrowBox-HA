@@ -283,6 +283,7 @@ async def handle_targeted_vpd(self):
     """
     VPD Target Mode - Maintain user-defined VPD target with tolerance.
     Allows manual override of automatic stage-based VPD control.
+    Supports separate night VPD target via Night Set Control.
     """
 
     _LOGGER.debug(f"ModeManager: {self.room} Modus 'Targeted VPD' activated.")
@@ -290,31 +291,28 @@ async def handle_targeted_vpd(self):
     try:
         // 1. Retrieve VPD control values
         currentVPD_raw = self.data_store.getDeep("vpd.current")
-        targetedVPD_raw = self.data_store.getDeep("vpd.targeted")  // User-set target
-        tolerance_raw = self.data_store.getDeep("vpd.tolerance")   // Tolerance percentage
+        targetedVPD_raw = self.data_store.getDeep("vpd.targeted")  // Active target (day or night)
+        targetedMin_raw = self.data_store.getDeep("vpd.targetedMin")
+        targetedMax_raw = self.data_store.getDeep("vpd.targetedMax")
 
         // 2. Validation - ensure all values are available
-        if currentVPD_raw is None or targetedVPD_raw is None or tolerance_raw is None:
+        if currentVPD_raw is None or targetedVPD_raw is None:
             _LOGGER.warning(f"{self.room}: VPD values not initialized. Skipping VPD control.")
-            _LOGGER.warning(f"  current: {currentVPD_raw}, targeted: {targetedVPD_raw}, tolerance: {tolerance_raw}")
+            _LOGGER.warning(f"  current: {currentVPD_raw}, targeted: {targetedVPD_raw}")
             return
 
         // 3. Convert to numeric values
         currentVPD = float(currentVPD_raw)
         targetedVPD = float(targetedVPD_raw)
-        tolerance_percent = float(tolerance_raw)  // 1-25% tolerance
-
-        // 4. Calculate tolerance range around target
-        tolerance_value = targetedVPD * (tolerance_percent / 100)
-        min_vpd = targetedVPD - tolerance_value
-        max_vpd = targetedVPD + tolerance_value
+        min_vpd = float(targetedMin_raw) if targetedMin_raw is not None else targetedVPD * 0.9
+        max_vpd = float(targetedMax_raw) if targetedMax_raw is not None else targetedVPD * 1.1
 
         _LOGGER.debug(f"{self.room}: VPD Target Mode - Target: {targetedVPD:.2f}, Range: {min_vpd:.2f} - {max_vpd:.2f}, Current: {currentVPD:.2f}")
 
-        // 5. Get device capabilities
+        // 4. Get device capabilities
         capabilities = self.data_store.getDeep("capabilities")
 
-        // 6. Decision logic based on position relative to tolerance range
+        // 5. Decision logic based on position relative to tolerance range
         if currentVPD < min_vpd:
             // Below minimum tolerance - increase VPD
             _LOGGER.debug(f"{self.room}: VPD {currentVPD:.2f} below min tolerance {min_vpd:.2f}. Increasing VPD.")
@@ -325,14 +323,9 @@ async def handle_targeted_vpd(self):
             _LOGGER.debug(f"{self.room}: VPD {currentVPD:.2f} above max tolerance {max_vpd:.2f}. Reducing VPD.")
             await self.event_manager.emit("reduce_vpd", capabilities)
 
-        elif currentVPD != targetedVPD:
-            // Within tolerance but not at exact target - fine tune
-            _LOGGER.debug(f"{self.room}: VPD {currentVPD:.2f} within tolerance but not at target {targetedVPD:.2f}. Fine-tuning.")
-            await self.event_manager.emit("FineTune_vpd", capabilities)
-
         else:
-            // At exact target - no action needed
-            _LOGGER.debug(f"{self.room}: VPD {currentVPD:.2f} is at target {targetedVPD:.2f}. No action required.")
+            // Within tolerance range - no action needed
+            _LOGGER.debug(f"{self.room}: VPD {currentVPD:.2f} within target range {min_vpd:.2f} - {max_vpd:.2f}. No action required.")
             return
 
     except ValueError as e:
@@ -340,6 +333,14 @@ async def handle_targeted_vpd(self):
     except Exception as e:
         _LOGGER.error(f"ModeManager: Unexpected error in handle_targeted_vpd: {e}")
 ```
+
+#### Night VPD Target
+
+When `controlOptions.nightSetControl` is enabled and the lights are off, the active
+VPD target is switched to `vpd.NightVPD` and the bounds are recalculated from
+`vpd.tolerance`. The day target is preserved in `vpd.dayTargeted` and restored
+when the lights turn on again. This allows a lower night-time VPD target while
+keeping the user-defined day target intact.
 
 ## Complete Action Processing Pipeline
 
@@ -787,6 +788,20 @@ graph TD
 
 ## Key Differences: VPD-Perfection vs VPD-Target
 
+### VPD-Target Mode
+- **Target Source**: User-defined single VPD value (`vpd.targeted`)
+- **Night Source**: Optional `vpd.NightVPD` when `controlOptions.nightSetControl` is enabled and lights are off
+- **Range Logic**: Tolerance percentage around active target
+- **Flexibility**: Manual control with user-set parameters
+- **Use Case**: Specific environmental requirements or experiments
+- **DataStore Keys**:
+  - `vpd.targeted` - Active target VPD (day or night)
+  - `vpd.dayTargeted` - Preserved day target for restore after night
+  - `vpd.targetedMin` - Active lower bound
+  - `vpd.targetedMax` - Active upper bound
+  - `vpd.NightVPD` - Optional night target
+  - `vpd.tolerance` - Tolerance percentage (1-25%)
+
 ### VPD-Perfection Mode
 - **Target Source**: plantStages datastore (primary) or hardcoded ranges (fallback)
 - **Plant Stages**: Detailed multi-stage system when using plantStages, simplified 3-stage when using hardcoded
@@ -797,15 +812,6 @@ graph TD
   - `vpd.perfection` - Calculated midpoint: `(min + max) / 2`
   - `vpd.perfectMin` - Midpoint with negative tolerance applied
   - `vpd.perfectMax` - Midpoint with positive tolerance applied
-
-### VPD-Target Mode
-- **Target Source**: User-defined single VPD value (`vpd.targeted`)
-- **Range Logic**: Tolerance percentage around user target
-- **Flexibility**: Manual control with user-set parameters
-- **Use Case**: Specific environmental requirements or experiments
-- **DataStore Keys**:
-  - `vpd.targeted` - User-set target VPD
-  - `vpd.tolerance` - Tolerance percentage (1-25%)
 
 ### Action Processing (Common to Both)
 - **Device Selection**: Capability-based action generation
@@ -845,10 +851,17 @@ graph TD
 // DataStore configuration for VPD-Target mode
 {
     "tentMode": "VPD Target",
+    "controlOptions": {
+        "nightSetControl": false
+    },
     "vpd": {
-        "current": 1.3,        // Current measured VPD
-        "targeted": 1.25,      // User-set target VPD
-        "tolerance": 15        // 15% tolerance (±0.1875 kPa)
+        "current": 1.3,           // Current measured VPD
+        "targeted": 1.25,         // Active target VPD
+        "dayTargeted": 1.25,      // Preserved day target
+        "targetedMin": 1.0625,    // Lower bound with 15% tolerance
+        "targetedMax": 1.4375,    // Upper bound with 15% tolerance
+        "NightVPD": 1.0,          // Optional night target
+        "tolerance": 15           // 15% tolerance
     }
     // Tolerance range: 1.25 ± (1.25 × 0.15) = 1.0625 - 1.4375 kPa
 }

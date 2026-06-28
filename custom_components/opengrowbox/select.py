@@ -290,6 +290,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             initial_value="NO",
         ),
         CustomSelect(
+            f"OGB_NightSet_Control_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            options=["YES", "NO"],
+            initial_value="NO",
+        ),
+        CustomSelect(
             f"OGB_LightControl_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,

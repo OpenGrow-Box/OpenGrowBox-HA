@@ -487,14 +487,15 @@ class OGBActionManager:
             humWeight = self.data_store.getDeep("controlOptionData.weights.hum")
         else:
             plantStage = self.data_store.get("plantStage")
+            default_value = self.data_store.getDeep("controlOptionData.weights.defaultValue") or 1.0
 
             # Late flower stages need higher humidity priority
             if plantStage in ["LateFlower", "MidFlower"]:
-                tempWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue") * 1
-                humWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue") * 1.25
+                tempWeight = default_value * 1
+                humWeight = default_value * 1.25
             else:
-                tempWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue")
-                humWeight = self.data_store.getDeep("controlOptionData.weights.defaultValue")
+                tempWeight = default_value
+                humWeight = default_value
 
         # 1. Calculate REAL deviations (for display - absolute, not weighted)
         real_temp_dev = 0.0
@@ -551,11 +552,15 @@ class OGBActionManager:
             if mode == "VPD Perfection":
                 current_vpd = self.data_store.getDeep("vpd.current")
                 target_vpd = self.data_store.getDeep("vpd.perfection")
-                deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband") or 0.05
             elif mode == "VPD Target":
                 current_vpd = self.data_store.getDeep("vpd.current")
                 target_vpd = self.data_store.getDeep("vpd.targeted")
-                deadband = self.data_store.getDeep("controlOptionData.deadband.vpdTargetDeadband") or 0.05
+            else:
+                return False, ""
+
+            deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband")
+            if deadband is None:
+                deadband = 0.05
             else:
                 return False, ""
 
@@ -635,7 +640,6 @@ class OGBActionManager:
         ("canHeat",       "Increase", "canCool",        "Increase"),  # heizen + kühlen gleichzeitig
         ("canHeat",       "Reduce",   "canCool",        "Reduce"),
         ("canExhaust",    "Increase", "canHumidify",    "Increase"),  # Abluft erhöhen + befeuchten = sinnlos
-        ("canExhaust",    "Increase", "canIntake",      "Reduce"),    # beide reduzieren Luftwechsel
     ]
     CONFLICTING_PAIRS = [
         ("canHumidify", "canDehumidify"),
@@ -1220,6 +1224,11 @@ class OGBActionManager:
         NOTE: Core VPD Logic is only applied to VPD Perfection and VPD Target modes,
               NOT to Closed Environment or Premium modes (PID/MPC/AI).
         """
+        # Skip for ambient room - ambient has no devices to control
+        if is_ambient_room(self.room):
+            _LOGGER.debug(f"{self.room}: Ambient room - skipping action publication")
+            return
+
         # Check if this is a VPD mode (not Premium PID/MPC/AI or Closed Environment)
         mode = self.data_store.get("tentMode")
         # Core VPD Logic only for VPD Perfection and VPD Target, NOT for Closed Environment
@@ -1271,7 +1280,7 @@ class OGBActionManager:
                 actionMap, weighted_temp_dev, weighted_hum_dev, tent_data
             )
         else:
-            enhanced_actions = self.dampening_actions._resolve_action_conflicts(actionMap)
+            enhanced_actions = self._remove_conflicting_actions(actionMap)
 
         # STEP 2: DAMPENING FEATURES (only if enabled)
         dampening_enabled = self.data_store.getDeep("controlOptions.vpdDeviceDampening", False)

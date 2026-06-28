@@ -217,7 +217,11 @@ class OpenGrowBox:
         # This allows subsequent config changes to emit events
         if hasattr(self, 'config_manager') and hasattr(self.config_manager, 'mark_initialized'):
             self.config_manager.mark_initialized()
-        
+
+        # Apply day/night limits after initialization
+        if hasattr(self, 'config_manager') and hasattr(self.config_manager, '_apply_day_night_limits'):
+            await self.config_manager._apply_day_night_limits()
+
         await self.event_manager.emit("HydroModeChange", Init)
         await self.event_manager.emit("HydroModeRetrieveChange", Init)
         await self.event_manager.emit("PlantTimeChange", Init)

@@ -253,10 +253,11 @@ class OGBConf:
             "AmbientHum": None,
             "OutsiteTemp": None,
             "OutsiteHum": None,
-            "NightTempMin":None,
-            "NightTempMax":None,
-            "NightHumMin":None,
-            "NightHUmMin":None,
+            "NightTempMin": None,
+            "NightTempMax": None,
+            "NightHumMin": None,
+            "NightHumMax": None,
+
         }
     )
     vpd: Dict[str, Optional[Any]] = field(
@@ -265,11 +266,15 @@ class OGBConf:
             "targeted": None,
             "targetedMin": None,
             "targetedMax": None,
+            "dayTargeted": None,
+            "dayTargetedMin": None,
+            "dayTargetedMax": None,
             "range": None,
             "perfection": None,
             "perfectMin": None,
             "perfectMax": None,
             "tolerance": None,
+            "NightVPD": None,
         }
     )
     controlOptions: Dict[str, bool] = field(
@@ -286,6 +291,7 @@ class OGBConf:
             "ambientControl": False,
             "multiMediumControl": True,
             "aiLearning": False,
+            "nightSetControl": False,
         }
     )
     controlOptionData: Dict[str, Dict[str, Any]] = field(
@@ -293,6 +299,7 @@ class OGBConf:
             "co2ppm": {"target": 0, "current": 400, "minPPM": 400, "maxPPM": 1800},
             "weights": {"temp": 0, "hum": 0, "defaultValue": 1},
             "minmax": {"minTemp": 0, "maxTemp": 0, "minHum": 0, "maxHum": 0},
+            "nightMinmax": {"minTemp": 0, "maxTemp": 0, "minHum": 0, "maxHum": 0},
             "closedEnvironment": {"ambientInfluenceStrength": 0.3},
             "deadband": {
                 "active": False,

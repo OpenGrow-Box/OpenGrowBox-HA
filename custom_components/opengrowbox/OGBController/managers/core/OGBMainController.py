@@ -381,6 +381,10 @@ class OGBMainController:
             f"{self.room}: Light status checked and updated for {self.room} - Light status is {light_should_be_on}"
         )
 
+        # Apply day/night temperature and humidity limits
+        if hasattr(self, 'config_manager') and self.config_manager:
+            await self.config_manager._apply_day_night_limits()
+
         # Emit toggleLight event ONLY for normal Light devices (exclude special lights)
         # Special lights (LightFarRed, LightUV, LightBlue, LightRed, LightSpectrum) use their own scheduling
         special_light_types = {"LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}

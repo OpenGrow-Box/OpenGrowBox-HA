@@ -354,30 +354,28 @@ async def reduce_vpd(self, capabilities: Dict[str, Any]):
 ```python
 # OGBModeManager.handle_targeted_vpd()
 async def handle_targeted_vpd(self):
-    """VPD Target mode - maintain user-defined VPD target with tolerance."""
+    """VPD Target mode - maintain user-defined VPD target with tolerance.
+    Supports separate night target via Night Set Control."""
 
     _LOGGER.debug(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
 
     try:
         # Get VPD control values
         currentVPD_raw = self.data_store.getDeep("vpd.current")
-        targetedVPD_raw = self.data_store.getDeep("vpd.targeted")  # User-set target
-        tolerance_raw = self.data_store.getDeep("vpd.tolerance")   # Tolerance percentage
+        targetedVPD_raw = self.data_store.getDeep("vpd.targeted")  # Active target (day or night)
+        targetedMin_raw = self.data_store.getDeep("vpd.targetedMin")
+        targetedMax_raw = self.data_store.getDeep("vpd.targetedMax")
 
         # Validate all values are available
-        if any(val is None for val in [currentVPD_raw, targetedVPD_raw, tolerance_raw]):
+        if any(val is None for val in [currentVPD_raw, targetedVPD_raw]):
             _LOGGER.warning(f"{self.room}: VPD values not initialized. Skipping VPD control.")
             return
 
         # Convert to numeric values
         currentVPD = float(currentVPD_raw)
         targetedVPD = float(targetedVPD_raw)
-        tolerance_percent = float(tolerance_raw)  # 1-25%
-
-        # Calculate tolerance range
-        tolerance_value = targetedVPD * (tolerance_percent / 100)
-        min_vpd = targetedVPD - tolerance_value
-        max_vpd = targetedVPD + tolerance_value
+        min_vpd = float(targetedMin_raw) if targetedMin_raw is not None else targetedVPD * 0.9
+        max_vpd = float(targetedMax_raw) if targetedMax_raw is not None else targetedVPD * 1.1
 
         # Get device capabilities
         capabilities = self.data_store.getDeep("capabilities")
@@ -397,16 +395,15 @@ elif currentVPD > max_vpd:
     _LOGGER.debug(f"{self.room}: VPD {currentVPD} above max tolerance {max_vpd}. Reducing VPD.")
     await self.event_manager.emit("reduce_vpd", capabilities)
 
-elif currentVPD != targetedVPD:
-    # Within tolerance but not at exact target - fine tune
-    _LOGGER.debug(f"{self.room}: VPD {currentVPD} within tolerance but not at target {targetedVPD}. Fine-tuning.")
-    await self.event_manager.emit("FineTune_vpd", capabilities)
-
 else:
-    # At exact target - no action needed
-    _LOGGER.debug(f"{self.room}: VPD {currentVPD} is at target {targetedVPD}. No action required.")
+    # Within tolerance range - no action needed
+    _LOGGER.debug(f"{self.room}: VPD {currentVPD} within target range {min_vpd} - {max_vpd}. No action required.")
     return
 ```
+
+> **Night Set Control**: When enabled and lights are off, `vpd.targeted` is automatically
+> switched to `vpd.NightVPD` and the bounds are recalculated. The day target is preserved
+> in `vpd.dayTargeted` and restored when lights turn on.
 
 ## Drying Mode Action Cycle
 
