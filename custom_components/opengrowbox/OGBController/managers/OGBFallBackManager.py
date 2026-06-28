@@ -109,7 +109,9 @@ class OGBFallBackManager:
         # Device reliability tracking
         self._device_reliability: Dict[str, DeviceReliabilityState] = {}
 
-        # Runaway device tracking (retry state via _device_reliability)
+        # Running-but-off device tracking (rate limiting)
+        self._running_off_notifications: Dict[str, datetime] = {}
+        self._running_off_notification_cooldown = timedelta(minutes=60)
 
         # Task management
         self._check_task: Optional[asyncio.Task] = None
@@ -167,7 +169,7 @@ class OGBFallBackManager:
         while self._is_running:
             try:
                 await self._check_all_entities()
-                await self._check_runaway_devices()
+                await self._check_running_but_off_devices()
                 await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
             except asyncio.CancelledError:
                 _LOGGER.debug(f"{self.room} Monitoring loop cancelled")
@@ -218,186 +220,120 @@ class OGBFallBackManager:
                 f"{recovered_count} recovered, {len(self._stale_entities)} total stale"
             )
 
-    async def _check_runaway_devices(self):
+    async def _check_running_but_off_devices(self):
         """
-        Check for devices commanded OFF but still consuming power (runaway).
-        Uses per-device dynamic power threshold and 3 retry attempts with escalation.
+        Check for devices that are registered as 'off' but still consuming power.
+        This indicates a hardware defect or failed turn_off command.
         """
-        _LOGGER.debug(f"{self.room}: FB _check_runaway_devices scanning {len(self._monitored_entities)} entities")
+        now = datetime.now()
+
+        _LOGGER.debug(f"{self.room}: FB _check_running_but_off_devices scanning {len(self._monitored_entities)} entities")
 
         for entity_id, state in list(self._monitored_entities.items()):
             if state.entity_type != "device":
                 continue
+
+            _LOGGER.debug(f"{self.room}: FB checking device '{state.device_name}' type={state.device_type} last_value={state.last_value} has_ref={state.device_ref is not None}")
+
+            # Only check devices that are supposed to be off
+            if str(state.last_value).lower() not in ["off", "false", "0", "none"]:
+                _LOGGER.debug(f"{self.room}: FB skip '{state.device_name}' – last_value '{state.last_value}' is not off")
+                continue
+
+            # Check if device has a reference and power sensor
             if not state.device_ref:
+                _LOGGER.debug(f"{self.room}: FB skip '{state.device_name}' – no device_ref")
                 continue
 
             device_name = state.device_name or state.context
             if not device_name:
+                _LOGGER.debug(f"{self.room}: FB skip entity {entity_id} – no device_name")
                 continue
 
-            # Nur Geräte mit echten HA-Entitäten prüfen
-            if not hasattr(state.device_ref, 'switches') or not state.device_ref.switches:
+            power_sensor = self._find_power_sensor(device_name, state.device_ref)
+            _LOGGER.debug(f"{self.room}: FB power sensor lookup for '{device_name}': {power_sensor}")
+            if not power_sensor:
                 continue
-
-            # NUR commanded_state = "off" prüfen, nicht HA-last_value
-            commanded = getattr(state.device_ref, '_commanded_state', None)
-            if commanded != "off":
-                continue
-
-            # Leistungsaufnahme ermitteln (Power-Sensor + switch.current_power_w)
-            current_power = await self._get_device_power(state.device_ref)
-            if current_power is None:
-                continue
-
-            # Dynamische Schwelle pro Gerät
-            threshold = self._get_dynamic_threshold(state.device_ref)
-
-            _LOGGER.debug(f"{self.room}: FB '{device_name}' commanded=OFF power={current_power}W threshold={threshold}W")
-
-            if current_power <= threshold:
-                # Gerät verbraucht normal — kein Runaway
-                # Retry-Zähler zurücksetzen wenn OK
-                if device_name in self._device_reliability:
-                    rel = self._device_reliability[device_name]
-                    if rel.retry_count > 0:
-                        rel.retry_count = 0
-                        _LOGGER.debug(f"{self.room}: FB '{device_name}' retry counter reset (power OK)")
-                continue
-
-            # >>> RUNAWAY ERKANNT <<<
-            _LOGGER.warning(
-                f"{self.room}: ⚠️ Runaway '{device_name}' — commanded OFF but consuming {current_power}W (threshold: {threshold}W)"
-            )
-            await self._handle_runaway_device(state.device_ref, device_name, current_power, threshold)
-
-    async def _get_device_power(self, device_ref) -> Optional[float]:
-        """Liest die aktuelle Leistungsaufnahme eines Geräts (Power-Sensor + Switch-Attribut)."""
-        # Device-eigene Methode nutzt bereits power_sensor + switch.current_power_w
-        if hasattr(device_ref, '_get_current_power'):
-            try:
-                power = await device_ref._get_current_power()
-                if power is not None:
-                    return power
-            except Exception:
-                pass
-
-        # Fallback via bekannte Namensmuster
-        device_name = getattr(device_ref, 'deviceName', '')
-        power_sensor = self._find_power_sensor(device_name, device_ref)
-        if power_sensor:
-            return await self._get_power_value(power_sensor)
-
-        # Letzter Fallback: switch.current_power_w Attribut
-        if hasattr(device_ref, 'switches') and device_ref.switches:
-            for switch in device_ref.switches:
-                entity_id = switch.get("entity_id", "")
-                if self.hass:
-                    st = self.hass.states.get(entity_id)
-                    if st and hasattr(st, 'attributes'):
-                        pw = st.attributes.get('current_power_w')
-                        if pw is not None:
-                            try:
-                                return float(pw)
-                            except (ValueError, TypeError):
-                                pass
-        return None
-
-    def _get_dynamic_threshold(self, device_ref) -> float:
-        """
-        Ermittelt eine gerätespezifische Leistungsschwelle.
-        - Wenn vor dem Ausschalten ein Wert bekannt war: 30 % davon, mind. 2 W
-        - Sonst generischer Wert (5 W)
-        """
-        device_name = getattr(device_ref, 'deviceName', '')
-        rel_state = self._device_reliability.get(device_name)
-
-        if rel_state and rel_state.last_power_before_action is not None:
-            # Dynamisch: 30 % der Leistung vor dem Ausschalten, aber mind. 2 W
-            return max(2.0, rel_state.last_power_before_action * 0.3)
-
-        # Generischer Fallback
-        return self.RELIABILITY_POWER_ON_THRESHOLD_WATTS
-
-    async def _handle_runaway_device(self, device_ref, device_name: str, current_power: float, threshold: float):
-        """
-        Behandelt ein Runaway-Gerät mit Retry + Eskalation.
-        1.–3. Versuch: turn_off() wiederholen + Critical-Benachrichtigung
-        Nach 3. Fehlversuch: Toggle-Reset (ON→OFF) + Critical-Benachrichtigung
-        """
-        # Reliability-State holen oder anlegen
-        if device_name not in self._device_reliability:
-            self._device_reliability[device_name] = DeviceReliabilityState(device_name=device_name)
-
-        rel = self._device_reliability[device_name]
-
-        if rel.retry_count < self.RELIABILITY_MAX_RETRIES:
-            # Normaler Retry
-            rel.retry_count += 1
-            _LOGGER.warning(
-                f"{self.room}: 🔄 Runaway-Retry {rel.retry_count}/{self.RELIABILITY_MAX_RETRIES} "
-                f"für '{device_name}' — turn_off erneut gesendet ({current_power}W)"
-            )
 
             try:
-                await device_ref.turn_off()
+                current_power = await self._get_power_value(power_sensor)
+                _LOGGER.debug(f"{self.room}: FB '{device_name}' power via {power_sensor}: {current_power}W (threshold={self.RELIABILITY_POWER_ON_THRESHOLD_WATTS}W)")
+                if current_power is None:
+                    continue
+
+                # If power is above threshold while supposed to be off → DEFECT!
+                if current_power >= self.RELIABILITY_POWER_ON_THRESHOLD_WATTS:
+                    _LOGGER.warning(
+                        f"{self.room}: ⚠️ Device '{device_name}' is OFF but consuming "
+                        f"{current_power}W - forcing turn_off!"
+                    )
+
+                    # Attempt to turn off
+                    try:
+                        await state.device_ref.turn_off()
+                        _LOGGER.info(
+                            f"{self.room}: Forced turn_off for '{device_name}' "
+                            f"(was consuming {current_power}W while OFF)"
+                        )
+                    except Exception as e:
+                        _LOGGER.error(
+                            f"{self.room}: Failed to force turn_off for '{device_name}': {e}"
+                        )
+
+                    # Send notification (with rate limiting)
+                    await self._notify_suspected_defect(device_name, current_power)
+                else:
+                    _LOGGER.debug(f"{self.room}: FB '{device_name}' power {current_power}W below threshold, OK")
+
             except Exception as e:
-                _LOGGER.error(f"{self.room}: turn_off fehlgeschlagen für '{device_name}': {e}")
+                _LOGGER.debug(
+                    f"{self.room}: Error checking running-but-off state for "
+                    f"'{device_name}': {e}"
+                )
 
-            # Critical-Benachrichtigung
-            await self._notify_runaway(device_name, current_power, threshold, retry=rel.retry_count)
-
-        else:
-            # Max. Retries erreicht → Toggle-Reset versuchen
-            _LOGGER.warning(
-                f"{self.room}: ⚠️ Runaway '{device_name}' nach {self.RELIABILITY_MAX_RETRIES} Retries "
-                f"immer noch an ({current_power}W) — Toggle-Reset wird versucht"
-            )
-
-            try:
-                await device_ref.turn_on()
-                await asyncio.sleep(2)
-                await device_ref.turn_off()
-                _LOGGER.info(f"{self.room}: Toggle-Reset für '{device_name}' ausgeführt")
-            except Exception as e:
-                _LOGGER.error(f"{self.room}: Toggle-Reset fehlgeschlagen für '{device_name}': {e}")
-
-            # Critical-Benachrichtigung mit Toggle-Hinweis
-            await self._notify_runaway(device_name, current_power, threshold, retry=rel.retry_count, toggle_reset=True)
-
-            # Zähler zurücksetzen damit der nächste Zyklus wieder Retries versucht
-            rel.retry_count = 0
-
-    async def _notify_runaway(self, device_name: str, power: float, threshold: float, retry: int, toggle_reset: bool = False):
+    async def _notify_suspected_defect(self, device_name: str, power: float):
         """
-        Sendet eine CRITICAL-Benachrichtigung über ein Runaway-Gerät.
-        Wird bei JEDEM Retry gesendet (kein Cooldown).
+        Notify user about a suspected defective device.
+        Rate-limited to avoid spam.
         """
-        if toggle_reset:
-            message = (
-                f"⚠️ CRITICAL: Gerät '{device_name}' läuft trotz 3-fachem "
-                f"Ausschalt-Befehl weiter!\n\n"
-                f"Leistung: {power}W (Schwelle: {threshold}W)\n"
-                f"Toggle-Reset versucht (EIN→AUS)\n"
-                f"Raum: {self.room}\n\n"
-                f"BITTE PRÜFEN SIE DAS GERÄT MANUELL!"
-            )
-        else:
-            message = (
-                f"⚠️ Gerät '{device_name}' läuft nach Ausschalt-Befehl weiter.\n\n"
-                f"Leistung: {power}W (Schwelle: {threshold}W)\n"
-                f"Raum: {self.room}\n"
-                f"Auto-Retry {retry}/3 …"
-            )
-
         try:
-            # Use critical via the notificator (always sends, bypasses notification toggle)
-            await self.notificator.critical(
-                message=message,
-                title=f"OGB {self.room}: Runaway-Gerät - {device_name}",
+            # Check cooldown
+            last_notif = self._running_off_notifications.get(device_name)
+            if last_notif:
+                if datetime.now() - last_notif < self._running_off_notification_cooldown:
+                    _LOGGER.debug(
+                        f"{self.room}: Skipping defect notification for '{device_name}' "
+                        f"(cooldown active)"
+                    )
+                    return
+
+            message = (
+                f"Suspected defective device identified:\n\n"
+                f"Device: {device_name}\n"
+                f"Room: {self.room}\n"
+                f"Power consumption: {power}W\n\n"
+                f"The device is registered as OFF but is still consuming power. "
+                f"This indicates a hardware defect or a failed turn-off command.\n\n"
+                f"A repeated turn-off command has just been sent. "
+                f"Please check the device manually."
             )
-            _LOGGER.warning(f"{self.room}: 🚨 Critical-Benachrichtigung gesendet für Runaway '{device_name}'")
+
+            await self.notificator.warning(
+                message=message,
+                title=f"OGB {self.room}: Defective device detected - {device_name}",
+            )
+
+            self._running_off_notifications[device_name] = datetime.now()
+
+            _LOGGER.warning(
+                f"{self.room}: 🚨 Sent suspected defect notification for '{device_name}' "
+                f"(consuming {power}W while OFF)"
+            )
+
         except Exception as e:
-            _LOGGER.error(f"{self.room}: Fehler bei Runaway-Benachrichtigung '{device_name}': {e}")
+            _LOGGER.error(
+                f"{self.room}: Failed to send defect notification for '{device_name}': {e}"
+            )
 
     # =================================================================
     # Event Handlers
@@ -496,11 +432,6 @@ class OGBFallBackManager:
                 last_update=datetime.now(),
                 last_value="off",
             )
-
-            # Wire reliability_manager so Device.turn_on/turn_off call validate_device_state
-            if device_ref and hasattr(device_ref, 'reliability_manager') and device_ref.reliability_manager is None:
-                device_ref.reliability_manager = self
-                _LOGGER.debug(f"{self.room}: Wired reliability_manager for '{device_name}'")
 
             _LOGGER.debug(
                 f"🔌 {self.room} Registered device for monitoring: "
