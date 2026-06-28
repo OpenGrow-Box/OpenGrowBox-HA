@@ -131,7 +131,7 @@ class OGBScriptMode:
             
             # Parse and execute line
             try:
-                result = await self._execute_dsl_line(line, variables)
+                result = await self._execute_dsl_line(line, variables, lines, line_num)
                 # Handle control flow (IF/ELSE)
                 if result is not None:
                     line_num = result
@@ -142,7 +142,7 @@ class OGBScriptMode:
             
             line_num += 1
     
-    async def _execute_dsl_line(self, line: str, variables: Dict) -> Optional[int]:
+    async def _execute_dsl_line(self, line: str, variables: Dict, lines: List[str], current_line: int) -> Optional[int]:
         """
         Execute a single DSL line.
         Returns new line number for control flow, None for normal execution.
@@ -157,7 +157,7 @@ class OGBScriptMode:
         
         # IF statement - returns new line number for control flow
         elif line.startswith("IF "):
-            return await self._dsl_if(line, variables)
+            return await self._dsl_if(line, variables, lines, current_line)
         
         # CALL statement
         elif line.startswith("CALL "):
@@ -180,6 +180,63 @@ class OGBScriptMode:
         
         return None
     
+    async def _dsl_if(self, line: str, variables: Dict, lines: List[str], current_line: int) -> Optional[int]:
+        """
+        Execute IF statement with proper block handling.
+        Returns None if condition is true (continue execution),
+        or the line number to jump to (after ELSE/ENDIF) if condition is false.
+        """
+        condition = line.replace("IF ", "").replace(" THEN", "").strip()
+        
+        if self._eval_condition(condition, variables):
+            # Condition true - continue with next line
+            return None
+        
+        # Condition false - skip to matching ELSE or ENDIF
+        block_depth = 1
+        for i in range(current_line + 1, len(lines)):
+            stmt = lines[i].strip().upper()
+            if stmt.startswith("IF "):
+                block_depth += 1
+            elif stmt == "ENDIF":
+                block_depth -= 1
+                if block_depth == 0:
+                    return i
+            elif stmt == "ELSE" and block_depth == 1:
+                return i
+        
+        _LOGGER.warning(f"{self.room}: Unclosed IF block starting at line {current_line + 1}")
+        return len(lines)
+    
+    def _eval_expression(self, expr: str, variables: Dict) -> Any:
+        """Safely evaluate an expression."""
+        try:
+            import re
+            for var_name, value in variables.items():
+                pattern = r'\b' + re.escape(var_name) + r'\b'
+                expr = re.sub(pattern, str(value), expr)
+            return eval(expr, {"__builtins__": {}}, {})
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Expression error: {e}")
+            return None
+    
+    def _eval_condition(self, condition: str, variables: Dict) -> bool:
+        """Evaluate a condition."""
+        try:
+            import re
+            for var_name, value in variables.items():
+                pattern = r'\b' + re.escape(var_name) + r'\b'
+                condition = re.sub(pattern, str(value), condition)
+            
+            if "TIME" in condition:
+                current_time = datetime.now().strftime("%H:%M")
+                condition = condition.replace("TIME", f'"{current_time}"')
+            
+            return bool(eval(condition, {"__builtins__": {}}, {}))
+        except Exception as e:
+            _LOGGER.error(f"{self.room}: Condition error: {e}")
+            return False
+
     async def _dsl_read(self, line: str, variables: Dict):
         """Execute READ statement: READ var FROM path"""
         parts = line.split(" FROM ", 1)
@@ -279,6 +336,11 @@ class OGBScriptMode:
     
     async def _execute_python(self, script_code: str):
         """Execute Python script in sandboxed environment."""
+        # AST safety check before execution
+        if not self._is_python_code_safe(script_code):
+            _LOGGER.error(f"{self.room}: Python script failed safety check - execution blocked")
+            return
+        
         exec_globals = {
             "__builtins__": {
                 "True": True,
@@ -320,6 +382,44 @@ class OGBScriptMode:
         except asyncio.TimeoutError:
             _LOGGER.warning(f"{self.room}: Script execution timeout")
     
+    def _is_python_code_safe(self, code: str) -> bool:
+        """
+        AST-based safety check for user Python scripts.
+        Blocks imports, __dunder__ access, and dangerous built-in calls.
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            _LOGGER.error(f"{self.room}: Python script syntax error: {e}")
+            return False
+
+        blocked_builtins = {
+            "__import__", "open", "exec", "eval", "compile",
+            "input", "raw_input", "getattr", "setattr", "delattr",
+            "globals", "locals", "vars", "reload"
+        }
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                _LOGGER.warning(f"{self.room}: Python script blocked: import statement")
+                return False
+            if isinstance(node, ast.ImportFrom):
+                _LOGGER.warning(f"{self.room}: Python script blocked: from import statement")
+                return False
+            if isinstance(node, ast.Name) and node.id.startswith("__") and node.id.endswith("__"):
+                _LOGGER.warning(f"{self.room}: Python script blocked: dunder access {node.id}")
+                return False
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in blocked_builtins:
+                    _LOGGER.warning(f"{self.room}: Python script blocked: call to {func.id}")
+                    return False
+                if isinstance(func, ast.Attribute) and func.attr in blocked_builtins:
+                    _LOGGER.warning(f"{self.room}: Python script blocked: call to {func.attr}")
+                    return False
+
+        return True
+
     async def _run_python_code(self, code: str, exec_globals: Dict):
         """Run Python code with globals."""
         exec(code, exec_globals)

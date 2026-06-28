@@ -561,8 +561,6 @@ class OGBActionManager:
             deadband = self.data_store.getDeep("controlOptionData.deadband.vpdDeadband")
             if deadband is None:
                 deadband = 0.05
-            else:
-                return False, ""
 
             if current_vpd is None or target_vpd is None:
                 return False, ""

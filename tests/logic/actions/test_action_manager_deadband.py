@@ -75,7 +75,7 @@ async def test_vpd_target_deadband():
             },
             "controlOptionData": {
                 "deadband": {
-                    "vpdTargetDeadband": 0.05,
+                    "vpdDeadband": 0.05,
                 }
             }
         }
@@ -276,8 +276,13 @@ async def test_no_conflict_with_different_capabilities():
 
 
 @pytest.mark.asyncio
-async def test_conflicting_actions_exhaust_intake_reduce():
-    """Test that exhaust Increase + intake Reduce conflict is resolved."""
+async def test_conflicting_actions_exhaust_intake_reduce_not_removed():
+    """Test that exhaust Increase + intake Reduce is NOT removed.
+
+    This combination is intentionally allowed because:
+    - VPD increase uses exhaust increase + intake reduce to build negative pressure
+    - The negative pressure guard handles any unsafe pressure situations separately
+    """
     data_store = FakeDataStore({})
     event_manager = FakeEventManager()
     manager = OGBActionManager(None, data_store, event_manager, "test_room")
@@ -301,8 +306,7 @@ async def test_conflicting_actions_exhaust_intake_reduce():
 
     filtered = manager._remove_conflicting_actions(actions)
 
-    assert len(filtered) == 1
-    assert filtered[0].capability == "canIntake"
+    assert len(filtered) == 2
 
 
 @pytest.mark.asyncio

@@ -216,6 +216,267 @@ async def test_night_set_control_switch_applies_limits(base_store):
 
 
 @pytest.mark.asyncio
+async def test_day_to_night_transition_switches_limits():
+    store = FakeDataStore(
+        {
+            "tentMode": "VPD Target",
+            "isPlantDay": {"islightON": True},
+            "controlOptions": {"nightSetControl": True},
+            "controlOptionData": {
+                "minmax": {
+                    "minTemp": 20.0,
+                    "maxTemp": 28.0,
+                    "minHum": 45.0,
+                    "maxHum": 65.0,
+                },
+                "nightMinmax": {
+                    "minTemp": 18.0,
+                    "maxTemp": 24.0,
+                    "minHum": 50.0,
+                    "maxHum": 70.0,
+                },
+            },
+            "vpd": {
+                "targeted": 1.1,
+                "targetedMin": 0.99,
+                "targetedMax": 1.21,
+                "dayTargeted": 1.1,
+                "dayTargetedMin": 0.99,
+                "dayTargetedMax": 1.21,
+                "NightVPD": 1.3,
+                "tolerance": 10.0,
+            },
+            "tentData": {
+                "minTemp": 20.0,
+                "maxTemp": 28.0,
+                "minHumidity": 45.0,
+                "maxHumidity": 65.0,
+            },
+        }
+    )
+    mgr = _make_config_manager(store)
+
+    # Day values initially active
+    assert store.getDeep("tentData.minTemp") == 20.0
+    assert store.getDeep("vpd.targeted") == 1.1
+
+    # Simulate light turning off (like OGBMainController.light_schedule_update)
+    store.setDeep("isPlantDay.islightON", False)
+    await mgr._apply_day_night_limits()
+    await mgr._apply_vpd_target_day_night()
+
+    # Night values should now be active
+    assert store.getDeep("tentData.minTemp") == 18.0
+    assert store.getDeep("tentData.maxHumidity") == 70.0
+    assert store.getDeep("vpd.targeted") == 1.3
+    assert store.getDeep("vpd.targetedMin") == 1.17
+    assert store.getDeep("vpd.targetedMax") == 1.43
+
+
+@pytest.mark.asyncio
+async def test_night_to_day_transition_restores_limits():
+    store = FakeDataStore(
+        {
+            "tentMode": "VPD Target",
+            "isPlantDay": {"islightON": False},
+            "controlOptions": {"nightSetControl": True},
+            "controlOptionData": {
+                "minmax": {
+                    "minTemp": 20.0,
+                    "maxTemp": 28.0,
+                    "minHum": 45.0,
+                    "maxHum": 65.0,
+                },
+                "nightMinmax": {
+                    "minTemp": 18.0,
+                    "maxTemp": 24.0,
+                    "minHum": 50.0,
+                    "maxHum": 70.0,
+                },
+            },
+            "vpd": {
+                "targeted": 1.3,
+                "targetedMin": 1.17,
+                "targetedMax": 1.43,
+                "dayTargeted": 1.1,
+                "dayTargetedMin": 0.99,
+                "dayTargetedMax": 1.21,
+                "NightVPD": 1.3,
+                "tolerance": 10.0,
+            },
+            "tentData": {
+                "minTemp": 18.0,
+                "maxTemp": 24.0,
+                "minHumidity": 50.0,
+                "maxHumidity": 70.0,
+            },
+        }
+    )
+    mgr = _make_config_manager(store)
+
+    # Night values initially active
+    assert store.getDeep("tentData.minTemp") == 18.0
+    assert store.getDeep("vpd.targeted") == 1.3
+
+    # Simulate light turning on
+    store.setDeep("isPlantDay.islightON", True)
+    await mgr._apply_day_night_limits()
+    await mgr._apply_vpd_target_day_night()
+
+    # Day values should be restored
+    assert store.getDeep("tentData.minTemp") == 20.0
+    assert store.getDeep("tentData.maxHumidity") == 65.0
+    assert store.getDeep("vpd.targeted") == 1.1
+    assert store.getDeep("vpd.targetedMin") == 0.99
+    assert store.getDeep("vpd.targetedMax") == 1.21
+
+
+@pytest.mark.asyncio
+async def test_minmax_change_during_night_stored_but_not_active():
+    store = FakeDataStore(
+        {
+            "tentMode": "VPD Target",
+            "isPlantDay": {"islightON": False},
+            "controlOptions": {"nightSetControl": True},
+            "controlOptionData": {
+                "minmax": {
+                    "minTemp": 20.0,
+                    "maxTemp": 28.0,
+                    "minHum": 45.0,
+                    "maxHum": 65.0,
+                },
+                "nightMinmax": {
+                    "minTemp": 18.0,
+                    "maxTemp": 24.0,
+                    "minHum": 50.0,
+                    "maxHum": 70.0,
+                },
+            },
+            "vpd": {
+                "targeted": 1.3,
+                "targetedMin": 1.17,
+                "targetedMax": 1.43,
+                "dayTargeted": 1.1,
+                "dayTargetedMin": 0.99,
+                "dayTargetedMax": 1.21,
+                "NightVPD": 1.3,
+                "tolerance": 10.0,
+            },
+            "tentData": {
+                "minTemp": 18.0,
+                "maxTemp": 24.0,
+                "minHumidity": 50.0,
+                "maxHumidity": 70.0,
+            },
+        }
+    )
+    mgr = _make_config_manager(store)
+
+    # Change day min/max while night is active
+    await mgr._update_min_temp(_event_pub(22.0))
+    await mgr._update_max_temp(_event_pub(30.0))
+    await mgr._update_min_humidity(_event_pub(48.0))
+    await mgr._update_max_humidity(_event_pub(68.0))
+
+    # Day setters should be updated
+    assert store.getDeep("controlOptionData.minmax.minTemp") == 22.0
+    assert store.getDeep("controlOptionData.minmax.maxTemp") == 30.0
+    assert store.getDeep("controlOptionData.minmax.minHum") == 48.0
+    assert store.getDeep("controlOptionData.minmax.maxHum") == 68.0
+
+    # But tentData should still show night values
+    assert store.getDeep("tentData.minTemp") == 18.0
+    assert store.getDeep("tentData.maxTemp") == 24.0
+    assert store.getDeep("tentData.minHumidity") == 50.0
+    assert store.getDeep("tentData.maxHumidity") == 70.0
+
+    # After night ends, new day values should be active
+    store.setDeep("isPlantDay.islightON", True)
+    await mgr._apply_day_night_limits()
+
+    assert store.getDeep("tentData.minTemp") == 22.0
+    assert store.getDeep("tentData.maxTemp") == 30.0
+    assert store.getDeep("tentData.minHumidity") == 48.0
+    assert store.getDeep("tentData.maxHumidity") == 68.0
+
+
+@pytest.mark.asyncio
+async def test_night_value_change_during_day_stored_but_not_active():
+    store = FakeDataStore(
+        {
+            "tentMode": "VPD Target",
+            "isPlantDay": {"islightON": True},
+            "controlOptions": {"nightSetControl": True},
+            "controlOptionData": {
+                "minmax": {
+                    "minTemp": 20.0,
+                    "maxTemp": 28.0,
+                    "minHum": 45.0,
+                    "maxHum": 65.0,
+                },
+                "nightMinmax": {
+                    "minTemp": 18.0,
+                    "maxTemp": 24.0,
+                    "minHum": 50.0,
+                    "maxHum": 70.0,
+                },
+            },
+            "vpd": {
+                "targeted": 1.1,
+                "targetedMin": 0.99,
+                "targetedMax": 1.21,
+                "dayTargeted": 1.1,
+                "dayTargetedMin": 0.99,
+                "dayTargetedMax": 1.21,
+                "NightVPD": 1.3,
+                "tolerance": 10.0,
+            },
+            "tentData": {
+                "minTemp": 20.0,
+                "maxTemp": 28.0,
+                "minHumidity": 45.0,
+                "maxHumidity": 65.0,
+            },
+        }
+    )
+    mgr = _make_config_manager(store)
+
+    # Change night values while day is active
+    await mgr._update_night_min_temp(_event_pub(17.0))
+    await mgr._update_night_max_temp(_event_pub(23.0))
+    await mgr._update_night_min_humidity(_event_pub(52.0))
+    await mgr._update_night_max_humidity(_event_pub(72.0))
+    await mgr._update_night_vpd(_event_pub(1.4))
+
+    # Night setters should be updated
+    assert store.getDeep("controlOptionData.nightMinmax.minTemp") == 17.0
+    assert store.getDeep("controlOptionData.nightMinmax.maxTemp") == 23.0
+    assert store.getDeep("controlOptionData.nightMinmax.minHum") == 52.0
+    assert store.getDeep("controlOptionData.nightMinmax.maxHum") == 72.0
+    assert store.getDeep("vpd.NightVPD") == 1.4
+
+    # But tentData should still show day values
+    assert store.getDeep("tentData.minTemp") == 20.0
+    assert store.getDeep("tentData.maxTemp") == 28.0
+    assert store.getDeep("tentData.minHumidity") == 45.0
+    assert store.getDeep("tentData.maxHumidity") == 65.0
+    assert store.getDeep("vpd.targeted") == 1.1
+
+    # After night starts, new night values should be active
+    store.setDeep("isPlantDay.islightON", False)
+    await mgr._apply_day_night_limits()
+    await mgr._apply_vpd_target_day_night()
+
+    assert store.getDeep("tentData.minTemp") == 17.0
+    assert store.getDeep("tentData.maxTemp") == 23.0
+    assert store.getDeep("tentData.minHumidity") == 52.0
+    assert store.getDeep("tentData.maxHumidity") == 72.0
+    assert store.getDeep("vpd.targeted") == 1.4
+    assert store.getDeep("vpd.targetedMin") == 1.26
+    assert store.getDeep("vpd.targetedMax") == 1.54
+
+
+@pytest.mark.asyncio
 async def test_apply_limits_unknown_light_state(base_store):
     base_store.delete("isPlantDay.islightON")
 

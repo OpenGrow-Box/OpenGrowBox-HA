@@ -778,7 +778,11 @@ class OGBModeManager:
         # Kein VPD-basierter Deadband - das verursachte nur Probleme
 
         # Execute single control cycle (stateless like VPD Perfection)
-        await self.closedEnvironmentManager.execute_cycle()
+        if hasattr(self, 'closedEnvironmentManager') and self.closedEnvironmentManager is not None:
+            await self.closedEnvironmentManager.execute_cycle()
+        else:
+            _LOGGER.warning(f"{self.room}: Closed Environment manager not initialized, skipping cycle")
+            return
 
         # Log mode activation
         await self.event_manager.emit(
@@ -1139,13 +1143,14 @@ class OGBModeManager:
         """
         _LOGGER.debug(f"ModeManager: {self.room} executing Script Mode cycle")
 
+        # Ensure OGB reference is set before initializing script mode manager
+        if not hasattr(self, '_ogb_ref') or self._ogb_ref is None:
+            _LOGGER.warning(f"{self.room}: Script Mode requires OGB reference. Set _ogb_ref first.")
+            return
+
         # Initialize script mode manager if needed
         if self.scriptModeManager is None:
-            if hasattr(self, '_ogb_ref') and self._ogb_ref:
-                self.scriptModeManager = OGBScriptMode(self._ogb_ref)
-            else:
-                _LOGGER.warning(f"{self.room}: Script Mode requires OGB reference. Set _ogb_ref first.")
-                return
+            self.scriptModeManager = OGBScriptMode(self._ogb_ref)
 
         # Execute script (stateless - like VPD Perfection)
         # Script is loaded from DataStore on each execution

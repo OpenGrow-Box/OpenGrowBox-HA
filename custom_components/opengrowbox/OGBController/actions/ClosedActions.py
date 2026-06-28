@@ -8,11 +8,11 @@ Manages CO2, O2, humidity, and air recirculation without traditional ventilation
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from ..managers.OGBActionManager import OGBActionManager
 from ..logic.ClosedControlLogic import ClosedControlLogic
 
 if TYPE_CHECKING:
     from ..OGB import OpenGrowBox
+    from ..managers.OGBActionManager import OGBActionManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,6 +95,9 @@ class ClosedActions:
             List of action maps for CO2 control
         """
         # Delegate to centralized CO2 manager
+        if not hasattr(self.ogb, 'co2_manager') or self.ogb.co2_manager is None:
+            _LOGGER.warning(f"{self.ogb.room}: CO2 manager not available in Closed Environment")
+            return []
         return await self.ogb.co2_manager.decide_co2_action(
             mode="CLOSED",
             capabilities=capabilities
@@ -332,10 +335,36 @@ class ClosedActions:
 
         # HYSTERESIS: Only stop cooling when temp drops below (max - hysteresis)
         if status == "too_high":
+            # If cooler was active and we are now below the hysteresis threshold, skip action
+            if (
+                self._is_device_active("canCool")
+                and current is not None
+                and max_temp is not None
+                and current < (max_temp - self.temp_hysteresis)
+            ):
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Temperature below hysteresis threshold "
+                    f"({current:.1f}°C < {max_temp:.1f}°C - {self.temp_hysteresis}°C), "
+                    f"keeping cooling off"
+                )
+                return [], "stabil_hysteresis"
             action_message = f"Closed temp: too hot ({current:.1f}°C > {max_temp:.1f}°C)"
             actions = await self._decrease_temperature(capabilities, action_message)
             return actions, "kuehlen"
         elif status == "too_low":
+            # If heater was active and we are now above the hysteresis threshold, skip action
+            if (
+                self._is_device_active("canHeat")
+                and current is not None
+                and min_temp is not None
+                and current > (min_temp + self.temp_hysteresis)
+            ):
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Temperature above hysteresis threshold "
+                    f"({current:.1f}°C > {min_temp:.1f}°C + {self.temp_hysteresis}°C), "
+                    f"keeping heating off"
+                )
+                return [], "stabil_hysteresis"
             action_message = f"Closed temp: too cold ({current:.1f}°C < {min_temp:.1f}°C)"
             actions = await self._increase_temperature(capabilities, action_message)
             return actions, "heizen"
@@ -414,10 +443,36 @@ class ClosedActions:
         )
 
         if status == "too_low":
+            # If humidifier was active and we are now above the hysteresis threshold, skip action
+            if (
+                self._is_device_active("canHumidify")
+                and current is not None
+                and min_hum is not None
+                and current > (min_hum + self.hum_hysteresis)
+            ):
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Humidity above hysteresis threshold "
+                    f"({current:.1f}% > {min_hum:.1f}% + {self.hum_hysteresis}%), "
+                    f"keeping humidifier off"
+                )
+                return [], "stabil_hysteresis"
             action_message = f"Closed humidity: too dry ({current:.1f}% < {min_hum:.1f}%)"
             actions = await self._increase_humidity(capabilities, action_message)
             return actions, "befeuchten"
         elif status == "too_high":
+            # If dehumidifier was active and we are now below the hysteresis threshold, skip action
+            if (
+                self._is_device_active("canDehumidify")
+                and current is not None
+                and max_hum is not None
+                and current < (max_hum - self.hum_hysteresis)
+            ):
+                _LOGGER.debug(
+                    f"{self.ogb.room}: Humidity below hysteresis threshold "
+                    f"({current:.1f}% < {max_hum:.1f}% - {self.hum_hysteresis}%), "
+                    f"keeping dehumidifier off"
+                )
+                return [], "stabil_hysteresis"
             action_message = f"Closed humidity: too humid ({current:.1f}% > {max_hum:.1f}%)"
             actions = await self._decrease_humidity(capabilities, action_message)
             return actions, "entfeuchten"
@@ -508,7 +563,7 @@ class ClosedActions:
 
         # 0. NIGHT MODE CHECK - IMPORTANT: Handle night mode before any other logic
         is_light_on = self.ogb.dataStore.getDeep("isPlantDay.islightON", True)
-        night_vpd_hold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold", True)
+        night_vpd_hold = self.ogb.dataStore.getDeep("controlOptions.nightVPDHold", False)
 
         if not is_light_on and not night_vpd_hold:
             # Night mode without VPD hold - use power-saving mode
@@ -944,14 +999,14 @@ class ClosedActions:
             True if device is active
         """
         device_data = self.ogb.dataStore.getDeep(f"capabilities.{capability}.deviceData")
-        if not device_data:
+        if not isinstance(device_data, dict):
             return False
-        
+
         # Get first device entry
         for dev_name, dev_info in device_data.items():
             if isinstance(dev_info, dict):
                 return dev_info.get("on_off", False)
-        
+
         return False
 
     async def _emit_closed_environment_log(
@@ -1238,7 +1293,7 @@ class ClosedActions:
         if capabilities.get("canIntake", {}).get("state", False):
             # Get outside/ambient temperature if available
             outside_temp = self.control_logic.get_ambient_temperature()
-            min_temp_target = self.ogb.dataStore.getDeep("controlOptionData.temperature.min")
+            min_temp_target = self.ogb.dataStore.getDeep("tentData.minTemp")
 
             if outside_temp is not None and min_temp_target is not None:
                 if float(outside_temp) >= float(min_temp_target) - 3.0:
