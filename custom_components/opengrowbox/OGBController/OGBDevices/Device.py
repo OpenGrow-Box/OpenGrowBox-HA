@@ -1971,13 +1971,6 @@ class Device:
             _LOGGER.error(f"Error TurnON -> {self.deviceName}: {e}")
         finally:
             self._in_active_control = False
-            # Start reliability validation (non-blocking)
-            if self.reliability_manager:
-                asyncio.create_task(
-                    self.reliability_manager.validate_device_state(
-                        self.deviceName, self, "on"
-                    )
-                )
 
     async def turn_off(self, **kwargs):
         """Schaltet das Gerät aus."""
@@ -2359,13 +2352,7 @@ class Device:
         except Exception as e:
             _LOGGER.error(f"Fehler beim Ausschalten von {self.deviceName}: {e}")
         finally:
-            # Start reliability validation (non-blocking)
-            if self.reliability_manager:
-                asyncio.create_task(
-                    self.reliability_manager.validate_device_state(
-                        self.deviceName, self, "off"
-                    )
-                )
+            pass
 
     async def hard_turn_off(self):
         """Forcefully turn off the device by directly calling services on all entities."""
