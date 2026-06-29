@@ -633,6 +633,20 @@ class OGBFallBackManager:
                 _LOGGER.debug(f"{self.room}: No power sensor for {device_name}, skipping validation")
                 return True
 
+            # Check HA state first — if device's switch already reports expected state, skip power check
+            ha_state_matches = False
+            if hasattr(device_ref, 'switches') and device_ref.switches:
+                for switch in device_ref.switches:
+                    ha_state = self.hass.states.get(switch.get("entity_id", ""))
+                    if ha_state and str(ha_state.state).lower() == expected_state:
+                        ha_state_matches = True
+                        break
+            if ha_state_matches:
+                _LOGGER.debug(f"{self.room}: {device_name} HA state already shows {expected_state}, skipping power validation")
+                state.retry_count = 0
+                state.is_reliable = True
+                return True
+
             # Read current power
             current_power = await self._get_power_value(power_sensor)
             if current_power is None:
