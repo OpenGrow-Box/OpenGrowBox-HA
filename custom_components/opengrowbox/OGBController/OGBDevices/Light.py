@@ -645,7 +645,7 @@ class Light(Device):
             plantStage = self.data_store.get("plantStage")
 
             # Start voltage: User Min (wenn aktiv) → Plant Stage Min → 20%
-            if self._has_user_defined_minmax() and self.minVoltage is not None:
+            if self._has_user_defined_minmax() and self.minVoltage is not None and self.minVoltage > 0:
                 start_voltage = float(self.minVoltage)
                 voltage_source_min = "User MinMax"
             elif plantStage and plantStage in self.PlantStageMinMax:
