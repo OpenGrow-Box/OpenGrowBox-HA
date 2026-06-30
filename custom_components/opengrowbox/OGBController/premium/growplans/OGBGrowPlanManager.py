@@ -986,7 +986,14 @@ class OGBGrowPlanManager:
                         await update_entity("number.ogb_maxhum", day_hum, self.room, self.hass)
                         self.data_store.setDeep("controlOptionData.minmax.maxHum", float(day_hum))
                         self.data_store.setDeep("tentData.maxHumidity", float(day_hum))
-            
+
+                night_hum = humidity.get("night")
+                if isinstance(night_hum, dict):
+                    if night_hum.get("max") is not None:
+                        self.data_store.setDeep("controlOptionData.nightMinmax.maxHum", float(night_hum["max"]))
+                    if night_hum.get("min") is not None:
+                        self.data_store.setDeep("controlOptionData.nightMinmax.minHum", float(night_hum["min"]))
+
             # Update VPD target (supports both old and new format)
             vpd = env.get("vpd", {})
             if isinstance(vpd, dict):
@@ -1084,6 +1091,13 @@ class OGBGrowPlanManager:
                         await update_entity("number.ogb_mintemp", day_temp["min"], self.room, self.hass)
                         self.data_store.setDeep("controlOptionData.minmax.minTemp", float(day_temp["min"]))
                         self.data_store.setDeep("tentData.minTemp", float(day_temp["min"]))
+
+                night_temp = temp.get("night")
+                if isinstance(night_temp, dict):
+                    if night_temp.get("max") is not None:
+                        self.data_store.setDeep("controlOptionData.nightMinmax.maxTemp", float(night_temp["max"]))
+                    if night_temp.get("min") is not None:
+                        self.data_store.setDeep("controlOptionData.nightMinmax.minTemp", float(night_temp["min"]))
 
             # Activate min/max control so the grow plan values take effect
             await update_entity("select.ogb_minmax_control", "YES", self.room, self.hass)
