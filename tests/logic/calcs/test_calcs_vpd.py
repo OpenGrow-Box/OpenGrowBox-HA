@@ -3,7 +3,6 @@ import pytest
 from custom_components.opengrowbox.OGBController.utils.calcs import (
     calc_light_to_ppfd_dli,
     calc_dew_vpd,
-    calculate_orp,
     calculate_current_vpd,
     calculate_dew_point,
     calculate_perfect_vpd,
@@ -84,11 +83,3 @@ def test_calc_light_to_ppfd_dli_raises_for_invalid_unit_or_led_type():
     with pytest.raises(ValueError):
         calc_light_to_ppfd_dli(10000, unit="lux", hours=18, led_type="not_valid")
 
-
-def test_calculate_orp_baseline_and_temp_impact():
-    baseline = calculate_orp(6.0, 25.0)
-    warmer = calculate_orp(6.0, 30.0)
-
-    assert baseline == 236.64
-    # Higher temperature should slightly reduce ORP with current formula
-    assert warmer < baseline

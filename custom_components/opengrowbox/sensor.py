@@ -343,14 +343,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             initial_value=0,
             device_class="Minutes",
         ),
-        # Hydro ORP
-        CustomSensor(
-            f"OGB_WaterORP_{coordinator.room_name}",
-            coordinator.room_name,
-            coordinator,
-            initial_value=0,
-            device_class="mV",
-        ),
         # Energy Sensors
         CustomSensor(
             f"OGB_Energy_Today_kWh_{coordinator.room_name}",
