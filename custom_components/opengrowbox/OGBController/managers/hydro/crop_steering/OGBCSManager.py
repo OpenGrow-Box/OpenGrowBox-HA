@@ -45,7 +45,8 @@ class OGBCSManager:
             data_store=dataStore,
             event_manager=eventManager,
             advanced_sensor=self.advanced_sensor,
-            hass=hass
+            hass=hass,
+            irrigate_callback=self._irrigate
         )
         
         # Configuration Manager - handles presets and medium adjustments
@@ -275,6 +276,37 @@ class OGBCSManager:
             
         except Exception as e:
             _LOGGER.warning(f"{self.room} - Failed to update number entity for {parameter}.{phase}: {e}")
+
+    async def _sync_adjusted_presets_to_entities(self, plant_phase: str, gen_week: int):
+        """
+        Write the final adjusted preset values back to HA number entities,
+        so the UI shows what thresholds are actually active.
+        Only fires HA service calls when values change (tracked by old values).
+        """
+        if not self.hass:
+            return
+
+        params = [
+            ("VWCTarget", "vwc_target"),
+            ("VWCMin", "vwc_min"),
+            ("VWCMax", "vwc_max"),
+            ("ECTarget", "ec_target"),
+        ]
+        for phase in ("p0", "p1", "p2", "p3"):
+            preset = self._get_adjusted_preset(phase, plant_phase, gen_week)
+            for key, ent_suffix in params:
+                val = preset.get(key)
+                if val is not None:
+                    entity_id = f"number.ogb_cropsteering_{phase}_{ent_suffix}_{self.room.lower()}"
+                    try:
+                        await self.hass.services.async_call(
+                            domain="number",
+                            service="set_value",
+                            service_data={"entity_id": entity_id, "value": float(val)},
+                            blocking=True,
+                        )
+                    except Exception:
+                        pass
 
     # ==================== ENTRY POINT ====================
     async def handle_mode_change(self, data):
@@ -1080,7 +1112,8 @@ class OGBCSManager:
                 light_off = datetime.strptime(light_off_time_str, "%H:%M").time()
             
             # Get buffer hours (default 2 hours)
-            buffer_hours = self.data_store.getDeep("CropSteering.LightBufferHours") or 2
+            raw = self.data_store.getDeep("CropSteering.LightBufferHours")
+            buffer_hours = int(raw) if raw is not None else 2
             
             now = datetime.now().time()
             
@@ -1194,54 +1227,58 @@ class OGBCSManager:
 
     def _get_plant_info_from_medium(self) -> tuple:
         """
-        Get plant phase and week from GrowMedium objects.
-        Falls back to isPlantDay data if no medium found.
-        
+        Get plant phase and week from room-level plantStage (authoritative).
+        Falls back to GrowMedium objects, then isPlantDay data.
+
         Returns:
             tuple: (plant_phase, generative_week)
         """
+        FLOWER_STAGES = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
         try:
             grow_mediums = self.data_store.get("growMediums") or []
-            
+            room_stage = self.data_store.get("plantStage")
+
             for medium in grow_mediums:
                 try:
+                    week = None
                     if hasattr(medium, 'get_current_phase') and hasattr(medium, 'get_bloom_week'):
-                        # GrowMedium object
-                        phase = medium.get_current_phase()  # "veg" or "flower"
-                        if phase == "flower":
-                            week = medium.get_bloom_week()
-                            return ("flower", week)
+                        if room_stage:
+                            phase = "flower" if room_stage in FLOWER_STAGES else "veg"
                         else:
-                            week = medium.get_veg_week()
-                            return ("veg", week)
+                            phase = medium.get_current_phase()
+                        week = medium.get_bloom_week() if phase == "flower" else medium.get_veg_week()
+                        return (phase, week)
                     elif isinstance(medium, dict):
-                        # Dictionary representation
                         bloom_switch = medium.get("bloom_switch_date")
                         grow_start = medium.get("grow_start_date")
-                        
-                        if bloom_switch:
-                            # In flower - calculate bloom week
-                            from datetime import datetime
-                            if isinstance(bloom_switch, str):
-                                bloom_switch = datetime.fromisoformat(bloom_switch.replace('Z', '+00:00'))
-                            days = (datetime.now() - bloom_switch).days
-                            week = (days // 7) + 1 if days > 0 else 1
-                            return ("flower", week)
-                        elif grow_start:
-                            # In veg - calculate veg week  
-                            from datetime import datetime
-                            if isinstance(grow_start, str):
-                                grow_start = datetime.fromisoformat(grow_start.replace('Z', '+00:00'))
-                            days = (datetime.now() - grow_start).days
-                            week = (days // 7) + 1 if days > 0 else 1
-                            return ("veg", week)
+
+                        if room_stage:
+                            phase = "flower" if room_stage in FLOWER_STAGES else "veg"
+                        else:
+                            phase = "flower" if bloom_switch else ("veg" if grow_start else "unknown")
+
+                        if phase == "flower":
+                            if bloom_switch:
+                                from datetime import datetime
+                                if isinstance(bloom_switch, str):
+                                    bloom_switch = datetime.fromisoformat(bloom_switch.replace('Z', '+00:00'))
+                                days = (datetime.now() - bloom_switch).days
+                                week = (days // 7) + 1 if days > 0 else 1
+                            return ("flower", week or 1)
+                        else:
+                            if grow_start:
+                                from datetime import datetime
+                                if isinstance(grow_start, str):
+                                    grow_start = datetime.fromisoformat(grow_start.replace('Z', '+00:00'))
+                                days = (datetime.now() - grow_start).days
+                                week = (days // 7) + 1 if days > 0 else 1
+                            return ("veg", week or 1)
                 except Exception as e:
                     _LOGGER.warning(f"{self.room} - Error parsing medium plant info: {e}")
                     continue
         except Exception as e:
             _LOGGER.warning(f"{self.room} - Error getting plant info from mediums: {e}")
-        
-        # Fallback to isPlantDay data
+
         plant_phase = self.data_store.getDeep("isPlantDay.plantPhase") or "veg"
         generative_week = self.data_store.getDeep("isPlantDay.generativeWeek") or 0
         return (plant_phase, generative_week)
@@ -1258,6 +1295,9 @@ class OGBCSManager:
             plant_phase, generative_week = self._get_plant_info_from_medium()
             
             _LOGGER.debug(f"{self.room} - Plant info from medium: phase={plant_phase}, week={generative_week}")
+
+            # Sync adjusted values back to number entities so user sees actual active thresholds
+            await self._sync_adjusted_presets_to_entities(plant_phase, generative_week)
 
             # IMPORTANT: ALWAYS determine start phase based on CURRENT conditions
             # Ignore any persisted phase - we need to evaluate the actual situation
@@ -1292,6 +1332,10 @@ class OGBCSManager:
                         self.data_store.setDeep("CropSteering.ec_current", sensor_data["ec"])
 
                     current_phase = self.data_store.getDeep("CropSteering.CropPhase") or "p0"
+
+                    # Re-read plant info every cycle so stage changes take effect immediately
+                    plant_phase, generative_week = self._get_plant_info_from_medium()
+                    await self._sync_adjusted_presets_to_entities(plant_phase, generative_week)
 
                     # Get adjusted presets based on growth phase
                     preset = self._get_adjusted_preset(
@@ -1917,7 +1961,7 @@ class OGBCSManager:
                     f"{self.room} - P3: Initialized startNightMoisture to {vwc:.1f}%"
                 )
 
-            target_dryback = preset["target_dryback_percent"]
+            target_dryback = preset.get("target_dryback_percent", 10.0)
             current_dryback = (
                 ((start_night - vwc) / start_night) * 100 if start_night else 0
             )
@@ -2313,6 +2357,7 @@ class OGBCSManager:
         pre_temp = pre_sensor_data.get("temperature", 25) if pre_sensor_data else 25
 
         try:
+            self._irrigation_in_progress = True
             # Turn ON drippers - same pattern as CastManager
             _LOGGER.debug(f"{self.room} - Starting irrigation for {duration}s with {len(drippers)} drippers")
             for dev_id in drippers:

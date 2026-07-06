@@ -344,11 +344,30 @@ class OGBMediumManager:
             # Update all mediums with new stage
             for medium in self.media:
                 await medium.set_plant_stage(new_stage)
-            
+
+            # Sync isPlantDay.plantPhase for legacy/fallback paths
+            flower_stages = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
+            is_flower = new_stage in flower_stages
+            self.data_store.setDeep("isPlantDay.plantPhase", "flower" if is_flower else "veg")
+
+            # Sync isPlantDay.generativeWeek from oldest medium
+            from datetime import datetime
+            oldest = None
+            oldest_date = None
+            for m in self.media:
+                if m.grow_start_date and (oldest_date is None or m.grow_start_date < oldest_date):
+                    oldest_date = m.grow_start_date
+                    oldest = m
+            if oldest:
+                week = oldest.get_bloom_week() if is_flower else oldest.get_veg_week()
+            else:
+                week = 0
+            self.data_store.setDeep("isPlantDay.generativeWeek", week)
+
             # Save and emit updates
             self._save_mediums_to_store()
             await self.emit_all_plants_update()
-            
+
             _LOGGER.debug(f"[{self.room}] Updated {len(self.media)} mediums to plantStage={new_stage}")
             
         except Exception as e:

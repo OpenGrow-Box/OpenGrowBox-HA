@@ -26,7 +26,7 @@ class OGBCSCalibrationManager:
     sensor stabilization monitoring, and calibration data management.
     """
 
-    def __init__(self, room: str, data_store, event_manager, advanced_sensor, hass=None):
+    def __init__(self, room: str, data_store, event_manager, advanced_sensor, hass=None, irrigate_callback=None):
         """
         Initialize calibration manager.
 
@@ -36,12 +36,14 @@ class OGBCSCalibrationManager:
             event_manager: Event manager instance
             advanced_sensor: Advanced sensor processing instance
             hass: Home Assistant instance for updating number entities
+            irrigate_callback: Async callable(duration_secs) to perform actual irrigation
         """
         self.room = room
         self.data_store = data_store
         self.event_manager = event_manager
         self.advanced_sensor = advanced_sensor
         self.hass = hass
+        self._irrigate_callback = irrigate_callback
 
         # Calibration settings
         self.calibration_readings = []
@@ -327,10 +329,14 @@ class OGBCSCalibrationManager:
             self._calibration_task = None
 
     async def _wait_for_vwc_stabilization(
-        self, timeout: int = 300, check_interval: int = 10
+        self, timeout: int = 600, check_interval: int = 60
     ) -> bool:
         """
         Wait for VWC readings to stabilize.
+
+        Ensures readings span at least one full DataStore update cycle
+        (blockCheckIntervall ≈ 300s) to avoid false stability from
+        stale DataStore values.
 
         Args:
             timeout: Maximum time to wait in seconds
@@ -341,33 +347,30 @@ class OGBCSCalibrationManager:
         """
         try:
             start_time = datetime.now()
-            stable_readings = []
+            readings: List[tuple] = []
 
-            while (datetime.now() - start_time).seconds < timeout:
-                # Get current VWC reading
+            while (datetime.now() - start_time).total_seconds() < timeout:
                 current_vwc = self._get_current_vwc_reading()
 
                 if current_vwc is None:
                     await asyncio.sleep(check_interval)
                     continue
 
-                stable_readings.append(current_vwc)
+                readings.append((current_vwc, datetime.now()))
+                while len(readings) > 6:
+                    readings.pop(0)
 
-                # Keep only last 6 readings (1 minute worth)
-                if len(stable_readings) > 6:
-                    stable_readings.pop(0)
-
-                # Check stability if we have enough readings
-                if len(stable_readings) >= 6:
-                    min_reading = min(stable_readings)
-                    max_reading = max(stable_readings)
-                    variation = max_reading - min_reading
-
-                    if variation <= self.stability_tolerance:
-                        _LOGGER.debug(
-                            f"{self.room} - VWC stabilized: {min_reading:.1f}% - {max_reading:.1f}% (variation: {variation:.1f}%)"
-                        )
-                        return True
+                if len(readings) >= 3:
+                    time_span = (readings[-1][1] - readings[0][1]).total_seconds()
+                    if time_span >= 240:
+                        vals = [r[0] for r in readings]
+                        variation = max(vals) - min(vals)
+                        if variation <= self.stability_tolerance:
+                            _LOGGER.debug(
+                                f"{self.room} - VWC stabilized: {min(vals):.1f}% - {max(vals):.1f}% "
+                                f"(variation: {variation:.1f}%, span: {time_span:.0f}s)"
+                            )
+                            return True
 
                 await asyncio.sleep(check_interval)
 
@@ -474,39 +477,31 @@ class OGBCSCalibrationManager:
             True if irrigation successful
         """
         try:
-            # Use the irrigation manager to perform irrigation
-            # This is a placeholder - would need to import and use OGBCSIrrigationManager
             _LOGGER.debug(f"{self.room} - Calibration irrigation: {duration}s")
-
-            # For now, just simulate successful irrigation
-            await asyncio.sleep(duration)
-            return True
-
+            if self._irrigate_callback:
+                await self._irrigate_callback(duration)
+                return True
+            else:
+                _LOGGER.warning(f"{self.room} - No irrigation callback set, simulating irrigation")
+                await asyncio.sleep(duration)
+                return True
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error in calibration irrigation: {e}")
             return False
 
     def _get_current_vwc_reading(self) -> Optional[float]:
         """
-        Get current VWC reading from sensors.
+        Get current VWC reading from the shared DataStore.
 
+        The main CS manager writes CropSteering.vwc_current every cycle.
         Returns:
             Current VWC value or None if unavailable
         """
         try:
-            # Get VWC readings from advanced sensor
-            vwc_data = self.advanced_sensor.getSensorValue("vwc", "soil")
-            if vwc_data and len(vwc_data) > 0:
-                # Calculate average of all sensor readings instead of using only the first
-                values = [sensor.get("value") for sensor in vwc_data if sensor.get("value") is not None]
-                if values:
-                    return sum(values) / len(values)
-                else:
-                    _LOGGER.warning(f"{self.room} - No valid VWC values found in sensor data")
-                    return None
-
+            vwc = self.data_store.getDeep("CropSteering.vwc_current")
+            if vwc is not None:
+                return float(vwc)
             return None
-
         except Exception as e:
             _LOGGER.error(f"{self.room} - Error getting VWC reading: {e}")
             return None
@@ -537,9 +532,10 @@ class OGBCSCalibrationManager:
         """
         calibrated = []
         for phase in ["p1", "p2", "p3"]:
-            if self.data_store.getDeep(
-                f"CropSteering.Calibration.{phase}.Max"
-            ) or self.data_store.getDeep(f"CropSteering.Calibration.{phase}.Min"):
+            if (
+                self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMax") is not None
+                or self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMin") is not None
+            ):
                 calibrated.append(phase)
         return calibrated
 
@@ -553,17 +549,14 @@ class OGBCSCalibrationManager:
         Returns:
             True if calibration data is valid
         """
-        max_data = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.Max")
-        min_data = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.Min")
-
-        if not max_data or not min_data:
-            return False
-
-        max_vwc = max_data.get("value")
-        min_vwc = min_data.get("value")
+        max_vwc = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMax")
+        min_vwc = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMin")
 
         if max_vwc is None or min_vwc is None:
             return False
+
+        max_vwc = float(max_vwc)
+        min_vwc = float(min_vwc)
 
         # Basic validation: max should be higher than min
         if max_vwc <= min_vwc:

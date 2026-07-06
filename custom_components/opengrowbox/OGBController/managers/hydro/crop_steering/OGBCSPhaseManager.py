@@ -12,7 +12,7 @@ Responsibilities:
 
 import logging
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .OGBCSConfigurationManager import CSMode
 
@@ -196,44 +196,6 @@ class OGBCSPhaseManager:
         )
 
         return True
-
-    def should_transition_phase(
-        self, current_phase: str, sensor_data: Dict[str, Any], light_status: bool
-    ) -> Optional[str]:
-        """
-        Determine if phase transition is needed based on conditions.
-
-        Args:
-            current_phase: Current phase
-            sensor_data: Current sensor data
-            light_status: Whether lights are on
-
-        Returns:
-            Target phase if transition needed, None otherwise
-        """
-        vwc = sensor_data.get("vwc")
-
-        if current_phase == "p0":
-            # P0 transitions to P1 when VWC drops below minimum
-            if vwc is not None and vwc <= 55.0:  # VWCMin from p0 preset
-                return "p1"
-
-        elif current_phase == "p1":
-            # P1 transitions to P2 when target VWC reached
-            if vwc is not None and vwc >= 68.0:  # VWCMax from p1 preset
-                return "p2"
-
-        elif current_phase == "p2":
-            # P2 transitions to P3 when lights turn off
-            if not light_status:
-                return "p3"
-
-        elif current_phase == "p3":
-            # P3 transitions to P2 when lights turn on
-            if light_status:
-                return "p2"
-
-        return None
 
     async def execute_automatic_cycle(
         self, phase: str, config: Dict[str, Any], sensor_data: Dict[str, Any]

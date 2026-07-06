@@ -22,26 +22,28 @@
 
 ## 🛠️ Installation (Choose One Method)
 
-### Method 1: HACS (Recommended - 2 Minutes)
+> **OpenGrowBox is no longer distributed through HACS** (its OGBCL license isn't
+> compatible with HACS' requirements). Use Method 1 or 2 below. Once installed,
+> the integration checks GitHub for new releases itself and can install them with
+> one click from **Settings → Devices & Services → OpenGrowBox** or from the
+> OpenGrowBox dashboard's Settings tab - no HACS needed for updates either.
 
-1. **Install HACS** (skip if already installed):
-   - Go to **Settings** → **Add-ons, Backups & Supervisor** → **Add-on Store**
-   - Search and install **"HACS"**
-   - Restart Home Assistant
+### Method 1: Install Script (Recommended - 1 Minute)
 
-2. **Install OpenGrowBox**:
-   - Open **HACS** from sidebar
-   - Go to **Integrations** tab
-   - Search **"OpenGrowBox"**
-   - Click **Download**
-   - **Restart Home Assistant**
+Run this on your Home Assistant host (HAOS, Supervised, Container, and Core are
+all supported):
 
-3. **Add Integration**:
-   - Go to **Settings** → **Devices & Services**
-   - Click **+ Add Integration**
-   - Search **"OpenGrowBox"**
-   - Click **Add**
-   - **Done!** 🎉
+```bash
+curl -fsSL https://raw.githubusercontent.com/OpenGrow-Box/OpenGrowBox-HA/main/scripts/install.sh | sh
+```
+
+It detects your config directory and Home Assistant version, checks compatibility,
+and copies the integration into `custom_components/`. Then:
+
+- Go to **Settings** → **Devices & Services** → **+ Add Integration**
+- Search **"OpenGrowBox"** → **Add** → **Done!** 🎉
+
+Options: `--config-dir DIR`, `--restart` (HAOS/Supervised only), `--skip-version-check`.
 
 ### Method 2: Manual Installation (3 Minutes)
 
@@ -55,7 +57,7 @@ cp -r OpenGrowBox-HA/custom_components/opengrowbox /config/custom_components/
 # From UI: Settings → System → Restart
 # OR: ha core restart
 
-# 3. Add Integration (same as HACS method above)
+# 3. Add Integration (same as above)
 ```
 
 ### Method 3: Docker Installation

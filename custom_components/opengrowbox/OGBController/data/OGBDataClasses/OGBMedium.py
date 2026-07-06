@@ -281,6 +281,8 @@ class GrowMedium:
 
     SENSOR_HISTORY_LIMIT = 10
 
+    FLOWER_STAGES = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
+
     def __init__(
         self,
         eventManager,
@@ -316,6 +318,9 @@ class GrowMedium:
         self.plant_stage = plant_stage or "Germination"
         self.grow_start_date = grow_start_date
         self.bloom_switch_date = bloom_switch_date
+        if self.bloom_switch_date is None and self.plant_stage in self.FLOWER_STAGES:
+            self.bloom_switch_date = datetime.now()
+            _LOGGER.debug(f"{self.name}: Auto-set bloom_switch_date to {self.bloom_switch_date} from plant_stage={self.plant_stage}")
         
         # Plant stage definitions with DLI/light targets per stage
         self.plant_stage_config = {
@@ -485,10 +490,12 @@ class GrowMedium:
         """Set the current plant stage and emit update."""
         old_stage = self.plant_stage
         self.plant_stage = stage
-        
+
         if old_stage != stage:
             _LOGGER.debug(f"{self.name}: Plant stage changed from {old_stage} to {stage}")
-            # Emit full plant update (includes stage change)
+            if stage in self.FLOWER_STAGES and self.bloom_switch_date is None:
+                self.bloom_switch_date = datetime.now()
+                _LOGGER.debug(f"{self.name}: Auto-set bloom_switch_date to {self.bloom_switch_date} from plant_stage change")
             await self.emit_plant_update()
     
     def get_stage_config(self) -> Dict[str, Any]:

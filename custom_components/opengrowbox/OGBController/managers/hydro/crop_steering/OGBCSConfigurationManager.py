@@ -140,18 +140,17 @@ class OGBCSConfigurationManager:
 
         return presets
 
-    def _is_valid_nonzero(self, value) -> bool:
+    def _is_valid_user_value(self, value) -> bool:
         """
-        Check if a value is valid and non-zero.
-        Handles strings like '0.0', '0', actual numbers, and None.
-        
-        CRITICAL: DataStore often stores values as strings like '35.0', '0.0'
-        Simple comparison like `val != 0` fails for strings!
+        Check if a user value is set and parseable.
+        Accepts 0 (e.g. EC=0 for flush, Shot_Sum=0 to disable).
+        Only rejects None, empty strings, and unparseable values.
         """
         if value is None:
             return False
         try:
-            return float(value) != 0.0
+            float(value)
+            return True
         except (ValueError, TypeError):
             return False
 
@@ -163,35 +162,35 @@ class OGBCSConfigurationManager:
         Reads from CropSteering.Substrate.{phase}.{parameter} paths
         as set by the core OGBConfigurationManager.
         
-        CRITICAL: Uses _is_valid_nonzero() to properly check string values like '0.0'
+        CRITICAL: Uses _is_valid_user_value() to properly check string values like '0.0'
         """
         for phase in ["p0", "p1", "p2", "p3"]:
             # EC parameters
             ec_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_EC")
-            if self._is_valid_nonzero(ec_target):
+            if self._is_valid_user_value(ec_target):
                 presets[phase]["ECTarget"] = float(ec_target)
 
             min_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Min_EC")
-            if self._is_valid_nonzero(min_ec):
+            if self._is_valid_user_value(min_ec):
                 presets[phase]["MinEC"] = float(min_ec)
 
             max_ec = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Max_EC")
-            if self._is_valid_nonzero(max_ec):
+            if self._is_valid_user_value(max_ec):
                 presets[phase]["MaxEC"] = float(max_ec)
 
             # VWC parameters
             vwc_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Target")
-            if self._is_valid_nonzero(vwc_target):
+            if self._is_valid_user_value(vwc_target):
                 presets[phase]["VWCTarget"] = float(vwc_target)
                 _LOGGER.debug(f"{self.room} - User VWCTarget for {phase}: {vwc_target}")
 
             vwc_min = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Min")
-            if self._is_valid_nonzero(vwc_min):
+            if self._is_valid_user_value(vwc_min):
                 presets[phase]["VWCMin"] = float(vwc_min)
                 _LOGGER.debug(f"{self.room} - User VWCMin for {phase}: {vwc_min}")
 
             vwc_max = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Max")
-            if self._is_valid_nonzero(vwc_max):
+            if self._is_valid_user_value(vwc_max):
                 presets[phase]["VWCMax"] = float(vwc_max)
                 _LOGGER.debug(f"{self.room} - User VWCMax for {phase}: {vwc_max}")
 
@@ -199,12 +198,12 @@ class OGBCSConfigurationManager:
             shot_duration_path = f"CropSteering.Substrate.{phase}.Shot_Duration_Sec"
             shot_duration = self.data_store.getDeep(shot_duration_path)
             _LOGGER.warning(f"{self.room} - Reading {shot_duration_path} = {shot_duration}")
-            if self._is_valid_nonzero(shot_duration):
+            if self._is_valid_user_value(shot_duration):
                 presets[phase]["irrigation_duration"] = int(float(shot_duration))
                 _LOGGER.warning(f"{self.room} - Set irrigation_duration for {phase} = {int(float(shot_duration))}s")
 
             shot_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
-            if self._is_valid_nonzero(shot_interval):
+            if self._is_valid_user_value(shot_interval):
                 interval_sec = int(float(shot_interval) * 60)  # Convert minutes to seconds
                 if phase == "p1":
                     presets[phase]["wait_between"] = interval_sec
@@ -212,26 +211,26 @@ class OGBCSConfigurationManager:
                     presets[phase]["irrigation_interval"] = interval_sec
 
             irrigation_freq = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Irrigation_Frequency")
-            if self._is_valid_nonzero(irrigation_freq):
+            if self._is_valid_user_value(irrigation_freq):
                 presets[phase]["irrigation_frequency"] = int(float(irrigation_freq))
 
             # Dryback parameters
             dryback_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Target_Percent")
-            if self._is_valid_nonzero(dryback_target):
+            if self._is_valid_user_value(dryback_target):
                 presets[phase]["target_dryback_percent"] = float(dryback_target)
 
             dryback_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Dryback_Duration_Hours")
-            if self._is_valid_nonzero(dryback_duration):
+            if self._is_valid_user_value(dryback_duration):
                 presets[phase]["dryback_duration"] = int(float(dryback_duration))
                 
             # Moisture dryback
             moisture_dryback = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Moisture_Dryback")
-            if self._is_valid_nonzero(moisture_dryback):
+            if self._is_valid_user_value(moisture_dryback):
                 presets[phase]["moisture_dryback"] = float(moisture_dryback)
 
             # Shot Sum (max_cycles) - number of irrigation shots per cycle
             shot_sum = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Sum")
-            if self._is_valid_nonzero(shot_sum):
+            if self._is_valid_user_value(shot_sum):
                 presets[phase]["max_cycles"] = int(float(shot_sum))
                 _LOGGER.debug(f"{self.room} - User max_cycles for {phase}: {shot_sum}")
 
@@ -284,8 +283,8 @@ class OGBCSConfigurationManager:
             
             # Duration (seconds) - User says 91s = 91s, period.
             user_duration = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Duration_Sec")
-            is_valid = self._is_valid_nonzero(user_duration)
-            _LOGGER.warning(f"🔍 {self.room} - {phase} Shot_Duration_Sec raw='{user_duration}' (type={type(user_duration).__name__}), _is_valid_nonzero={is_valid}")
+            is_valid = self._is_valid_user_value(user_duration)
+            _LOGGER.warning(f"🔍 {self.room} - {phase} Shot_Duration_Sec raw='{user_duration}' (type={type(user_duration).__name__}), _is_valid_user_value={is_valid}")
             if is_valid:
                 adjusted_presets[phase]["irrigation_duration"] = int(float(user_duration))
                 _LOGGER.warning(f"✅ {self.room} - {phase} duration: {int(float(user_duration))}s (USER)")
@@ -296,7 +295,7 @@ class OGBCSConfigurationManager:
             
             # Interval (minutes in UI -> seconds internally)
             user_interval = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Intervall")
-            if self._is_valid_nonzero(user_interval):
+            if self._is_valid_user_value(user_interval):
                 interval_sec = int(float(user_interval) * 60)
                 adjusted_presets[phase]["wait_between"] = interval_sec
                 adjusted_presets[phase]["irrigation_interval"] = interval_sec
@@ -309,7 +308,7 @@ class OGBCSConfigurationManager:
             
             # Shot Sum / Max Cycles
             user_shot_sum = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.Shot_Sum")
-            if self._is_valid_nonzero(user_shot_sum):
+            if self._is_valid_user_value(user_shot_sum):
                 adjusted_presets[phase]["max_cycles"] = int(float(user_shot_sum))
                 _LOGGER.warning(f"{self.room} - {phase} max_cycles: {int(float(user_shot_sum))} (USER)")
             else:
@@ -341,7 +340,7 @@ class OGBCSConfigurationManager:
         Generativ: Weniger Feuchtigkeit, mehr Dryback (vegetativ)
 
         Args:
-            plant_phase: Current plant phase ('veg' or 'gen')
+            plant_phase: Current plant phase ('veg' or 'flower')
             generative_week: Week number in generative phase
 
         Returns:
@@ -355,7 +354,7 @@ class OGBCSConfigurationManager:
             adjustments["dryback_modifier"] = -2.0  # -2% Dryback (weniger Stress)
             adjustments["ec_modifier"] = -0.1  # Etwas niedrigere EC
 
-        elif plant_phase == "gen":
+        elif plant_phase == "flower":
             # Flowering Phase: Fördern Blütenbildung
             if generative_week <= 3:
                 # Early Flower: Übergang
@@ -368,10 +367,10 @@ class OGBCSConfigurationManager:
                 adjustments["dryback_modifier"] = 2.0  # +2% Dryback (mehr Stress)
                 adjustments["ec_modifier"] = 0.2  # Höhere EC
             elif generative_week <= 7:
-                # Mid Flower: Verstärkt generativ
-                adjustments["vwc_modifier"] = 2.0  # -2% Feuchtigkeit
-                adjustments["dryback_modifier"] = -2.0  # +2% Dryback (mehr Stress)
-                adjustments["ec_modifier"] = 0.1  # Höhere EC
+                # Late Mid Flower: Maximal generativ
+                adjustments["vwc_modifier"] = -3.0  # -3% Feuchtigkeit
+                adjustments["dryback_modifier"] = 3.0  # +3% Dryback (mehr Stress)
+                adjustments["ec_modifier"] = 0.25  # Höhere EC
             else:
                 # Late Flower: Maximal generativ
                 adjustments["vwc_modifier"] = -3.0  # -3% Feuchtigkeit

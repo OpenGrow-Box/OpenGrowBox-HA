@@ -29,7 +29,9 @@ class OGBCSIrrigationManager:
 #### 4. OGBCSPhaseManager (Plant Stages)
 ```python
 class OGBCSPhaseManager:
-    """Manages plant growth phases and watering adjustments."""
+    """Parses modes, determines initial phase, logs/emits transitions."""
+    # Phase handlers are placeholders — real transition logic lives
+    # inline in OGBCSManager._handle_phase_pX_auto()
 ```
 
 #### 5. OGBCSCalibrationManager (Sensor Calibration)
@@ -241,7 +243,7 @@ if not is_light_on:
     return "p3"
 else:
     # Day time → Check VWC to determine P0, P1, or P2
-    if vwc >= vwc_max * 0.90:
+    if vwc >= vwc_max:
         return "p2"  # Block full → Maintenance
     elif vwc < vwc_min:
         return "p1"  # Block dry → Saturation
@@ -311,41 +313,45 @@ else:
 - **Emergency threshold**: VWCMax × 0.85
 - **On light ON**: Transitions to P0
 
-## Plant Growth Phases
+## Plant Growth Phase (veg / flower)
 
-### Phase Definitions
+The system determines **veg** or **flower** from the room-level `plantStage` (set via `select.ogb_plantstage_*`):
+
+| Phase | plantStage values |
+|-------|------------------|
+| **veg** | `Germination`, `Clones`, `EarlyVeg`, `MidVeg`, `LateVeg` |
+| **flower** | `EarlyFlower`, `MidFlower`, `LateFlower`, `Flush` |
 
 ```python
-PLANT_PHASES = {
-    "germ": {
-        "vwc_min": 0.75,    # 75% moisture for germination
-        "vwc_max": 0.90,    # 90% maximum to prevent rot
-        "irrigation_interval": 3600,  # Check every hour
-        "description": "Germination phase - high moisture needed"
-    },
-    "veg": {
-        "vwc_min": 0.60,    # 60% for vegetative growth
-        "vwc_max": 0.80,    # 80% maximum
-        "irrigation_interval": 7200,  # Check every 2 hours
-        "description": "Vegetative growth - balanced moisture"
-    },
-    "gen": {
-        "vwc_min": 0.50,    # 50% for generative phase
-        "vwc_max": 0.75,    # 75% maximum
-        "irrigation_interval": 10800, # Check every 3 hours
-        "description": "Flowering/fruiting - slightly drier"
-    }
-}
+FLOWER_STAGES = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
+is_flower = room_stage in FLOWER_STAGES  # → True/False
+```
+
+### How it works
+
+1. **User sets `plantStage`** via the select entity in the UI
+2. The value is stored as `plantStage` (room-level, DataStore) and synced to all `GrowMedium` objects
+3. When `plantStage` changes to a flower stage and no `bloom_switch_date` exists yet, it is **auto-set to `datetime.now()`** — no separate bloom switch date entry needed
+4. `isPlantDay.plantPhase` and `isPlantDay.generativeWeek` are synced from `plantStage` for legacy fallback paths
+5. Crop Steering reads `plantStage` directly (authoritative source) and applies growth-specific adjustments
+
+### Priority
+
+```
+plantStage (room-level, via UI)
+  ├── determines veg/flower via FLOWER_STAGES set
+  ├── overrides individual medium bloom_switch_date
+  └── synced to isPlantDay.plantPhase
 ```
 
 ### Phase-Specific Adjustments
 
-#### Vegetative Phase
+#### Vegetative Phase (Germination … LateVeg)
 - **Higher moisture retention** for rapid growth
 - **More frequent checks** to prevent drying out
 - **Balanced irrigation** to support leaf development
 
-#### Generative Phase (Flowering)
+#### Generative Phase / Flowering (EarlyFlower … Flush)
 - **Gradually drier conditions** to stress plants for flowering
 - **Reduced irrigation frequency** to prevent bud rot
 - **Environmental adaptation** based on humidity/temperature
@@ -426,41 +432,33 @@ class OGBCSCalibrationManager:
     
     Handles all calibration procedures with:
     - Sensor stabilization monitoring
-    - Multiple reading averaging
+    - Multiple reading averaging (6 readings)
     - Timeout handling
     - Persistent storage of calibrated values
+    - Real irrigation via callback to OGBCSManager._irrigate()
     """
 
-    async def start_vwc_max_calibration(self, phase: str = "p1"):
-        """
-        Start VWC maximum calibration procedure.
-        
-        Process:
-        1. Irrigate medium progressively
-        2. Wait for VWC stabilization after each irrigation
-        3. Detect when VWC stops increasing (saturation)
-        4. Store calibrated VWCMax value
-        5. Persist to disk via SaveState
-        """
+    def __init__(self, room, data_store, event_manager, advanced_sensor,
+                 hass=None, irrigate_callback=None):
+        # irrigate_callback: async callable(duration_secs)
+        #   → passed from OGBCSManager: self._irrigate
+        #   → performs actual pump irrigation, not just sleep
 
-    async def start_vwc_min_calibration(self, phase: str = "p1"):
-        """
-        Start VWC minimum calibration through dryback.
-        
-        Process:
-        1. Monitor natural dryback over time
-        2. Track minimum VWC observed
-        3. Apply 10% safety buffer
-        4. Store calibrated VWCMin value
-        5. Persist to disk via SaveState
-        """
+    def _get_current_vwc_reading(self) -> Optional[float]:
+        # Reads from DataStore: CropSteering.vwc_current
+        # (written every cycle by OGBCSManager._automatic_cycle)
+        return self.data_store.getDeep("CropSteering.vwc_current")
 
-    async def _wait_for_vwc_stabilization(self, timeout=300):
+    async def _irrigate_for_calibration(self, duration: int) -> bool:
+        # Uses self._irrigate_callback(duration) if set
+        # Falls back to asyncio.sleep(duration) if no callback
+
+    async def _wait_for_vwc_stabilization(self, timeout=300, check_interval=10):
         """
         Wait until VWC reading stabilizes.
         
-        Uses moving average of last 3 readings
-        and checks if deviation is within tolerance.
+        Collects up to 6 readings (every check_interval seconds),
+        checks if max - min deviation is within self.stability_tolerance.
         """
 ```
 
@@ -902,6 +900,14 @@ Examples:
 
 **IMPORTANT**: User timing values (duration, interval, shot_sum) are used **exactly as configured** - no drainage_factor adjustments are applied to timing parameters.
 
+##### Value Validation
+
+User values are validated by `_is_valid_user_value()` which accepts any parseable number including `0`:
+- `EC=0` → allowed (flush with pure water)
+- `Shot_Sum=0` → allowed (disables automatic irrigation for that phase)
+- `Shot_Duration=0` → allowed (skips irrigation shot)
+- `None` / empty string / unparseable → rejected, falls back to default
+
 #### Automatic Mode Timing Settings (v3.3)
 
 In Automatic mode, the system now uses **user-configurable timing values** while maintaining **preset-based VWC/EC thresholds**:
@@ -942,15 +948,34 @@ MEDIUM_ADJUSTMENTS = {
     "soil": {"vwc_offset": -5, "ec_offset": 0.2, "drainage_factor": 0.7},
     "perlite": {"vwc_offset": -8, "ec_offset": 0.1, "drainage_factor": 1.2},
     "aero": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
-    "water": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0}
+    "water": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
+    "custom": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0}
 }
 ```
 
 These adjustments are applied on top of user settings.
 
-### Phase-Specific Adjustments
+##### Entity Sync
 
-Growth phase adjustments optimize watering for plant development:
+After applying all adjustments (user settings + medium offsets + growth phase adjustments), the final values are written back to the HA number entities every cycle. This ensures the UI always shows the **actual active thresholds**, not just the raw user-configured values.
+
+| Synced parameters | Entity pattern |
+|---|---|
+| VWCTarget, VWCMin, VWCMax, ECTarget | `number.ogb_cropsteering_{phase}_{param}_{room}` |
+
+### Phase Determination (veg vs flower)
+
+The authoritative source for veg/flower is the room-level `plantStage`:
+
+```python
+FLOWER_STAGES = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
+
+room_stage = self.data_store.get("plantStage")
+if room_stage:
+    phase = "flower" if room_stage in FLOWER_STAGES else "veg"
+```
+
+### Growth Phase Adjustments
 
 ```python
 # Vegetative Phase: Promote growth
@@ -960,8 +985,8 @@ veg_adjustments = {
     "ec_modifier": -0.1       # Slightly lower EC
 }
 
-# Generative Phase: Promote flowering
-gen_adjustments = {
+# Flowering Phase: Promote flowering
+flower_adjustments = {
     "vwc_modifier": -2.0,     # -2% moisture
     "dryback_modifier": 2.0,  # +2% dryback (more stress)
     "ec_modifier": 0.2        # Higher EC
@@ -977,9 +1002,8 @@ async def setup_automatic_mode(self):
     # Sync medium type
     await self._sync_medium_type()
 
-    # Get plant phase and week
-    plant_phase = self.data_store.getDeep("isPlantDay.plantPhase")
-    generative_week = self.data_store.getDeep("isPlantDay.generativeWeek")
+    # Get plant phase and week (plantStage is authoritative)
+    plant_phase, generative_week = self._get_plant_info_from_medium()
 
     # Apply growth phase adjustments
     adjustments = self.get_phase_growth_adjustments(plant_phase, generative_week)
@@ -1248,7 +1272,7 @@ $ cs_calibrate -h
 | **OGBCSManager** | ~1450 | ✅ Ready | Main controller, coordinates all subsystems |
 | **OGBCSConfigurationManager** | ~320 | ✅ Ready | Settings, presets, medium adjustments |
 | **OGBCSIrrigationManager** | ~200 | ✅ Ready | Water delivery, dripper control |
-| **OGBCSPhaseManager** | ~150 | ✅ Ready | Phase transitions, timing logic |
+| **OGBCSPhaseManager** | ~140 | ✅ Ready | Mode parsing, initial phase, transition logging |
 | **OGBCSCalibrationManager** | ~400 | ✅ Ready | VWC max/min calibration procedures |
 | **OGBAdvancedSensor** | ~300 | ✅ Ready | TDR polynomial calculations |
 
@@ -1257,7 +1281,7 @@ $ cs_calibrate -h
 - **4-Phase Automatic Mode**: P0-P3 with intelligent transitions
 - **Manual Mode**: User-configurable timing per phase
 - **Medium-Specific Adjustments**: Rockwool, coco, soil, perlite, aero, water
-- **Growth Phase Optimization**: Vegetative vs generative watering strategies
+- **Growth Phase Optimization**: Vegetative vs generative watering strategies (driven by `plantStage`)
 - **VWC Calibration**: Dedicated CalibrationManager with persistence
 - **Auto-Calibration P1**: VWCMax via stagnation detection during saturation
 - **Auto-Calibration P2**: VWCMax via post-irrigation peak tracking
