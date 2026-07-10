@@ -57,37 +57,55 @@ class OGBFeedParameterManager:
 
 ### Intelligent Adjustment Algorithm
 
-The system uses **proportional dosing** to deliver precise nutrient amounts based on real-time sensor deviations:
+The system uses **proportional dosing** to deliver precise nutrient amounts based on real-time sensor deviations. The recipe is configured as the milliliters of each component needed for a **completely full tank** (`ReservoirVolume`). From that the per-liter concentration is derived and automatically scaled to the current water volume.
 
-#### Dead Zone Logic
+### Recipe Input: Full-Tank Amounts
+
+Instead of entering `ml/L`, you enter the absolute ml for a full tank. The system calculates the concentration internally:
+
+```python
+concentration_ml_per_liter = full_tank_ml / reservoir_volume_liters
+dose_for_current_volume = concentration_ml_per_liter * current_water_volume
+```
+
+Example: For a 100 L tank you enter **200 ml A**, **120 ml B** and **80 ml C**. The system derives `2.0 ml/L`, `1.2 ml/L` and `0.8 ml/L`. If the tank is only 50 % full, it doses half of those amounts (100 ml, 60 ml, 40 ml).
+
+### Dead Zone Logic
+
 ```python
 # Prevent unnecessary micro-adjustments
 if abs(deviation) < 0.08:  # 8% EC tolerance (conservative)
-    return {'nutrients_needed': False}
+    return {'nutrients_needed': False, 'scale_factor': 0.0}
 
 if abs(deviation) < 0.2:   # 0.2 pH tolerance (conservative)
     return {'ph_down_needed': False}
 ```
 
-#### Proportional Dose Calculation
+### Proportional Dose Calculation
+
+The EC deviation is translated into a `scale_factor` between `0.0` and `1.0`. The full concentration-based dose is multiplied by this factor, so small deviations yield small corrections and large deviations yield the full recipe dose:
+
 ```python
-# Scale dose amount with deviation severity (conservative dosing)
-base_dose_per_5_percent = 1.5  # ml per nutrient type (reduced for safety)
-dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
-nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at 5ml
+if deviation >= 0.25:      # 25% or more below target -> full dose
+    scale_factor = 1.0
+elif deviation < 0.08:     # inside dead zone -> no dose
+    scale_factor = 0.0
+else:
+    scale_factor = (deviation - 0.08) / (0.25 - 0.08)
 ```
 
-#### Adjustment Examples (Conservative Settings)
+### Adjustment Examples (Conservative Settings)
+
 | Deviation | System Response | Dose Amount |
 |-----------|----------------|-------------|
-| EC < 8% | No action (dead zone) | 0ml |
-| EC 8% | Small correction | 1.2ml per nutrient |
-| EC 15% | Medium correction | 2.25ml per nutrient |
-| EC 25%+ | Maximum correction | 5.0ml per nutrient (cap) |
-| pH < 0.2 | No action (dead zone) | 0ml |
-| pH 0.3 | Small correction | 0.75ml pH adjuster |
-| pH 0.5 | Medium correction | 1.25ml pH adjuster |
-| pH 0.6+ | Maximum correction | 1.5ml pH adjuster (cap) |
+| EC < 8% | No action (dead zone) | 0 ml |
+| EC 10% | Small correction | 12 % of full recipe dose |
+| EC 15% | Medium correction | 41 % of full recipe dose |
+| EC 25%+ | Full correction | 100 % of full recipe dose |
+| pH < 0.2 | No action (dead zone) | 0 ml |
+| pH 0.3 | Small correction | 0.75 ml pH adjuster |
+| pH 0.5 | Medium correction | 1.25 ml pH adjuster |
+| pH 0.6+ | Maximum correction | 1.5 ml pH adjuster (cap) |
 
 ### Feeding Frequency (Conservative Settings)
 
@@ -111,9 +129,10 @@ nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at
 
 ### 3. Config Mode
 - **Logic**: Configuration holder only
-- **Function**: Lets the user edit targets, concentrations, flow rates, and calibration values from the UI
+- **Function**: Lets the user edit targets, full-tank recipe amounts, pump flow rates, and calibration values from the UI
 - **Safety**: Does not actively dose nutrients or pH solutions
 - **Use Case**: Setup, maintenance, testing, and safe manual preparation
+- **Note**: The `ml/L` concentration values are now shown as **read-only sensors** that are calculated from the configured full-tank recipe.
 
 ## Active Feed Modes
 
@@ -150,66 +169,66 @@ It does **not** disable:
 
 ### Plant-Specific Nutrient Profiles
 
-#### Cannabis Nutrient Profile
+#### Cannabis Nutrient Profile (example for a 100 L tank)
 ```python
 CANNABIS_PROFILE = {
     "germ": {
         "ph_target": 6.0,
         "ec_target": 0.4,
-        "nutrients_ml_per_liter": {
-            "A": 0.4,  # Nitrogen-rich vegetative
-            "B": 0.3,  # Phosphorus/potassium bloom
-            "C": 0.2,  # Micro nutrients
-            "X": 0.0,  # Optional additives (set > 0 to enable)
-            "Y": 0.0   # Optional additives (set > 0 to enable)
+        "full_tank_ml": {  # ml for a completely full 100 L tank
+            "A": 40,   # 0.4 ml/L
+            "B": 30,   # 0.3 ml/L
+            "C": 20,   # 0.2 ml/L
+            "X": 0,    # Optional additives (set > 0 to enable)
+            "Y": 0     # Optional additives (set > 0 to enable)
         }
     },
     "veg": {
         "ph_target": 5.8,
         "ec_target": 1.2,
-        "nutrients_ml_per_liter": {
-            "A": 2.0,  # High nitrogen for growth
-            "B": 1.0,  # Moderate P/K
-            "C": 0.8,  # Micro nutrients
-            "X": 0.0,  # Optional additives (set > 0 to enable)
-            "Y": 0.0   # Optional additives (set > 0 to enable)
+        "full_tank_ml": {  # ml for a completely full 100 L tank
+            "A": 200,  # 2.0 ml/L
+            "B": 100,  # 1.0 ml/L
+            "C": 80,   # 0.8 ml/L
+            "X": 0,
+            "Y": 0
         }
     },
     "flower": {
         "ph_target": 6.0,
         "ec_target": 2.2,
-        "nutrients_ml_per_liter": {
-            "A": 1.2,  # Reduced nitrogen
-            "B": 3.0,  # High P/K for flowering
-            "C": 1.5,  # Enhanced micros
-            "X": 0.5,  # Bloom booster example
-            "Y": 0.3   # Enzyme additive example
+        "full_tank_ml": {  # ml for a completely full 100 L tank
+            "A": 120,  # 1.2 ml/L
+            "B": 300,  # 3.0 ml/L
+            "C": 150,  # 1.5 ml/L
+            "X": 50,   # Bloom booster example
+            "Y": 30    # Enzyme additive example
         }
     }
 }
 ```
 
 **X and Y Pump Examples**:
-- **X Pump**: Bloom boosters, flowering enhancers, PK boosters (e.g., 0.5-1.0 ml/L during flowering)
-- **Y Pump**: Enzymes, beneficial bacteria, root stimulants (e.g., 0.2-0.5 ml/L throughout growth)
+- **X Pump**: Bloom boosters, flowering enhancers, PK boosters (e.g. 50-100 ml per 100 L tank during flowering)
+- **Y Pump**: Enzymes, beneficial bacteria, root stimulants (e.g. 20-50 ml per 100 L tank throughout growth)
 
-#### Tomato Nutrient Profile
+#### Tomato Nutrient Profile (example for a 100 L tank)
 ```python
 TOMATO_PROFILE = {
     "germ": {
         "ph_target": 6.0,
         "ec_target": 0.5,
-        "nutrients_ml_per_liter": {"A": 0.5, "B": 0.3, "C": 0.2}
+        "full_tank_ml": {"A": 50, "B": 30, "C": 20}
     },
     "veg": {
         "ph_target": 6.0,
         "ec_target": 2.0,
-        "nutrients_ml_per_liter": {"A": 2.5, "B": 1.5, "C": 1.0}
+        "full_tank_ml": {"A": 250, "B": 150, "C": 100}
     },
     "flower": {
         "ph_target": 6.2,
         "ec_target": 2.8,
-        "nutrients_ml_per_liter": {"A": 1.5, "B": 3.0, "C": 1.5}
+        "full_tank_ml": {"A": 150, "B": 300, "C": 150}
     }
 }
 ```
@@ -221,14 +240,15 @@ TOMATO_PROFILE = {
 async def prepare_nutrient_solution(self, target_profile: Dict[str, Any]) -> bool:
     """Automatically prepare nutrient solution to target specifications."""
 
-    # 1. Calculate required volumes
+    # 1. Calculate required volumes from full-tank recipe
     tank_volume_liters = self.get_tank_volume()
     target_ec = target_profile["ec_target"]
     target_ph = target_profile["ph_target"]
 
     nutrient_volumes = {}
-    for nutrient_type, ml_per_liter in target_profile["nutrients_ml_per_liter"].items():
-        nutrient_volumes[nutrient_type] = ml_per_liter * tank_volume_liters
+    for nutrient_type, full_tank_ml in target_profile["full_tank_ml"].items():
+        concentration = full_tank_ml / tank_volume_liters
+        nutrient_volumes[nutrient_type] = concentration * tank_volume_liters
 
     # 2. Start with base water
     await self.fill_tank_with_water(tank_volume_liters)
@@ -359,10 +379,10 @@ def _calculate_ec_adjustment(self, current_ec: Optional[float], target_ec: float
 async def _perform_proportional_feeding(self, ec_adjustment: Dict, ph_adjustment: Dict) -> bool:
     """Execute proportional feeding based on calculated adjustments."""
 
-    # Feed nutrients if needed
+    # Feed nutrients if needed, using scale_factor from EC deviation
     if ec_adjustment.get('nutrients_needed', False):
-        nutrient_dose = ec_adjustment['nutrient_dose_ml']
-        await self.event_manager.emit("DoseNutrients", {'dose_ml': nutrient_dose})
+        scale_factor = ec_adjustment['scale_factor']  # 0.0 - 1.0
+        await self.event_manager.emit("DoseNutrients", {'scale_factor': scale_factor})
 
     # Adjust pH if needed
     if ph_adjustment.get('ph_down_needed', False):
@@ -375,6 +395,17 @@ async def _perform_proportional_feeding(self, ec_adjustment: Dict, ph_adjustment
 
     return True
 ```
+
+#### Full Recipe Dosing
+For filling or re-preparing a tank, use the `dose_full_recipe` service. It doses the complete recipe for the current water volume without checking the EC deviation:
+
+```yaml
+service: opengrowbox.dose_full_recipe
+data:
+  room: "FlowerTent"
+```
+
+Internally this emits the `DoseFullRecipe` event, which runs the same concentration-based dosing logic but with a `scale_factor` of `1.0`.
 
 ## Feeding Schedules
 
@@ -494,12 +525,12 @@ class PumpCalibration:
 - `switch.feedpump_pm` - pH Up (pH+)
 
 **X and Y Pump Integration**:
-- **Automatic Inclusion**: X and Y pumps are automatically included in the dosing sequence when their concentration is set > 0
-- **Concentration-Based Dosing**: Like main nutrients (A, B, C), X and Y pumps use concentration-based dosing (ml/L)
+- **Automatic Inclusion**: X and Y pumps are automatically included in the dosing sequence when their full-tank amount is set > 0
+- **Concentration-Based Dosing**: Like main nutrients (A, B, C), X and Y pumps use concentration-based dosing (ml/L) derived from the full-tank recipe
 - **Dosing Order**: A → B → C → X → Y (if enabled, with 90-second intervals between each)
 - **Auto-Calibration**: X and Y pumps are automatically calibrated when they are dosed
 - **Use Cases**: Additional additives, bloom boosters, enzymes, supplements, or custom nutrient blends
-- **Configuration**: Set `OGB_Nutrient_Concentration_X` or `OGB_Nutrient_Concentration_Y` to > 0 to enable
+- **Configuration**: Set `OGB_Feed_Nutrient_X` or `OGB_Feed_Nutrient_Y` to > 0 to enable
 
 #### Automatic Calibration Management
 ```python
@@ -781,18 +812,23 @@ async def calibrate_pump(self, pump_id: str):
 - Dosing time is calculated as: `time_seconds = desired_volume_ml / flow_rate_ml_per_s`
 - A higher calibration_factor means a faster pump (shorter dosing time)
 - All 8 pump types (A, B, C, W, X, Y, pH-, pH+) are calibrated independently
-- **X and Y pumps** are automatically included in dosing when their concentration > 0
-- **Concentration-based dosing**: `ml_dose = tank_volume_L × concentration_ml_per_L`
+- **Primary recipe input**: enter the **ml for a full tank** for each component; the system derives the concentration automatically
+- **X and Y pumps** are automatically included in dosing when their full-tank amount > 0
+- **Concentration-based dosing**: `ml_dose = current_water_volume_L × (full_tank_ml / reservoir_volume_L)`
 - **Dosing sequence**: A → B → C → X → Y (90-second intervals between each)
+- **Full Recipe service**: `opengrowbox.dose_full_recipe` for filling or re-preparing a tank
 
 ---
 
 ## New Proportional Features Summary
 
 ### ✅ Implemented Features
-- **Concentration-Based Dosing**: Precise dosing based on nutrient concentration (ml/L) and tank volume
-- **Proportional Dosing**: Dose amounts scale with deviation severity
-- **X and Y Pump Support**: Custom pumps automatically included when concentration > 0
+- **Full-Tank Recipe Input**: Enter component amounts in ml for a full tank; the system derives the concentration
+- **Concentration-Based Dosing**: Precise dosing based on derived concentration (ml/L) and current water volume
+- **Read-Only Concentration Sensors**: `OGB_Nutrient_Concentration_*` now display the calculated ml/L, no longer editable as numbers
+- **Proportional Dosing**: Dose amounts scale with EC deviation via a 0.0–1.0 scale factor
+- **Full Recipe Service**: `opengrowbox.dose_full_recipe` for filling or re-preparing a tank
+- **X and Y Pump Support**: Custom pumps automatically included when full-tank amount > 0
 - **Dead Zone Logic**: Prevents unnecessary micro-adjustments (< 8% EC, < 0.2 pH)
 - **Conservative Dosing**: 60-minute minimum intervals, maximum 6 doses/day
 - **Advanced Calibration**: Auto-recalibration with accuracy scoring for all 8 pump types
@@ -800,7 +836,7 @@ async def calibrate_pump(self, pump_id: str):
 - **Parameter Validation**: Comprehensive validation with plant stage adaptation
 
 ### 🔧 Key Improvements
-- **Prevents Over-Fertilization**: Conservative dosing with larger dead zones
+- **Prevents Over-Fertilization**: Small EC deviations now result in a small fraction of the full recipe, not arbitrary ml doses
 - **Stable Control**: Less frequent adjustments prevent oscillation
 - **Equipment Protection**: Reduced pump cycling (max 6x/day vs 12x/day)
 - **Calibration Accuracy**: Automatic validation and adjustment
@@ -815,12 +851,13 @@ async def calibrate_pump(self, pump_id: str):
 - **Dead Zones**: 8% EC tolerance, 0.2 pH tolerance
 - **Pump Calibration**: 8 pump types (A, B, C, W, X, Y, pH-, pH+), 30-day validity, 80% accuracy threshold
 - **Calibration Factor**: Flow rate in ml/s (default: 0.5 ml/s), used for time calculation
-- **Concentration-Based Dosing**: Automatic scaling based on tank volume (ml = volume_L × concentration_ml_per_L)
-- **X and Y Pumps**: Automatically included when concentration > 0, dosed in sequence A → B → C → X → Y
+- **Full-Tank Recipe Input**: `OGB_Feed_Nutrient_*` in ml for a full tank
+- **Concentration-Based Dosing**: `ml_dose = current_water_volume_L × (full_tank_ml / reservoir_volume_L)`
+- **X and Y Pumps**: Automatically included when full-tank amount > 0, dosed in sequence A → B → C → X → Y
 - **Inter-Nutrient Delay**: 90 seconds between each nutrient to prevent mixing issues
 
 ---
 
-**Last Updated**: April 7, 2026
-**Version**: 3.2 (Concentration-Based Dosing with X/Y Pump Support)
+**Last Updated**: July 10, 2026
+**Version**: 3.3 (Full-Tank Recipe Input with Read-Only Concentration Sensors)
 **Status**: Production Ready with Conservative Settings

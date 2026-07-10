@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
+import asyncio
 
 import pytest
 
@@ -232,7 +233,7 @@ async def test_dose_nutrients_proportional_tracks_ec():
     
     manager._dose_nutrients_with_concentration = mock_dose
     
-    await manager._dose_nutrients_proportional({"dose_ml": 5.0})
+    await manager._dose_nutrients_proportional({"scale_factor": 1.0})
     
     # Wait for async sleep
     await asyncio.sleep(0.1)
@@ -249,7 +250,7 @@ async def test_dose_nutrients_proportional_skips_if_dose_zero():
     event_manager = FakeEventManager()
     manager = _manager_stub(event_manager=event_manager)
     
-    await manager._dose_nutrients_proportional({"dose_ml": 0.0})
+    await manager._dose_nutrients_proportional({"scale_factor": 0.0})
     
     # Should not add to history
     assert len(manager.feed_history) == 0
@@ -260,7 +261,7 @@ async def test_dose_nutrients_proportional_skips_if_dose_negative():
     event_manager = FakeEventManager()
     manager = _manager_stub(event_manager=event_manager)
     
-    await manager._dose_nutrients_proportional({"dose_ml": -1.0})
+    await manager._dose_nutrients_proportional({"scale_factor": -1.0})
     
     # Should not add to history
     assert len(manager.feed_history) == 0
@@ -444,17 +445,21 @@ def test_load_nutrient_concentrations_loads_from_datastore():
 
 
 def test_load_nutrient_concentrations_uses_defaults():
-    """Test that default concentrations are used when not in DataStore"""
+    """Test that concentrations default to 0.0 when not in DataStore.
+
+    Defaults are now 0.0 because the primary recipe input is the full-tank
+    amount (Nut_*_ml).  Concentrations are derived from that input.
+    """
     store = FakeDataStore()
     manager = _manager_stub(store)
-    
+
     manager._load_nutrient_concentrations()
-    
-    # Verify defaults were used
-    assert manager.nutrient_concentrations["A"] == 2.0
-    assert manager.nutrient_concentrations["B"] == 2.0
-    assert manager.nutrient_concentrations["C"] == 1.0
-    assert manager.nutrient_concentrations["PH_DOWN"] == 0.5
+
+    # Verify defaults are zero (derived from full-tank recipe when needed)
+    assert manager.nutrient_concentrations["A"] == 0.0
+    assert manager.nutrient_concentrations["B"] == 0.0
+    assert manager.nutrient_concentrations["C"] == 0.0
+    assert manager.nutrient_concentrations["PH_DOWN"] == 0.0
 
 
 def test_calculate_dose_from_concentration():
@@ -858,4 +863,136 @@ async def test_auto_calibrate_with_inaccurate_x_and_y():
     assert manager.pump_calibrations["switch.feedpump_y"].calibration_factor > 1.0
 
 
-import asyncio
+@pytest.mark.asyncio
+async def test_derive_nutrient_concentrations_from_full_tank():
+    """Test that ml/L concentrations are derived from full-tank amounts."""
+    store = FakeDataStore({
+        "Hydro": {
+            "ReservoirVolume": 100.0,
+            "Nut_A_ml": 200.0,
+            "Nut_B_ml": 120.0,
+            "Nut_C_ml": 80.0,
+        }
+    })
+    manager = _manager_stub(store)
+    manager.reservoir_volume_liters = 100.0
+    manager.nutrient_concentrations = {"A": 0.0, "B": 0.0, "C": 0.0}
+    manager.nutrients = {"A": 200.0, "B": 120.0, "C": 80.0}
+
+    manager._derive_nutrient_concentrations_from_full_tank()
+
+    assert abs(manager.nutrient_concentrations["A"] - 2.0) < 0.001
+    assert abs(manager.nutrient_concentrations["B"] - 1.2) < 0.001
+    assert abs(manager.nutrient_concentrations["C"] - 0.8) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_explicit_concentration_overrides_full_tank_derivation():
+    """Test that explicit Nutrient_Concentration_* values override the derivation."""
+    store = FakeDataStore({
+        "Hydro": {
+            "ReservoirVolume": 100.0,
+            "Nut_A_ml": 200.0,
+            "Nutrient_Concentration_A": 3.0,
+        }
+    })
+    manager = _manager_stub(store)
+    manager.reservoir_volume_liters = 100.0
+    manager.nutrient_concentrations = {"A": 3.0}
+    manager.nutrients = {"A": 200.0}
+
+    manager._derive_nutrient_concentrations_from_full_tank()
+
+    assert abs(manager.nutrient_concentrations["A"] - 3.0) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_dose_nutrients_proportional_scales_with_scale_factor():
+    """Test that proportional dosing uses scale_factor to scale the full recipe dose."""
+    store = FakeDataStore({
+        "Hydro": {
+            "ReservoirLevel": 100.0,
+            "ReservoirVolume": 100.0,
+        }
+    })
+    event_manager = FakeEventManager()
+    manager = _manager_stub(store, event_manager)
+    manager.reservoir_volume_liters = 100.0
+    manager.nutrient_concentrations = {"A": 2.0, "B": 1.0, "C": 0.5}
+    manager.nutrients = {"A": 200.0, "B": 100.0, "C": 50.0}
+    manager.current_ec = 1.0
+
+    dosed_pumps = []
+
+    async def mock_activate_pump(pump_type, run_time, dose_ml):
+        dosed_pumps.append({"pump": pump_type, "dose_ml": dose_ml})
+        return True
+
+    manager._activate_pump = mock_activate_pump
+
+    original_sleep = asyncio.sleep
+    async def mock_sleep(seconds):
+        pass
+
+    asyncio.sleep = mock_sleep
+
+    try:
+        await manager._dose_nutrients_proportional({"scale_factor": 0.25})
+    finally:
+        asyncio.sleep = original_sleep
+
+    # Full recipe would be 200ml, 100ml, 50ml. With scale factor 0.25 we expect
+    # 50ml, 25ml, 12.5ml (capped by max_dose_ml in production, but the test pump
+    # receives the raw calculated dose).
+    assert len(dosed_pumps) == 3
+    by_pump = {p["pump"]: p["dose_ml"] for p in dosed_pumps}
+    assert abs(by_pump[PumpType.NUTRIENT_A] - 50.0) < 0.001
+    assert abs(by_pump[PumpType.NUTRIENT_B] - 25.0) < 0.001
+    assert abs(by_pump[PumpType.NUTRIENT_C] - 12.5) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_dose_full_recipe_doses_full_concentration_based_amount():
+    """Test that the full recipe service doses the complete recipe for the current volume."""
+    store = FakeDataStore({
+        "Hydro": {
+            "ReservoirLevel": 50.0,
+            "ReservoirVolume": 100.0,
+        }
+    })
+    event_manager = FakeEventManager()
+    manager = _manager_stub(store, event_manager)
+    manager.reservoir_volume_liters = 100.0
+    manager.nutrient_concentrations = {"A": 2.0, "B": 1.0, "C": 0.5}
+    manager.nutrients = {"A": 200.0, "B": 100.0, "C": 50.0}
+    manager.current_ec = 1.0
+
+    dosed_pumps = []
+
+    async def mock_activate_pump(pump_type, run_time, dose_ml):
+        dosed_pumps.append({"pump": pump_type, "dose_ml": dose_ml})
+        return True
+
+    manager._activate_pump = mock_activate_pump
+
+    original_sleep = asyncio.sleep
+    async def mock_sleep(seconds):
+        pass
+
+    asyncio.sleep = mock_sleep
+
+    try:
+        await manager._dose_full_recipe()
+    finally:
+        asyncio.sleep = original_sleep
+
+    # 50% tank level means half the full-tank dose
+    assert len(dosed_pumps) == 3
+    by_pump = {p["pump"]: p["dose_ml"] for p in dosed_pumps}
+    assert abs(by_pump[PumpType.NUTRIENT_A] - 100.0) < 0.001
+    assert abs(by_pump[PumpType.NUTRIENT_B] - 50.0) < 0.001
+    assert abs(by_pump[PumpType.NUTRIENT_C] - 25.0) < 0.001
+
+    # Verify feed history marks this as a full recipe dose
+    assert len(manager.feed_history) == 1
+    assert manager.feed_history[0].get("full_recipe") is True

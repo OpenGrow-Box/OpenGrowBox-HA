@@ -321,21 +321,14 @@ class OGBFeedParameterManager:
             "veg": {
                 "EC_Target": 1.8,
                 "PH_Target": 5.8,
-                "Nut_A_ml": 1.5,  # Higher veg nutrient
-                "Nut_B_ml": 0.8,  # Lower flower nutrient
             },
             "flower": {
                 "EC_Target": 2.2,
                 "PH_Target": 5.8,
-                "Nut_A_ml": 1.0,  # Balanced nutrients
-                "Nut_B_ml": 1.2,  # Higher flower nutrient
             },
             "flush": {
                 "EC_Target": 0.8,
                 "PH_Target": 5.8,
-                "Nut_A_ml": 0.0,  # No nutrients during flush
-                "Nut_B_ml": 0.0,
-                "Nut_C_ml": 0.0,
             },
         }
 

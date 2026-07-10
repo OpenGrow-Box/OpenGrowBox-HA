@@ -31,10 +31,21 @@ def test_calculate_ec_adjustment_deadzone_and_cap():
 
     small = manager._calculate_ec_adjustment(current_ec=1.97, target_ec=2.0)
     assert small["nutrients_needed"] is False
+    assert small["scale_factor"] == 0.0
 
     large = manager._calculate_ec_adjustment(current_ec=1.0, target_ec=2.0)
     assert large["nutrients_needed"] is True
-    assert 0 < large["nutrient_dose_ml"] <= 5.0
+    assert 0 < large["scale_factor"] <= 1.0
+
+    # 10% deviation should scale roughly between 0 and 1
+    medium = manager._calculate_ec_adjustment(current_ec=1.8, target_ec=2.0)
+    assert medium["nutrients_needed"] is True
+    assert 0 < medium["scale_factor"] < 1.0
+
+    # Exactly at 25% deviation -> full scale
+    full = manager._calculate_ec_adjustment(current_ec=1.5, target_ec=2.0)
+    assert full["nutrients_needed"] is True
+    assert full["scale_factor"] == 1.0
 
 
 def test_calculate_ph_adjustment_up_and_down():

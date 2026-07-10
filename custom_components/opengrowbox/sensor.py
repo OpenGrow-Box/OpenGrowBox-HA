@@ -36,7 +36,7 @@ class CustomSensor(RestoreEntity):
     _attr_has_entity_name = False
 
     def __init__(
-        self, name, room_name, coordinator, initial_value=None, device_class=None, should_restore=True
+        self, name, room_name, coordinator, initial_value=None, device_class=None, should_restore=True, unit_of_measurement=None
     ):
         """Initialize the sensor."""
 
@@ -46,6 +46,7 @@ class CustomSensor(RestoreEntity):
         self.room_name = room_name
         self.coordinator = coordinator  # Store coordinator reference for premium features
         self._device_class = device_class  # e.g., temperature, humidity, light
+        self._custom_unit = unit_of_measurement
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
         self._attr_unique_id = self._unique_id
         self._should_restore = should_restore  # Control state restoration
@@ -84,6 +85,8 @@ class CustomSensor(RestoreEntity):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement for this sensor."""
+        if self._custom_unit:
+            return self._custom_unit
         if self._device_class == "temperature":
             return "°C"
         elif self._device_class == "humidity":
@@ -379,6 +382,61 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             initial_value=0.0,
             device_class="energy",
         ),
+        # Calculated nutrient concentrations (read-only) - derived from full-tank recipe
+        CustomSensor(
+            f"OGB_Nutrient_Concentration_A_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class=None,
+            should_restore=True,
+            unit_of_measurement="ml/L",
+        ),
+        CustomSensor(
+            f"OGB_Nutrient_Concentration_B_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class=None,
+            should_restore=True,
+            unit_of_measurement="ml/L",
+        ),
+        CustomSensor(
+            f"OGB_Nutrient_Concentration_C_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class=None,
+            should_restore=True,
+            unit_of_measurement="ml/L",
+        ),
+        CustomSensor(
+            f"OGB_Nutrient_Concentration_PH_Down_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class=None,
+            should_restore=True,
+            unit_of_measurement="ml/L",
+        ),
+        CustomSensor(
+            f"OGB_Nutrient_Concentration_X_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class=None,
+            should_restore=True,
+            unit_of_measurement="ml/L",
+        ),
+        CustomSensor(
+            f"OGB_Nutrient_Concentration_Y_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            initial_value=0.0,
+            device_class=None,
+            should_restore=True,
+            unit_of_measurement="ml/L",
+        ),
     ]
 
     # Register the sensors globally in hass.data
@@ -582,6 +640,45 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             }, extra=vol.ALLOW_EXTRA),
         )
         _LOGGER.debug(f"✅ Registered {DOMAIN}.finish_grow service")
+
+    # Register dose_full_recipe service
+    if not hass.services.has_service(DOMAIN, "dose_full_recipe"):
+        async def handle_dose_full_recipe(call):
+            """Handle dose_full_recipe service - emits DoseFullRecipe event for the room."""
+            room = call.data.get("room")
+
+            _LOGGER.warning(f"🔍 SERVICE CALL: dose_full_recipe for room '{room}'")
+
+            # Get coordinator for this room
+            coordinator = None
+            for entry_id, coord in hass.data[DOMAIN].items():
+                if entry_id != "sensors" and hasattr(coord, 'room_name'):
+                    if coord.room_name == room:
+                        coordinator = coord
+                        _LOGGER.warning(f"✅ Found coordinator for room: {room}")
+                        break
+
+            if not coordinator:
+                if _handle_missing_coordinator(room, [k for k in hass.data[DOMAIN].keys()]):
+                    return
+                return
+
+            try:
+                _LOGGER.warning(f"📤 Emitting DoseFullRecipe event for room: {room}")
+                await coordinator.OGB.eventManager.emit("DoseFullRecipe", {"room": room}, haEvent=True)
+                _LOGGER.warning(f"✅ Emitted DoseFullRecipe event for room: {room}")
+            except Exception as e:
+                _LOGGER.error(f"❌ Failed to emit DoseFullRecipe event: {e}", exc_info=True)
+
+        hass.services.async_register(
+            DOMAIN,
+            "dose_full_recipe",
+            handle_dose_full_recipe,
+            schema=vol.Schema({
+                vol.Required("room"): str,
+            }),
+        )
+        _LOGGER.debug(f"✅ Registered {DOMAIN}.dose_full_recipe service")
 
     # Register EnergyUpdate event listener to update energy sensors
     async def handle_energy_update(event_data):

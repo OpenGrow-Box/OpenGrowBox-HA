@@ -278,7 +278,7 @@ class OGBFeedLogicManager:
                     self.daily_feed_count += 1
                     _LOGGER.debug(
                         f"{self.room} - Proportional feeding completed: "
-                        f"EC nutrients={ec_adjustment.get('nutrient_dose_ml', 0):.2f}ml, "
+                        f"EC scale_factor={ec_adjustment.get('scale_factor', 0):.2f}, "
                         f"pH down={ph_adjustment.get('ph_down_dose_ml', 0):.2f}ml, "
                         f"pH up={ph_adjustment.get('ph_up_dose_ml', 0):.2f}ml"
                     )
@@ -294,27 +294,30 @@ class OGBFeedLogicManager:
         """
         Calculate proportional nutrient adjustment needed for EC correction.
 
-        Returns:
-            Dict with 'nutrients_needed' and 'nutrient_dose_ml' keys
+        Returns a scale_factor between 0.0 and 1.0.  The TankFeedManager multiplies
+        the full concentration-based recipe by this factor, so small EC deviations
+        result in small partial doses and large deviations result in full doses.
         """
         if current_ec is None:
-            return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
+            return {'nutrients_needed': False, 'scale_factor': 0.0}
 
         deviation = abs(current_ec - target_ec) / target_ec
 
         # Dead zone - don't adjust for small deviations
-        if deviation < 0.08:  # 8% tolerance (increased from 3%)
-            return {'nutrients_needed': False, 'nutrient_dose_ml': 0.0}
+        if deviation < 0.08:  # 8% tolerance
+            return {'nutrients_needed': False, 'scale_factor': 0.0}
 
-        # Proportional dosing: more deviation = more nutrients
-        # Base dose for 5% deviation = 1.5ml per nutrient type (reduced from 2.5ml)
-        base_dose_per_5_percent = 1.5
-        dose_multiplier = deviation / 0.05  # Normalize to 5% deviation
-        nutrient_dose_ml = min(base_dose_per_5_percent * dose_multiplier, 5.0)  # Cap at 5ml (reduced from 10ml)
+        # Scale linearly between 8% deviation (no dose) and 25% deviation (full dose)
+        # 25%+ deviation triggers the full calculated recipe.
+        if deviation >= 0.25:
+            scale_factor = 1.0
+        else:
+            scale_factor = (deviation - 0.08) / (0.25 - 0.08)
+            scale_factor = max(0.0, min(1.0, scale_factor))
 
         return {
             'nutrients_needed': True,
-            'nutrient_dose_ml': nutrient_dose_ml
+            'scale_factor': scale_factor,
         }
 
     def _calculate_ph_adjustment(self, current_ph: Optional[float], target_ph: float) -> Dict[str, Any]:
@@ -373,9 +376,9 @@ class OGBFeedLogicManager:
             # Feed nutrients if needed
             nutrients_dosed = False
             if ec_adjustment.get('nutrients_needed', False):
-                nutrient_dose = ec_adjustment['nutrient_dose_ml']
-                await self.event_manager.emit("DoseNutrients", {'dose_ml': nutrient_dose})
-                _LOGGER.debug(f"{self.room} - Dosed {nutrient_dose:.2f}ml nutrients")
+                scale_factor = ec_adjustment.get('scale_factor', 0.0)
+                await self.event_manager.emit("DoseNutrients", {'scale_factor': scale_factor})
+                _LOGGER.debug(f"{self.room} - Dosed nutrients with scale_factor={scale_factor:.2f}")
                 nutrients_dosed = True
 
             # Schedule pH adjustment with delay if needed

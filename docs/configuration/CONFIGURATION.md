@@ -264,49 +264,68 @@ The OpenGrowBox Tank Feed Manager provides automated nutrient dosing with precis
 - `OGB_Pump_FlowRate_PH_Down` - pH- down pump flow rate (default: 10.0 ml/min)
 - `OGB_Pump_FlowRate_PH_Up` - pH+ up pump flow rate (default: 10.0 ml/min)
 
-**Nutrient Concentrations (ml/L):**
-- `OGB_Nutrient_Concentration_A` - Nutrient A concentration (default: 2.0 ml/L)
-- `OGB_Nutrient_Concentration_B` - Nutrient B concentration (default: 2.0 ml/L)
-- `OGB_Nutrient_Concentration_C` - Nutrient C concentration (default: 1.0 ml/L)
-- `OGB_Nutrient_Concentration_X` - Custom X nutrient concentration (default: 0.0 ml/L, set > 0 to enable)
-- `OGB_Nutrient_Concentration_Y` - Custom Y nutrient concentration (default: 0.0 ml/L, set > 0 to enable)
-- `OGB_Nutrient_Concentration_PH_Down` - pH- down concentration (default: 0.5 ml/L)
+**Full-Tank Recipe Amounts (ml):**
+- `OGB_Feed_Nutrient_A` - ml of Nutrient A for a full tank (default: 200.0 ml)
+- `OGB_Feed_Nutrient_B` - ml of Nutrient B for a full tank (default: 100.0 ml)
+- `OGB_Feed_Nutrient_C` - ml of Nutrient C for a full tank (default: 100.0 ml)
+- `OGB_Feed_Nutrient_PH` - ml of pH adjuster for a full tank (default: 50.0 ml)
+- `OGB_Feed_Nutrient_W` - ml of Nutrient W for a full tank (default: 0.0 ml)
+- `OGB_Feed_Nutrient_X` - ml of Custom X for a full tank (default: 0.0 ml, set > 0 to enable)
+- `OGB_Feed_Nutrient_Y` - ml of Custom Y for a full tank (default: 0.0 ml, set > 0 to enable)
+
+**Calculated Concentration Sensors (read-only, ml/L):**
+- `OGB_Nutrient_Concentration_A` - calculated ml/L derived from `OGB_Feed_Nutrient_A / OGB_Reservoir_Volume_L`
+- `OGB_Nutrient_Concentration_B` - calculated ml/L derived from `OGB_Feed_Nutrient_B / OGB_Reservoir_Volume_L`
+- `OGB_Nutrient_Concentration_C` - calculated ml/L derived from `OGB_Feed_Nutrient_C / OGB_Reservoir_Volume_L`
+- `OGB_Nutrient_Concentration_X` - calculated ml/L derived from `OGB_Feed_Nutrient_X / OGB_Reservoir_Volume_L`
+- `OGB_Nutrient_Concentration_Y` - calculated ml/L derived from `OGB_Feed_Nutrient_Y / OGB_Reservoir_Volume_L`
+- `OGB_Nutrient_Concentration_PH_Down` - calculated ml/L derived from `OGB_Feed_Nutrient_PH / OGB_Reservoir_Volume_L`
 
 **Reservoir Configuration:**
 - `OGB_Reservoir_Volume_L` - Tank volume in liters (default: 50L)
 
 #### How It Works
 
-1. **Concentration-Based Dosing:**
-    - System calculates exact nutrient amounts: `ml = Tank Volume (L) × Concentration (ml/L)`
-    - Example: 100L tank × 2.0 ml/L = 200ml Nutrient A
-    - Pump time: `200ml ÷ 50 ml/min = 4 minutes`
-    - **X and Y Pumps:** Automatically included in dosing sequence when concentration > 0
+1. **Full-Tank Recipe Input:**
+    - Enter how many ml of each component are needed for a **completely full tank**.
+    - The system calculates the concentration: `Concentration (ml/L) = full_tank_ml / ReservoirVolume_L`
+    - For dosing, the recipe is scaled to the current water volume: `ml_dose = Concentration × current_water_volume_L`
+    - Example: 100L tank, 200ml A configured → `2.0 ml/L`. At 50% fill level, 50ml A is dosed.
+    - **X and Y Pumps:** Automatically included in dosing sequence when their full-tank amount > 0
     - Dosing order: A → B → C → X → Y (if enabled)
-    - Pumps with concentration = 0 are automatically skipped
+    - Pumps with full-tank amount = 0 are automatically skipped
 
-2. **Automatic Calibration:**
+2. **Concentration Sensors:**
+    - The `OGB_Nutrient_Concentration_*` sensors are **read-only** and show the calculated ml/L.
+    - They update automatically when the full-tank recipe or the reservoir volume changes.
+
+3. **Full Recipe Service:**
+    - Service: `opengrowbox.dose_full_recipe`
+    - Use this when filling or re-preparing a tank to dose the complete recipe for the current water volume.
+    - Example service call data: `{"room": "FlowerTent"}`
+
+4. **Automatic Calibration:**
     - System measures EC before and after each feed
     - Calculates pump accuracy: `(actual EC change) ÷ (expected EC change)`
     - Automatically adjusts calibration factors (0.5x to 2.0x range)
     - **X and Y Pumps:** Calibrated automatically when they were dosed
     - Notifies user if accuracy < 70% or > 130%
 
-3. **Rate Limiting:**
+5. **Rate Limiting:**
     - Minimum 4 hours between feeds
     - Maximum 6 feeds per day
     - 90 seconds between nutrients (A → B → C → X → Y)
     - 15 minutes delay before pH adjustment
 
-4. **Reservoir Monitoring:**
+6. **Reservoir Monitoring:**
     - Low level alert: < 25%
     - High level alert: > 85%
     - Water level stored in `Hydro.ReservoirLevel` (percentage)
     - Auto-fill system (optional, requires Feedpump_W)
 
-5. **Custom Nutrients (X and Y Pumps):**
+7. **Custom Nutrients (X and Y Pumps):**
     - Use X and Y pumps for additional additives (boosters, enzymes, etc.)
-    - Set concentration > 0 to include in automatic dosing
+    - Set full-tank amount > 0 to include in automatic dosing
     - Automatically scaled based on tank volume
     - Same safety and calibration features as main nutrients
 

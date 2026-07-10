@@ -241,3 +241,13 @@ get_device_proposals:
       description: Der Raum, für den Vorschläge abgefragt werden sollen (optional).
       required: false
       example: dev_room
+
+dose_full_recipe:
+  name: Dose Full Recipe
+  description: Dose the complete nutrient recipe for the current water volume. Intended for filling or re-preparing a tank.
+  fields:
+    room:
+      name: Room
+      description: The room/tent name for which the full recipe should be dosed.
+      required: true
+      example: FlowerTent

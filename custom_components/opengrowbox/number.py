@@ -25,10 +25,14 @@ class CustomNumber(NumberEntity, RestoreEntity):
         step,
         unit,
         initial_value=None,
+        display_name=None,
     ):
         """Initialize the number entity."""
         self._name = name
-        self._attr_name = display_name_from_raw(name, room_name)
+        if display_name:
+            self._attr_name = display_name
+        else:
+            self._attr_name = display_name_from_raw(name, room_name)
         self.room_name = room_name
         self._min_value = min_value
         self._max_value = max_value
@@ -1156,67 +1160,87 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             initial_value=50.0,
         ),
         # ============================================================
-        # NUTRIENT CONCENTRATIONS (ml/L) - For consistent nutrient ratios
+        # FULL-TANK NUTRIENT AMOUNTS (ml) - Primary recipe input
+        # These define how many ml of each component are needed for a
+        # completely full tank (ReservoirVolume). The per-liter concentration
+        # is derived from these values automatically.
         # ============================================================
         CustomNumber(
-            f"OGB_Nutrient_Concentration_A_{coordinator.room_name}",
+            f"OGB_Feed_Nutrient_A_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             min_value=0.0,
-            max_value=10.0,
-            step=0.1,
-            unit="ml/L",
-            initial_value=2.0,
+            max_value=1000.0,
+            step=1.0,
+            unit="ml",
+            initial_value=200.0,
+            display_name=f"Feed Nutrient A Full Tank ({coordinator.room_name})",
         ),
         CustomNumber(
-            f"OGB_Nutrient_Concentration_B_{coordinator.room_name}",
+            f"OGB_Feed_Nutrient_B_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             min_value=0.0,
-            max_value=10.0,
-            step=0.1,
-            unit="ml/L",
-            initial_value=2.0,
+            max_value=1000.0,
+            step=1.0,
+            unit="ml",
+            initial_value=100.0,
+            display_name=f"Feed Nutrient B Full Tank ({coordinator.room_name})",
         ),
         CustomNumber(
-            f"OGB_Nutrient_Concentration_C_{coordinator.room_name}",
+            f"OGB_Feed_Nutrient_C_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             min_value=0.0,
-            max_value=10.0,
-            step=0.1,
-            unit="ml/L",
-            initial_value=1.0,
+            max_value=1000.0,
+            step=1.0,
+            unit="ml",
+            initial_value=100.0,
+            display_name=f"Feed Nutrient C Full Tank ({coordinator.room_name})",
         ),
         CustomNumber(
-            f"OGB_Nutrient_Concentration_PH_Down_{coordinator.room_name}",
+            f"OGB_Feed_Nutrient_PH_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             min_value=0.0,
-            max_value=5.0,
-            step=0.1,
-            unit="ml/L",
-            initial_value=0.5,
+            max_value=500.0,
+            step=1.0,
+            unit="ml",
+            initial_value=50.0,
+            display_name=f"Feed Nutrient pH Full Tank ({coordinator.room_name})",
         ),
         CustomNumber(
-            f"OGB_Nutrient_Concentration_X_{coordinator.room_name}",
+            f"OGB_Feed_Nutrient_W_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             min_value=0.0,
-            max_value=10.0,
-            step=0.1,
-            unit="ml/L",
+            max_value=1000.0,
+            step=1.0,
+            unit="ml",
             initial_value=0.0,
+            display_name=f"Feed Nutrient W Full Tank ({coordinator.room_name})",
         ),
         CustomNumber(
-            f"OGB_Nutrient_Concentration_Y_{coordinator.room_name}",
+            f"OGB_Feed_Nutrient_X_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
             min_value=0.0,
-            max_value=10.0,
-            step=0.1,
-            unit="ml/L",
+            max_value=1000.0,
+            step=1.0,
+            unit="ml",
             initial_value=0.0,
+            display_name=f"Feed Nutrient X Full Tank ({coordinator.room_name})",
+        ),
+        CustomNumber(
+            f"OGB_Feed_Nutrient_Y_{coordinator.room_name}",
+            coordinator.room_name,
+            coordinator,
+            min_value=0.0,
+            max_value=1000.0,
+            step=1.0,
+            unit="ml",
+            initial_value=0.0,
+            display_name=f"Feed Nutrient Y Full Tank ({coordinator.room_name})",
         ),
         # ============================================================
         # SPECIAL LIGHTS - Far Red

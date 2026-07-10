@@ -245,9 +245,13 @@ class OGBTankFeedManager:
         self._load_user_nutrient_configurations()
 
     def _load_user_nutrient_configurations(self):
-        """Load user-configured nutrient values from datastore"""
+        """Load user-configured nutrient amounts for a FULL tank from datastore.
+
+        These values are the ml of each component that should be added when the
+        reservoir is at ReservoirVolume (e.g. 200 ml A for a 100 L tank).  From
+        this the per-liter concentration is derived and used for dosing.
+        """
         try:
-            # Load nutrient concentrations (ml per liter)
             self.nutrients = {
                 "A": float(self.data_store.getDeep("Hydro.Nut_A_ml", 0.0) or 0.0),
                 "B": float(self.data_store.getDeep("Hydro.Nut_B_ml", 0.0) or 0.0),
@@ -258,14 +262,10 @@ class OGBTankFeedManager:
                 "PH": float(self.data_store.getDeep("Hydro.Nut_PH_ml", 0.0) or 0.0),
             }
 
-            # Remove zero values to avoid unnecessary pumping
-            self.nutrients = {k: v for k, v in self.nutrients.items() if v > 0}
-
-            _LOGGER.debug(f"[{self.room}] Loaded user nutrient configurations: {self.nutrients}")
+            _LOGGER.debug(f"[{self.room}] Loaded user full-tank nutrient configurations: {self.nutrients}")
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error loading user nutrient configurations: {e}")
-            # Fallback to empty dict
             self.nutrients = {}
 
         # Current measurements
@@ -312,6 +312,7 @@ class OGBTankFeedManager:
 
         # Proportional dosing events
         self.event_manager.on("DoseNutrients", self._dose_nutrients_proportional)
+        self.event_manager.on("DoseFullRecipe", self._dose_full_recipe)
         self.event_manager.on("DosePHDown", self._dose_ph_down_proportional)
         self.event_manager.on("DosePHUp", self._dose_ph_up_proportional)
 
@@ -372,10 +373,95 @@ class OGBTankFeedManager:
         # Load pump flow rates (ml/min)
         self._load_pump_flow_rates()
         
-        # Load nutrient concentrations (ml/L)
+        # Load nutrient concentrations (ml/L) - may be explicit overrides
         self._load_nutrient_concentrations()
-        
+
+        # Derive any missing concentrations from the user-configured full-tank amounts
+        self._derive_nutrient_concentrations_from_full_tank()
+
+        # Update read-only HA sensors with calculated concentrations
+        self._update_concentration_sensors()
+
         _LOGGER.debug(f"[{self.room}] OGB Feed Manager initialized - Reservoir: {self.reservoir_volume_liters}L, EC Unit: {self.ec_unit.value}")
+
+    def _derive_nutrient_concentrations_from_full_tank(self):
+        """Derive ml/L concentrations from the user-configured full-tank amounts.
+
+        For each nutrient, if no explicit concentration override is set, calculate
+        concentration = full_tank_ml / reservoir_volume_liters.  This gives the
+        user an intuitive way to enter "200 ml A for my 100 L tank" while keeping
+        the existing concentration math intact.
+        """
+        try:
+            if self.reservoir_volume_liters <= 0:
+                _LOGGER.warning(f"[{self.room}] Reservoir volume not set, cannot derive concentrations")
+                return
+
+            full_tank_map = {
+                "A": self.nutrients.get("A", 0.0),
+                "B": self.nutrients.get("B", 0.0),
+                "C": self.nutrients.get("C", 0.0),
+                "X": self.nutrients.get("X", 0.0),
+                "Y": self.nutrients.get("Y", 0.0),
+                "PH_DOWN": self.nutrients.get("PH", 0.0),
+            }
+
+            for nutrient, full_tank_ml in full_tank_map.items():
+                # Only derive if the user supplied a positive full-tank amount
+                if full_tank_ml <= 0:
+                    continue
+
+                # Only derive if there is no explicit concentration override
+                existing = self.nutrient_concentrations.get(nutrient, 0.0)
+                if existing > 0:
+                    _LOGGER.debug(
+                        f"[{self.room}] Keeping explicit concentration for {nutrient}: {existing:.3f} ml/L"
+                    )
+                    continue
+
+                concentration = full_tank_ml / self.reservoir_volume_liters
+                self.nutrient_concentrations[nutrient] = concentration
+                _LOGGER.debug(
+                    f"[{self.room}] Derived concentration for {nutrient}: {full_tank_ml:.1f}ml / "
+                    f"{self.reservoir_volume_liters:.1f}L = {concentration:.3f} ml/L"
+                )
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error deriving nutrient concentrations: {e}")
+
+    def _update_concentration_sensors(self):
+        """Push calculated nutrient concentrations to read-only HA sensors.
+
+        This gives the user immediate feedback on the ml/L concentration that is
+        derived from the configured full-tank recipe. Only runs when hass is
+        available (i.e. not during unit tests).
+        """
+        try:
+            if not self.hass:
+                return
+
+            mapping = {
+                "A": "sensor.ogb_nutrient_concentration_a",
+                "B": "sensor.ogb_nutrient_concentration_b",
+                "C": "sensor.ogb_nutrient_concentration_c",
+                "PH_DOWN": "sensor.ogb_nutrient_concentration_ph_down",
+                "X": "sensor.ogb_nutrient_concentration_x",
+                "Y": "sensor.ogb_nutrient_concentration_y",
+            }
+            room_normalized = self.room.lower().replace(" ", "_")
+            for nutrient, base_entity_id in mapping.items():
+                concentration = self.nutrient_concentrations.get(nutrient, 0.0) or 0.0
+                full_entity_id = f"{base_entity_id}_{room_normalized}"
+                asyncio.create_task(
+                    self.hass.services.async_call(
+                        domain="opengrowbox",
+                        service="update_sensor",
+                        service_data={"entity_id": full_entity_id, "value": round(concentration, 3)},
+                        blocking=False,
+                    )
+                )
+        except Exception as e:
+            _LOGGER.debug(f"[{self.room}] Could not update concentration sensors: {e}")
 
     def _normalize_ec_value(self, ec_raw: float) -> float:
         """
@@ -717,10 +803,25 @@ class OGBTankFeedManager:
 
 
     async def _feed_mode_targets_change(self, data):
-        """Handle changes to feed parameters - delegate to parameter manager"""
+        """Handle changes to feed parameters - delegate to parameter manager and reload local config."""
         await self.feed_parameter_manager.handle_feed_mode_targets_change(data)
+        # Reload nutrient configuration so full-tank amounts and explicit concentrations
+        # are reflected immediately without a restart.
+        await self._reload_nutrient_configuration()
 
-
+    async def _reload_nutrient_configuration(self):
+        """Reload nutrient full-tank amounts and concentrations from dataStore."""
+        try:
+            self._load_user_nutrient_configurations()
+            self._load_nutrient_concentrations()
+            self._derive_nutrient_concentrations_from_full_tank()
+            self._update_concentration_sensors()
+            _LOGGER.debug(
+                f"[{self.room}] Reloaded nutrient configuration: full-tank={self.nutrients}, "
+                f"concentrations={self.nutrient_concentrations}"
+            )
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error reloading nutrient configuration: {e}")
 
     async def _check_if_feed_need(self, payload):
         """Handle incoming hydro sensor values - delegate to feed logic manager"""
@@ -836,28 +937,57 @@ class OGBTankFeedManager:
         return False
 
     async def _dose_nutrients_proportional(self, data: Dict[str, Any]):
-        """Handle proportional nutrient dosing requests with EC tracking using concentration-based dosing."""
+        """Handle proportional nutrient dosing requests with EC tracking using concentration-based dosing.
+
+        The event may provide either a 'scale_factor' (0.0-1.0) or the legacy 'dose_ml' key.
+        scale_factor scales the full concentration-based dose, allowing small EC corrections
+        to use only a fraction of the calculated recipe.
+        """
         try:
             # EC Tracking: Save EC before dosing
             self.feed_ec_before = self.current_ec
             _LOGGER.debug(f"[{self.room}] Starting concentration-based nutrient dosing (EC before: {self.feed_ec_before:.2f})")
 
+            # Determine scale factor.  New callers should pass scale_factor; legacy callers pass
+            # dose_ml (which used to be an absolute amount).  Treat legacy dose_ml as a full dose
+            # to avoid breaking existing integrations.
+            scale_factor = data.get('scale_factor', 1.0)
+            if scale_factor is None and data.get('dose_ml') is not None:
+                scale_factor = 1.0
+                _LOGGER.warning(
+                    f"[{self.room}] Legacy 'dose_ml' received in DoseNutrients event; "
+                    f"treating as full recipe dose.  Please emit 'scale_factor' instead."
+                )
+            try:
+                scale_factor = max(0.0, min(1.0, float(scale_factor)))
+            except (TypeError, ValueError):
+                scale_factor = 1.0
+
             # Calculate doses based on concentration (ml/L) and current tank volume
             nutrient_doses = {}
             nutrients_to_dose = []
-            
-            # Calculate doses for all nutrients with concentration > 0
+
             for nutrient_type in ["A", "B", "C", "X", "Y"]:
                 concentration = self.nutrient_concentrations.get(nutrient_type, 0.0)
                 if concentration > 0 and nutrient_type in self.nutrients and self.nutrients[nutrient_type] > 0:
-                    dose = self._calculate_dose_from_concentration(nutrient_type)
-                    if dose > 0:
-                        nutrient_doses[nutrient_type] = dose
+                    full_dose = self._calculate_dose_from_concentration(nutrient_type)
+                    if full_dose > 0:
+                        scaled_dose = full_dose * scale_factor
+                        nutrient_doses[nutrient_type] = scaled_dose
                         nutrients_to_dose.append(nutrient_type)
-            
+
             if not nutrients_to_dose:
                 _LOGGER.warning(f"[{self.room}] No nutrients with concentration > 0 found to dose")
                 return
+
+            full_dose_summary = ", ".join(
+                f"{k}={self._calculate_dose_from_concentration(k):.1f}ml"
+                for k in nutrients_to_dose
+            )
+            _LOGGER.debug(
+                f"[{self.room}] Dosing with scale_factor={scale_factor:.2f}; "
+                f"calculated full doses: {full_dose_summary}"
+            )
 
             # Dose each nutrient based on calculated concentration-based doses
             success = await self._dose_nutrients_with_concentration(nutrient_doses)
@@ -880,6 +1010,7 @@ class OGBTankFeedManager:
                     'ec_after': self.feed_ec_after,
                     'ec_added': self.feed_ec_added,
                     'dose_ml': total_dose,
+                    'scale_factor': scale_factor,
                     'nutrients_dosed': nutrients_to_dose,
                     'nutrient_doses': nutrient_doses,
                 }
@@ -906,6 +1037,74 @@ class OGBTankFeedManager:
 
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error in concentration-based nutrient dosing: {e}")
+
+    async def _dose_full_recipe(self, data: Dict[str, Any] = None):
+        """Dose the complete recipe for the current water volume.
+
+        This is intended for filling / re-preparing a tank.  It ignores the current
+        EC deviation and doses the full concentration-based amount for the present
+        water level.
+        """
+        try:
+            data = data or {}
+            _LOGGER.warning(f"[{self.room}] Starting full recipe dosing for current water volume")
+
+            self.feed_ec_before = self.current_ec
+
+            nutrient_doses = {}
+            nutrients_to_dose = []
+            for nutrient_type in ["A", "B", "C", "X", "Y"]:
+                concentration = self.nutrient_concentrations.get(nutrient_type, 0.0)
+                if concentration > 0 and nutrient_type in self.nutrients and self.nutrients[nutrient_type] > 0:
+                    dose = self._calculate_dose_from_concentration(nutrient_type)
+                    if dose > 0:
+                        nutrient_doses[nutrient_type] = dose
+                        nutrients_to_dose.append(nutrient_type)
+
+            if not nutrients_to_dose:
+                self._log_to_client("Full recipe dosing skipped - no nutrients configured", "WARNING")
+                return
+
+            full_dose_summary = ", ".join(
+                f"{k}={v:.1f}ml" for k, v in nutrient_doses.items()
+            )
+            _LOGGER.warning(
+                f"[{self.room}] Full recipe doses: {full_dose_summary}"
+            )
+
+            success = await self._dose_nutrients_with_concentration(nutrient_doses)
+            if success:
+                await asyncio.sleep(90)
+                self.feed_ec_after = self.current_ec
+                self.feed_ec_added = self.feed_ec_after - self.feed_ec_before
+                total_dose = sum(nutrient_doses.values())
+
+                feed_cycle = {
+                    'timestamp': datetime.now().isoformat(),
+                    'ec_before': self.feed_ec_before,
+                    'ec_after': self.feed_ec_after,
+                    'ec_added': self.feed_ec_added,
+                    'dose_ml': total_dose,
+                    'scale_factor': 1.0,
+                    'full_recipe': True,
+                    'nutrients_dosed': nutrients_to_dose,
+                    'nutrient_doses': nutrient_doses,
+                }
+                self.feed_history.append(feed_cycle)
+                if len(self.feed_history) > 100:
+                    self.feed_history = self.feed_history[-100:]
+                self.data_store.setDeep("Hydro.FeedHistory", json.dumps(self.feed_history))
+
+                await self._auto_calibrate_pumps(total_dose, nutrients_to_dose)
+
+                self._log_to_client(
+                    f"Full recipe dosed - EC: {self.feed_ec_before:.2f}→{self.feed_ec_after:.2f} (+{self.feed_ec_added:.2f}), Total: {total_dose:.1f}ml",
+                    "INFO",
+                    {"ec_before": self.feed_ec_before, "ec_after": self.feed_ec_after, "total_dose_ml": total_dose, "nutrients_dosed": nutrients_to_dose}
+                )
+
+        except Exception as e:
+            _LOGGER.error(f"[{self.room}] Error in full recipe dosing: {e}")
 
     async def _dose_ph_down_proportional(self, data: Dict[str, Any]):
         """Handle proportional pH down dosing requests."""
@@ -1277,16 +1476,16 @@ class OGBTankFeedManager:
                 _LOGGER.debug(f"[{self.room}] Loaded {pump_type} flow rate: {ml_per_second * 60:.1f} ml/min")
     
     def _load_nutrient_concentrations(self):
-        """Load nutrient concentrations from DataStore (ml/L)"""
+        """Load nutrient concentrations from DataStore (ml/L)."""
         self.nutrient_concentrations = {
-            "A": self.data_store.getDeep("Hydro.Nutrient_Concentration_A", 2.0),
-            "B": self.data_store.getDeep("Hydro.Nutrient_Concentration_B", 2.0),
-            "C": self.data_store.getDeep("Hydro.Nutrient_Concentration_C", 1.0),
+            "A": self.data_store.getDeep("Hydro.Nutrient_Concentration_A", 0.0),
+            "B": self.data_store.getDeep("Hydro.Nutrient_Concentration_B", 0.0),
+            "C": self.data_store.getDeep("Hydro.Nutrient_Concentration_C", 0.0),
             "X": self.data_store.getDeep("Hydro.Nutrient_Concentration_X", 0.0),
             "Y": self.data_store.getDeep("Hydro.Nutrient_Concentration_Y", 0.0),
-            "PH_DOWN": self.data_store.getDeep("Hydro.Nutrient_Concentration_PH_Down", 0.5),
+            "PH_DOWN": self.data_store.getDeep("Hydro.Nutrient_Concentration_PH_Down", 0.0),
         }
-        
+
         _LOGGER.debug(f"[{self.room}] Loaded nutrient concentrations: {self.nutrient_concentrations}")
 
     def _calculate_dose_from_concentration(self, nutrient_type: str) -> float:
