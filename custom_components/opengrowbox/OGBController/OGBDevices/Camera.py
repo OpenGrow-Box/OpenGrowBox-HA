@@ -9,6 +9,7 @@ import zipfile
 import json
 from datetime import datetime, timedelta, timezone, time
 from .Device import Device
+from ..data.OGBParams.OGBParams import DEVICE_TYPE_MAPPING
 
 # Home Assistant imports for scheduling
 from homeassistant.util import dt as dt_util
@@ -210,43 +211,47 @@ class Camera(Device):
 
     def deviceInit(self, entitys):
         """Minimal initialization for camera - stores entity in options."""
-        # Store camera entities
         self.camera_entities = entitys if isinstance(entitys, list) else [entitys]
+        CAMERA_KEYWORDS = DEVICE_TYPE_MAPPING.get("Camera", [])
 
-        # Store camera entity in options (like other devices)
-        # Support both: entity_id starting with "camera." OR having camera label
         if self.camera_entities:
+            camera_name_match = None
+            camera_label_match = None
+
             for entity in self.camera_entities:
-                if isinstance(entity, dict):
-                    entity_id = entity.get("entity_id", "")
-                    labels = entity.get("labels", [])
-                    
-                    # Check 1: Entity-ID starts with "camera."
-                    is_camera_by_name = entity_id.startswith("camera.")
-                    
-                    # Check 2: Entity has camera-related label
-                    is_camera_by_label = any(
-                        lbl.get("id", "").lower() in ["camera", "cam", "webcam", "ipcam"]
-                        for lbl in labels
+                if not isinstance(entity, dict):
+                    continue
+                entity_id = entity.get("entity_id", "")
+                labels = entity.get("labels", [])
+
+                is_camera_by_name = entity_id.startswith("camera.")
+                is_camera_by_label = any(
+                    lbl.get("id", "").lower() in CAMERA_KEYWORDS
+                    or any(kw in lbl.get("name", "").lower() for kw in CAMERA_KEYWORDS)
+                    for lbl in labels
+                )
+
+                if is_camera_by_name:
+                    camera_name_match = entity
+                elif is_camera_by_label and not camera_label_match:
+                    camera_label_match = entity
+
+            best_match = camera_name_match or camera_label_match
+            if best_match:
+                self.options.append(best_match)
+                entity_id = best_match.get("entity_id", "")
+                if entity_id:
+                    self.camera_entity_id = entity_id
+                    _LOGGER.debug(
+                        f"[{self.inRoom}] Camera '{self.deviceName}' mapped to entity: {entity_id} "
+                        f"(by_name={camera_name_match is not None}, by_label={camera_label_match is not None and camera_name_match is None})"
                     )
-                    
-                    if is_camera_by_name or is_camera_by_label:
-                        self.options.append(entity)
-                        # Update camera_entity_id to actual entity ID
-                        if entity_id:
-                            self.camera_entity_id = entity_id
-                            _LOGGER.debug(
-                                f"[{self.inRoom}] Camera '{self.deviceName}' mapped to entity: {entity_id} "
-                                f"(by_name={is_camera_by_name}, by_label={is_camera_by_label})"
-                            )
 
         self.identifyCapabilities()
 
-        # Set initialization flags directly
         self.initialization = True
         self.isInitialized = True
 
-        # Use logging like parent class does for consistency
         _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
 
     def _is_device_for_event(self, device_name):
@@ -260,11 +265,24 @@ class Camera(Device):
             return False
 
         normalized = str(device_name).strip().lower()
-        return normalized in {
+        if normalized in {
             self.deviceName.lower(),
             self.camera_entity_id.lower(),
             f"camera.{self.deviceName}".lower(),
-        }
+        }:
+            return True
+
+        CAMERA_KEYWORDS = DEVICE_TYPE_MAPPING.get("Camera", [])
+        for lbl in (self.labelMap or []):
+            lbl_name = lbl.get("name", "").lower()
+            lbl_id = lbl.get("id", "").lower()
+            if normalized == lbl_name or normalized == lbl_id:
+                return True
+            if any(kw in lbl_name or kw in lbl_id for kw in CAMERA_KEYWORDS):
+                if normalized == f"camera.{lbl_name}" or normalized == f"camera.{lbl_id}":
+                    return True
+
+        return False
 
     async def init(self):
         """Initialize camera - calls parent first for capabilities."""
