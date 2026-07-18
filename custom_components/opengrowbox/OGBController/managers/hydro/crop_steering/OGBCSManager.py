@@ -807,11 +807,17 @@ class OGBCSManager:
             _LOGGER.warning(f"{self.room} - _get_drippers: No pump devices found!")
             return []
 
+        device_data = dripperDevices.get("deviceData", {})
         valid_keywords = ["dripper"]
 
         dripper_devices = [
             dev for dev in devices
             if any(keyword in dev.lower() for keyword in valid_keywords)
+            or any(
+                keyword in lbl
+                for lbl in device_data.get(dev, {}).get("labels", [])
+                for keyword in valid_keywords
+            )
         ]
 
         if not dripper_devices:
@@ -836,10 +842,16 @@ class OGBCSManager:
                 _LOGGER.warning(f"{self.room} - No pump devices in capabilities")
                 return
 
-            # Filter to only dripper devices
+            device_data = pump_capabilities.get("deviceData", {})
+
+            # Filter to only dripper devices (by name or label)
             dripper_devices = [
                 dev for dev in all_devices
                 if "dripper" in dev.lower()
+                or any(
+                    "dripper" in lbl
+                    for lbl in device_data.get(dev, {}).get("labels", [])
+                )
             ]
 
             # Update capabilities with filtered list for Crop-Steering mode

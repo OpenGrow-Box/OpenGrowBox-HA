@@ -869,7 +869,8 @@ class Device:
                     "dimm_value": self._get_dim_value(),
                     "min_duty": getattr(self, 'minDuty', None),
                     "max_duty": getattr(self, 'maxDuty', None),
-                    "minmax_active": getattr(self, 'is_minmax_active', False)
+                    "minmax_active": getattr(self, 'is_minmax_active', False),
+                    "labels": [lbl.get("name", "").lower() for lbl in (self.labelMap or [])],
                 }
 
                 # Write updated data back to dataStore

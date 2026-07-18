@@ -263,10 +263,7 @@ class OGBLightScheduler:
 
             # Handle if SunSet window crosses midnight into previous day
             if start_minutes < 0:
-                # Window crosses midnight into previous day
-                start_minutes_wrapped = start_minutes + (
-                    24 * 60
-                )  # Convert to positive minutes of previous day
+                start_minutes_wrapped = start_minutes + (24 * 60)
                 return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
                     0 <= current_minutes <= end_minutes
                 )
@@ -274,19 +271,18 @@ class OGBLightScheduler:
                 # Normal case (no midnight crossing)
                 return start_minutes <= current_minutes <= end_minutes
         else:
-            # For SunRise: Window BEFORE the target time (subtract offset)
-            start_minutes = target_minutes - duration_minutes
-            end_minutes = target_minutes
+            # For SunRise: Window AFTER the target time (Start at lightOnTime)
+            start_minutes = target_minutes
+            end_minutes = target_minutes + duration_minutes
 
-            # Check normal case (no midnight crossing)
-            if start_minutes >= 0:  # Starts after midnight
-                return start_minutes <= current_minutes <= end_minutes
-            else:
-                # Time window crosses midnight into previous day
-                start_minutes_wrapped = start_minutes + (24 * 60)
-                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
-                    0 <= current_minutes <= end_minutes
+            # Handle if SunRise window crosses midnight into next day
+            if end_minutes >= 24 * 60:
+                end_minutes_wrapped = end_minutes - (24 * 60)
+                return (start_minutes <= current_minutes < 24 * 60) or (
+                    0 <= current_minutes <= end_minutes_wrapped
                 )
+            else:
+                return start_minutes <= current_minutes <= end_minutes
 
     async def periodic_sun_phase_check(self):
         """Periodically check for sun phase activation."""

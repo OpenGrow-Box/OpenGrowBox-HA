@@ -467,20 +467,25 @@ class Light(Device):
             # Für SunSet: Fenster VOR der Zielzeit (Offset subtrahieren)
             start_minutes = target_minutes - duration_minutes
             end_minutes = target_minutes
+
+            if start_minutes < 0:
+                start_minutes_wrapped = start_minutes + (24 * 60)
+                return (start_minutes_wrapped <= current_minutes < 24 * 60) or (
+                    0 <= current_minutes <= end_minutes
+                )
+            else:
+                return start_minutes <= current_minutes <= end_minutes
         else:
             # Für SunRise: Fenster NACH der Zielzeit (Start bei lightOnTime)
             start_minutes = target_minutes
             end_minutes = target_minutes + duration_minutes
 
-            # Handle wenn das Sunrise-Fenster über Mitternacht in den nächsten Tag geht
             if end_minutes >= 24 * 60:
-                # Fenster überschreitet Mitternacht in den nächsten Tag
                 end_minutes_wrapped = end_minutes - (24 * 60)
                 return (start_minutes <= current_minutes < 24 * 60) or (
                     0 <= current_minutes <= end_minutes_wrapped
                 )
             else:
-                # Normaler Fall (keine Überschreitung von Mitternacht)
                 return start_minutes <= current_minutes <= end_minutes
 
     # SunPhases
@@ -674,7 +679,6 @@ class Light(Device):
             _LOGGER.debug(f"{self.deviceName}: Start SunRise von {start_voltage}% ({voltage_source_min}) bis {target_voltage}% ({voltage_source_max})")
 
             for i in range(1, 11):
-                # Check if SunRise phase is still active (instead of islightON to avoid race conditions)
                 if not self.sunrise_phase_active:
                     _LOGGER.warning(f"{self.deviceName}: ⚠️ SunRise abgebrochen - sunrise_phase_active ist False! (Step {i}/10)")
                     break
@@ -682,9 +686,10 @@ class Light(Device):
                 if self.sun_phase_paused:
                     await self._wait_if_paused()
                 else:
-                    await asyncio.sleep(step_duration)
+                    # Step 1: sofort start_voltage setzen (kein sleep)
+                    if i > 1:
+                        await asyncio.sleep(step_duration)
 
-                    # First step → use start_voltage, subsequent steps → calculate increment
                     if i == 1:
                         self.voltage = math.ceil(start_voltage)
                     else:

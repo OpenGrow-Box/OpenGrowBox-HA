@@ -268,6 +268,9 @@ class OGBMainController:
         if self.data_cleanup_manager:
             await self.data_cleanup_manager.start_cleanup()
 
+        # Start periodic light schedule check (unabhängig von Sensor-Updates)
+        asyncio.create_task(self._periodic_light_schedule_check())
+
         # Emit initial events
         await self.event_manager.emit("HydroModeChange", True)
         await self.event_manager.emit("HydroModeRetrieveChange", True)
@@ -407,6 +410,18 @@ class OGBMainController:
         else:
             # Fallback: emit to all lights if no devices filtered (for backward compatibility)
             await self.event_manager.emit("toggleLight", light_should_be_on)
+
+    async def _periodic_light_schedule_check(self):
+        """Periodisch Licht-Zeitplan prüfen — unabhängig von Sensor-Updates."""
+        while True:
+            try:
+                await asyncio.sleep(30)
+                light_by_ogb = self.data_store.getDeep("controlOptions.lightbyOGBControl")
+                if light_by_ogb == False:
+                    continue
+                await self.light_schedule_update(None)
+            except Exception as e:
+                _LOGGER.error(f"{self.room}: Periodic light schedule check error: {e}")
 
     async def manager(self, data):
         """Route configuration updates to appropriate handlers via ConfigurationManager."""
