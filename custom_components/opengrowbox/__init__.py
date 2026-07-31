@@ -83,7 +83,7 @@ async def _register_update_sensor_service(hass: HomeAssistant) -> None:
             debug_info.append(f"{s._name}: entity_id={s_entity_id}, expected={s_expected}")
         _LOGGER.error(f"Available sensors (first 5): {debug_info}")
 
-    await hass.services.async_register(
+    hass.services.async_register(
         DOMAIN,
         "update_sensor",
         handle_update_sensor,
