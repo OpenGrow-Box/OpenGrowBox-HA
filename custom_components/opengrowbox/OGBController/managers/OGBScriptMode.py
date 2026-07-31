@@ -158,6 +158,9 @@ class OGBScriptMode:
         # IF statement - returns new line number for control flow
         elif line.startswith("IF "):
             return await self._dsl_if(line, variables, lines, current_line)
+
+        elif line == "ELSE":
+            return self._skip_to_matching_endif(lines, current_line)
         
         # CALL statement
         elif line.startswith("CALL "):
@@ -203,9 +206,22 @@ class OGBScriptMode:
                 if block_depth == 0:
                     return i
             elif stmt == "ELSE" and block_depth == 1:
-                return i
+                return i + 1
         
         _LOGGER.warning(f"{self.room}: Unclosed IF block starting at line {current_line + 1}")
+        return len(lines)
+
+    def _skip_to_matching_endif(self, lines: List[str], current_line: int) -> int:
+        """Return the matching ENDIF line for an ELSE branch that should be skipped."""
+        block_depth = 1
+        for i in range(current_line + 1, len(lines)):
+            stmt = lines[i].strip().upper()
+            if stmt.startswith("IF "):
+                block_depth += 1
+            elif stmt == "ENDIF":
+                block_depth -= 1
+                if block_depth == 0:
+                    return i
         return len(lines)
     
     def _eval_expression(self, expr: str, variables: Dict) -> Any:
@@ -264,21 +280,6 @@ class OGBScriptMode:
         self.data_store.setDeep(path, value)
         
         _LOGGER.debug(f"{self.room}: SET {path} = {value}")
-    
-    async def _dsl_if(self, line: str, variables: Dict) -> Optional[int]:
-        """
-        Execute IF statement.
-        Returns None for normal flow, or line number to jump to.
-        """
-        # Simplified IF handling - full implementation would need proper parsing
-        condition = line.replace("IF ", "").replace(" THEN", "").strip()
-        
-        if not self._eval_condition(condition, variables):
-            # Condition false - skip to ENDIF or ELSE
-            # This is simplified - would need proper block handling
-            pass
-        
-        return None
     
     async def _dsl_call(self, line: str, variables: Dict):
         """Execute CALL statement: CALL device.action"""
@@ -381,6 +382,9 @@ class OGBScriptMode:
             )
         except asyncio.TimeoutError:
             _LOGGER.warning(f"{self.room}: Script execution timeout")
+        finally:
+            if hasattr(self, "_python_tasks"):
+                del self._python_tasks
     
     def _is_python_code_safe(self, code: str) -> bool:
         """
@@ -421,8 +425,11 @@ class OGBScriptMode:
         return True
 
     async def _run_python_code(self, code: str, exec_globals: Dict):
-        """Run Python code with globals."""
+        """Run Python code with globals and await queued helper tasks."""
+        self._python_tasks = []
         exec(code, exec_globals)
+        if self._python_tasks:
+            await asyncio.gather(*self._python_tasks)
     
     def _py_read(self, path: str) -> Any:
         """Python helper: Read from DataStore."""
@@ -432,13 +439,15 @@ class OGBScriptMode:
         """Python helper: Write to DataStore."""
         self.data_store.setDeep(path, value)
     
-    async def _py_call(self, device: str, action: str, **kwargs):
-        """Python helper: Call device action."""
-        await self._execute_device_action(device, action, kwargs)
+    def _py_call(self, device: str, action: str, **kwargs):
+        """Python helper: Queue a device action."""
+        task = asyncio.create_task(self._execute_device_action(device, action, kwargs))
+        self._python_tasks.append(task)
     
-    async def _py_emit(self, event: str, data: Dict = None):
-        """Python helper: Emit event."""
-        await self.event_manager.emit(event, data or {})
+    def _py_emit(self, event: str, data: Dict = None):
+        """Python helper: Queue an event emission."""
+        task = asyncio.create_task(self.event_manager.emit(event, data or {}))
+        self._python_tasks.append(task)
     
     def _py_log(self, message: str, level: str = "info"):
         """Python helper: Log message."""
