@@ -193,6 +193,20 @@ class OGBConfigurationManager:
             f"ogb_dehumidifier_minmax_{self.room.lower()}": self._device_self_min_max,
             f"ogb_dehumidifier_duty_min_{self.room.lower()}": self._device_min_max_setter,
             f"ogb_dehumidifier_duty_max_{self.room.lower()}": self._device_min_max_setter,
+            # Device Dimm Steps
+            f"ogb_exhaust_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_intake_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_ventilation_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_light_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_lightfarred_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_lightuv_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_lightblue_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_lightred_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_heater_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_cooler_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_humidifier_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_dehumidifier_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
+            f"ogb_co2_dimm_steps_{self.room.lower()}": self._device_dimm_step_setter,
             # WorkMode
             f"ogb_workmode_{self.room.lower()}": self._update_work_mode_control,
             # Strain Data
@@ -215,7 +229,7 @@ class OGBConfigurationManager:
             # Crop Steering - note: entity names are lowercase with underscores
             f"ogb_cropsteering_mode_{self.room.lower()}": self._crop_steering_mode,
             f"ogb_cropsteering_phases_{self.room.lower()}": self._crop_steering_phase,
-            # Crop Steering Parameters - Shot Intervall
+            # Crop Steering Parameters - Shot Interval
             f"ogb_cropsteering_p0_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
             f"ogb_cropsteering_p1_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
             f"ogb_cropsteering_p2_shot_intervall_{self.room.lower()}": self._crop_steering_sets,
@@ -662,7 +676,7 @@ class OGBConfigurationManager:
         value = data.newState[0]
         current_mode = self.data_store.get("tentMode")
 
-        if isinstance(data, OGBInitData):  # OGBInitData hat nur newState, kein oldState
+        if isinstance(data, OGBInitData):  # OGBInitData only has newState, no oldState
             self.data_store.set("tentMode", value)
             # Emit event to activate mode - needed for proper initialization
             # Emit even during init so mode manager can properly set the mode
@@ -670,7 +684,7 @@ class OGBConfigurationManager:
             tent_mode_pub = OGBModeRunPublication(currentMode=value)
             await self.event_manager.emit("selectActionMode", tent_mode_pub)
             await self.event_manager.emit("PremiumModeChange", value)
-            # WICHTIG: Auch bei Init DataRelease senden wenn Disabled
+            # IMPORTANT: Also send DataRelease during init when Disabled
             if value == "Disabled":
                 await self.event_manager.emit("DataRelease", True)
                 _LOGGER.debug(f"🔄 {self.room}: Tent mode '{value}' during initialization - DataRelease sent")
@@ -1211,7 +1225,7 @@ class OGBConfigurationManager:
             self.data_store.setDeep("controlOptions.minMaxControl", bool_value)
             
             if bool_value:
-                # Min/Max Control wurde aktiviert -> gespeicherte Werte in tentData schreiben
+                # Min/Max Control was activated -> write saved values to tentData
                 minmax_data = self.data_store.getDeep("controlOptionData.minmax") or {}
                 
                 min_temp = minmax_data.get("minTemp")
@@ -1221,16 +1235,16 @@ class OGBConfigurationManager:
                 
                 if min_temp is not None:
                     self.data_store.setDeep("tentData.minTemp", float(min_temp))
-                    _LOGGER.debug(f"{self.room}: Min/Max Control aktiviert -> tentData.minTemp = {min_temp}")
+                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.minTemp = {min_temp}")
                 if max_temp is not None:
                     self.data_store.setDeep("tentData.maxTemp", float(max_temp))
-                    _LOGGER.debug(f"{self.room}: Min/Max Control aktiviert -> tentData.maxTemp = {max_temp}")
+                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.maxTemp = {max_temp}")
                 if min_hum is not None:
                     self.data_store.setDeep("tentData.minHumidity", float(min_hum))
-                    _LOGGER.debug(f"{self.room}: Min/Max Control aktiviert -> tentData.minHumidity = {min_hum}")
+                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.minHumidity = {min_hum}")
                 if max_hum is not None:
                     self.data_store.setDeep("tentData.maxHumidity", float(max_hum))
-                    _LOGGER.debug(f"{self.room}: Min/Max Control aktiviert -> tentData.maxHumidity = {max_hum}")
+                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.maxHumidity = {max_hum}")
 
     async def _update_min_temp(self, data):
         """
@@ -1379,9 +1393,7 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.nightSetControl")
         )
         if not night_set_control:
-            _LOGGER.warning(
-                f"{self.room}: Night set control disabled - ignoring night min temp update"
-            )
+
             return
         current_value = self.data_store.getDeep("controlOptionData.nightMinmax.minTemp")
         if current_value is None:
@@ -1403,7 +1415,7 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.nightSetControl")
         )
         if not night_set_control:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Night set control disabled - ignoring night max temp update"
             )
             return
@@ -1427,7 +1439,7 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.nightSetControl")
         )
         if not night_set_control:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Night set control disabled - ignoring night min humidity update"
             )
             return
@@ -1451,7 +1463,7 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.nightSetControl")
         )
         if not night_set_control:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Night set control disabled - ignoring night max humidity update"
             )
             return
@@ -1475,7 +1487,7 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.nightSetControl")
         )
         if not night_set_control:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Night set control disabled - ignoring night VPD update"
             )
             return
@@ -1673,7 +1685,7 @@ class OGBConfigurationManager:
         """
         new_value = self._coerce_float(data.newState[0], context="reservoir_min_level")
         if new_value is None:
-            _LOGGER.warning(f"{self.room}: Invalid reservoir min level value, skipping update")
+            _LOGGER.debug(f"{self.room}: Invalid reservoir min level value, skipping update")
             return
             
         current_value = self.data_store.getDeep("Hydro.ReservoirMinLevel")
@@ -1691,7 +1703,7 @@ class OGBConfigurationManager:
         """
         new_value = self._coerce_float(data.newState[0], context="reservoir_max_level")
         if new_value is None:
-            _LOGGER.warning(f"{self.room}: Invalid reservoir max level value, skipping update")
+            _LOGGER.debug(f"{self.room}: Invalid reservoir max level value, skipping update")
             return
             
         current_value = self.data_store.getDeep("Hydro.ReservoirMaxLevel")
@@ -1818,7 +1830,7 @@ class OGBConfigurationManager:
 
         numeric_value = self._coerce_float(value, context=name)
         if numeric_value is None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 f"{self.room}: Skipping {device_type} min/max update for invalid init value '{value}'"
             )
             return
@@ -1853,6 +1865,59 @@ class OGBConfigurationManager:
 
         # Emit event to update devices
         _LOGGER.debug(f"{self.room}: Emitting SetDeviceMinMax for {device_type}")
+        await self.event_manager.emit("SetDeviceMinMax", device_type)
+
+    async def _device_dimm_step_setter(self, data):
+        """Update device dimm step setting (1-10%)."""
+        value = data.newState[0]
+        name = data.Name.lower()
+
+        # Priority order: special light types must be matched before generic "light"
+        device_type_mapping = [
+            ("lightfarred", "LightFarRed"),
+            ("lightuv", "LightUV"),
+            ("lightblue", "LightBlue"),
+            ("lightred", "LightRed"),
+            ("light", "Light"),
+            ("exhaust", "Exhaust"),
+            ("intake", "Intake"),
+            ("ventilation", "Ventilation"),
+            ("heater", "Heater"),
+            ("cooler", "Cooler"),
+            ("humidifier", "Humidifier"),
+            ("dehumidifier", "Dehumidifier"),
+            ("co2", "CO2"),
+        ]
+
+        device_type = None
+        for key, dt in device_type_mapping:
+            if key in name:
+                device_type = dt
+                break
+
+        if not device_type:
+            _LOGGER.error(f"{self.room}: Unknown device dim step control: {name}")
+            return
+
+        numeric_value = self._coerce_float(value, context=f"{device_type} dim step")
+        if numeric_value is None:
+            _LOGGER.debug(
+                f"{self.room}: Skipping {device_type} dim step update for invalid init value '{value}'"
+            )
+            return
+
+        # Clamp to valid range 1-10%
+        numeric_value = int(max(1, min(10, numeric_value)))
+
+        dim_step_path = f"DeviceSteps.{device_type}"
+        current_value = self.data_store.getDeep(dim_step_path)
+        if current_value is None or float(current_value) != numeric_value:
+            self.data_store.setDeep(dim_step_path, numeric_value)
+            _LOGGER.debug(f"{self.room}: Set {device_type} dim step to {numeric_value}%")
+        else:
+            _LOGGER.debug(f"{self.room}: {device_type} dim step already {numeric_value}%")
+
+        # Emit event so devices update their step at runtime
         await self.event_manager.emit("SetDeviceMinMax", device_type)
 
     async def _update_work_mode_control(self, data):

@@ -112,14 +112,14 @@ class OGBUpdateEntity(UpdateEntity):
         asset_url = await self._resolve_asset_url(session, target_version)
         if not asset_url:
             raise HomeAssistantError(
-                f"Release-Asset '{RELEASE_ASSET_NAME}' für Version {target_version} "
-                "wurde nicht gefunden."
+                f"Release asset '{RELEASE_ASSET_NAME}' for version {target_version} "
+                "was not found."
             )
 
         async with session.get(asset_url, timeout=60) as response:
             if response.status != 200:
                 raise HomeAssistantError(
-                    f"Download von {RELEASE_ASSET_NAME} fehlgeschlagen "
+                    f"Download of {RELEASE_ASSET_NAME} failed "
                     f"(HTTP {response.status})."
                 )
             payload = await response.read()
@@ -134,10 +134,10 @@ class OGBUpdateEntity(UpdateEntity):
             "create",
             {
                 "notification_id": _NOTIFICATION_ID,
-                "title": "OpenGrowBox Update installiert",
+                "title": "OpenGrowBox Update installed",
                 "message": (
-                    f"OpenGrowBox wurde auf Version {target_version} aktualisiert. "
-                    "Bitte Home Assistant neu starten, um das Update abzuschließen."
+                    f"OpenGrowBox was updated to version {target_version}. "
+                    "Please restart Home Assistant to complete the update."
                 ),
             },
             blocking=False,
@@ -153,7 +153,7 @@ class OGBUpdateEntity(UpdateEntity):
                 data = await response.json()
         except Exception as err:  # noqa: BLE001
             _LOGGER.error(
-                "Release-Lookup für Version %s fehlgeschlagen: %s", version, err
+                "Release lookup for version %s failed: %s", version, err
             )
             return None
 
@@ -184,7 +184,7 @@ class OGBUpdateEntity(UpdateEntity):
             extracted_dir = os.path.join(staging_dir, "opengrowbox")
             if not os.path.isdir(extracted_dir):
                 raise HomeAssistantError(
-                    "Release-Archiv enthält keinen 'opengrowbox'-Ordner."
+                    "Release archive does not contain an 'opengrowbox' folder."
                 )
 
             os.rename(integration_dir, old_dir)

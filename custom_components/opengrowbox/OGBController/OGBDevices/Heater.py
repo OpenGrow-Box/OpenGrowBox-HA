@@ -34,9 +34,6 @@ class Heater(Device):
         self.event_manager.on("Increase Heater", self.increaseAction)
         self.event_manager.on("Reduce Heater", self.reduceAction)
         
-        if self.isDimmable: 
-            self.steps = 5
-            
         if self.isAcInfinDev:
             self.checkMinMax(False)
             self.dutyCycle = 0
@@ -45,7 +42,7 @@ class Heater(Device):
             self.minDuty = 0
 
     def clamp_duty_cycle(self, duty_cycle):
-        """Begrenzt den Duty Cycle auf erlaubte Werte."""
+        """Limit the duty cycle to allowed values."""
         if duty_cycle is None:
             _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle called with None, using default 50%")
             duty_cycle = 50
@@ -57,43 +54,43 @@ class Heater(Device):
         clamped_value = max(min_duty, min(max_duty, duty_cycle))
         clamped_value = int(clamped_value)
         
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped_value}% begrenzt (range: {min_duty}-{max_duty}%)")
+        _LOGGER.debug(f"{self.deviceName}: Duty cycle limited to {clamped_value}% (range: {min_duty}-{max_duty}%)")
         return clamped_value
 
     def change_duty_cycle(self, increase=True):
         """
-        Ändert den Duty Cycle basierend auf dem Schrittwert.
-        Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
+        Change the duty cycle based on the step size.
+        Increases or decreases the duty cycle and limits the value with clamp.
         """
         if not self.isDimmable:
             _LOGGER.warning(
-                f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist."
+                f"{self.deviceName}: Cannot change duty cycle, device is not dimmable."
             )
             return self.dutyCycle
 
-        # Berechne neuen Wert basierend auf Schrittweite
+        # Calculate new value based on step size
         new_duty_cycle = (
             int(self.dutyCycle) + int(self.steps)
             if increase
             else int(self.dutyCycle) - int(self.steps)
         )
 
-        # Begrenze den neuen Duty Cycle auf erlaubte Werte
+        # Limit the new duty cycle to allowed values
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
 
-        # Setze den begrenzten Wert als neuen Duty Cycle
+        # Set the clamped value as the new duty cycle
         self.dutyCycle = int(clamped_duty_cycle)
 
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle changed to {self.dutyCycle}% ")
         return self.dutyCycle
 
     async def increaseAction(self, data):
-        """Schaltet Heizung an oder erhöht Duty Cycle"""
+        """Turns heater on or increases duty cycle."""
         action_type, target_value = self._extract_action_value(data)
         
         if self.isDimmable:
             if target_value is not None:
-                # Direkt auf Zielwert dimmen
+                # Dim directly to target value
                 await self.set_duty_cycle(target_value, log_action_callback=self.log_action)
             else:
                 newDuty = self.change_duty_cycle(increase=True)
@@ -108,9 +105,9 @@ class Heater(Device):
                 await self.turn_on()
 
     async def reduceAction(self, data):
-        """Schaltet Heizung aus oder reduziert Modus"""
+        """Turns heater off or reduces mode."""
         
-        # Smart Deadband Check - Aktion blockieren wenn im Deadband
+        # Smart Deadband Check - block action when in deadband
         if self._in_smart_deadband:
             _LOGGER.debug(
                 f"{self.deviceName}: ReduceAction BLOCKED - device is in Smart Deadband (operating at minimum)"
@@ -120,12 +117,12 @@ class Heater(Device):
         action_type, target_value = self._extract_action_value(data)
         
         if target_value is not None and self.isDimmable:
-            # Direkt auf Zielwert dimmen
+            # Dim directly to target value
             await self.set_duty_cycle(target_value, log_action_callback=self.log_action)
         else:
             await self.reduce_or_turn_off(log_action_callback=self.log_action)
 
     def log_action(self, action_name):
-        """Protokolliert die ausgeführte Aktion."""
+        """Log the executed action."""
         log_message = f"{self.deviceName}"
         _LOGGER.debug(f"{action_name}: {log_message}")

@@ -73,7 +73,7 @@ class OGBVPDManager:
         humidities = []
 
         for dev in devices:
-            # Nur initialisierte Sensor-Objekte prüfen
+            # Only check initialized sensor objects
             if hasattr(dev, 'sensorReadings') and dev.isInitialized:
                 air_context = dev.getSensorsByContext("air")
 
@@ -102,7 +102,7 @@ class OGBVPDManager:
                             
                             temperatures.append({"entity_id":name,"value":value,"label":label})
                         except (ValueError, TypeError):
-                            _LOGGER.error(f"Ungültiger Temperaturwert in {t.get('entity_id')}: {t.get('state')}")
+                            _LOGGER.error(f"Invalid temperature value for {t.get('entity_id')}: {t.get('state')}")
 
                 if has_hum:
                     humSensors = air_context["humidity"]
@@ -123,14 +123,17 @@ class OGBVPDManager:
                             
                             humidities.append({"entity_id":name,"value":value,"label":label})
                         except (ValueError, TypeError):
-                            _LOGGER.error(f"Ungültiger Feuchtigkeitswert in {h.get('entity_id')}: {h.get('state')}")
+                            _LOGGER.error(f"Invalid humidity value for {h.get('entity_id')}: {h.get('state')}")
 
-        _LOGGER.warning(f"{self.room} VPD-CALC VALUES: Temp:{temperatures} --- HUMS:{humidities}")
+        _LOGGER.debug(
+            f"{self.room} VPD-CALC VALUES: "
+            f"temp_count={len(temperatures)}, hum_count={len(humidities)}"
+        )
 
         self.data_store.setDeep("workData.temperature",temperatures)
         self.data_store.setDeep("workData.humidity",humidities)
         
-        # Durchschnittswerte asynchron berechnen (VOR Leaf Sensor Logik!)
+        # Calculate average values asynchronously (BEFORE leaf sensor logic!)
         avgTemp = calculate_avg_value(temperatures)
         self.data_store.setDeep("tentData.temperature", avgTemp)
         avgHum = calculate_avg_value(humidities)
@@ -221,7 +224,7 @@ class OGBVPDManager:
                         f"{self.room}: 🍃 No leaf sensor, using manual offset: {current_offset}°C"
                     )
 
-        # Taupunkt asynchron berechnen
+        # Calculate dew point asynchronously
         avgDew = calculate_dew_point(avgTemp, avgHum) if avgTemp != "unavailable" and avgHum != "unavailable" else None
         self.data_store.setDeep("tentData.dewpoint", avgDew if avgDew else "unavailable")
 
@@ -242,10 +245,10 @@ class OGBVPDManager:
             return None if val == "unavailable" else val
 
         if isinstance(data, OGBInitData):
-            #_LOGGER.debug(f"OGBInitData erkannt: {data}")
+            #_LOGGER.debug(f"OGBInitData recognized: {data}")
             return
         else:
-            # Spezifische Aktion für OGBEventPublication
+            # Specific action for OGBEventPublication
             if currentVPD != lastVpd:
                 self.data_store.setDeep("vpd.current", currentVPD)
                 vpdPub = OGBVPDPublication(Name=self.room, VPD=currentVPD, AvgTemp=convert_value(avgTemp), AvgHum=convert_value(avgHum), AvgDew=convert_value(avgDew))
@@ -399,7 +402,7 @@ class OGBVPDManager:
                             )
                         except (ValueError, TypeError):
                             _LOGGER.error(
-                                f"Ungültiger Temperaturwert in {t.get('entity_id')}: {t.get('state')}"
+                                f"Invalid temperature value for {t.get('entity_id')}: {t.get('state')}"
                             )
 
                 if has_hum:
@@ -424,7 +427,7 @@ class OGBVPDManager:
                             )
                         except (ValueError, TypeError):
                             _LOGGER.error(
-                                f"Ungültiger Feuchtigkeitswert in {h.get('entity_id')}: {h.get('state')}"
+                                f"Invalid humidity value for {h.get('entity_id')}: {h.get('state')}"
                             )
 
         # Store work data

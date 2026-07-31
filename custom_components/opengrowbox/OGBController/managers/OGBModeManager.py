@@ -733,7 +733,7 @@ class OGBModeManager:
             await self.handle_disabled_mode()
 
         else:
-            _LOGGER.debug(f"{self.name}: Unbekannter Modus {tentMode}")
+            _LOGGER.debug(f"{self.name}: Unknown mode {tentMode}")
 
     async def handle_disabled_mode(self):
         """
@@ -871,7 +871,7 @@ class OGBModeManager:
             )
             return
 
-        _LOGGER.debug(f"ModeManager: {self.room} Modus 'Targeted VPD' aktiviert.")
+        _LOGGER.debug(f"ModeManager: {self.room} Mode 'Targeted VPD' activated.")
         _LOGGER.debug(
             f"{self.room} VPD Target state: "
             f"current={self.data_store.getDeep('vpd.current')}, "
@@ -959,11 +959,11 @@ class OGBModeManager:
 
         except ValueError as e:
             _LOGGER.error(
-                f"ModeManager: Fehler beim Konvertieren der VPD-Werte oder Toleranz in Zahlen. {e}"
+                f"ModeManager: Error converting VPD values or tolerance to numbers. {e}"
             )
         except Exception as e:
             _LOGGER.error(
-                f"ModeManager: Unerwarteter Fehler in 'handle_targeted_vpd': {e}"
+                f"ModeManager: Unexpected error in 'handle_targeted_vpd': {e}"
             )
 
     ## Premium Handle

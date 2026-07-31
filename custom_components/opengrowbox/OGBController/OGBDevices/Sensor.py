@@ -161,7 +161,7 @@ class Sensor:
     def sensorPlatformIdent(self):
         """Analysiert deviceData und identifiziert Sensortypen MIT Kontext UND Label-Mapping."""
         if not hasattr(self, "deviceData") or not self.deviceData:
-            _LOGGER.warning("Keine deviceData vorhanden.")
+            _LOGGER.warning("No deviceData available.")
             return None
 
         sensor_map = {"air": {}, "water": {}, "soil": {}, "light": {}, "energy": {}, "leaf": {}, "other": {}}
@@ -264,7 +264,7 @@ class Sensor:
         """Initialisiere alle Sensoren aus der sensorMap mit Kontext."""
         try:
             if not self.sensorMap or "sensors" not in self.sensorMap:
-                _LOGGER.warning(f"Keine SensorMap für {self.deviceName} vorhanden")
+                _LOGGER.warning(f"No sensor map available for {self.deviceName}")
                 return
 
             # Initialisiere jeden Kontext
@@ -540,7 +540,7 @@ class Sensor:
             )
 
         except Exception as e:
-            _LOGGER.error(f"[{self.room}] Fehler bei Medium-Registrierung für {entity_id}: {e}", exc_info=True)
+            _LOGGER.error(f"[{self.room}] Error during medium registration for {entity_id}: {e}", exc_info=True)
 
     async def handleSensorUpdate(self, event_data):
         """
@@ -754,7 +754,7 @@ class Sensor:
                 sensor_config["last_update"] = datetime.now()
 
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Update von {sensor_config['entity_id']}: {e}")
+            _LOGGER.error(f"Error updating {sensor_config['entity_id']}: {e}")
 
     def getSensorValue(self, sensor_type, context=None, event_data=None):
         """
@@ -938,7 +938,7 @@ class Sensor:
     def checkSensor(self, event_data=None):
         """Überprüfe alle Sensoren auf Verfügbarkeit."""
         if not self.isInitialized:
-            _LOGGER.warning(f"Sensor-Device {self.deviceName} ist nicht initialisiert")
+            _LOGGER.warning(f"Sensor device {self.deviceName} is not initialized")
             return False
 
         all_ok = True
@@ -964,7 +964,7 @@ class Sensor:
                 )
                 return False
         else:
-            _LOGGER.warning(f"Sensor {entity_id}: Keine Lesung vorhanden")
+            _LOGGER.warning(f"Sensor {entity_id}: no reading available")
             return False
 
         return True
@@ -1013,7 +1013,7 @@ class Sensor:
 
             return False
         except Exception as e:
-            _LOGGER.error(f"Fehler bei Kalibrierung: {e}")
+            _LOGGER.error(f"Error during calibration: {e}")
             return False
 
     def setThresholds(self, event_data=None):
@@ -1041,7 +1041,7 @@ class Sensor:
                         config["threshold_min"] = float(threshold_min)
                     if threshold_max is not None:
                         config["threshold_max"] = float(threshold_max)
-                    _LOGGER.debug(f"Schwellwerte für {entity_id} gesetzt")
+                    _LOGGER.debug(f"Thresholds set for {entity_id}")
                     return True
 
             elif sensor_type:
@@ -1066,7 +1066,7 @@ class Sensor:
 
             return False
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Setzen der Schwellwerte: {e}")
+            _LOGGER.error(f"Error setting thresholds: {e}")
             return False
 
     def readSensor(self, event_data=None):
@@ -1094,7 +1094,7 @@ class Sensor:
             dict: {context: {sensor_type: [readings]}}
         """
         if not self.isInitialized:
-            _LOGGER.warning(f"Sensor-Device {self.deviceName} ist nicht initialisiert")
+            _LOGGER.warning(f"Sensor device {self.deviceName} is not initialized")
             return {}
 
         all_readings = {}

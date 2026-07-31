@@ -448,58 +448,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # Add entities to Home Assistant
     async_add_entities(sensors)
 
-    if not hass.services.has_service(DOMAIN, "update_sensor"):
+    # update_sensor service is registered centrally in __init__.py so it is
+    # available before the sensor platform loads. The sensor list is populated
+    # above and used by the shared service handler.
+    _LOGGER.debug(f"Sensor platform loaded with {len(sensors)} sensors; update_sensor service handled by __init__.py")
 
-        async def handle_update_sensor(call):
-            """Handle the update sensor service."""
-            entity_id_requested = call.data.get("entity_id")
-            value = call.data.get("value")
-
-            _LOGGER.debug(f"🔍 SERVICE CALL: update_sensor for '{entity_id_requested}' = {value}")
-
-            # Find and update the corresponding sensor
-            sensor_found = False
-            for sensor in hass.data[DOMAIN]["sensors"]:
-                # Match by entity_id (if available) OR by name-based entity_id
-                sensor_entity_id = getattr(sensor, 'entity_id', None)
-                expected_entity_id = f"sensor.{sensor._name.lower().replace(' ', '_')}"
-                
-                if sensor_entity_id == entity_id_requested or expected_entity_id == entity_id_requested:
-                    sensor.update_state(value)
-                    _LOGGER.debug(f"✅ Updated sensor '{sensor._name}' (matched: {entity_id_requested}) to value: {value}")
-                    sensor_found = True
-                    return
-            
-            if not sensor_found:
-                _LOGGER.error(f"❌ Sensor '{entity_id_requested}' NOT FOUND in registered sensors")
-                # Log first 5 sensors with their entity_ids for debugging
-                debug_info = []
-                for s in hass.data[DOMAIN]["sensors"][:5]:
-                    s_entity_id = getattr(s, 'entity_id', None)
-                    s_expected = f"sensor.{s._name.lower().replace(' ', '_')}"
-                    debug_info.append(f"{s._name}: entity_id={s_entity_id}, expected={s_expected}")
-                _LOGGER.error(f"🔍 Available sensors (first 5): {debug_info}")
-
-        hass.services.async_register(
-            DOMAIN,
-            "update_sensor",
-            handle_update_sensor,
-            schema=vol.Schema(
-                {
-                    vol.Required("entity_id"): str,
-                    vol.Required("value"): vol.Any(float, int, str),
-                }
-            ),
-        )
-        _LOGGER.debug(f"✅ Registered {DOMAIN}.update_sensor service with {len(hass.data[DOMAIN]['sensors'])} sensors")
-        
-        for idx, s in enumerate(hass.data[DOMAIN]['sensors'][:15]):
-            s_entity_id = getattr(s, 'entity_id', 'NOT_SET_YET')
-            s_expected = f"sensor.{s._name.lower().replace(' ', '_')}"
-            _LOGGER.debug(f"  [{idx}] Name: {s._name}, entity_id: {s_entity_id}, expected: {s_expected}")
-    else:
-        _LOGGER.debug(f"⚠️ Service {DOMAIN}.update_sensor already registered")
-    
     # Register medium plant tracking services
     if not hass.services.has_service(DOMAIN, "request_medium_plants_data"):
         async def handle_request_medium_plants_data(call):

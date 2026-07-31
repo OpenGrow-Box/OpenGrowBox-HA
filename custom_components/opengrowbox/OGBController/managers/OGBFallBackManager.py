@@ -404,7 +404,7 @@ class OGBFallBackManager:
             try:
                 await device_ref.turn_off()
             except Exception as e:
-                _LOGGER.error(f"{self.room}: turn_off fehlgeschlagen für '{device_name}': {e}")
+                _LOGGER.error(f"{self.room}: turn_off failed for '{device_name}': {e}")
 
             # Critical-Benachrichtigung
             await self._notify_runaway(device_name, current_power, threshold, retry=rel.retry_count)
@@ -420,9 +420,9 @@ class OGBFallBackManager:
                 await device_ref.turn_on()
                 await asyncio.sleep(2)
                 await device_ref.turn_off()
-                _LOGGER.info(f"{self.room}: Toggle-Reset für '{device_name}' ausgeführt")
+                _LOGGER.info(f"{self.room}: Toggle reset executed for '{device_name}'")
             except Exception as e:
-                _LOGGER.error(f"{self.room}: Toggle-Reset fehlgeschlagen für '{device_name}': {e}")
+                _LOGGER.error(f"{self.room}: Toggle reset failed for '{device_name}': {e}")
 
             # Critical-Benachrichtigung mit Toggle-Hinweis
             await self._notify_runaway(device_name, current_power, threshold, retry=rel.retry_count, toggle_reset=True)
@@ -458,9 +458,9 @@ class OGBFallBackManager:
                 message=message,
                 title=f"OGB {self.room}: Runaway-Gerät - {device_name}",
             )
-            _LOGGER.warning(f"{self.room}: 🚨 Critical-Benachrichtigung gesendet für Runaway '{device_name}'")
+            _LOGGER.warning(f"{self.room}: 🚨 Critical notification sent for runaway '{device_name}'")
         except Exception as e:
-            _LOGGER.error(f"{self.room}: Fehler bei Runaway-Benachrichtigung '{device_name}': {e}")
+            _LOGGER.error(f"{self.room}: Error sending runaway notification for '{device_name}': {e}")
 
     # =================================================================
     # Event Handlers

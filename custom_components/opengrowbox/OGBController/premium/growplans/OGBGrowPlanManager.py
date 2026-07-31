@@ -75,7 +75,7 @@ class OGBGrowPlanManager:
         self._pending_updates = []
 
 
-        # Timer für tägliche Aktualisierungen
+        # Timer for daily updates
         self._daily_update_task = None
         self._init_task = None
         self._ha_unsubscribers = []
@@ -240,14 +240,14 @@ class OGBGrowPlanManager:
             return False
 
     async def _start_daily_update_timer(self):
-        """Startet Timer für tägliche Aktualisierungen (00:00 und 12:00)"""
+        """Start timer for daily updates (00:00 and 12:00)."""
         if self._daily_update_task:
             self._daily_update_task.cancel()
         
         self._daily_update_task = asyncio.create_task(self._daily_update_loop())
 
     async def _daily_update_loop(self):
-        """Tägliche Aktualisierung der aktuellen Woche um 00:00 und 12:00.
+        """Daily update of the current week at 00:00 and 12:00.
 
         The ambient room does not run its own grow plan, so skip it.
         For all other rooms: when a plan is active, request fresh week data
@@ -317,32 +317,32 @@ class OGBGrowPlanManager:
     ## Workers
     async def _eval_plan_settings(self, plan_data: Dict[str, Any]):
         """
-        Prüft den aktiven Plan und triggert Events für relevante Parameter.
-        Wird beim Aktivieren eines Plans oder täglichen Update ausgeführt.
+        Checks the active plan and triggers events for relevant parameters.
+        Runs when activating a plan or during daily updates.
         """
         try:
-            # Wähle aktuelle Woche aus
+            # Select current week
             week = self.current_week or 1
             week_settings = self.get_week_data_by_number(week)
 
             if not week_settings:
-                _LOGGER.warning(f"{self.room}: Keine WeekData für Woche {week} gefunden")
+                _LOGGER.warning(f"{self.room}: No week data found for week {week}")
                 return
 
             _LOGGER.warning(f"{self.room}: Evaluating Grow Plan Settings for Week {week}: {week_settings}")
 
-            # Jetzt einzelne Prüfungen durchführen
+            # Now perform individual checks
             await self._emit_if_changed("light", week_settings, ["lightStart", "lightEnd", "lightIntensity"])
             await self._emit_if_changed("climate", week_settings, ["temperature", "humidity", "vpd", "co2"])
             await self._emit_if_changed("feed", week_settings, ["A", "B", "C", "EC", "PH"])
             await self._emit_if_changed("mode", week_settings, ["FullAutomatic", "feedControl", "co2Control"])
 
         except Exception as e:
-            _LOGGER.error(f"{self.room}: Fehler bei _eval_plan_settings: {e}")
+            _LOGGER.error(f"{self.room}: Error in _eval_plan_settings: {e}")
 
     async def _emit_if_changed(self, category: str, week_settings: Dict[str, Any], keys: list[str]):
         """
-        Prüft bestimmte Werte und sendet Event/DataStore-Update nur, wenn sich etwas geändert hat.
+        Checks specific values and sends event/data store update only when something changed.
         """
         try:
             changes = {}
@@ -350,22 +350,22 @@ class OGBGrowPlanManager:
                 new_value = week_settings.get(key)
                 old_value = self.data_store.get(f"{category}_{key}")
 
-                # Nur aktualisieren, wenn es sich geändert hat oder noch nicht gesetzt ist
+                # Only update if it changed or is not yet set
                 if new_value is not None and new_value != old_value:
                     self.data_store.set(f"{category}_{key}", new_value)
                     changes[key] = new_value
 
-            # Nur senden, wenn sich Werte wirklich geändert haben
+            # Only send if values actually changed
             if changes:
                 event_name = f"growplan_update_{category}"
-                _LOGGER.warning(f"{self.room}: Änderungen erkannt in {category} → {changes}")
+                _LOGGER.warning(f"{self.room}: Changes detected in {category}: {changes}")
                 await self.event_manager.emit(event_name, {"room": self.room, "changes": changes})
 
         except Exception as e:
-            _LOGGER.error(f"{self.room}: Fehler bei _emit_if_changed ({category}): {e}")
+            _LOGGER.error(f"{self.room}: Error in _emit_if_changed ({category}): {e}")
 
     async def activate_grow_plan_by_id(self, plan_id: str, plan_data: dict = None):
-        """Aktiviert einen Grow Plan"""
+        """Activates a grow plan."""
         try:
             # Validate plan_id - handle case where plan_id is a dict
             if isinstance(plan_id, dict):
@@ -400,7 +400,7 @@ class OGBGrowPlanManager:
                     if isinstance(start_date_str, str):
                         start_date_str = start_date_str.replace('Z', '+00:00')
                         parsed_date = datetime.fromisoformat(start_date_str)
-                        # WICHTIG: Sicherstellen dass das Datum timezone-aware ist
+                        # IMPORTANT: Ensure the date is timezone-aware
                         if parsed_date.tzinfo is None:
                             parsed_date = parsed_date.replace(tzinfo=timezone.utc)
                         self.plan_start_date = parsed_date
@@ -413,13 +413,13 @@ class OGBGrowPlanManager:
                 _LOGGER.error(f"🌱 {self.room} No startDate in plan, using current time")
                 self.plan_start_date = datetime.now(timezone.utc)
             
-            # Speichere Zustand
+            # Save state
             await self.event_manager.emit("SaveRequest",self.room) 
             
             self.managerActive = True
             self.data_store.set("growManagerActive",True)
 
-            # Immer frische Wochen-Daten holen + anwenden (tentMode, PlantStage, Environment)
+            # Always fetch fresh week data and apply it (tentMode, PlantStage, Environment)
             if self.ws_client:
                 try:
                     await self.ws_client.request_grow_plans_week()
@@ -428,9 +428,9 @@ class OGBGrowPlanManager:
             await self._update_current_week()
             await self._update_entities_from_week_data()
             
-            _LOGGER.info(f"🌱 {self.room} Grow Plan aktiviert: {plan_id}, Start: {self.plan_start_date}, Woche: {self.current_week}")
+            _LOGGER.info(f"🌱 {self.room} Grow Plan activated: {plan_id}, Start: {self.plan_start_date}, Week: {self.current_week}")
             
-            # Event senden
+            # Send event
             self.hass.bus.async_fire("grow_plan_activated", {
                 "plan_id": plan_id,
                 "start_date": self.plan_start_date.isoformat(),
@@ -440,7 +440,7 @@ class OGBGrowPlanManager:
             return True
 
         except Exception as e:
-            _LOGGER.error(f"Fehler bei der Aktivierung des Grow Plans: {e}")
+            _LOGGER.error(f"Error activating the grow plan: {e}")
             return False
 
     async def deactivate_grow_plan(self, clear_plan_data: bool = True) -> bool:
@@ -739,7 +739,7 @@ class OGBGrowPlanManager:
             self.current_week_data = None
             return
 
-        # Prüfe ob Startdatum in der Zukunft liegt (aber nur wenn mehr als 1 Stunde in der Zukunft)
+        # Check if start date is in the future (but only if more than 1 hour in the future)
         try:
             time_diff = self.plan_start_date - self.currentDate
         except TypeError as e:
@@ -748,11 +748,11 @@ class OGBGrowPlanManager:
             self.current_week = 1
             return
             
-        if time_diff.total_seconds() > 3600:  # Nur wenn mehr als 1 Stunde in der Zukunft
+        if time_diff.total_seconds() > 3600:  # Only when more than 1 hour in the future
             self.current_week = 0
             self.current_week_data = None
             plan_name = self.active_grow_plan.get('plan_name') or self.active_grow_plan.get('name') or 'Unknown'
-            _LOGGER.warning(f"Grow Plan '{plan_name}' ist vorgeplant. Start am {self.plan_start_date.isoformat()}")
+            _LOGGER.warning(f"Grow Plan '{plan_name}' is scheduled. Start on {self.plan_start_date.isoformat()}")
             self.hass.bus.async_fire("grow_plan_week_update", {
                 "week": 0,
                 "week_data": None,
@@ -819,7 +819,7 @@ class OGBGrowPlanManager:
                 except Exception:
                     continue
             
-            # Falls keine spezifische Woche gefunden, nimm die letzte verfügbare
+            # If no specific week found, use the last available
             if not current_week_data and plan_data:
                 max_week = max(int(w.get("week", 0)) for w in plan_data)
                 if week_number > max_week:
@@ -832,7 +832,7 @@ class OGBGrowPlanManager:
         self.current_week_data = current_week_data
 
         if current_week_data:
-            _LOGGER.warning(f"Aktuelle Woche: {week_number}, Daten: {current_week_data}")
+            _LOGGER.warning(f"Current week: {week_number}, Data: {current_week_data}")
             # days_since_start might not be defined if we used api_week
             try:
                 days_val = days_since_start
@@ -848,22 +848,22 @@ class OGBGrowPlanManager:
             # Update entities with the week data
             await self._update_entities_from_week_data()
         else:
-            # Keine Wochendaten gefunden - frage API an (nur wenn verbunden)
-            _LOGGER.debug(f"🌱 {self.room} Keine Wochendaten für Woche {week_number} gefunden")
+            # No week data found - request from API (only if connected)
+            _LOGGER.debug(f"🌱 {self.room} No week data found for week {week_number}")
             if self.ws_client:
-                # Prüfe ob WebSocket verbunden ist
+                # Check if WebSocket is connected
                 is_connected = getattr(self.ws_client, 'ws_connected', False) or getattr(self.ws_client.sio, 'connected', False)
                 if is_connected:
-                    _LOGGER.debug(f"🌱 {self.room} Frage Wochendaten vom API an...")
+                    _LOGGER.debug(f"🌱 {self.room} Requesting week data from API...")
                     try:
                         await self.ws_client.request_grow_plans_week()
                     except Exception as e:
-                        _LOGGER.error(f"🌱 {self.room} Konnte Wochendaten nicht anfragen: {e}")
+                        _LOGGER.error(f"🌱 {self.room} Could not request week data: {e}")
                 else:
-                    _LOGGER.debug(f"🌱 {self.room} WebSocket nicht verbunden - überspringe API-Anfrage")
+                    _LOGGER.debug(f"🌱 {self.room} WebSocket not connected - skipping API request")
 
     def is_plan_active(self) -> bool:
-        """Prüft ob ein Plan aktiv ist"""
+        """Check whether a plan is active."""
         return self.active_grow_plan is not None and self.plan_start_date is not None
 
     def _is_grow_plan_active(self) -> bool:
@@ -873,7 +873,7 @@ class OGBGrowPlanManager:
         return bool(self.managerActive) and bool(self.data_store.get("growManagerActive"))
 
     def get_current_week_data(self) -> Optional[Dict[str, Any]]:
-        """Gibt die Daten der aktuellen Woche zurück.
+        """Return the data of the current week.
         
         First checks local cache, then falls back to data_store.
         """
@@ -889,7 +889,7 @@ class OGBGrowPlanManager:
         return None
 
     def get_week_data_by_number(self, week_number: int) -> Optional[Dict[str, Any]]:
-        """Gibt Daten für eine spezifische Woche zurück"""
+        """Return data for a specific week."""
         if not self.active_grow_plan:
             return None
         

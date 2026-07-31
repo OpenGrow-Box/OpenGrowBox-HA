@@ -42,6 +42,7 @@ class Device:
         self.maxVoltage = None
         self.minDuty = None
         self.maxDuty = None
+        self.steps = 5  # Default dim step; subclasses/AcInfin/datastore may override
         self.is_minmax_active = False  # Track if MinMax control is active for this device
         self.voltageFromNumber = False
         
@@ -51,7 +52,7 @@ class Device:
         self.eventManager.on("MinMaxControlDisabled", self.on_minmax_control_disabled)
         self.eventManager.on("MinMaxControlEnabled", self.on_minmax_control_enabled)
 
-        # Smart Deadband Events (Climate-Geräte)
+        # Smart Deadband Events (Climate devices)
         self.eventManager.on("SmartDeadbandEntered", self.on_smart_deadband_entered)
         self.eventManager.on("SmartDeadbandExited", self.on_smart_deadband_exited)
         self.eventManager.on("SmartDeadbandCorrection", self.on_smart_deadband_correction)
@@ -149,17 +150,17 @@ class Device:
 
     @property
     def option_count(self) -> int:
-        """Gibt die Anzahl aller Optionen zurück."""
+        """Returns the count of all options."""
         return len(self.options)
     
     @property
     def switch_count(self) -> int:
-        """Gibt die Anzahl aller Optionen zurück."""
+        """Returns the count of all switches."""
         return len(self.switches)
 
     @property
     def sensor_count(self) -> int:
-        """Gibt die Anzahl aller Sensoren zurück."""
+        """Returns the count of all sensors."""
         return len(self.sensors)
 
     def __iter__(self):
@@ -203,11 +204,11 @@ class Device:
         return should_block
 
     def __repr__(self):
-        """Kompakte Darstellung für Debugging."""
+        """Compact representation for debugging."""
         if not self.isInitialized:
             return f"Device(name='{self.deviceName}', room='{self.inRoom}', type='{self.deviceType}', status='NOT_INITIALIZED')"
         
-        # Zähle alle Sensoren aus allen Containern
+        # Count all sensors from all containers
         sensor_count = sum(
             len(getattr(container, "sensors", []))
             for container in (self, *self.switches, *self.options, *self.ogbsettings)
@@ -233,7 +234,7 @@ class Device:
         )
 
     def __str__(self):
-        """Detaillierte, lesbare Darstellung für Nutzer."""
+        """Detailed, readable representation for users."""
         if not self.isInitialized:
             return f"Device '{self.deviceName}' (Room: {self.inRoom}) - NOT INITIALIZED"
         
@@ -244,7 +245,7 @@ class Device:
             "╠" + "═" * 80 + "╣",
         ]
         
-        # Basis-Informationen
+        # Basic information
         lines.extend([
             f"║ Name:          {self.deviceName:<65} ║",
             f"║ Type:          {self.deviceType:<65} ║",
@@ -263,7 +264,7 @@ class Device:
         ]
         lines.append(f"║ Status:        {' | '.join(status_items):<65} ║")
         
-        # Komponenten-Übersicht
+        # Component overview
         lines.append("╠" + "─" * 80 + "╣")
         lines.extend([
             f"║ Switches:      {self.switch_count:<65} ║",
@@ -271,7 +272,7 @@ class Device:
             f"║ OGB Settings:  {len(self.ogbsettings):<65} ║",
         ])
         
-        # Sensoren Detail
+        # Sensor Detail
         sensor_count = sum(
             len(getattr(container, "sensors", []))
             for container in (self, *self.switches, *self.options, *self.ogbsettings)
@@ -301,25 +302,25 @@ class Device:
             f"║   └─ Children: {child_sensors:<65} ║",
         ])
         
-        # Detaillierte Sensor-Liste (optional, wenn nicht zu viele)
+        # Detailed sensor list (optional, if not too many)
         if sensor_count > 0 and sensor_count <= 10:
             lines.append("╠" + "─" * 80 + "╣")
             lines.append(f"║ {'SENSORS':^78} ║")
             lines.append("╠" + "─" * 80 + "╣")
             
-            # Device Sensoren
+            # Device sensors
             if self.sensors:
                 lines.append(f"║ Device Sensors:                                                              ║")
-                for sensor in self.sensors[:5]:  # Max 5 anzeigen
+                for sensor in self.sensors[:5]:  # Show max 5
                     sensor_name = getattr(sensor, 'sensorName', str(sensor))[:60]
                     lines.append(f"║   • {sensor_name:<75} ║")
             
-            # Switch Sensoren
-            for idx, switch in enumerate(self.switches[:3]):  # Max 3 Switches
+            # Switch sensors
+            for idx, switch in enumerate(self.switches[:3]):  # Max 3 switches
                 if hasattr(switch, 'sensors') and switch.sensors:
                     switch_name = getattr(switch, 'switchName', f'Switch {idx}')[:20]
                     lines.append(f"║ {switch_name} Sensors:                                                      ║")
-                    for sensor in switch.sensors[:3]:  # Max 3 Sensoren pro Switch
+                    for sensor in switch.sensors[:3]:  # Max 3 sensors per switch
                         sensor_name = getattr(sensor, 'sensorName', str(sensor))[:60]
                         lines.append(f"║   • {sensor_name:<75} ║")
         
@@ -334,22 +335,22 @@ class Device:
 
     def getEntitys(self):
         """
-        Liefert eine Liste aller Entitäten der Sensoren, Optionen, Schalter und OGB-Einstellungen.
-        Erwartet, dass die Objekte Dictionaries mit dem Schlüssel 'entity_id' sind.
+        Returns a list of all entities for sensors, options, switches, and OGB settings.
+        Expects the objects to be dictionaries with the key 'entity_id'.
         """
         entityList = []
-        # Iteriere durch die Entitäten in allen Kategorien
+        # Iterate through the entities in all categories
         for group in [self.sensors, self.options, self.switches, self.ogbsettings]:
-            if group:  # Überprüfen, ob die Gruppe nicht None ist
+            if group:  # Check if the group is not None
                 for entity in group:   
-                    # Überprüfe, ob 'entity_id' im Dictionary vorhanden ist
+                    # Check if 'entity_id' is present in the dictionary
                     if isinstance(entity, dict) and "entity_id" in entity:
                         entityList.append(entity["entity_id"])
                     else:
-                        _LOGGER.error(f"Ungültiges Objekt in {group}: {entity}")
+                        _LOGGER.error(f"Invalid object in {group}: {entity}")
         return entityList
         
-    # Initialisiere das Gerät und identifiziere Eigenschaften
+    # Initialize the device and identify properties
     def deviceInit(self, entitys):
         clean_entitys = self.discoverRelatedSensors(entitys)
         self.identifySwitchesAndSensors(clean_entitys)
@@ -362,7 +363,7 @@ class Device:
         if(self.initialization == True):
             self.initialization = False
             self.isInitialized = True
-            logging.warning(f"Device: {self.deviceName} Initialization done {self}")
+            logging.warning(f"Device {self.deviceName} initialization done")
             self.deviceUpdater()
             asyncio.create_task(
                 self.eventManager.emit(
@@ -382,8 +383,8 @@ class Device:
 
     def discoverRelatedSensors(self, entitys):
         """
-        Sucht nach dedizierten Sensor-Devices (temperature, humidity, dewpoint, co2).
-        duty und intensity bleiben beim Gerät – werden NICHT als separate Sensoren erstellt.
+        Searches for dedicated sensor devices (temperature, humidity, dewpoint, co2).
+        duty and intensity remain with the device – they are NOT created as separate sensors.
         """
         devices = self.dataStore.get("devices") or []
         new_sensors = []
@@ -476,7 +477,7 @@ class Device:
         except Exception as e:
             _LOGGER.debug(f"[{self.deviceName}] HA state sensor backfill skipped: {e}")
 
-        # Schritt 1: Gruppiere sensor.-Entities nach Typ
+        # Step 1: Group sensor entities by type
         for entity in entitys:
             entity_id = entity.get("entity_id", "")
             if not entity_id.startswith("sensor."):
@@ -516,14 +517,14 @@ class Device:
                     f"[{self.deviceName}] Remapping sensor entity '{entity_id}' as '{sensor_type}'"
                 )
 
-        # Schritt 2: Erstelle Sensor-Objekte für jede Gruppe
+        # Step 2: Create sensor objects for each group
         for sensor_type, sensor_entities in sensor_groups.items():
             if not sensor_entities:
                 continue
 
             sensor_name = f"{self.deviceName}_{sensor_type}"
 
-            # Duplikat-Check – existiert dieser Sensor bereits im dataStore?
+            # Duplicate check – does this sensor already exist in the dataStore?
             already_exists = any(
                 getattr(d, "deviceName", None) == sensor_name
                 for d in devices
@@ -570,7 +571,7 @@ class Device:
                     exc_info=True
                 )
 
-        # Schritt 3: Neue Sensoren speichern
+        # Step 3: Save new sensors
         if new_sensors:
             devices = self.dataStore.get("devices") or []
             devices.extend(new_sensors)
@@ -579,12 +580,49 @@ class Device:
                 f"[{self.deviceName}] Added {len(new_sensors)} remapped sensors to dataStore"
             )
 
-        # Schritt 4: Entferne genutzte Entities aus Rückgabe – duty/intensity bleiben drin
+        # Step 4: Remove used entities from return – duty/intensity remain inside
         remaining_entities = [
             e for e in entitys if e.get("entity_id", "") not in used_entities
         ]
 
         return remaining_entities
+
+    def _load_dim_step(self) -> None:
+        """Load the configured dim step from DeviceSteps for this device type.
+
+        Called during init and whenever SetDeviceMinMax is emitted. Ac-Infinity
+        devices keep their fixed 10% step and are not overridden.
+        """
+        if self.isAcInfinDev:
+            return
+
+        if not self.isDimmable:
+            return
+
+        try:
+            dim_step = self.dataStore.getDeep(f"DeviceSteps.{self.deviceType}")
+        except AttributeError:
+            _LOGGER.debug(f"{self.deviceName}: dataStore not available for dim step loading")
+            return
+
+        if dim_step is None:
+            return
+
+        try:
+            new_step = int(float(dim_step))
+        except (ValueError, TypeError):
+            _LOGGER.warning(f"{self.deviceName}: Invalid dim step value '{dim_step}', ignoring")
+            return
+
+        if new_step < 1 or new_step > 10:
+            _LOGGER.warning(f"{self.deviceName}: Dim step {new_step}% out of range, ignoring")
+            return
+
+        if getattr(self, "steps", None) != new_step:
+            _LOGGER.debug(
+                f"{self.deviceName}: Updated dim step from {getattr(self, 'steps', None)}% to {new_step}%"
+            )
+            self.steps = new_step
 
     def checkMinMax(self, data) -> None:
         if self.isDimmable == False:
@@ -592,7 +630,7 @@ class Device:
         try:
             minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
         except AttributeError:
-            _LOGGER.warning(f"{self.deviceName}: dataStore nicht verfügbar in checkMinMax")
+            _LOGGER.warning(f"{self.deviceName}: dataStore not available in checkMinMax")
             self.is_minmax_active = False
             return
 
@@ -600,11 +638,14 @@ class Device:
             self.is_minmax_active = False
             return
 
-        # is_active sicher lesen
+        # Load user-configured dim step first (before min/max clamping uses it)
+        self._load_dim_step()
+
+        # Read active safely
         self.is_minmax_active = bool(minMaxSets.get("active", False))
 
 
-        # Voltage laden
+        # Load voltage
         raw_min_v = minMaxSets.get("minVoltage")
         raw_max_v = minMaxSets.get("maxVoltage")
         if raw_min_v is not None and raw_max_v is not None:
@@ -613,9 +654,9 @@ class Device:
                 self.maxVoltage = float(raw_max_v)
                 _LOGGER.debug(f"{self.deviceName}: Loaded min/max voltage: {self.minVoltage}-{self.maxVoltage}")
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: Ungültige Voltage-Werte: {raw_min_v}, {raw_max_v}")
+                _LOGGER.warning(f"{self.deviceName}: Invalid voltage values: {raw_min_v}, {raw_max_v}")
 
-        # Duty laden
+        # Load duty
         raw_min_d = minMaxSets.get("minDuty")
         raw_max_d = minMaxSets.get("maxDuty")
         if raw_min_d is not None and raw_max_d is not None:
@@ -624,9 +665,9 @@ class Device:
                 self.maxDuty = float(raw_max_d)
                 _LOGGER.debug(f"{self.deviceName}: Loaded min/max duty: {self.minDuty}-{self.maxDuty}")
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {raw_min_d}, {raw_max_d}")
+                _LOGGER.warning(f"{self.deviceName}: Invalid duty values: {raw_min_d}, {raw_max_d}")
 
-        # Voltage clampen - ONLY if actually changed
+        # Clamp voltage - ONLY if actually changed
         if hasattr(self, 'voltage') and self.voltage is not None and self.minVoltage is not None and self.maxVoltage is not None:
             try:
                 old_voltage = self.voltage
@@ -640,9 +681,9 @@ class Device:
                 else:
                     _LOGGER.debug(f"{self.deviceName}: Voltage {old_voltage}% preserved (within bounds {self.minVoltage}-{self.maxVoltage}%)")
             except Exception as e:
-                _LOGGER.warning(f"{self.deviceName}: Fehler beim Voltage-Clamping: {e}")
+                _LOGGER.warning(f"{self.deviceName}: Error clamping voltage: {e}")
 
-        # DutyCycle clampen - ONLY if actually changed
+        # Clamp duty cycle - ONLY if actually changed
         if hasattr(self, 'dutyCycle') and self.dutyCycle is not None and self.minDuty is not None and self.maxDuty is not None:
             try:
                 old_duty = self.dutyCycle
@@ -659,7 +700,7 @@ class Device:
                 else:
                     _LOGGER.debug(f"{self.deviceName}: DutyCycle {old_duty}% preserved (within bounds {self.minDuty}-{self.maxDuty}%)")
             except Exception as e:
-                _LOGGER.warning(f"{self.deviceName}: Fehler beim DutyCycle-Clamping: {e}")
+                _LOGGER.warning(f"{self.deviceName}: Error clamping duty cycle: {e}")
 
     def is_tent_mode_disabled(self) -> bool:
         """Check if tent mode is disabled in datastore."""
@@ -680,7 +721,7 @@ class Device:
             return await self.turn_on(**kwargs)
 
     def initialize_duty_cycle(self) -> None:
-        """Initialisiert den Duty Cycle auf die Mitte der min/max Werte, aligned to steps."""
+        """Initializes the duty cycle to the middle of the min/max values, aligned to steps."""
 
         def to_float(val, default: float) -> float:
             if val is None:
@@ -700,7 +741,7 @@ class Device:
                 steps_in_range = int(range_mid // steps_val)
                 return int(min_val + steps_in_range * steps_val)
             except (ValueError, TypeError) as e:
-                _LOGGER.warning(f"{self.deviceName}: calc_middle Fehler ({e}), fallback 50")
+                _LOGGER.warning(f"{self.deviceName}: calc_middle error ({e}), fallback 50")
                 return 50
 
         min_duty = to_float(self.minDuty, None)
@@ -708,14 +749,14 @@ class Device:
         steps    = to_float(self.steps, 0.0)
 
         if self.isAcInfinDev:
-            # Feste Werte für AcInfin
+            # Fixed values for AcInfin
             self.steps    = 10
             self.minDuty  = 0.0
             self.maxDuty  = 100.0
             self.dutyCycle = calc_middle(0.0, 100.0, 10.0)  # → 50
 
         elif min_duty is not None and max_duty is not None:
-            # isSpecialDevice + Generischer Fall – identische Logik, kein Duplikat nötig
+            # isSpecialDevice + generic case – identical logic, no duplicate needed
             self.dutyCycle = calc_middle(min_duty, max_duty, steps)
 
         else:
@@ -723,7 +764,7 @@ class Device:
 
         _LOGGER.debug(f"{self.deviceName}: Duty Cycle Init to {self.dutyCycle}%.")
 
-    # Eval sensor if Intressted in 
+    # Evaluate sensor if interested in
     def evalSensors(self, sensor_id: str) -> bool:
         interested_mapping = (
             "_temperature", "temperature",
@@ -737,7 +778,7 @@ class Device:
 
     # Mapp Entity Types to Class vars
     def identifySwitchesAndSensors(self, entitys):
-        """Identifiziere Switches und Sensoren aus der Liste der Entitäten und prüfe ungültige Werte."""
+        """Identify switches and sensors from the list of entities and check invalid values."""
         _LOGGER.debug(f"Identify all given {entitys}")
 
         try:
@@ -753,9 +794,9 @@ class Device:
                 if "ogb_" in entityID:
                     _LOGGER.debug(f"Entity {entityID} contains 'ogb_'. Adding to switches.")
                     self.ogbsettings.append(entity)
-                    continue  # Überspringe die weitere Verarbeitung für diese Entität
+                    continue  # Skip further processing for this entity
 
-                # Prüfe for special Platform
+                # Check for special platform
                 if entityPlatform == "ac_infinity":
                     _LOGGER.debug(f"FOUND AC-INFINITY Entity {self.deviceName} Initial value detected {entityValue} from {entity} Full-Entity-List:{entitys}")
                     self.isAcInfinDev = True
@@ -770,7 +811,7 @@ class Device:
 
                 if entityValue in ("None", "unknown", "Unbekannt", "unavailable"):
                     _LOGGER.debug(f"DEVICE {self.deviceName} Initial invalid value detected for {entityID}. ")
-                    # AcInfinity: trotzdem registrieren, da die Entität später verfügbar wird
+                    # AcInfinity: register anyway, as the entity will be available later
                     if self.isAcInfinDev and entityID.startswith(("select.", "number.")):
                         self.options.append(entity)
                     continue
@@ -922,15 +963,15 @@ class Device:
 
         if self.isAcInfinDev:
             for select in self.options:
-                # Nur select-Entitäten prüfen, number-Entitäten überspringen
+                # Only check select entities, skip number entities
                 entity_id = select.get("entity_id", "")
                 if entity_id.startswith("number."):
-                    continue  # number-Entitäten überspringen
+                    continue  # Skip number entities
                 option_value = select.get("value")
 
                 if option_value == "on" or option_value == "On":
                     self.isRunning = True
-                    return  # Früh beenden, da Zustand gefunden
+                    return  # Return early because state was found
                 elif option_value == "off" or option_value == "Off":
                     self.isRunning = False
                     return
@@ -973,18 +1014,18 @@ class Device:
             if dim_value is not None and dim_value > 0:
                 self.isRunning = True
 
-    # Überprüfe, ob das Gerät dimmbar ist
+    # Check if the device is dimmable
     def identifyIfDimmable(self):
         allowedDeviceTypes = ["ventilation", "exhaust","intake","light","lightfarred","lightuv","lightblue","lightred","humidifier","dehumidifier","heater","cooler","co2"]
 
-        # Gerät muss in der Liste der erlaubten Typen sein
+        # Device must be in the list of allowed types
         if self.deviceType.lower() not in allowedDeviceTypes:
             _LOGGER.debug(f"{self.deviceName}: {self.deviceType} Is not in a list for Dimmable Devices.")
             return
 
         dimmableKeys = ["fan.", "light.","number.","_duty","_intensity"]
 
-        # Prüfen, ob ein Schlüssel in switches, options oder sensors vorhanden ist
+        # Check if a key is present in switches, options, or sensors
         for source in (self.switches, self.options, self.sensors):
             for entity in source:
                 entity_id = entity.get("entity_id", "").lower()
@@ -1022,7 +1063,7 @@ class Device:
                     result *= 10
                 return int(result)
             except (ValueError, TypeError) as e:
-                _LOGGER.error(f"{self.deviceName}: Konvertierungsfehler für Wert '{value}': {e}")
+                _LOGGER.error(f"{self.deviceName}: Conversion error for value '{value}': {e}")
                 return None
 
         def update_sensor_value_in_list(new_value) -> None:
@@ -1040,7 +1081,7 @@ class Device:
         needs_turn_on = False
         turn_on_kwargs = {}
 
-        # ── Sensoren ──────────────────────────────────────────────────────────────
+        # ── Sensors ──────────────────────────────────────────────────────────────
         for sensor in self.sensors:
             entity_id = sensor.get("entity_id", "")
             if not any(key in entity_id.lower() for key in relevant_keys):
@@ -1059,9 +1100,9 @@ class Device:
             if converted is None:
                 continue
 
-            # Beim Init (force_update=False): Wert 0 überspringen – noch kein echter HA-Wert
+            # During init (force_update=False): skip value 0 – not a real HA value yet
             if not force_update and converted == 0:
-                _LOGGER.debug(f"{self.deviceName}: Init – sensor {entity_id} hat Wert 0, überspringe (warte auf echten Wert via deviceUpdater)")
+                _LOGGER.debug(f"{self.deviceName}: Init - sensor {entity_id} has value 0, skipping (waiting for real value via deviceUpdater)")
                 continue
 
             if self.deviceType in light_types:
@@ -1141,9 +1182,9 @@ class Device:
                     if converted is None:
                         continue
 
-                    # Beim Init: Wert 0 überspringen
+                    # During init: skip value 0
                     if not force_update and converted == 0:
-                        _LOGGER.warning(f"{self.deviceName}: Init – option {entity_id} hat Wert 0, überspringe")
+                        _LOGGER.debug(f"{self.deviceName}: Init - option {entity_id} has value 0, skipping")
                         continue
 
                     old = self.voltage
@@ -1176,9 +1217,9 @@ class Device:
                     if converted is None:
                         continue
 
-                    # Beim Init: Wert 0 überspringen
+                    # During init: skip value 0
                     if not force_update and converted == 0:
-                        _LOGGER.warning(f"{self.deviceName}: Init – option {entity_id} hat Wert 0, überspringe")
+                        _LOGGER.debug(f"{self.deviceName}: Init - option {entity_id} has value 0, skipping")
                         continue
 
                     old = self.dutyCycle
@@ -1212,7 +1253,7 @@ class Device:
                             turn_on_kwargs = {"percentage": self.dutyCycle}
                     break
 
-        # ── HA State Machine Fallback für fan./light. Switches ───────────────────────
+        # ── HA State Machine Fallback for fan./light. switches ───────────────────────
         if not control_value_found:
             for switch in self.switches:
                 entity_id = switch.get("entity_id", "")
@@ -1266,7 +1307,7 @@ class Device:
         if not control_value_found:
             self._set_default_control_values()
 
-        # ── turn_on wenn force_update und Wert geändert oder geclampt ─────────────
+        # ── turn_on when force_update and value changed or clamped ─────────────
         if needs_turn_on:
             # Block when OGB light control is off
             if self.deviceType == "Light":
@@ -1344,7 +1385,7 @@ class Device:
             return True  # Default to enabled if check fails
 
     async def turn_on(self, **kwargs):
-        """Schaltet das Gerät ein."""
+        """Turns the device on."""
         import time
         
         self._commanded_state = "on"
@@ -1428,7 +1469,7 @@ class Device:
                 else:
                     percentage = 100.0
 
-            # === Sonderfall: AcInfinity Geräte ===
+            # === Special case: AcInfinity devices ===
             if self.isAcInfinDev:
                 entity_ids = []
                 if self.switches:
@@ -1437,7 +1478,7 @@ class Device:
                         if "select." in switch["entity_id"]
                     ]
                 if not entity_ids:
-                    _LOGGER.warning(f"{self.deviceName}: Keine passenden Select-Switches, nutze Fallback auf Options")
+                    _LOGGER.warning(f"{self.deviceName}: No matching select switches, falling back to options")
                     if self.options:
                         entity_ids = [
                             option["entity_id"] for option in self.options
@@ -1456,9 +1497,9 @@ class Device:
                             },
                         )
 
-                    # Zusatzaktionen je nach Gerätetyp
+                    # Additional actions depending on device type
                     if self.deviceType in ["Light", "Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"]:
-                        # Bei AcInfinity wird oft ein Prozentwert extra gesetzt
+                        # For AcInfinity, a percentage value is often set separately
                         if self.deviceType == "Light":
                             if brightness_pct is not None:
                                 _LOGGER.warning(f"{self.deviceName}: set value to {brightness_pct}")
@@ -1473,7 +1514,7 @@ class Device:
 
                 _LOGGER.warning(f"{self.deviceName}: AcInfinity without select entity - using standard fallback path")
 
-            # === Standardgeräte ===
+            # === Standard devices ===
             if not self.switches:
                 _LOGGER.warning(f"{self.deviceName} has not Switch to Activate or Turn On")
                 return
@@ -1489,12 +1530,12 @@ class Device:
                     entity_id = str(entity_id)
                 _LOGGER.debug(f"{self.deviceName}: Using entity_id={entity_id}")
 
-               # Light einschalten (alle Light device types)
+                # Turn on light (all light device types)
                 if self.deviceType in ["Light", "LightFarRed", "LightUV", "LightBlue", "LightRed"]:
                     if self.isDimmable:
-                        # Prüfe voltageFromNumber Pfad (wie im Original)
+                        # Check voltageFromNumber path (as in original)
                         if self.voltageFromNumber:
-                            # Original Pfad für Tuya-Geräte: switch + set_value
+                            # Original path for Tuya devices: switch + set_value
                             await self.hass.services.async_call(
                                 domain="switch",
                                 service="turn_on",
@@ -1505,7 +1546,7 @@ class Device:
                             _LOGGER.debug(f"{self.deviceName}: Light ON (via Number).")
                             return
                         else:
-                            # Standard Pfad: light.turn_on mit brightness_pct (0-100)
+                            # Standard path: light.turn_on with brightness_pct (0-100)
                             if isinstance(brightness_pct, list):
                                 brightness_pct = brightness_pct[0] if brightness_pct else 100
                             brightness_pct = max(0, min(100, float(brightness_pct)))
@@ -1523,7 +1564,7 @@ class Device:
                             _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON ({brightness_pct}%).")
                             return
                     else:
-                        # Nicht-dimmable Lichter
+                        # Non-dimmable lights
                         await self.hass.services.async_call(
                             domain="switch",
                             service="turn_on",
@@ -1533,7 +1574,7 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: {self.deviceType} ON (non-dimmable).")
                         return
 
-                # Exhaust einschalten
+                # Turn on exhaust
                 elif self.deviceType == "Exhaust":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -1593,7 +1634,7 @@ class Device:
                         _LOGGER.warning(f"{self.deviceName}: Exhaust ON (Switch).")
                         return
 
-                # Intake einschalten
+                # Turn on intake
                 elif self.deviceType == "Intake":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -1645,7 +1686,7 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Intake ON (Switch).")
                         return
 
-                # Ventilation einschalten
+                # Turn on ventilation
                 elif self.deviceType == "Ventilation":
                     if self.isSpecialDevice:
                         await self.hass.services.async_call(
@@ -1681,7 +1722,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Ventilation ON - {len(self.switches)} entities activated.")
 
 
-                # Climate einschalten
+                # Turn on climate
                 elif self.deviceType == "Climate":
                     hvac_mode = kwargs.get("hvac_mode", "heat")
                     await self.hass.services.async_call(
@@ -1696,7 +1737,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: HVAC-Mode {hvac_mode} ON.")
                     return
 
-                # Humidifier einschalten
+                # Turn on humidifier
                 elif self.deviceType == "Humidifier":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -1756,7 +1797,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Humidifier ON ({percentage}%).")
                     return
 
-                # Dehumidifier einschalten
+                # Turn on dehumidifier
                 elif self.deviceType == "Dehumidifier":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -1816,7 +1857,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Dehumidifier ON ({percentage}%).")
                     return
 
-                # Heater einschalten
+                # Turn on heater
                 elif self.deviceType == "Heater":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -1874,7 +1915,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Heater ON ({percentage}%).")
                     return
 
-                # Cooler einschalten
+                # Turn on cooler
                 elif self.deviceType == "Cooler":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -1933,7 +1974,7 @@ class Device:
                     return
 
 
-                # CO2 einschalten
+                # Turn on CO2
                 elif self.deviceType == "CO2":
                     if self.isDimmable:
                         await self.hass.services.async_call(
@@ -1974,7 +2015,7 @@ class Device:
             self._in_active_control = False
 
     async def turn_off(self, **kwargs):
-        """Schaltet das Gerät aus."""
+        """Turns the device off."""
         import time
         
         self._commanded_state = "off"
@@ -1994,7 +2035,7 @@ class Device:
         self._control_lock_until = time.time() + 5.0
         
         try:
-            # === Sonderfall: AcInfinity Geräte ===
+            # === Special case: AcInfinity devices ===
             if self.isAcInfinDev:
                 entity_ids = []
                 if self.switches:
@@ -2003,7 +2044,7 @@ class Device:
                         if "select." in switch["entity_id"]
                     ]
                 if not entity_ids:
-                    _LOGGER.warning(f"{self.deviceName}: Keine passenden Select-Switches, nutze Fallback auf Options")
+                    _LOGGER.warning(f"{self.deviceName}: No matching select switches, falling back to options")
                     if self.options:
                         entity_ids = [
                             option["entity_id"] for option in self.options
@@ -2025,12 +2066,12 @@ class Device:
                     if self.deviceType in ["Light", "Humidifier","Exhaust","Ventilation"]:
                         await self.set_value(0)
                     self.isRunning = False
-                    _LOGGER.debug(f"{self.deviceName}: AcInfinity über select OFF.")
+                    _LOGGER.debug(f"{self.deviceName}: AcInfinity via select OFF.")
                     return
 
                 _LOGGER.warning(f"{self.deviceName}: AcInfinity without select entity - using standard fallback off path")
 
-            # === Standardgeräte ===
+            # === Standard devices ===
             if not self.switches:
                 _LOGGER.debug(f"{self.deviceName} has NO Switches to Turn OFF")
                 return
@@ -2040,7 +2081,7 @@ class Device:
             for entity_id in entity_ids:
                 _LOGGER.debug(f"{self.deviceName}: Service-Call for Entity: {entity_id}")
 
-                # Climate ausschalten
+                # Turn off climate
                 if self.deviceType == "Climate":
                     await self.hass.services.async_call(
                         domain="climate",
@@ -2054,7 +2095,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: HVAC-Mode OFF.")
                     return
 
-                # Humidifier ausschalten
+                # Turn off humidifier
                 elif self.deviceType == "Humidifier":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -2104,7 +2145,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Humidifier OFF.")
                     return
 
-                # Dehumidifier ausschalten
+                # Turn off dehumidifier
                 elif self.deviceType == "Dehumidifier":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -2148,7 +2189,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Dehumidifier OFF.")
                     return
 
-                # Light ausschalten
+                # Turn off light
                 elif self.deviceType == "Light":
                     if self.isDimmable:
                         # For dimmable lights, use brightness_pct=0 to turn off
@@ -2172,14 +2213,14 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Light OFF (Default-Switch).")
                         return
 
-                # Exhaust ausschalten
+                # Turn off exhaust
                 elif self.deviceType == "Exhaust":
                     if self.isDimmable:
                         if self._has_power_and_number_control():
                             await self._set_power_control(False)
                             await self.set_value(0)
                             self.isRunning = False
-                        return  # Deaktiviert for fan-percentage exhaust
+                        return  # Disabled for fan-percentage exhaust
                     else:
                         await self.hass.services.async_call(
                             domain="switch",
@@ -2190,7 +2231,7 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Exhaust OFF.")
                         return
 
-                # Intake ausschalten
+                # Turn off intake
                 elif self.deviceType == "Intake":
                     if self.isDimmable:
                         if self._has_power_and_number_control():
@@ -2208,7 +2249,7 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Intake OFF.")
                         return
 
-                # Ventilation ausschalten
+                # Turn off ventilation
                 elif self.deviceType == "Ventilation":
                     if self.isSpecialDevice:
                         await self.hass.services.async_call(
@@ -2237,7 +2278,7 @@ class Device:
                     self.isRunning = False
                     _LOGGER.debug(f"{self.deviceName}: Ventilation OFF - {len(self.switches)} entities deactivated.")
                         
-                # Heater ausschalten
+                # Turn off heater
                 elif self.deviceType == "Heater":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -2281,7 +2322,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Heater OFF.")
                     return
 
-                # Cooler ausschalten
+                # Turn off cooler
                 elif self.deviceType == "Cooler":
                     if self.isSpecialDevice:
                         if self.isDimmable:
@@ -2325,7 +2366,7 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: Cooler OFF.")
                     return
 
-                # CO2 ausschalten
+                # Turn off CO2
                 elif self.deviceType == "CO2":
                     if self.isDimmable:
                         return
@@ -2339,7 +2380,7 @@ class Device:
                         _LOGGER.warning(f"{self.deviceName}: CO2 OFF.")
                         return
 
-                # Fallback: Standard-Switch
+                # Fallback: standard switch
                 else:
                     await self.hass.services.async_call(
                         domain="switch",
@@ -2351,7 +2392,7 @@ class Device:
                     return
 
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Ausschalten von {self.deviceName}: {e}")
+            _LOGGER.error(f"Error turning off {self.deviceName}: {e}")
         finally:
             pass
 
@@ -2360,7 +2401,7 @@ class Device:
         try:
             _LOGGER.debug(f"{self.deviceName}: hard_turn_off started")
             
-            # 1. Alle Switches durchgehen und direkt ausschalten
+            # 1. Go through all switches and turn them off directly
             for switch in (self.switches or []):
                 entity_id = switch.get("entity_id", "")
                 if not entity_id:
@@ -2400,7 +2441,7 @@ class Device:
                 except Exception as e:
                     _LOGGER.error(f"{self.deviceName}: hard_turn_off failed for {entity_id}: {e}")
             
-            # 2. Options (Number Entities) auf 0 setzen
+            # 2. Set options (number entities) to 0
             for option in (self.options or []):
                 entity_id = option.get("entity_id", "")
                 if entity_id and entity_id.startswith("number."):
@@ -2481,16 +2522,16 @@ class Device:
             _LOGGER.error(f"{self.deviceName}: CalibStart failed: {e}", exc_info=True)
 
     async def set_value(self, value: int | float | str | None) -> None:
-        """Setzt einen numerischen Wert, falls unterstützt und relevant (duty oder voltage)."""
+        """Sets a numeric value if supported and relevant (duty or voltage)."""
         if not self.options:
-            _LOGGER.debug(f"{self.deviceName}: unterstützt keine numerischen Werte.")
+            _LOGGER.debug(f"{self.deviceName}: does not support numeric values.")
             return
 
-        # value sicher konvertieren
+        # Convert value safely
         try:
             value = float(value)
         except (ValueError, TypeError):
-            _LOGGER.error(f"{self.deviceName}: set_value ungültiger Wert '{value}'")
+            _LOGGER.error(f"{self.deviceName}: set_value invalid value '{value}'")
             return
 
         # Preferred: explicit duty/intensity control entities
@@ -2504,10 +2545,10 @@ class Device:
                         service="set_value",
                         service_data={"entity_id": entity_id, "value": send_value},
                     )
-                    _LOGGER.debug(f"{self.deviceName}: Wert {send_value} für {entity_id} gesetzt.")
+                    _LOGGER.debug(f"{self.deviceName}: Value {send_value} set for {entity_id}.")
                 except Exception as e:
-                    _LOGGER.error(f"{self.deviceName}: Fehler beim Setzen des Wertes für {entity_id}: {e}")
-                return  # immer nach erster passender Option abbrechen
+                    _LOGGER.error(f"{self.deviceName}: Error setting value for {entity_id}: {e}")
+                return  # always stop after first matching option
 
         # Fallback for non-AC dimmable devices using generic number entities
         if self.deviceType in {"Humidifier", "Dehumidifier", "Exhaust", "Intake", "Ventilation"}:
@@ -2521,12 +2562,12 @@ class Device:
                             service="set_value",
                             service_data={"entity_id": entity_id, "value": send_value},
                         )
-                        _LOGGER.debug(f"{self.deviceName}: Fallback number value {send_value} für {entity_id} gesetzt.")
+                        _LOGGER.debug(f"{self.deviceName}: Fallback number value {send_value} set for {entity_id}.")
                     except Exception as e:
-                        _LOGGER.error(f"{self.deviceName}: Fehler beim Setzen des Fallback-Wertes für {entity_id}: {e}")
+                        _LOGGER.error(f"{self.deviceName}: Error setting fallback value for {entity_id}: {e}")
                     return
 
-        _LOGGER.warning(f"{self.deviceName}: keine Option mit 'duty' oder 'intensity' in entity_id gefunden.")
+        _LOGGER.warning(f"{self.deviceName}: no option with 'duty' or 'intensity' found in entity_id.")
 
     def _has_power_and_number_control(self) -> bool:
         """Return True if device exposes (select or switch) plus number control."""
@@ -2653,34 +2694,34 @@ class Device:
                 )
 
     async def set_mode(self, mode: str) -> None:
-        """Setzt den Mode des Geräts, falls unterstützt."""
+        """Sets the device mode, if supported."""
         if not self.options:
-            _LOGGER.warning(f"{self.deviceName}: unterstützt keine Modi.")
+            _LOGGER.warning(f"{self.deviceName}: does not support modes.")
             return
 
         if not isinstance(mode, str) or not mode.strip():
-            _LOGGER.error(f"{self.deviceName}: set_mode ungültiger Mode '{mode}'")
+            _LOGGER.error(f"{self.deviceName}: set_mode invalid mode '{mode}'")
             return
 
         try:
             entity_id = self.options[0].get("entity_id", "")
             if not entity_id:
-                _LOGGER.error(f"{self.deviceName}: options[0] hat keine entity_id")
+                _LOGGER.error(f"{self.deviceName}: options[0] has no entity_id")
                 return
             await self.hass.services.async_call(
                 domain="select",
                 service="select_option",
                 service_data={"entity_id": entity_id, "option": mode},
             )
-            _LOGGER.debug(f"{self.deviceName}: Mode '{mode}' für {entity_id} gesetzt.")
+            _LOGGER.debug(f"{self.deviceName}: Mode '{mode}' set for {entity_id}.")
         except Exception as e:
-            _LOGGER.error(f"{self.deviceName}: Fehler beim Setzen des Mode: {e}")
+            _LOGGER.error(f"{self.deviceName}: Error setting mode: {e}")
 
     async def WorkMode(self, workmode) -> None:
         special_light_types = {"LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}
         no_action_types     = {"Light", "Pump", "Sensor"}
 
-        # Lights die aus sind: WorkMode speichern oder ignorieren
+        # Lights that are off: save or ignore WorkMode
         if hasattr(self, 'islightON') and not self.islightON:
             if self.deviceType in special_light_types:
                 _LOGGER.debug(f"{self.deviceName}: ({self.deviceType}) ignoring WorkMode, using dedicated scheduling")
@@ -2701,14 +2742,14 @@ class Device:
                     if not self.dataStore.getDeep("controlOptions.lightbyOGBControl"):
                         _LOGGER.debug(f"{self.deviceName}: WorkMode ON blocked — OGBLightControl is OFF")
                         return
-                    # minVoltage nutzen wenn gesetzt, sonst initVoltage
+                    # Use minVoltage if set, otherwise initVoltage
                     try:
                         if self.minVoltage is not None and self.maxVoltage is not None:
                             self.voltage = float(self.minVoltage)
                         else:
                             self.voltage = float(self.initVoltage)
                     except (ValueError, TypeError):
-                        _LOGGER.warning(f"{self.deviceName}: Ungültiger Voltage-Wert, nutze initVoltage Fallback")
+                        _LOGGER.warning(f"{self.deviceName}: Invalid voltage value, using initVoltage fallback")
                         self.voltage = float(getattr(self, 'initVoltage', 20))
                     await self.safe_turn_on(brightness_pct=self.voltage)
 
@@ -2720,7 +2761,7 @@ class Device:
                     try:
                         min_duty = int(float(self.minDuty))
                     except (ValueError, TypeError):
-                        _LOGGER.warning(f"{self.deviceName}: Ungültiger minDuty-Wert, nutze 0")
+                        _LOGGER.warning(f"{self.deviceName}: Invalid minDuty value, using 0")
                         min_duty = 0
                     self.dutyCycle = min_duty
                     if self.isSpecialDevice:
@@ -2732,7 +2773,7 @@ class Device:
                 if self.deviceType not in no_action_types:
                     await self.turn_off()
 
-        else:  # WorkMode deaktiviert
+        else:  # WorkMode disabled
             if self.isDimmable:
                 if self.deviceType == "Light":
                     if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
@@ -2745,7 +2786,7 @@ class Device:
                     try:
                         self.voltage = float(self.maxVoltage)
                     except (ValueError, TypeError):
-                        _LOGGER.warning(f"{self.deviceName}: Ungültiger maxVoltage-Wert")
+                        _LOGGER.warning(f"{self.deviceName}: Invalid maxVoltage value")
                         self.voltage = 100.0
                     if self.isRunning:
                         await self.safe_turn_on(brightness_pct=self.voltage)
@@ -2754,7 +2795,7 @@ class Device:
                     try:
                         max_duty = int(float(self.maxDuty))
                     except (ValueError, TypeError):
-                        _LOGGER.warning(f"{self.deviceName}: Ungültiger maxDuty-Wert, nutze 100")
+                        _LOGGER.warning(f"{self.deviceName}: Invalid maxDuty value, using 100")
                         max_duty = 100
                     self.dutyCycle = max_duty
                     if self.isRunning:
@@ -2790,7 +2831,7 @@ class Device:
                 return
 
     async def DeviceSetMinMax(self, data) -> None:
-        # KEIN isInitialized check – Bounds müssen auch beim Init geladen werden
+        # NO isInitialized check – bounds must also be loaded during init
         if hasattr(self, 'sunPhaseActive') and self.sunPhaseActive:
             _LOGGER.debug(f"{self.deviceName}: Cannot change min/max during active sunphase")
             return
@@ -2813,13 +2854,16 @@ class Device:
         try:
             minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
         except AttributeError:
-            _LOGGER.error(f"{self.deviceName}: dataStore nicht verfügbar in DeviceSetMinMax")
+            _LOGGER.error(f"{self.deviceName}: dataStore not available in DeviceSetMinMax")
             return
 
         if not isinstance(minMaxSets, dict):
             _LOGGER.error(f"{self.deviceName}: minMaxSets is not a dict for {self.deviceType}")
             return
-            
+
+        # Always refresh dim step from datastore, independent of active min/max control
+        self._load_dim_step()
+
         if not minMaxSets.get("active", False):
             _LOGGER.debug(f"{self.deviceName}: min/max control is not active for {self.deviceType}")
             return
@@ -2831,7 +2875,7 @@ class Device:
                 self.maxVoltage = float(minMaxSets.get("maxVoltage"))
                 _LOGGER.debug(f"{self.deviceName}: Updated voltage min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
             except (ValueError, TypeError):
-                _LOGGER.error(f"{self.deviceName}: Ungültige Voltage-Werte: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
+                _LOGGER.error(f"{self.deviceName}: Invalid voltage values: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
                 return
 
             # Block when OGB light control is off
@@ -2840,14 +2884,14 @@ class Device:
                     _LOGGER.debug(f"{self.deviceName}: DeviceSetMinMax blocked — OGBLightControl is OFF")
                     return
 
-            # Nur clampen + turn_on wenn bereits initialisiert
+            # Only clamp + turn_on if already initialized
             if self.isInitialized:
                 if self.isRunning:
                     await self.changeMinMaxValues(self.clamp_voltage(self.voltage))
                 else:
                     self.voltage = self.clamp_voltage(self.voltage)
             else:
-                _LOGGER.debug(f"{self.deviceName}: Bounds geladen aber kein turn_on – noch nicht initialisiert")
+                _LOGGER.debug(f"{self.deviceName}: Bounds loaded but no turn_on - not yet initialized")
 
         elif "minDuty" in minMaxSets and "maxDuty" in minMaxSets:
             min_duty_val = minMaxSets.get("minDuty")
@@ -2861,20 +2905,20 @@ class Device:
                 self.maxDuty = float(max_duty_val)
                 _LOGGER.debug(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {min_duty_val}, {max_duty_val}")
+                _LOGGER.warning(f"{self.deviceName}: Invalid duty values: {min_duty_val}, {max_duty_val}")
                 return
 
-            # Nur clampen + turn_on wenn bereits initialisiert
+            # Only clamp + turn_on if already initialized
             if self.isInitialized:
                 await self.changeMinMaxValues(self.clamp_duty_cycle(self.dutyCycle))
             else:
-                _LOGGER.debug(f"{self.deviceName}: Bounds geladen aber kein turn_on – noch nicht initialisiert")
+                _LOGGER.debug(f"{self.deviceName}: Bounds loaded but no turn_on - not yet initialized")
             
-            # Capabilities aktualisieren
+            # Update capabilities
             self._update_deviceData_in_capabilities()
 
     async def on_minmax_control_enabled(self, data) -> None:
-        # KEIN isInitialized check – gleiche Logik wie DeviceSetMinMax
+        # NO isInitialized check – same logic as DeviceSetMinMax
         _LOGGER.debug(f"{self.deviceName}: === MINMAX CONTROL ENABLED START ===")
         
         minmax_device_types = {"Light", "Exhaust", "Intake", "Ventilation", "Heater", "Cooler", "Humidifier", "Dehumidifier"}
@@ -2891,11 +2935,14 @@ class Device:
         try:
             minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
         except AttributeError as e:
-            _LOGGER.error(f"{self.deviceName}: dataStore nicht verfügbar: {e}")
+            _LOGGER.error(f"{self.deviceName}: dataStore not available: {e}")
             return
 
         if not isinstance(minMaxSets, dict):
             return
+
+        # Refresh dim step whenever min/max control is enabled
+        self._load_dim_step()
 
         if self.deviceType == "Light":
             # Block when OGB light control is off
@@ -2947,9 +2994,9 @@ class Device:
                             else:
                                 await self.turn_on(percentage=self.dutyCycle)
                 else:
-                    _LOGGER.debug(f"{self.deviceName}: Bounds geladen aber kein turn_on – noch nicht initialisiert")
+                    _LOGGER.debug(f"{self.deviceName}: Bounds loaded but no turn_on - not yet initialized")
             
-            # Capabilities aktualisieren
+            # Update capabilities
             self._update_deviceData_in_capabilities()
 
 
@@ -3044,12 +3091,12 @@ class Device:
                         else:
                             await self.turn_on(percentage=self.dutyCycle)
             
-            # Capabilities aktualisieren
+            # Update capabilities
             self._update_deviceData_in_capabilities()
 
 
     def clamp(self, value: int | float | str | None) -> float | int:
-        """Genereller Clamper – wählt automatisch den richtigen Clamper basierend auf deviceType."""
+        """General clamper – automatically selects the correct clamper based on deviceType."""
         voltage_types = {"Light", "LightFarRed", "LightUV", "LightBlue", "LightRed", "LightSpectrum"}
         duty_types    = {"Exhaust", "Intake", "Ventilation"}
         duty_types_generic = {"Humidifier", "Dehumidifier", "Heater", "Cooler"}
@@ -3070,14 +3117,14 @@ class Device:
         try:
             v = float(value) if value is not None else 0.0
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: clamp_voltage ungültiger Wert '{value}', nutze 0.0")
+            _LOGGER.warning(f"{self.deviceName}: clamp_voltage invalid value '{value}', using 0.0")
             v = 0.0
 
         try:
             min_v = float(self.minVoltage) if self.minVoltage is not None else None
             max_v = float(self.maxVoltage) if self.maxVoltage is not None else None
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: Ungültige min/max Voltage-Werte, kein Clamping")
+            _LOGGER.warning(f"{self.deviceName}: Invalid min/max voltage values, no clamping")
             return v
 
         if min_v is not None and max_v is not None:
@@ -3087,40 +3134,40 @@ class Device:
     def clamp_duty_cycle(self, value: int | float | str | None) -> int:
         """Clamp duty cycle to min/max range."""
         if value is None:
-            _LOGGER.debug(f"{self.deviceName}: clamp_duty_cycle None, nutze 50%")
+            _LOGGER.debug(f"{self.deviceName}: clamp_duty_cycle None, using 50%")
             value = 50.0
         else:
             try:
                 value = float(value)
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle ungültiger Wert '{value}', nutze 50%")
+                _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle invalid value '{value}', using 50%")
                 value = 50.0
 
         try:
             min_duty = float(self.minDuty) if self.minDuty is not None else 0.0
             max_duty = float(self.maxDuty) if self.maxDuty is not None else 100.0
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: Ungültige min/max Duty-Werte, nutze 0-100")
+            _LOGGER.warning(f"{self.deviceName}: Invalid min/max duty values, using 0-100")
             min_duty, max_duty = 0.0, 100.0
 
         return int(max(min_duty, min(max_duty, value)))
 
     def deviceUpdater(self):
-        # Duplikat-Schutz – Listener nur einmal registrieren
+        # Duplicate protection – register listener only once
         if getattr(self, '_deviceUpdater_registered', False):
-            _LOGGER.warning(f"{self.deviceName}: deviceUpdater bereits registriert – skip")
+            _LOGGER.debug(f"{self.deviceName}: deviceUpdater already registered - skip")
             return
         self._deviceUpdater_registered = True
 
         deviceEntitiys = self.getEntitys()
-        _LOGGER.debug(f"UpdateListener für {self.deviceName} registriert for {deviceEntitiys}.")
+        _LOGGER.debug(f"Update listener for {self.deviceName} registered for {deviceEntitiys}.")
 
         async def deviceUpdateListner(event):
             if not getattr(self, 'isInitialized', False):
-                _LOGGER.warning(f"{self.deviceName}: Update ignoriert – noch nicht initialisiert")
+                _LOGGER.debug(f"{self.deviceName}: Update ignored - not yet initialized")
                 return
             if getattr(self, 'initialization', False):
-                _LOGGER.warning(f"{self.deviceName}: Update ignoriert – Initialisierung läuft gerade")
+                _LOGGER.debug(f"{self.deviceName}: Update ignored - initialization still in progress")
                 return
 
             entity_id = event.data.get("entity_id")
@@ -3150,7 +3197,7 @@ class Device:
             )
 
             def update_entity_in_lists(entity_lists: list, entity_id: str, new_value) -> bool:
-                """Sucht entity_id in allen übergebenen Listen und setzt den neuen Wert."""
+                """Searches for entity_id in all passed lists and sets the new value."""
                 for entity_list in entity_lists:
                     for entity in entity_list:
                         if entity.get("entity_id") == entity_id:
@@ -3159,7 +3206,7 @@ class Device:
                             return True
                 return False
 
-            # Sensor Entitäten → Wert updaten dann checkForControlValue
+            # Sensor entities → update value then checkForControlValue
             if "sensor." in entity_id:
                 updated = update_entity_in_lists([self.sensors, self.options], entity_id, new_state_value)
                 if updated:
@@ -3168,7 +3215,7 @@ class Device:
                         self._update_deviceData_in_capabilities()
                         _LOGGER.debug(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Sensor-Update")
                     except Exception as e:
-                        _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
+                        _LOGGER.error(f"{self.deviceName}: Error in checkForControlValue: {e}")
                     
                     # Emit power sensor update for energy tracking
                     if any(suffix in entity_id for suffix in ["_power", "_energy_power", "_apparentpower"]):
@@ -3181,9 +3228,9 @@ class Device:
                                 "room": self.inRoom,
                             }))
                         except Exception as e:
-                            _LOGGER.debug(f"{self.deviceName}: Fehler PowerSensorUpdate Event: {e}")
+                            _LOGGER.debug(f"{self.deviceName}: Error in PowerSensorUpdate event: {e}")
 
-            # Number/Option Entitäten → Wert updaten dann checkForControlValue
+            # Number/option entities → update value then checkForControlValue
             elif any(prefix in entity_id for prefix in ["number.", "text.", "time.", "date."]):
                 updated = update_entity_in_lists([self.options], entity_id, new_state_value)
                 if updated:
@@ -3192,9 +3239,9 @@ class Device:
                         self._update_deviceData_in_capabilities()
                         _LOGGER.debug(f"{self.deviceName}: dutyCycle={self.dutyCycle} voltage={self.voltage} nach Option-Update")
                     except Exception as e:
-                        _LOGGER.error(f"{self.deviceName}: Fehler checkForControlValue: {e}")
+                        _LOGGER.error(f"{self.deviceName}: Error in checkForControlValue: {e}")
 
-            # Switch/Control Entitäten → Wert updaten dann Running-State aktualisieren
+            # Switch/control entities → update value then update running state
             elif any(prefix in entity_id for prefix in ["fan.", "light.", "switch.", "humidifier.", "select.", "cover."]):
                 updated = update_entity_in_lists([self.switches, self.options, self.sensors], entity_id, new_state_value)
                 if updated:
@@ -3213,36 +3260,36 @@ class Device:
                                 "room": self.inRoom,
                             }))
                         except Exception as e:
-                            _LOGGER.debug(f"{self.deviceName}: Fehler DeviceStateChange Event: {e}")
+                            _LOGGER.debug(f"{self.deviceName}: Error in DeviceStateChange event: {e}")
                     except Exception as e:
-                        _LOGGER.error(f"{self.deviceName}: Fehler beim Aktualisieren des Running-State: {e}")
+                        _LOGGER.error(f"{self.deviceName}: Error updating running state: {e}")
 
-            # OGB Entitäten → nur updaten, kein checkForControlValue nötig
+            # OGB entities → only update, no checkForControlValue needed
             elif "ogb_" in entity_id:
                 update_entity_in_lists([self.sensors, self.ogbsettings], entity_id, new_state_value)
                 _LOGGER.debug(f"{self.deviceName}: OGB entity {entity_id} → {new_state_value}")
 
         self.hass.bus.async_listen("state_changed", deviceUpdateListner)
-        _LOGGER.debug(f"Device-State-Change Listener für {self.deviceName} registriert.")
+        _LOGGER.debug(f"Device state change listener for {self.deviceName} registered.")
 
     async def setToMinimum(self):
         """
-        Reduziert das Gerät auf das Minimum für Smart Deadband.
+        Reduces the device to the minimum for Smart Deadband.
         
-        Dimmbare Geräte: Auf 10% (oder minDuty wenn höher)
-        Nicht-dimmbare Geräte: Ausschalten
+        Dimmable devices: to 10% (or minDuty if higher)
+        Non-dimmable devices: turn off
         
-        Diese Methode wird vom Smart Deadband aufgerufen, um Geräte
-        in einen "Low-Power" Zustand zu versetzen ohne die normale
-        reduce/increase Logik zu beeinträchtigen.
+        This method is called by Smart Deadband to put devices
+        into a "low-power" state without affecting the normal
+        reduce/increase logic.
         """
         if self.isDimmable:
-            # Dimmbares Gerät: Auf Minimum reduzieren (10% oder minDuty)
-            min_value = max(self.minDuty or 0, 10)  # Minimum 10% oder minDuty wenn höher
+            # Dimmable device: reduce to minimum (10% or minDuty if higher)
+            min_value = max(self.minDuty or 0, 10)  # Minimum 10% or minDuty if higher
             clamped = self.clamp_duty_cycle(min_value)
             self.dutyCycle = clamped
             
-            # Setze auf den geklammpten Wert (turn_on akzeptiert percentage oder brightness_pct)
+            # Set to the clamped value (turn_on accepts percentage or brightness_pct)
             if self.isSpecialDevice:
                 await self.turn_on(brightness_pct=clamped)
             else:
@@ -3253,7 +3300,7 @@ class Device:
                 f"(dimmable device)"
             )
         else:
-            # Nicht-dimmbares Gerät: Ausschalten
+            # Non-dimmable device: turn off
             if self.isRunning:
                 _LOGGER.debug(
                     f"{self.deviceName}: Turned off for deadband (non-dimmable device)"
@@ -3266,13 +3313,13 @@ class Device:
 
     async def restoreFromMinimum(self):
         """
-        Stellt das Gerät auf den vorherigen Zustand vor dem Eintritt in den Smart Deadband zurück.
+        Restores the device to the previous state before entering Smart Deadband.
 
-        Dimmbare Geräte: Wiederherstellen auf vorherigen duty cycle
-        Nicht-dimmbare Geräte: Wiederherstellen auf vorherigen running state
+        Dimmable devices: restore to previous duty cycle
+        Non-dimmable devices: restore to previous running state
         """
         if self.isDimmable:
-            # Dimmbares Gerät: Wiederherstellen auf vorherigen duty cycle
+            # Dimmable device: restore to previous duty cycle
             if self._pre_deadband_duty_cycle is not None:
                 clamped = self.clamp_duty_cycle(self._pre_deadband_duty_cycle)
                 self.dutyCycle = clamped
@@ -3291,7 +3338,7 @@ class Device:
                     f"{self.deviceName}: No previous duty cycle saved, cannot restore from deadband"
                 )
         else:
-            # Nicht-dimmbares Gerät: Wiederherstellen auf vorherigen running state
+            # Non-dimmable device: restore to previous running state
             if self._pre_deadband_is_running is not None:
                 if self._pre_deadband_is_running:
                     if not self.isRunning:
@@ -3311,7 +3358,7 @@ class Device:
                 )
 
     async def on_smart_deadband_entered(self, data) -> None:
-        """Wird aufgerufen wenn VPD in Smart Deadband eintritt."""
+        """Called when VPD enters Smart Deadband."""
         if not self.isInitialized:
             _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandEntered – not yet initialized")
             return
@@ -3320,7 +3367,7 @@ class Device:
         if self.deviceType not in deadband_device_types:
             return
 
-        # Device-Filter wie bei MinMax
+        # Device filter as with MinMax
         if isinstance(data, dict):
             event_device_type = data.get("deviceType", "")
             if event_device_type and event_device_type.lower() != self.deviceType.lower():
@@ -3341,7 +3388,7 @@ class Device:
                 return
 
         if not self._in_smart_deadband:
-            # WICHTIG: Zuerst aktuellen Status speichern, dann auf Minimum reduzieren!
+            # IMPORTANT: First save current state, then reduce to minimum!
             # Save current state before entering deadband
             if self.isDimmable:
                 self._pre_deadband_duty_cycle = self.dutyCycle
@@ -3357,7 +3404,7 @@ class Device:
             )
 
     async def on_smart_deadband_exited(self, data) -> None:
-        """Wird aufgerufen wenn VPD Smart Deadband verlässt."""
+        """Called when VPD leaves Smart Deadband."""
         if not self.isInitialized:
             _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandExited – not yet initialized")
             return
@@ -3366,7 +3413,7 @@ class Device:
         if self.deviceType not in deadband_device_types:
             return
 
-        # Device-Filter wie bei MinMax
+        # Device filter as with MinMax
         if isinstance(data, dict):
             event_device_type = data.get("deviceType", "")
             if event_device_type and event_device_type.lower() != self.deviceType.lower():
@@ -3384,7 +3431,7 @@ class Device:
             )
 
     async def on_smart_deadband_correction(self, data) -> None:
-        """Wird aufgerufen wenn ein Gerät während Deadband für Temp/Humidity Korrektur aktiviert werden muss."""
+        """Called when a device must be activated during deadband for temperature/humidity correction."""
         if not self.isInitialized:
             _LOGGER.debug(f"{self.deviceName}: ignoring SmartDeadbandCorrection – not yet initialized")
             return

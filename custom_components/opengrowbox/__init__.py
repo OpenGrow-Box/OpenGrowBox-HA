@@ -5,6 +5,8 @@ import re
 import shutil
 from glob import glob
 
+import voluptuous as vol
+
 from homeassistant.components.frontend import async_remove_panel
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -33,6 +35,66 @@ _CONFIG_AUTO_UPDATE_FLAG = "__config_auto_update_done__"
 _CLEANUP_DONE_FLAG = "__cleanup_done__"
 _AMBIENT_ENSURE_FLAG = "__ambient_ensure_done__"
 _CONFIG_NOTIFICATION_ID = "opengrowbox_required_ha_config"
+
+
+def _register_update_sensor_service(hass: HomeAssistant) -> None:
+    """Register the update_sensor service as early as possible.
+
+    The service is used by managers to push sensor updates. It must be available
+    before the sensor platform finishes setting up, otherwise callers receive
+    ServiceNotFound while platforms are still loading.
+    """
+    if hass.services.has_service(DOMAIN, "update_sensor"):
+        return
+
+    async def handle_update_sensor(call):
+        """Handle the update sensor service."""
+        entity_id_requested = call.data.get("entity_id")
+        value = call.data.get("value")
+
+        _LOGGER.debug(
+            f"SERVICE CALL: update_sensor for '{entity_id_requested}' = {value}"
+        )
+
+        sensors = hass.data.get(DOMAIN, {}).get("sensors")
+        if not sensors:
+            _LOGGER.debug(
+                f"update_sensor called before sensors loaded; '{entity_id_requested}' skipped"
+            )
+            return
+
+        for sensor in sensors:
+            sensor_entity_id = getattr(sensor, "entity_id", None)
+            expected_entity_id = f"sensor.{sensor._name.lower().replace(' ', '_')}"
+            if sensor_entity_id == entity_id_requested or expected_entity_id == entity_id_requested:
+                sensor.update_state(value)
+                _LOGGER.debug(
+                    f"Updated sensor '{sensor._name}' (matched: {entity_id_requested}) to value: {value}"
+                )
+                return
+
+        _LOGGER.error(
+            f"Sensor '{entity_id_requested}' NOT FOUND in registered sensors"
+        )
+        debug_info = []
+        for s in sensors[:5]:
+            s_entity_id = getattr(s, "entity_id", None)
+            s_expected = f"sensor.{s._name.lower().replace(' ', '_')}"
+            debug_info.append(f"{s._name}: entity_id={s_entity_id}, expected={s_expected}")
+        _LOGGER.error(f"Available sensors (first 5): {debug_info}")
+
+    hass.services.async_register(
+        DOMAIN,
+        "update_sensor",
+        handle_update_sensor,
+        schema=vol.Schema(
+            {
+                vol.Required("entity_id"): str,
+                vol.Required("value"): vol.Any(float, int, str),
+            }
+        ),
+    )
+    _LOGGER.debug(f"Registered {DOMAIN}.update_sensor service")
 
 
 def _apply_minimal_log_fallback() -> None:
@@ -574,6 +636,12 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # Create the coordinator
     coordinator = OGBIntegrationCoordinator(hass, config_entry)
     hass.data[DOMAIN][config_entry.entry_id] = coordinator
+
+    # Register the update_sensor service early so it is available before any
+    # platform starts calling it (prevents ServiceNotFound during startup).
+    if "sensors" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["sensors"] = []
+    _register_update_sensor_service(hass)
 
     # Load all platforms
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)

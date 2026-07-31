@@ -98,22 +98,22 @@ class OGBDeviceManager:
             return False
 
     async def addDevice(self, device):
-        """Gerät aus eigener Geräteliste hinzufügen."""
+        """Add a device to the internal device list."""
         logging.debug(f"DEVICE:{device}")
 
         deviceName = device.get("name", "unknown_device")
         deviceData = device.get("entities", [])
 
-        # Duplikat-Check – selber Name darf nicht zweimal rein
+        # Duplicate check - same name must not be added twice
         current_devices = self.data_store.get("devices") or []
         if any(getattr(d, "deviceName", None) == deviceName for d in current_devices):
-            _LOGGER.debug(f"{self.room}: Device '{deviceName}' bereits in devices – addDevice abgebrochen")
+            _LOGGER.debug(f"{self.room}: Device '{deviceName}' already in devices - addDevice aborted")
             return None
 
         allLabels = []
         deviceLabels = device.get("labels", [])
 
-        # Labels direkt am Device (ohne entity_id)
+        # Labels directly on the device (without entity_id)
         for lbl in deviceLabels:
             new_lbl = {
                 "id": lbl.get("id"),
@@ -123,7 +123,7 @@ class OGBDeviceManager:
             }
             allLabels.append(new_lbl)
 
-        # Labels von Entities mit Entity-Zuordnung
+        # Labels from entities with entity mapping
         for entity in deviceData:
             entity_id = entity.get("entity_id")
             for lbl in entity.get("labels", []):
@@ -135,7 +135,7 @@ class OGBDeviceManager:
                 }
                 allLabels.append(new_lbl)
 
-        # Duplikate entfernen (nach id + entity)
+        # Remove duplicates (by id + entity)
         uniqueLabels = []
         seen = set()
         for lbl in allLabels:
@@ -153,10 +153,10 @@ class OGBDeviceManager:
 
         _LOGGER.debug(f"Device:->{identified_device} identification Success")
 
-        # Nochmal prüfen – Race-Condition zwischen identify und append
+        # Check again - race condition between identify and append
         current_devices = self.data_store.get("devices") or []
         if any(getattr(d, "deviceName", None) == deviceName for d in current_devices):
-            _LOGGER.warning(f"{self.room}: Device '{deviceName}' wurde während identify hinzugefügt – abgebrochen")
+            _LOGGER.warning(f"{self.room}: Device '{deviceName}' was added during identify - aborted")
             return None
 
         current_devices.append(identified_device)
@@ -189,7 +189,7 @@ class OGBDeviceManager:
             self.data_store.setDeep("workData.failedDevices", failed_devices)
 
     async def removeDevice(self, deviceName: str):
-        """Entfernt ein Gerät anhand des Gerätenamens aus der Geräteliste."""
+        """Remove a device by name from the device list."""
 
         controlOption = self.data_store.get("mainControl")
         devices = self.data_store.get("devices")
@@ -197,7 +197,7 @@ class OGBDeviceManager:
         if controlOption not in ["HomeAssistant", "Premium"]:
             return False
 
-        # Add-on Sensoren sollen nicht entfernt werden
+        # Add-on sensors should not be removed
         if any(
             deviceName.endswith(suffix)
             for suffix in ["_humidity", "_temperature", "_dewpoint", "_co2"]
@@ -218,7 +218,7 @@ class OGBDeviceManager:
 
         _LOGGER.warning(f"{self.room} - Removed device: {deviceName}")
 
-        # Capability-Mapping anpassen
+        # Adjust capability mapping
         for cap, deviceTypes in CAP_MAPPING.items():
             if deviceToRemove.deviceType.lower() in (dt.lower() for dt in deviceTypes):
                 capPath = f"capabilities.{cap}"
@@ -245,8 +245,8 @@ class OGBDeviceManager:
 
     async def identify_device(self, device_name, device_data, device_labels=None):
         """
-        Gerät anhand von Namen, Labels und Typzuordnung identifizieren.
-        Wenn Labels vorhanden sind, werden sie bevorzugt zur Geräteerkennung genutzt.
+        Identify a device by name, labels, and type mapping.
+        If labels are present, they are preferred for device recognition.
         
         IMPORTANT: Special light types (LightFarRed, LightUV, etc.) must be matched
         BEFORE generic Light type. We use EXACT matching first, then fallback to
@@ -416,7 +416,7 @@ class OGBDeviceManager:
         )
 
     def get_device_class(self, device_type):
-        """Geräteklasse erhalten."""
+        """Get device class."""
         if device_type == "Sensor":
             from ..OGBDevices.Sensor import Sensor
             return Sensor
@@ -424,7 +424,7 @@ class OGBDeviceManager:
             from ..OGBDevices.ModbusSensor import ModbusSensor
             return ModbusSensor
         
-        # Klassen ohne zyklische Abhängigkeiten
+        # Classes without cyclic dependencies
         device_classes = {
             "Humidifier": Humidifier,
             "Dehumidifier": Dehumidifier,
@@ -499,7 +499,7 @@ class OGBDeviceManager:
             and device.deviceName not in realDeviceNames
         ]
 
-        # Geräte mit geänderten Labels erkennen (nur wenn DeviceLabelIdent aktiv ist)
+        # Detect devices with changed labels (only when DeviceLabelIdent is active)
         devicesToReidentify = []
         if deviceLabelIdent:
             for realDevice in allDevices:
@@ -525,8 +525,8 @@ class OGBDeviceManager:
                         expected_label
                     )
 
-                    # Re-Identification nur wenn neuer Label gültig UND unterschiedlich
-                    # Wenn neuer Label EMPTY ist (keine Labels), aber aktueller gültig → NICHT re-identifizieren
+                    # Re-identify only when new label is valid AND different
+                    # If the new label is EMPTY (no labels) but current is valid → DO NOT re-identify
                     if normalized_expected != "EMPTY" and normalized_current != normalized_expected:
                         devicesToReidentify.append(realDevice)
                         _LOGGER.warning(
@@ -539,8 +539,8 @@ class OGBDeviceManager:
             for device in removedDevices:
                 await self.removeDevice(device.deviceName)
 
-        # Geräte mit geänderten Labels entfernen und neu hinzufügen
-        reidentify_names = set()  # ← immer initialisieren, auch wenn devicesToReidentify leer
+        # Remove devices with changed labels and re-add them
+        reidentify_names = set()  # always initialize, even if devicesToReidentify is empty
         if devicesToReidentify:
             _LOGGER.warning(
                 f"Re-identifying {len(devicesToReidentify)} devices due to label changes"
@@ -553,8 +553,8 @@ class OGBDeviceManager:
         if newDevices:
             _LOGGER.warning(f"Found {len(newDevices)} new devices, initializing...")
             for device in newDevices:
-                if device["name"] in reidentify_names:  # ← verhindert doppeltes Init
-                    _LOGGER.debug(f"'{device['name']}' bereits via reidentify hinzugefügt – übersprungen")
+                if device["name"] in reidentify_names:  # prevents double init
+                    _LOGGER.debug(f"'{device['name']}' already added via reidentify - skipped")
                     continue
                 _LOGGER.debug(f"Registering new device: {device}")
                 await self.setupDevice(device)
@@ -582,7 +582,7 @@ class OGBDeviceManager:
         self._devicerefresh_task = asyncio.create_task(periodicWorker())
 
     def capCleaner(self, data):
-        """Setzt alle Capabilities im DataStore auf den Ursprungszustand zurück."""
+        """Reset all capabilities in the DataStore to their initial state."""
         capabilities = self.data_store.get("capabilities")
 
         self.data_store.set("devices", [])

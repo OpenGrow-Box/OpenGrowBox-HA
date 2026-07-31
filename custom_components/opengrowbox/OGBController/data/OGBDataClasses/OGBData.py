@@ -709,6 +709,23 @@ class OGBConf:
             },
         }
     )
+    DeviceSteps: Dict[str, int] = field(
+        default_factory=lambda: {
+            "Exhaust": 5,
+            "Intake": 5,
+            "Ventilation": 5,
+            "Light": 5,
+            "LightFarRed": 5,
+            "LightUV": 5,
+            "LightBlue": 5,
+            "LightRed": 5,
+            "Heater": 5,
+            "Cooler": 5,
+            "Humidifier": 5,
+            "Dehumidifier": 5,
+            "CO2": 5,
+        }
+    )
     DeviceProfiles: Dict[str, Dict[str, Any]] = field(
         default_factory=lambda: {
             "Exhaust": {

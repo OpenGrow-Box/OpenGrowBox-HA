@@ -9,7 +9,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class OGBModbusDevice(Device):
-    """Modbus-Gerät als Wrapper für standardisierte Device-Kommunikation."""
+    """Modbus device as a wrapper for standardized device communication."""
 
     def __init__(
         self,
@@ -28,7 +28,7 @@ class OGBModbusDevice(Device):
         self.modbus_client = None
         self.modbus_config = modbus_config or {}
         self.slave_id = self.modbus_config.get("slave_id", 1)
-        self.registers = {}  # Register-Mapping
+        self.registers = {}  # Register mapping
         self.isModbusDevice = True
 
         # Additional attributes to match Device class
@@ -62,7 +62,7 @@ class OGBModbusDevice(Device):
         self.event_manager.on("MinMaxControlDisabled", self.on_minmax_control_disabled)
 
     async def connect_modbus(self):
-        """Stellt Modbus-Verbindung her."""
+        """Establishes Modbus connection."""
         try:
             if self.modbus_config.get("type") == "tcp":
                 self.modbus_client = ModbusTcpClient(
@@ -76,17 +76,17 @@ class OGBModbusDevice(Device):
                 )
 
             if self.modbus_client.connect():
-                _LOGGER.debug(f"Modbus-Verbindung zu {self.deviceName} erfolgreich")
+                _LOGGER.debug(f"Modbus connection to {self.deviceName} successful")
                 return True
             return False
         except Exception as e:
             _LOGGER.error(
-                f"Modbus-Verbindung fehlgeschlagen für {self.deviceName}: {e}"
+                f"Modbus connection failed for {self.deviceName}: {e}"
             )
             return False
 
     async def read_register(self, address, count=1, register_type="holding"):
-        """Liest Modbus-Register."""
+        """Reads Modbus registers."""
         if not self.modbus_client or not self.modbus_client.is_socket_open():
             await self.connect_modbus()
 
@@ -107,14 +107,14 @@ class OGBModbusDevice(Device):
             if not result.isError():
                 return result.registers if hasattr(result, "registers") else result.bits
             else:
-                _LOGGER.error(f"Modbus-Lesefehler bei {self.deviceName}: {result}")
+                _LOGGER.error(f"Modbus read error for {self.deviceName}: {result}")
                 return None
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Lesen von Register {address}: {e}")
+            _LOGGER.error(f"Error reading register {address}: {e}")
             return None
 
     async def write_register(self, address, value, register_type="holding"):
-        """Schreibt in Modbus-Register."""
+        """Writes to Modbus registers."""
         if not self.modbus_client or not self.modbus_client.is_socket_open():
             await self.connect_modbus()
 
@@ -129,16 +129,16 @@ class OGBModbusDevice(Device):
                 )
 
             if not result.isError():
-                _LOGGER.debug(f"Modbus-Schreibvorgang erfolgreich: {address} = {value}")
+                _LOGGER.debug(f"Modbus write operation successful: {address} = {value}")
                 return True
             return False
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Schreiben in Register {address}: {e}")
+            _LOGGER.error(f"Error writing to register {address}: {e}")
             return False
 
-    # Override Device-Methoden für Modbus-Steuerung
+    # Override device methods for Modbus control
     async def turn_on(self, **kwargs):
-        """Schaltet Modbus-Gerät ein."""
+        """Turns Modbus device on."""
         control_address = self.modbus_config.get("control_register")
         if control_address:
             success = await self.write_register(control_address, 1, "coil")
@@ -146,11 +146,11 @@ class OGBModbusDevice(Device):
                 self.isRunning = True
                 return
 
-        # Fallback auf Standard-Methode
+        # Fallback to standard method
         await super().turn_on(**kwargs)
 
     async def turn_off(self, **kwargs):
-        """Schaltet Modbus-Gerät aus."""
+        """Turns Modbus device off."""
         control_address = self.modbus_config.get("control_register")
         if control_address:
             success = await self.write_register(control_address, 0, "coil")
@@ -161,24 +161,24 @@ class OGBModbusDevice(Device):
         await super().turn_off(**kwargs)
 
     async def set_value(self, value):
-        """Setzt Wert über Modbus (z.B. Duty Cycle)."""
+        """Sets value via Modbus (e.g. duty cycle)."""
         value_address = self.modbus_config.get("value_register")
         if value_address:
-            # Skalierung anwenden falls nötig
+            # Apply scaling if needed
             scaled_value = int(value * self.modbus_config.get("scale_factor", 1))
             await self.write_register(value_address, scaled_value)
         else:
             await super().set_value(value)
 
     async def poll_sensors(self):
-        """Liest Sensor-Daten über Modbus aus."""
+        """Reads sensor data via Modbus."""
         for sensor_name, register_info in self.registers.items():
             address = register_info["address"]
             reg_type = register_info.get("type", "holding")
 
             values = await self.read_register(address, 1, reg_type)
             if values:
-                # Skalierung/Transformation
+                # Scaling/transformation
                 raw_value = values[0]
                 scale = register_info.get("scale", 1)
                 offset = register_info.get("offset", 0)
@@ -198,17 +198,17 @@ class OGBModbusDevice(Device):
     # Additional methods to match Device class
     @property
     def option_count(self) -> int:
-        """Gibt die Anzahl aller Optionen zurück."""
+        """Returns the count of all options."""
         return len(self.options)
 
     @property
     def switch_count(self) -> int:
-        """Gibt die Anzahl aller Switches zurück."""
+        """Returns the count of all switches."""
         return len(self.switches)
 
     @property
     def sensor_count(self) -> int:
-        """Gibt die Anzahl aller Sensoren zurück."""
+        """Returns the count of all sensors."""
         return len(self.sensors)
 
     def deviceInit(self, entitys):
@@ -292,7 +292,7 @@ class OGBModbusDevice(Device):
         
         _LOGGER.debug(f"{self.deviceName}: Processing SetMinMax event: {data}")
 
-        # deviceType-Filter – data kann String oder Dict sein
+        # deviceType filter – data can be string or dict
         event_device_type = None
         if isinstance(data, str):
             event_device_type = data
@@ -307,7 +307,7 @@ class OGBModbusDevice(Device):
         try:
             minMaxSets = self.data_store.getDeep(f"DeviceMinMax.{self.deviceType}")
         except AttributeError:
-            _LOGGER.warning(f"{self.deviceName}: dataStore nicht verfügbar in userSetMinMax")
+            _LOGGER.warning(f"{self.deviceName}: dataStore not available in userSetMinMax")
             return
 
         # Check if min/max is active for this device type
@@ -329,7 +329,7 @@ class OGBModbusDevice(Device):
                 self.maxVoltage = float(minMaxSets.get("maxVoltage"))
                 _LOGGER.debug(f"{self.deviceName}: Updated voltage min/max: min={old_min}→{self.minVoltage}%, max={old_max}→{self.maxVoltage}%")
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: Ungültige Voltage-Werte: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
+                _LOGGER.warning(f"{self.deviceName}: Invalid voltage values: {minMaxSets.get('minVoltage')}, {minMaxSets.get('maxVoltage')}")
                 return
 
             # Apply voltage settings via modbus if running
@@ -346,7 +346,7 @@ class OGBModbusDevice(Device):
                 self.maxDuty = float(minMaxSets.get("maxDuty"))
                 _LOGGER.debug(f"{self.deviceName}: Updated duty min/max: min={old_min}→{self.minDuty}%, max={old_max}→{self.maxDuty}%")
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: Ungültige Duty-Werte: {minMaxSets.get('minDuty')}, {minMaxSets.get('maxDuty')}")
+                _LOGGER.warning(f"{self.deviceName}: Invalid duty values: {minMaxSets.get('minDuty')}, {minMaxSets.get('maxDuty')}")
                 return
             
             # Apply duty settings via modbus
@@ -385,14 +385,14 @@ class OGBModbusDevice(Device):
         try:
             v = float(value) if value is not None else 0.0
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: clamp_voltage ungültiger Wert '{value}', nutze 0.0")
+            _LOGGER.warning(f"{self.deviceName}: clamp_voltage invalid value '{value}', using 0.0")
             v = 0.0
 
         try:
             min_v = float(self.minVoltage) if hasattr(self, 'minVoltage') and self.minVoltage is not None else None
             max_v = float(self.maxVoltage) if hasattr(self, 'maxVoltage') and self.maxVoltage is not None else None
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: Ungültige min/max Voltage-Werte, kein Clamping")
+            _LOGGER.warning(f"{self.deviceName}: Invalid min/max voltage values, no clamping")
             return v
 
         if min_v is not None and max_v is not None:
@@ -402,20 +402,20 @@ class OGBModbusDevice(Device):
     def clamp_duty_cycle(self, value):
         """Clamp duty cycle to min/max range."""
         if value is None:
-            _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle None, nutze 50%")
+            _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle None, using 50%")
             value = 50.0
         else:
             try:
                 value = float(value)
             except (ValueError, TypeError):
-                _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle ungültiger Wert '{value}', nutze 50%")
+                _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle invalid value '{value}', using 50%")
                 value = 50.0
 
         try:
             min_duty = float(self.minDuty) if hasattr(self, 'minDuty') and self.minDuty is not None else 0.0
             max_duty = float(self.maxDuty) if hasattr(self, 'maxDuty') and self.maxDuty is not None else 100.0
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: Ungültige min/max Duty-Werte, nutze 0-100")
+            _LOGGER.warning(f"{self.deviceName}: Invalid min/max duty values, using 0-100")
             min_duty, max_duty = 0.0, 100.0
 
         return int(max(min_duty, min(max_duty, value)))

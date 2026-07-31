@@ -42,7 +42,7 @@ class OGBEventManager:
         return task
 
     def on(self, event_name, callback):
-        """Registriere einen Listener (synchron oder asynchron) für ein spezifisches Event."""
+        """Register a listener (synchronous or asynchronous) for a specific event."""
         if event_name not in self.listeners:
             self.listeners[event_name] = []
         # MEMORY FIX: Prevent duplicate listeners
@@ -50,35 +50,35 @@ class OGBEventManager:
             self.listeners[event_name].append(callback)
 
     def remove(self, event_name, callback):
-        """Entferne einen spezifischen Listener."""
+        """Remove a specific listener."""
         if event_name in self.listeners and callback in self.listeners[event_name]:
             self.listeners[event_name].remove(callback)
 
     def remove_all(self, event_name=None):
-        """Entferne alle Listener für ein Event oder alle Events."""
+        """Remove all listeners for an event or all events."""
         if event_name:
             self.listeners.pop(event_name, None)
         else:
             self.listeners.clear()
 
     async def _call_listener(self, callback, data):
-        """Rufe einen Listener auf, synchron oder asynchron."""
+        """Call a listener, synchronous or asynchronous."""
         try:
             if inspect.iscoroutinefunction(callback):
                 await callback(data)
             else:
                 callback(data)
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Aufruf des Listeners für '{callback}': {e}")
+            _LOGGER.error(f"Error calling listener for '{callback}': {e}")
 
     async def emit(self, event_name, data, haEvent=False, debug_type: Optional[DebugType] = None):
-        """Event auslösen, inkl. optionalem HA-Event und Notification.
+        """Emit an event, incl. optional HA event and notification.
         
         Args:
-            event_name: Name des Events
-            data: Event-Daten
-            haEvent: Wenn True, Event an Home Assistant senden
-            debug_type: Optionaler Typ für LogForClient (DEBUG, INFO, WARNING, ERROR)
+            event_name: Name of the event
+            data: Event data
+            haEvent: If True, send event to Home Assistant
+            debug_type: Optional type for LogForClient (DEBUG, INFO, WARNING, ERROR)
         """
         
         # Don't emit events during shutdown
@@ -89,15 +89,15 @@ class OGBEventManager:
         if "Medium" in event_name or "Plant" in event_name:
             _LOGGER.debug(f"📢 EMIT: {event_name} - listeners: {len(self.listeners.get(event_name, []))}, haEvent: {haEvent}")
 
-        # LogForClient: Speichere in ogb_data mit debug_type (async)
+        # LogForClient: save to ogb_data with debug_type (async)
         if event_name == "LogForClient":
-            # Bestimme debug_type mit intelligenter Fallback-Logik
+            # Determine debug_type with intelligent fallback logic
             effective_debug_type = debug_type
             
-            # Wenn kein expliziter debug_type, versuche aus Payload zu extrahieren
+            # If no explicit debug_type, try to extract from payload
             if not effective_debug_type:
                 if isinstance(data, dict):
-                    # Prüfe verschiedene Felder im Payload
+                    # Check various fields in the payload
                     if data.get("Type") in ("DEBUG", "INFO", "WARNING", "ERROR"):
                         effective_debug_type = data.get("Type")
                     elif data.get("Warning"):
@@ -105,7 +105,7 @@ class OGBEventManager:
                     elif data.get("Error") or data.get("error"):
                         effective_debug_type = "ERROR"
                 elif isinstance(data, str):
-                    # Prüfe String-Inhalte auf Warnungen/Fehler
+                    # Check string contents for warnings/errors
                     lower_data = data.lower()
                     if "error" in lower_data or "failed" in lower_data or "exception" in lower_data:
                         effective_debug_type = "ERROR"
@@ -114,7 +114,7 @@ class OGBEventManager:
                     elif "debug" in lower_data:
                         effective_debug_type = "DEBUG"
                 
-                # Fallback auf INFO wenn nichts gefunden
+                # Fallback to INFO if nothing found
                 effective_debug_type = effective_debug_type or "INFO"
             
             self._create_tracked_task(self._save_log_to_file(data, effective_debug_type))
@@ -123,7 +123,7 @@ class OGBEventManager:
             # MEMORY FIX: Track the task
             self._create_tracked_task(self.emit_to_home_assistant(event_name, data, debug_type))
             if self.notifications_enabled:
-                # Bestimme effective_debug_type für Notification-Filter
+                # Determine effective_debug_type for notification filter
                 effective_type = debug_type
                 if event_name == "LogForClient" and not effective_type:
                     effective_type = self._extract_debug_type_from_data(data)
@@ -141,36 +141,36 @@ class OGBEventManager:
                     try:
                         callback(data)
                     except Exception as e:
-                        _LOGGER.error(f"Fehler beim synchronen Listener: {e}")
+                        _LOGGER.error(f"Error in synchronous listener: {e}")
         elif "Medium" in event_name or "Plant" in event_name:
             _LOGGER.debug(f"ℹ️ No listeners registered for {event_name}")
 
     def emit_sync(self, event_name, data, haEvent=False, debug_type: Optional[DebugType] = None):
-        """Synchrones Event auslösen (für synchrone Kontexte).
-        Wenn haEvent=True, wird das Event auch an Home Assistant gesendet.
+        """Emit an event synchronously (for synchronous contexts).
+        If haEvent=True, the event is also sent to Home Assistant.
         
         Args:
-            event_name: Name des Events
-            data: Event-Daten
-            haEvent: Wenn True, Event an Home Assistant senden
-            debug_type: Optionaler Typ für LogForClient (DEBUG, INFO, WARNING, ERROR)
+            event_name: Name of the event
+            data: Event data
+            haEvent: If True, send event to Home Assistant
+            debug_type: Optional type for LogForClient (DEBUG, INFO, WARNING, ERROR)
         """
         asyncio.create_task(self.emit(event_name, data, haEvent, debug_type))
 
     async def emit_to_home_assistant(self, event_name, event_data, debug_type: Optional[DebugType] = None):
-        """Sende ein Event an Home Assistant über den Event-Bus.
+        """Send an event to Home Assistant via the event bus.
         
         Args:
-            event_name: Name des Events
-            event_data: Event-Daten
-            debug_type: Optionaler Typ für LogForClient (wird in Event-Daten eingefügt)
+            event_name: Name of the event
+            event_data: Event data
+            debug_type: Optional type for LogForClient (inserted into event data)
         """
         try:
-            # Wenn event_data ein Dataclass-Objekt ist, in ein Dictionary umwandeln
+            # If event_data is a dataclass object, convert to a dictionary
             if is_dataclass(event_data):
                 event_data = asdict(event_data)
             
-            # DebugType in Event-Daten einfügen falls vorhanden
+            # Insert DebugType into event data if available
             if debug_type and isinstance(event_data, dict):
                 event_data["DebugType"] = debug_type
             elif debug_type and isinstance(event_data, str):
@@ -178,13 +178,13 @@ class OGBEventManager:
 
             if hasattr(self.hass, "bus"):
                 self.hass.bus.fire(event_name, event_data)
-                _LOGGER.debug(f"Event-Bus Event '{event_name}' erfolgreich gesendet.")
+                _LOGGER.debug(f"Event-bus event '{event_name}' sent successfully.")
             else:
                 _LOGGER.error(
-                    f"Kein gültiger Event-Kanal für '{event_name}' verfügbar!"
+                    f"No valid event channel available for '{event_name}'!"
                 )
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Senden des Events '{event_name}': {e}")
+            _LOGGER.error(f"Error sending event '{event_name}': {e}")
 
     def make_json_serializable(self, obj):
         """
@@ -201,14 +201,14 @@ class OGBEventManager:
 
     async def send_notification(self, title: str, data, debug_type: str = None):
         """
-        Sende eine Push-Notification via notify.notify an alle konfigurierten Notifier.
-        Filtert nach logType aus DataStore.
+        Send a push notification via notify.notify to all configured notifiers.
+        Filters by logType from DataStore.
         """
         try:
-            # Bestimme den Log-Typ aus den Daten
+            # Determine the log type from the data
             effective_type = debug_type
             
-            # Versuche aus den Daten zu extrahieren
+            # Try to extract from the data
             if not effective_type:
                 if isinstance(data, dict):
                     if data.get("DebugType") in ("DEBUG", "INFO", "WARNING", "ERROR"):
@@ -230,27 +230,27 @@ class OGBEventManager:
             
             effective_type = effective_type or "INFO"
             
-            # Prüfe logType Filter aus DataStore
+            # Check logType filter from DataStore
             allowed_types = self._get_allowed_notification_types()
             
-            # DEBUG nur senden wenn explizit erlaubt
+            # Only send DEBUG if explicitly allowed
             if effective_type == "DEBUG" and "DEBUG" not in allowed_types:
-                _LOGGER.debug(f"DEBUG Notification unterdrückt (nicht in logType): {title}")
+                _LOGGER.debug(f"DEBUG notification suppressed (not in logType): {title}")
                 return
             
-            # INFO nur senden wenn erlaubt
+            # Only send INFO if allowed
             if effective_type == "INFO" and "INFO" not in allowed_types:
-                _LOGGER.debug(f"INFO Notification unterdrückt (nicht in logType): {title}")
+                _LOGGER.debug(f"INFO notification suppressed (not in logType): {title}")
                 return
             
-            # WARNING nur senden wenn erlaubt
+            # Only send WARNING if allowed
             if effective_type == "WARNING" and "WARNING" not in allowed_types:
-                _LOGGER.debug(f"WARNING Notification unterdrückt (nicht in logType): {title}")
+                _LOGGER.debug(f"WARNING notification suppressed (not in logType): {title}")
                 return
             
-            # ERROR immer senden (wichtig!)
+            # Always send ERROR (important!)
             if effective_type == "ERROR":
-                pass  # Keine Filterung für Fehler
+                pass  # No filtering for errors
             
             serializable_data = self.make_json_serializable(data)
             message = (
@@ -268,12 +268,12 @@ class OGBEventManager:
                 },
                 blocking=False,
             )
-            _LOGGER.debug(f"Push-Notification für '{title}' gesendet (Typ: {effective_type}).")
+            _LOGGER.debug(f"Push notification for '{title}' sent (type: {effective_type}).")
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Senden der Push-Notification: {e}")
+            _LOGGER.error(f"Error sending push notification: {e}")
     
     def _extract_debug_type_from_data(self, data) -> str:
-        """Extrahiert debug_type aus den Daten (für interne Nutzung)."""
+        """Extract debug_type from data (for internal use)."""
         if isinstance(data, dict):
             if data.get("DebugType") in ("DEBUG", "INFO", "WARNING", "ERROR"):
                 return data.get("DebugType")
@@ -295,19 +295,19 @@ class OGBEventManager:
     
     def _get_allowed_notification_types(self) -> list:
         """
-        Liest logType aus dem DataStore und gibt Liste erlaubter Typen zurück.
+        Read logType from DataStore and return list of allowed types.
         """
         try:
-            # Versuche über ogb_model auf data_store zuzugreifen
+            # Try to access data_store via ogb_model
             if hasattr(self, 'ogb_model') and self.ogb_model:
                 data_store = getattr(self.ogb_model, 'data_store', None)
                 if data_store:
                     log_type = data_store.get("logType")
                     if log_type:
-                        # Parse CSV-String wie "INFO,WARNING,ERROR"
+                        # Parse CSV string like "INFO,WARNING,ERROR"
                         return [t.strip().upper() for t in log_type.split(",") if t.strip()]
             
-            # Fallback: Default erlaubt WARNING und ERROR
+            # Fallback: default allows WARNING and ERROR
             return ["WARNING", "ERROR"]
         except Exception as e:
             _LOGGER.debug(f"Konnte logType nicht lesen: {e}")
@@ -345,27 +345,27 @@ class OGBEventManager:
         _LOGGER.debug(f"✅ EventManager shutdown complete, cleared {listener_count} listeners")
 
     def _sanitize_data_for_json(self, data):
-        """Reinigt Daten für JSON-Speicherung, um kaputte Strings zu vermeiden."""
+        """Clean data for JSON storage to avoid broken strings."""
         if data is None:
             return None
         elif isinstance(data, str):
-            # String-Reinigung: sicherstellen, dass der String gültig ist
+            # String cleanup: ensure the string is valid
             try:
-                # Prüfe ob der String selbst gültiges JSON wäre
+                # Check if the string itself would be valid JSON
                 json.dumps(data)
                 return data
             except (TypeError, ValueError):
-                # Wenn nicht, versuchen wir, den String zu bereinigen
+                # If not, try to clean the string
                 try:
-                    # Ersetze nicht-escaped quotes in Strings
+                    # Replace unescaped quotes in strings
                     cleaned = str(data)
-                    # Ersetze carriage returns und andere problematische Zeichen
+                    # Replace carriage returns and other problematic characters
                     cleaned = cleaned.replace('\r', '\\r').replace('\n', '\\n')
-                    # Prüfe erneut
+                    # Check again
                     json.dumps(cleaned)
                     return cleaned
                 except:
-                    # Als letztes Mittel: repr() verwenden, das sicher immer geht
+                    # As a last resort: use repr(), which always works
                     return repr(str(data))
         elif isinstance(data, (list, tuple)):
             return [self._sanitize_data_for_json(item) for item in data]
@@ -374,7 +374,7 @@ class OGBEventManager:
         elif isinstance(data, (bool, int, float)):
             return data
         else:
-            # Für andere Typen: zu String konvertieren und validieren
+            # For other types: convert to string and validate
             try:
                 s = str(data)
                 json.dumps(s)
@@ -383,15 +383,15 @@ class OGBEventManager:
                 return repr(data)
 
     async def _save_log_to_file(self, data, debug_type: DebugType):
-        """Speichert LogForClient Events in ogb_data JSON-Datei.
+        """Save LogForClient events to the ogb_data JSON file.
         
         Args:
-            data: Die Log-Daten
-            debug_type: Der Typ (DEBUG, INFO, WARNING, ERROR)
+            data: The log data
+            debug_type: The type (DEBUG, INFO, WARNING, ERROR)
         """
         async with self._log_file_lock:
             try:
-                # ogb_data Verzeichnis ermitteln
+                # Determine ogb_data directory
                 if hasattr(self.hass, 'config'):
                     ogb_data_dir = self.hass.config.path("ogb_data")
                 else:
@@ -401,7 +401,7 @@ class OGBEventManager:
                 
                 log_file = os.path.join(ogb_data_dir, "client_logs.json")
                 
-                # Bestehende Logs laden oder neue Liste erstellen (async)
+                # Load existing logs or create new list (async)
                 logs = []
                 if os.path.exists(log_file):
                     try:
@@ -419,14 +419,14 @@ class OGBEventManager:
                         _LOGGER.warning("client_logs.json war korrupt, starte neu")
                         logs = []
                 
-                # Dataclass in dict umwandeln falls nötig (mit Fallback)
+                # Convert dataclass to dict if necessary (with fallback)
                 serializable_data = data
                 try:
                     if is_dataclass(data) and not isinstance(data, type):
                         try:
                             serializable_data = asdict(data)
                         except Exception:
-                            # Fallback: manuell alle Felder extrahieren
+                            # Fallback: manually extract all fields
                             serializable_data = {}
                             for field in getattr(data, '__dataclass_fields__', {}).keys():
                                 try:
@@ -444,13 +444,13 @@ class OGBEventManager:
                     _LOGGER.debug(f"Konnte Dataclass nicht konvertieren: {e}")
                     serializable_data = str(data)
                 
-                # Daten sanitizen, um korrupte JSON zu vermeiden
+                # Sanitize data to avoid corrupt JSON
                 serializable_data = self._sanitize_data_for_json(serializable_data)
                 
-                # Room aus Daten extrahieren - mehrere Quellen prüfen
+                # Extract room from data - check multiple sources
                 room = "unknown"
                 
-                # 1. Erst vom Original-Data-Objekt (bevor es zum String wird)
+                # 1. First from the original data object (before it becomes a string)
                 if hasattr(data, "room") and data.room:
                     room = str(data.room)
                 elif hasattr(data, "Name") and data.Name:
@@ -461,22 +461,22 @@ class OGBEventManager:
                     else:
                         room = room_name
                 
-                # 2. Falls immer noch unknown, versuche es mit serializable_data
+                # 2. If still unknown, try with serializable_data
                 if room == "unknown" and isinstance(serializable_data, dict):
                     room = serializable_data.get("room") or serializable_data.get("Room") or serializable_data.get("Name") or "unknown"
-                    # Extrahiere Room aus "Name" falls es ein String-Dict ist
+                    # Extract room from "Name" if it's a string dict
                     if isinstance(room, str) and " - " in room:
                         room = room.split(" - ")[0]
                 
-                # 3. Falls immer noch "unknown", versuche den Room aus einem String-Pattern zu extrahieren
+                # 3. If still "unknown", try to extract room from a string pattern
                 if room == "unknown" and isinstance(serializable_data, str):
                     import re
-                    # Suche nach "room': 'VeggiTent'" oder 'room': "VeggiTent"
+                    # Search for "room': 'VeggiTent'" or 'room': "VeggiTent"
                     match = re.search(r"['\"]room['\"]:\s*['\"](\w+)['\"]", serializable_data)
                     if match:
                         room = match.group(1)
                     else:
-                        # Suche nach "Name': 'VeggiTent"
+                        # Search for "Name': 'VeggiTent"
                         match = re.search(r"['\"]Name['\"]:\s*['\"](\w+)", serializable_data)
                         if match:
                             room = match.group(1)
@@ -490,25 +490,25 @@ class OGBEventManager:
                 
                 logs.append(log_entry)
                 
-                # Maximal 1000 Einträge behalten (älteste löschen)
+                # Keep max 1000 entries (delete oldest)
                 if len(logs) > 1000:
                     logs = logs[-1000:]
                 
-                # Speichern (async)
+                # Save (async)
                 json_string = json.dumps(logs, indent=2, ensure_ascii=False)
                 await asyncio.to_thread(self._write_file, log_file, json_string)
             except Exception as e:
-                _LOGGER.error(f"Fehler beim Speichern des LogForClient: {e}")
+                _LOGGER.error(f"Error saving LogForClient: {e}")
 
     async def get_client_logs(self, room_filter: str = None, limit: int = 200):
-        """Liest gespeicherte LogForClient Events aus der JSON-Datei.
+        """Read stored LogForClient events from the JSON file.
         
         Args:
-            room_filter: Optionaler Room-Filter
-            limit: Maximale Anzahl Einträge (default 200)
+            room_filter: Optional room filter
+            limit: Maximum number of entries (default 200)
             
         Returns:
-            Liste von Log-Einträgen
+            List of log entries
         """
         try:
             if hasattr(self.hass, 'config'):
@@ -527,17 +527,17 @@ class OGBEventManager:
             
             logs = json.loads(content)
             
-            # Room-Filter temporär deaktiviert - zeige alle Logs
+            # Room filter temporarily disabled - show all logs
             # if room_filter:
             #     room_lower = room_filter.lower()
             #     logs = [l for l in logs if str(l.get("room", "")).lower() == room_lower]
             
-            # Nur die neuesten limit Einträge
+            # Only the latest limit entries
             return logs[-limit:] if len(logs) > limit else logs
             
         except json.JSONDecodeError as e:
-            _LOGGER.error(f"Client-Logs Datei ist beschädigt (JSON-Fehler): {e}")
-            # Versuch, Backup wiederherzustellen
+            _LOGGER.error(f"Client logs file is corrupted (JSON error): {e}")
+            # Attempt to restore backup
             try:
                 if hasattr(self.hass, 'config'):
                     ogb_data_dir = self.hass.config.path("ogb_data")
@@ -561,17 +561,17 @@ class OGBEventManager:
                             os.fsync(temp_file.fileno())
                             temp_path = temp_file.name
                         os.replace(temp_path, os.path.join(ogb_data_dir, "client_logs.json"))
-                        _LOGGER.debug("Backup erfolgreich wiederhergestellt")
+                        _LOGGER.debug("Backup restored successfully")
                         return logs[-limit:] if len(logs) > limit else logs
             except Exception as backup_error:
                 _LOGGER.error(f"Konnte Backup nicht wiederherstellen: {backup_error}")
             return []
         except Exception as e:
-            _LOGGER.error(f"Fehler beim Lesen der Client-Logs: {e}")
+            _LOGGER.error(f"Error reading client logs: {e}")
             return []
 
     async def handle_get_logs(self, event):
-        """Event-Handler für getOGBClientLogs."""
+        """Event handler for getOGBClientLogs."""
         try:
             _LOGGER.debug(f"handle_get_logs called with event: {event}")
             event_data = getattr(event, "data", {}) or {}
@@ -592,12 +592,12 @@ class OGBEventManager:
                     "logs": logs,
                     "count": len(logs)
                 })
-                _LOGGER.debug(f"Gesendet {len(logs)} Client-Logs für Raum: {room_filter or 'alle'}")
+                _LOGGER.debug(f"Sent {len(logs)} client logs for room: {room_filter or 'all'}")
             else:
                 _LOGGER.error("No hass.bus available!")
                 
         except Exception as e:
-            _LOGGER.error(f"Fehler bei handle_get_logs: {e}", exc_info=True)
+            _LOGGER.error(f"Error in handle_get_logs: {e}", exc_info=True)
             if hasattr(self.hass, "bus"):
                 self.hass.bus.fire(GET_LOGS_RESPONSE_EVENT, {
                     "success": False,
@@ -605,7 +605,7 @@ class OGBEventManager:
                 })
     
     def _read_file(self, filepath: str) -> str:
-        """Synchroner File-Read für asyncio.to_thread"""
+        """Synchronous file read for asyncio.to_thread."""
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return f.read()
@@ -613,11 +613,11 @@ class OGBEventManager:
             return ""
     
     def _write_file(self, filepath: str, content: str):
-        """Synchroner File-Write für asyncio.to_thread mit atomic write support"""
+        """Synchronous file write for asyncio.to_thread with atomic write support."""
         import tempfile
         import shutil
         
-        # Temporäre Datei im selben Verzeichnis erstellen
+        # Create temporary file in the same directory
         dir_name = os.path.dirname(filepath) or "."
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', 
                                          dir=dir_name, 

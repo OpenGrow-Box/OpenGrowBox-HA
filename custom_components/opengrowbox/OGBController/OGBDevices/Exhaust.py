@@ -31,12 +31,6 @@ class Exhaust(Device):
             allLabels,
         )
 
-        self.steps = 5  # DutyCycle Steps
-        # Initialize min/max to defaults - will be overridden by user settings in checkMinMax
-        self.minDuty = 0  # Class default
-        self.maxDuty = 100  # Class default
-        # Note: dutyCycle will be set by checkForControlValue or default logic
-
         if self.isAcInfinDev:
             self.steps = 10
             self.maxDuty = 100
@@ -48,12 +42,12 @@ class Exhaust(Device):
 
 
     def clamp_duty_cycle(self, value: int | float | str | None) -> int:
-        """Begrenzt den Duty Cycle auf erlaubte Werte."""
+        """Limit the duty cycle to allowed values."""
 
         if self.isDimmable == False:
             return
 
-        # value sicher zu float konvertieren
+        # Convert value safely to float
         if value is None:
             _LOGGER.warning(f"{self.deviceName}:{self.isDimmable} clamp_duty_cycle called with None, using default 50%")
             value = 50.0
@@ -64,8 +58,8 @@ class Exhaust(Device):
                 _LOGGER.warning(f"{self.deviceName}: clamp_duty_cycle got invalid value '{value}', using default 50%")
                 value = 50.0
 
-        # Min/Max aus dataStore lesen
-        min_duty, max_duty = 10.0, 100.0  # ← deine Defaults (10 statt 0)
+        # Read min/max from dataStore
+        min_duty, max_duty = 10.0, 100.0  # Your defaults (10 instead of 0)
         try:
             minMaxSets = self.dataStore.getDeep(f"DeviceMinMax.{self.deviceType}")
             if minMaxSets:
@@ -75,7 +69,7 @@ class Exhaust(Device):
                     min_duty = float(raw_min)
                     max_duty = float(raw_max)
         except (ValueError, TypeError, AttributeError):
-            _LOGGER.warning(f"{self.deviceName}: Fehler beim Lesen von DeviceMinMax, nutze Defaults")
+            _LOGGER.warning(f"{self.deviceName}: Error reading DeviceMinMax, using defaults")
             try:
                 min_duty = float(self.minDuty) if self.minDuty is not None else 10.0
                 max_duty = float(self.maxDuty) if self.maxDuty is not None else 100.0
@@ -83,17 +77,17 @@ class Exhaust(Device):
                 pass
 
         clamped = int(max(min_duty, min(max_duty, value)))
-        _LOGGER.debug(f"{self.deviceName}: Duty Cycle auf {clamped}% begrenzt (range: {min_duty}-{max_duty}%)")
+        _LOGGER.debug(f"{self.deviceName}: Duty cycle limited to {clamped}% (range: {min_duty}-{max_duty}%)")
         return clamped
 
     def change_duty_cycle(self, increase=True):
         """
-        Ändert den Duty Cycle basierend auf dem Schrittwert.
-        Erhöht oder verringert den Duty Cycle und begrenzt den Wert mit clamp.
+        Change the duty cycle based on the step size.
+        Increases or decreases the duty cycle and limits the value with clamp.
         """
         if self.isDimmable == False:
             _LOGGER.warning(
-                f"{self.deviceName}: Änderung des Duty Cycles nicht möglich, da Device nicht dimmbar ist."
+                f"{self.deviceName}: Cannot change duty cycle, device is not dimmable."
             )
             return 
 
@@ -109,14 +103,14 @@ class Exhaust(Device):
             _LOGGER.warning(f"{self.deviceName}: Invalid step value, using default 5")
             step_value = 5
             
-        # Berechne neuen Wert basierend auf Schrittweite
+        # Calculate new value based on step size
         new_duty_cycle = (
             int(self.dutyCycle) + step_value
             if increase
             else int(self.dutyCycle) - step_value
         )
 
-        # Begrenze den neuen Duty Cycle auf erlaubte Werte
+        # Limit the new duty cycle to allowed values
         clamped_duty_cycle = self.clamp_duty_cycle(new_duty_cycle)
 
         # Only update if the value actually changed
@@ -130,7 +124,7 @@ class Exhaust(Device):
 
     # Actions
     async def increaseAction(self, data):
-        """Erhöht den Duty Cycle."""
+        """Increases the duty cycle."""
         if self.should_block_air_exchange_increase("canExhaust", "Direct Increase Exhaust event"):
             await self.event_manager.emit(
                 "LogForClient",
@@ -162,9 +156,9 @@ class Exhaust(Device):
             await self.turn_on()
 
     async def reduceAction(self, data):
-        """Reduziert den Duty Cycle."""
+        """Reduces the duty cycle."""
         
-        # Smart Deadband Check - Aktion blockieren wenn im Deadband
+        # Smart Deadband Check - block action when in deadband
         if self._in_smart_deadband:
             _LOGGER.debug(
                 f"{self.deviceName}: ReduceAction BLOCKED - device is in Smart Deadband (operating at minimum)"
@@ -185,6 +179,6 @@ class Exhaust(Device):
             await self.turn_off()
 
     def log_action(self, action_name):
-        """Protokolliert die ausgeführte Aktion."""
+        """Log the executed action."""
         log_message = f"{self.deviceName} DutyCycle: {self.dutyCycle}%"
         _LOGGER.debug(f"{action_name}: {log_message}")
