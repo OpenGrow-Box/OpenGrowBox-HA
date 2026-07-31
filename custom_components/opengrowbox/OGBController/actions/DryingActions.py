@@ -7,23 +7,61 @@ Handles all drying mode operations including ElClassico, 5DayDry, and DewBased a
 import math
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from ..utils.calcs import calc_Dry5Days_vpd, calc_dew_vpd
 
+if TYPE_CHECKING:
+    from ..managers.OGBgcdManager import OGBgcdManager
+
 _LOGGER = logging.getLogger(__name__)
+
+
+# Maps drying action names to the capability keys used by the Global Cooldown (GCD).
+_ACTION_TO_CAPABILITY = {
+    "Increase Heater": ("canHeat", "Increase"),
+    "Reduce Heater": ("canHeat", "Reduce"),
+    "Increase Cooler": ("canCool", "Increase"),
+    "Reduce Cooler": ("canCool", "Reduce"),
+    "Increase Humidifier": ("canHumidify", "Increase"),
+    "Reduce Humidifier": ("canHumidify", "Reduce"),
+    "Increase Dehumidifier": ("canDehumidify", "Increase"),
+    "Reduce Dehumidifier": ("canDehumidify", "Reduce"),
+    "Increase Exhaust": ("canExhaust", "Increase"),
+    "Reduce Exhaust": ("canExhaust", "Reduce"),
+    "Increase Ventilation": ("canVentilate", "Increase"),
+    "Reduce Ventilation": ("canVentilate", "Reduce"),
+    "Increase Intake": ("canIntake", "Increase"),
+    "Reduce Intake": ("canIntake", "Reduce"),
+}
 
 
 class DryingActions:
     """Handles drying mode operations and algorithms."""
 
-    def __init__(self, data_store, event_manager, room: str):
-        """Initialize drying actions."""
+    def __init__(
+        self,
+        data_store,
+        event_manager,
+        room: str,
+        cooldown_manager: Optional["OGBgcdManager"] = None,
+    ):
+        """Initialize drying actions.
+
+        Args:
+            data_store: Data store instance
+            event_manager: Event manager instance
+            room: Room identifier
+            cooldown_manager: Optional OGBgcdManager for Global Cooldown enforcement.
+                When provided, all device actions in drying handlers are routed through
+                the cooldown filter. Cleanup actions bypass cooldowns.
+        """
         self.data_store = data_store
         self.event_manager = event_manager
         self.room = room
         self.name = f"DryingActions-{room}"
-        
+        self.cooldown_manager = cooldown_manager
+
         # Register cleanup listener for when drying mode is turned off
         self.event_manager.on("drying_cleanup", self._handle_cleanup_event)
 
@@ -84,7 +122,38 @@ class DryingActions:
         # Only cleanup if this is for our room
         if event_room is None or event_room == self.room:
             await self.cleanup_drying_devices()
-    
+
+    async def _emit_action(self, action_name: str):
+        """Emit a device action, optionally respecting the Global Cooldown (GCD).
+
+        Cleanup-related actions should NOT use this method because cooldowns must
+        never prevent a safe shutdown. All normal control actions from drying handlers
+        should pass through this helper.
+        """
+        if not self.cooldown_manager:
+            # No cooldown manager provided -> emit directly for backward compatibility
+            await self.event_manager.emit(action_name, None)
+            return
+
+        mapping = _ACTION_TO_CAPABILITY.get(action_name)
+        if not mapping:
+            _LOGGER.debug(
+                f"{self.name}: No cooldown mapping for action '{action_name}', emitting directly"
+            )
+            await self.event_manager.emit(action_name, None)
+            return
+
+        capability, action = mapping
+
+        if not await self.cooldown_manager.is_allowed(capability, action):
+            _LOGGER.debug(
+                f"{self.name}: Action '{action_name}' blocked by cooldown for {capability}"
+            )
+            return
+
+        await self.event_manager.emit(action_name, None)
+        await self.cooldown_manager.register(capability, action)
+
     async def cleanup_drying_devices(self) -> None:
         """
         Turn off all drying-related devices when switching to NO-Dry.
@@ -115,7 +184,7 @@ class DryingActions:
     async def handle_ElClassico(self, phaseConfig: Dict[str, Any]) -> None:
         """
         Classic drying algorithm with temperature and humidity control.
-        Direct event emission - no cooldowns or VPD logic interference.
+        Actions are routed through the cooldown manager when available.
         """
         _LOGGER.warning(f"{self.name} Run Drying 'El Classico'")
         tentData = self.data_store.get("tentData")
@@ -223,14 +292,14 @@ class DryingActions:
         if finalActionMap:
             _LOGGER.warning(f"{self.name}: ElClassico executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
             for action_name in finalActionMap:
-                await self.event_manager.emit(action_name, None)
+                await self._emit_action(action_name)
         else:
             _LOGGER.warning(f"{self.name}: ElClassico - No actions needed, conditions within tolerance")
 
     async def handle_5DayDry(self, phaseConfig: Dict[str, Any]) -> None:
         """
         Structured 5-day drying program with VPD-based control.
-        Direct event emission - no cooldowns or VPD logic interference.
+        Actions are routed through the cooldown manager when available.
         """
         _LOGGER.warning(f"{self.name}: Run Drying '5DayDry'")
         tentData = self.data_store.get("tentData")
@@ -357,14 +426,14 @@ class DryingActions:
         if finalActionMap:
             _LOGGER.warning(f"{self.name}: 5DayDry executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
             for action_name in finalActionMap:
-                await self.event_manager.emit(action_name, None)
+                await self._emit_action(action_name)
         else:
             _LOGGER.warning(f"{self.name}: 5DayDry - All conditions within tolerance")
 
     async def handle_DewBased(self, phaseConfig: Dict[str, Any]) -> None:
         """
         Dew point-based drying with precise moisture control.
-        Direct event emission - no cooldowns or VPD logic interference.
+        Actions are routed through the cooldown manager when available.
         """
         _LOGGER.warning(f"{self.name}: Run Drying 'DewBased'")
         tentData = self.data_store.get("tentData")
@@ -484,7 +553,7 @@ class DryingActions:
         if finalActionMap:
             _LOGGER.warning(f"{self.name}: DewBased executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
             for action_name in finalActionMap:
-                await self.event_manager.emit(action_name, None)
+                await self._emit_action(action_name)
         else:
             _LOGGER.warning(f"{self.name}: DewBased - All conditions within tolerance")
 
@@ -492,7 +561,7 @@ class DryingActions:
         """
         OwnDry mode - continuous min/max control.
         Uses min/max values from controlOptionData.minmax.
-        Direct event emission - no cooldowns or VPD logic interference.
+        Actions are routed through the cooldown manager when available.
         """
         _LOGGER.warning(f"{self.name}: Run Drying 'OwnDry'")
         
@@ -573,7 +642,7 @@ class DryingActions:
         if finalActionMap:
             _LOGGER.warning(f"{self.name}: OwnDry executing {len(finalActionMap)} actions: {list(finalActionMap.keys())}")
             for action_name in finalActionMap:
-                await self.event_manager.emit(action_name, None)
+                await self._emit_action(action_name)
         else:
             _LOGGER.warning(f"{self.name}: OwnDry - Conditions within tolerance")
 

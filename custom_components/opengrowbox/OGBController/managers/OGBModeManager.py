@@ -38,7 +38,10 @@ class OGBModeManager:
         self.closedEnvironmentManager = ClosedEnvironmentManager(dataStore, self.event_manager, room, hass)
 
         # Drying Actions for drying mode handling
-        self.dryingActions = DryingActions(dataStore, self.event_manager, room)
+        cooldown_manager = getattr(action_manager, "cooldown_manager", None)
+        self.dryingActions = DryingActions(
+            dataStore, self.event_manager, room, cooldown_manager=cooldown_manager
+        )
 
         # Script Mode Manager for custom user scripts
         self.scriptModeManager: OGBScriptMode | None = None

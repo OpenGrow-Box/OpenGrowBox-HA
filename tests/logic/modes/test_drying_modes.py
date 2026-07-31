@@ -8,6 +8,26 @@ from tests.logic.helpers import FakeDataStore, FakeEventManager
 from custom_components.opengrowbox.OGBController.actions.DryingActions import DryingActions
 
 
+class _FakeCooldownManager:
+    """Cooldown manager that allows every action by default."""
+
+    def __init__(self, allowed=None):
+        self.allowed = set(allowed or [])
+        self.registered = []
+
+    async def is_allowed(self, capability: str, action: str, deviation: float = 0) -> bool:
+        if not self.allowed:
+            return True
+        return (capability, action) in self.allowed
+
+    async def register(self, capability: str, action: str, deviation: float = 0):
+        self.registered.append((capability, action))
+
+
+def _fake_cooldown_manager(allowed=None):
+    return _FakeCooldownManager(allowed=allowed)
+
+
 class TestElClassico:
     """Test ElClassico drying mode with phases."""
     
@@ -59,7 +79,7 @@ class TestElClassico:
         
         event_manager.emit = tracked_emit
         
-        return DryingActions(data_store, event_manager, "test_room")
+        return DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
     
     @pytest.mark.asyncio
     async def test_elclassico_start_phase_temp_low(self, drying_actions):
@@ -273,7 +293,7 @@ class Test5DayDry:
         
         event_manager.emit = tracked_emit
         
-        return DryingActions(data_store, event_manager, "test_room")
+        return DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
     
     @pytest.mark.asyncio
     async def test_5daydry_temp_low(self, drying_actions):
@@ -349,7 +369,7 @@ class TestDewBased:
         
         event_manager.emit = tracked_emit
         
-        return DryingActions(data_store, event_manager, "test_room")
+        return DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
     
     @pytest.mark.asyncio
     async def test_dewbased_temp_low(self, drying_actions):
@@ -421,7 +441,7 @@ class TestOwnDry:
         
         event_manager.emit = tracked_emit
         
-        return DryingActions(data_store, event_manager, "test_room")
+        return DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
     
     @pytest.mark.asyncio
     async def test_owndry_temp_low(self, drying_actions):
@@ -518,7 +538,7 @@ class TestDryingModesGeneral:
         
         event_manager.emit = tracked_emit
         
-        return DryingActions(data_store, event_manager, "test_room")
+        return DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
     
     @pytest.mark.asyncio
     async def test_cleanup_drying_devices(self, drying_actions):
@@ -569,6 +589,75 @@ class TestDryingModesGeneral:
         result = await drying_actions.handle_drying()
         
         assert result is None
+
+
+class TestDryingCooldown:
+    """Test that drying actions respect Global Cooldown (GCD)."""
+
+    @pytest.fixture
+    def drying_actions_blocked(self):
+        """DryingActions with a cooldown manager that blocks canHumidify/canDehumidify."""
+        data_store = FakeDataStore({
+            "drying": {
+                "currentDryMode": "ElClassico",
+                "mode_start_time": datetime.now().isoformat(),
+                "isRunning": True,
+                "modes": {
+                    "ElClassico": {
+                        "isActive": True,
+                        "phase": {
+                            "start": {
+                                "targetTemp": 20.0,
+                                "targetHumidity": 62.0,
+                                "durationHours": 24,
+                            }
+                        }
+                    }
+                }
+            },
+            "tentData": {
+                "temperature": 20.0,
+                "humidity": 65.0,  # Above target -> dehumidify wanted
+            }
+        })
+
+        event_manager = FakeEventManager()
+        event_manager.emitted_events = []
+        original_emit = event_manager.emit
+
+        async def tracked_emit(event_name, data=None, **kwargs):
+            event_manager.emitted_events.append((event_name, data))
+            return await original_emit(event_name, data, **kwargs)
+
+        event_manager.emit = tracked_emit
+
+        # Block only humidity-related capabilities
+        cooldown_manager = _fake_cooldown_manager(
+            allowed={("canHeat", "Increase"), ("canCool", "Reduce")}
+        )
+        return DryingActions(
+            data_store, event_manager, "test_room", cooldown_manager=cooldown_manager
+        )
+
+    @pytest.mark.asyncio
+    async def test_actions_blocked_by_cooldown(self, drying_actions_blocked):
+        """Humidity actions should be blocked when cooldown manager disallows them."""
+        phase_config = drying_actions_blocked.data_store.getDeep("drying.modes.ElClassico")
+        await drying_actions_blocked.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions_blocked.event_manager.emitted_events]
+        # Humidity actions must be blocked
+        assert "Increase Dehumidifier" not in events
+        assert "Reduce Humidifier" not in events
+
+    @pytest.mark.asyncio
+    async def test_cleanup_bypasses_cooldown(self, drying_actions_blocked):
+        """Cleanup must always turn devices off, regardless of cooldown."""
+        await drying_actions_blocked.cleanup_drying_devices()
+
+        events = [e[0] for e in drying_actions_blocked.event_manager.emitted_events]
+        assert "Reduce Humidifier" in events
+        assert "Reduce Dehumidifier" in events
 
 
 if __name__ == "__main__":
