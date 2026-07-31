@@ -1730,8 +1730,17 @@ class OGBCSManager:
             else float("inf")
         )
         time_until_next = max(0, wait_between - time_since_last)
-        
+
         if time_since_last >= wait_between:
+            # Safety: do not irrigate if VWC is already at or above target max
+            if vwc >= target_max:
+                _LOGGER.debug(
+                    f"{self.room} - P1: VWC {vwc:.1f}% already at/above target max "
+                    f"{target_max:.1f}%, skipping irrigation and completing P1"
+                )
+                await self._complete_p1_saturation(vwc, target_max, success=True)
+                return
+
             # Time for next shot!
             await self._irrigate(duration=shot_duration)
 
@@ -2249,17 +2258,41 @@ class OGBCSManager:
 
                     # Emergency irrigation - VWCMin is already a float
                     vwc_min = settings["VWCMin"]["value"]
+                    vwc_max = settings["VWCMax"]["value"]
                     if vwc and vwc_min > 0 and vwc < vwc_min * 0.9:
-                        await self._irrigate(duration=shot_duration)
-                        await self.event_manager.emit(
-                            "LogForClient",
-                            {
-                                "Name": self.room,
-                                "Type": "Emergency irrigation",
-                                "Message": f"CropSteering {phase}: Emergency irrigation",
-                            },
-                            haEvent=True,
-                        )
+                        if shot_counter >= shot_count:
+                            _LOGGER.debug(
+                                f"{self.room} - Manual {phase}: Emergency irrigation needed "
+                                f"but max shots reached ({shot_counter}/{shot_count})"
+                            )
+                            await self.event_manager.emit(
+                                "LogForClient",
+                                {
+                                    "Name": self.room,
+                                    "Type": "CSLOG",
+                                    "Message": f"Manual {phase}: Emergency irrigation blocked - max shots reached",
+                                },
+                                haEvent=True,
+                            )
+                        elif vwc_max > 0 and vwc >= vwc_max:
+                            _LOGGER.debug(
+                                f"{self.room} - Manual {phase}: VWC {vwc:.1f}% already at/above max "
+                                f"{vwc_max:.1f}%, skipping emergency irrigation"
+                            )
+                        else:
+                            await self._irrigate(duration=shot_duration)
+                            shot_counter += 1
+                            self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
+                            self.data_store.setDeep("CropSteering.lastIrrigationTime", datetime.now())
+                            await self.event_manager.emit(
+                                "LogForClient",
+                                {
+                                    "Name": self.room,
+                                    "Type": "Emergency irrigation",
+                                    "Message": f"CropSteering {phase}: Emergency irrigation ({shot_counter}/{shot_count})",
+                                },
+                                haEvent=True,
+                            )
 
                     # Scheduled irrigation
                     last_irrigation = self.data_store.getDeep(
@@ -2273,20 +2306,27 @@ class OGBCSManager:
                     )
 
                     if should_irrigate and shot_counter < shot_count:
-                        await self._irrigate(duration=shot_duration)
-                        shot_counter += 1
-                        self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
-                        self.data_store.setDeep("CropSteering.lastIrrigationTime", now)
+                        # Safety: never schedule irrigation above VWC max
+                        if vwc_max > 0 and vwc >= vwc_max:
+                            _LOGGER.debug(
+                                f"{self.room} - Manual {phase}: VWC {vwc:.1f}% already at/above max "
+                                f"{vwc_max:.1f}%, skipping scheduled irrigation"
+                            )
+                        else:
+                            await self._irrigate(duration=shot_duration)
+                            shot_counter += 1
+                            self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
+                            self.data_store.setDeep("CropSteering.lastIrrigationTime", now)
 
-                        await self.event_manager.emit(
-                            "LogForClient",
-                            {
-                                "Name": self.room,
-                                "Type": "CSLOG",
-                                "Message": f"CropSteering {phase}: Shot {shot_counter}/{shot_count}",
-                            },
-                            haEvent=True,
-                        )
+                            await self.event_manager.emit(
+                                "LogForClient",
+                                {
+                                    "Name": self.room,
+                                    "Type": "CSLOG",
+                                    "Message": f"CropSteering {phase}: Shot {shot_counter}/{shot_count}",
+                                },
+                                haEvent=True,
+                            )
 
                     # Reset counter after full cycle
                     if shot_counter >= shot_count:
