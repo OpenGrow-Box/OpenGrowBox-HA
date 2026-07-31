@@ -1569,9 +1569,9 @@ class OGBActionManager:
                     await self.event_manager.emit(f"{actionType} Climate", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Climate executed.")
                 elif actionCap == "canCO2":
-                    _LOGGER.warning(f"{self.room}: Emitting {actionType} CO2")
+                    _LOGGER.debug(f"{self.room}: Emitting {actionType} CO2")
                     await self.event_manager.emit(f"{actionType} CO2", event_data)
-                    _LOGGER.warning(f"{self.room}: {actionType} CO2 executed.")
+                    _LOGGER.debug(f"{self.room}: {actionType} CO2 executed.")
                 elif actionCap == "canLight":
                     await self.event_manager.emit(f"{actionType} Light", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Light executed.")

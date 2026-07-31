@@ -37,7 +37,7 @@ _AMBIENT_ENSURE_FLAG = "__ambient_ensure_done__"
 _CONFIG_NOTIFICATION_ID = "opengrowbox_required_ha_config"
 
 
-def _register_update_sensor_service(hass: HomeAssistant) -> None:
+async def _register_update_sensor_service(hass: HomeAssistant) -> None:
     """Register the update_sensor service as early as possible.
 
     The service is used by managers to push sensor updates. It must be available
@@ -83,7 +83,7 @@ def _register_update_sensor_service(hass: HomeAssistant) -> None:
             debug_info.append(f"{s._name}: entity_id={s_entity_id}, expected={s_expected}")
         _LOGGER.error(f"Available sensors (first 5): {debug_info}")
 
-    hass.services.async_register(
+    await hass.services.async_register(
         DOMAIN,
         "update_sensor",
         handle_update_sensor,
@@ -641,7 +641,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # platform starts calling it (prevents ServiceNotFound during startup).
     if "sensors" not in hass.data[DOMAIN]:
         hass.data[DOMAIN]["sensors"] = []
-    _register_update_sensor_service(hass)
+    await _register_update_sensor_service(hass)
 
     # Load all platforms
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)

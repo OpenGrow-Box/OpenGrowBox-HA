@@ -2377,7 +2377,7 @@ class Device:
                             service_data={"entity_id": entity_id},
                         )
                         self.isRunning = False
-                        _LOGGER.warning(f"{self.deviceName}: CO2 OFF.")
+                        _LOGGER.debug(f"{self.deviceName}: CO2 OFF.")
                         return
 
                 # Fallback: standard switch
