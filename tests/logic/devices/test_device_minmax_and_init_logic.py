@@ -8,6 +8,7 @@ def _device_stub(device_type="Ventilation"):
     device.deviceName = "dev_vent"
     device.deviceType = device_type
     device.isDimmable = True
+    device.isAcInfinDev = False
     device.isInitialized = True
     device.dataStore = FakeDataStore(
         {
@@ -19,7 +20,10 @@ def _device_stub(device_type="Ventilation"):
                     "minDuty": 15,
                     "maxDuty": 70,
                 }
-            }
+            },
+            "DeviceSteps": {
+                device_type: 5,
+            },
         }
     )
     device.minVoltage = 0
@@ -28,6 +32,7 @@ def _device_stub(device_type="Ventilation"):
     device.maxDuty = 100
     device.voltage = 90
     device.dutyCycle = 10
+    device.steps = 5
     return device
 
 

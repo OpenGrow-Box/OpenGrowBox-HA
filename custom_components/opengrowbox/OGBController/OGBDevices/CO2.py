@@ -1,4 +1,5 @@
 import logging
+from typing import Optional, Union
 
 from .Device import Device
 
@@ -59,7 +60,7 @@ class CO2(Device):
 
         _LOGGER.debug(f"CO2 Device {self.deviceName} initialization complete. isInitialized: {self.isInitialized}, switches: {len(self.switches)}, sensors: {len(self.sensors)}")
 
-    def clamp_duty_cycle(self, value: int | float | str | None) -> int:
+    def clamp_duty_cycle(self, value: Union[int, float, str, None]) -> int:
         """Clamp CO2 duty cycle to valid range."""
         if value is None:
             _LOGGER.debug(f"{self.deviceName}: clamp_duty_cycle called with None, using default 0%")

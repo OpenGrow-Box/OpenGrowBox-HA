@@ -109,7 +109,14 @@ class OGBgcdManager:
             ],
         }
 
-        self._lock = asyncio.Lock()
+        self._async_lock: Optional[asyncio.Lock] = None
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """Lazy lock - created on first use so sync tests don't need an event loop."""
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        return self._async_lock
 
     def _can_solve_emergency(self, capability: str) -> bool:
         """

@@ -61,7 +61,14 @@ class OGBPumpControlManager:
 
         # Pump status tracking
         self.active_pumps = set()
-        self.pump_lock = asyncio.Lock()
+        self._pump_lock: Optional[asyncio.Lock] = None
+
+    @property
+    def pump_lock(self) -> asyncio.Lock:
+        """Lazy pump lock - created on first use so sync tests don't need an event loop."""
+        if self._pump_lock is None:
+            self._pump_lock = asyncio.Lock()
+        return self._pump_lock
 
     def calculate_dose_time(
         self, ml_amount: float, pump_type: Union[str, PumpType]

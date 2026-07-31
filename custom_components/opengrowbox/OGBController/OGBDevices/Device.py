@@ -593,16 +593,24 @@ class Device:
         Called during init and whenever SetDeviceMinMax is emitted. Ac-Infinity
         devices keep their fixed 10% step and are not overridden.
         """
-        if self.isAcInfinDev:
+        if getattr(self, "isAcInfinDev", False):
             return
 
-        if not self.isDimmable:
+        if not getattr(self, "isDimmable", False):
+            return
+
+        data_store = getattr(self, "dataStore", None)
+        if data_store is None:
+            return
+
+        device_type = getattr(self, "deviceType", None)
+        if device_type is None:
             return
 
         try:
-            dim_step = self.dataStore.getDeep(f"DeviceSteps.{self.deviceType}")
+            dim_step = data_store.getDeep(f"DeviceSteps.{device_type}")
         except AttributeError:
-            _LOGGER.debug(f"{self.deviceName}: dataStore not available for dim step loading")
+            _LOGGER.debug(f"{getattr(self, 'deviceName', '?')}: dataStore not available for dim step loading")
             return
 
         if dim_step is None:
@@ -611,16 +619,16 @@ class Device:
         try:
             new_step = int(float(dim_step))
         except (ValueError, TypeError):
-            _LOGGER.warning(f"{self.deviceName}: Invalid dim step value '{dim_step}', ignoring")
+            _LOGGER.warning(f"{getattr(self, 'deviceName', '?')}: Invalid dim step value '{dim_step}', ignoring")
             return
 
         if new_step < 1 or new_step > 10:
-            _LOGGER.warning(f"{self.deviceName}: Dim step {new_step}% out of range, ignoring")
+            _LOGGER.warning(f"{getattr(self, 'deviceName', '?')}: Dim step {new_step}% out of range, ignoring")
             return
 
         if getattr(self, "steps", None) != new_step:
             _LOGGER.debug(
-                f"{self.deviceName}: Updated dim step from {getattr(self, 'steps', None)}% to {new_step}%"
+                f"{getattr(self, 'deviceName', '?')}: Updated dim step from {getattr(self, 'steps', None)}% to {new_step}%"
             )
             self.steps = new_step
 
