@@ -1,0 +1,33 @@
+name: Build Release Asset
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build release zip
+        run: |
+          # Create a clean zip containing only the integration folder.
+          # The updater expects the archive root to be "custom_components/opengrowbox".
+          cd "${GITHUB_WORKSPACE}"
+          rm -f "${RELEASE_ASSET_NAME}"
+          zip -r "${RELEASE_ASSET_NAME}" custom_components/opengrowbox \
+            -x "*.pyc" -x "*/__pycache__/*" -x "*.git*"
+        env:
+          RELEASE_ASSET_NAME: opengrowbox.zip
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: opengrowbox.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
