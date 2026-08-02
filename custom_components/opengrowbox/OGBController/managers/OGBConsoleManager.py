@@ -1077,7 +1077,18 @@ class OGBConsoleManager:
         lines = ["🌱 Medium Sensor Readings:", "━━━━━━━━━━━━━━━━━━━━━━━"]
 
         for medium in matched_mediums:
-            values = medium.get_all_medium_values()
+            # Support both GrowMedium objects and plain dicts (e.g. from persistence)
+            if hasattr(medium, "get_all_medium_values") and callable(
+                getattr(medium, "get_all_medium_values")
+            ):
+                values = medium.get_all_medium_values()
+            elif isinstance(medium, dict):
+                values = self._medium_dict_to_values(medium)
+            else:
+                lines.append("")
+                lines.append(f"⚠️ Unsupported medium entry: {type(medium).__name__}")
+                continue
+
             plant_info = values.get("plant", {})
 
             lines.extend([
@@ -1115,6 +1126,59 @@ class OGBConsoleManager:
         lines.append("💡 Use 'medium_sensors <name>' to filter a single medium.")
 
         await self._send_response("\n".join(lines))
+
+    def _medium_dict_to_values(self, medium: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a persisted medium dict to the same shape as get_all_medium_values()."""
+        name = medium.get("name", "unknown")
+        medium_type = medium.get("type", medium.get("medium_type", "unknown"))
+
+        # Plant info: persisted dict uses flat keys, get_all_medium_values uses nested 'plant'
+        plant_info = {
+            "plant_name": medium.get("plant_name"),
+            "breeder_name": medium.get("breeder_name"),
+            "plant_type": medium.get("plant_type"),
+            "plant_stage": medium.get("plant_stage"),
+            "total_grow_days": None,
+            "bloom_days": None,
+        }
+
+        # Try to calculate day counts from stored dates
+        from datetime import datetime
+        for date_key, days_key in [
+            ("grow_start_date", "total_grow_days"),
+            ("bloom_switch_date", "bloom_days"),
+        ]:
+            date_val = medium.get(date_key)
+            if date_val:
+                try:
+                    if isinstance(date_val, str):
+                        date_val = datetime.fromisoformat(date_val.replace("Z", "+00:00"))
+                    plant_info[days_key] = (datetime.now() - date_val).days
+                except (ValueError, TypeError):
+                    pass
+
+        return {
+            "Name": f"{self.room} - Medium: {name.upper()} Info",
+            "medium": True,
+            "room": self.room,
+            "medium_type": medium_type,
+            "medium_ec": medium.get("current_ec"),
+            "medium_ec_unit": "mS/cm" if medium.get("current_ec") is not None else None,
+            "medium_ec_source_unit": "auto",
+            "medium_ph": medium.get("current_ph"),
+            "medium_moisture": medium.get("current_moisture"),
+            "medium_light": medium.get("current_light"),
+            "medium_temp": medium.get("current_temp"),
+            "medium_sensors_total": sum(
+                len(v)
+                for v in medium.get("registered_sensors", {}).values()
+                if isinstance(v, (list, tuple, set))
+            ),
+            "medium_sensors": medium.get("registered_sensors", {}),
+            "sensor_history": {},
+            "plant": plant_info,
+            "timestamp": datetime.now(),
+        }
 
     async def cmd_get_week(self, params: List[str]):
         """Shows current grow plan week data from the API."""

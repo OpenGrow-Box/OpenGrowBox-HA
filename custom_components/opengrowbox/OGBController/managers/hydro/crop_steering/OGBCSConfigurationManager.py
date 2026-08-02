@@ -140,19 +140,34 @@ class OGBCSConfigurationManager:
 
         return presets
 
-    def _is_valid_user_value(self, value) -> bool:
+    def _is_valid_user_value(self, value, min_sensible: Optional[float] = None) -> bool:
         """
         Check if a user value is set and parseable.
         Accepts 0 (e.g. EC=0 for flush, Shot_Sum=0 to disable).
         Only rejects None, empty strings, and unparseable values.
+
+        If min_sensible is provided, values below it are treated as unset so
+        corrupted/uninitialized entities (e.g. VWC_Target=1.0) don't override
+        sensible defaults.
         """
         if value is None:
             return False
         try:
-            float(value)
-            return True
+            numeric = float(value)
         except (ValueError, TypeError):
             return False
+        if min_sensible is not None and numeric < min_sensible:
+            _LOGGER.debug(
+                f"{self.room} - Rejecting user value {value} (below sensible minimum {min_sensible})"
+            )
+            return False
+        return True
+
+    def _coerce_user_value(self, value, default: Any, min_sensible: Optional[float] = None) -> Any:
+        """Return float(value) if it passes validation, otherwise default."""
+        if self._is_valid_user_value(value, min_sensible=min_sensible):
+            return float(value)
+        return default
 
     def _apply_user_settings(self, presets: Dict[str, Dict[str, Any]]) -> None:
         """
@@ -178,19 +193,19 @@ class OGBCSConfigurationManager:
             if self._is_valid_user_value(max_ec):
                 presets[phase]["MaxEC"] = float(max_ec)
 
-            # VWC parameters
+            # VWC parameters - reject corrupted/uninitialized low values
             vwc_target = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Target")
-            if self._is_valid_user_value(vwc_target):
+            if self._is_valid_user_value(vwc_target, min_sensible=5.0):
                 presets[phase]["VWCTarget"] = float(vwc_target)
                 _LOGGER.debug(f"{self.room} - User VWCTarget for {phase}: {vwc_target}")
 
             vwc_min = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Min")
-            if self._is_valid_user_value(vwc_min):
+            if self._is_valid_user_value(vwc_min, min_sensible=5.0):
                 presets[phase]["VWCMin"] = float(vwc_min)
                 _LOGGER.debug(f"{self.room} - User VWCMin for {phase}: {vwc_min}")
 
             vwc_max = self.data_store.getDeep(f"CropSteering.Substrate.{phase}.VWC_Max")
-            if self._is_valid_user_value(vwc_max):
+            if self._is_valid_user_value(vwc_max, min_sensible=5.0):
                 presets[phase]["VWCMax"] = float(vwc_max)
                 _LOGGER.debug(f"{self.room} - User VWCMax for {phase}: {vwc_max}")
 

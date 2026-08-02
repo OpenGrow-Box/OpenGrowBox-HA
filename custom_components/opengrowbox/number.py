@@ -38,7 +38,7 @@ class CustomNumber(NumberEntity, RestoreEntity):
         self._max_value = max_value
         self._step = step
         self._unit = unit
-        self._value = initial_value or min_value
+        self._value = initial_value if initial_value is not None else min_value
         self.coordinator = coordinator
         self._unique_id = f"{DOMAIN}_{room_name}_{name.lower().replace(' ', '_')}"
         self.entity_id = legacy_entity_id("number", name)
