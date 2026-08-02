@@ -428,16 +428,22 @@ class OGBCSManager:
         # DEBUG: Dump CropSteering config to see what's actually stored
         self.debug_dump_cropsteering_config()
 
-        # Get sensor data
+        # Get sensor data (best-effort; don't abort if sensors aren't ready yet,
+        # otherwise the cycle never starts when mode is set before sensor data arrives)
         sensor_data = await self._get_sensor_averages()
-        if not sensor_data:
-            _LOGGER.debug(f"{self.room} - No sensor data! Cannot start CropSteering")
+        if sensor_data:
+            self.data_store.setDeep("CropSteering.vwc_current", sensor_data["vwc"])
+            self.data_store.setDeep("CropSteering.ec_current", sensor_data["ec"])
+        else:
+            _LOGGER.warning(
+                f"{self.room} - No sensor data available yet, starting CropSteering anyway. "
+                f"The cycle will wait for valid VWC/EC readings."
+            )
+            self.data_store.setDeep("CropSteering.vwc_current", 0)
+            self.data_store.setDeep("CropSteering.ec_current", 0)
             await self._log_missing_sensors()
-            return
 
-        # Update current values
-        self.data_store.setDeep("CropSteering.vwc_current", sensor_data["vwc"])
-        self.data_store.setDeep("CropSteering.ec_current", sensor_data["ec"])
+        # Mark crop steering as active
         self.data_store.setDeep("CropSteering.Active", True)
 
         # CRITICAL FIX: Filter capabilities for Crop-Steering mode (only drippers)
@@ -2804,6 +2810,9 @@ class OGBCSManager:
         # Convert interval to minutes for display
         interval_min = int(interval / 60) if isinstance(interval, (int, float)) else interval
         
+        vwc_value = sensor_data.get("vwc") if sensor_data else None
+        ec_value = sensor_data.get("ec") if sensor_data else None
+        
         await self.event_manager.emit(
             "LogForClient",
             {
@@ -2815,8 +2824,8 @@ class OGBCSManager:
                 "Interval": f"{interval_min}min",
                 "MaxShots": max_shots,
                 "VWCTarget": vwc_target,
-                "VWC": sensor_data.get("vwc"),
-                "EC": sensor_data.get("ec"),
+                "VWC": vwc_value,
+                "EC": ec_value,
                 "PlantPhase": plant_phase,
                 "Week": gen_week,
             },
