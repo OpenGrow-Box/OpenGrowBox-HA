@@ -188,10 +188,6 @@ class OGBRegistryEvenListener:
             
             # NEW: Skip disabled entities
             if entity.disabled:
-                _LOGGER.debug(
-                    f"Skipping disabled entity: {entity.entity_id} "
-                    f"(disabled by: {entity.disabled_by})"
-                )
                 return None
             
             is_ogb_room_entity = "ogb_" in entity.entity_id and f"_{room_lower}" in entity.entity_id
@@ -365,10 +361,6 @@ class OGBRegistryEvenListener:
             
             # NEW: Skip disabled entities
             if entity.disabled:
-                _LOGGER.warning(
-                    f"Skipping disabled entity: {entity.entity_id} "
-                    f"(disabled by: {entity.disabled_by})"
-                )
                 return None
             
             # EXISTING LOGIC: Physical devices must be in the room
