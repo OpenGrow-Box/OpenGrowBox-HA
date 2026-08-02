@@ -277,6 +277,32 @@ class OGBCSManager:
         except Exception as e:
             _LOGGER.warning(f"{self.room} - Failed to update number entity for {parameter}.{phase}: {e}")
 
+    async def _set_crop_phase_and_update_selector(self, phase: str):
+        """
+        Set CropSteering.CropPhase and update the HA phase selector entity
+        so the UI reflects internal phase transitions.
+        """
+        phase_lower = phase.lower() if phase else "p0"
+        self.data_store.setDeep("CropSteering.CropPhase", phase_lower)
+
+        if not self.hass:
+            _LOGGER.debug(f"{self.room} - Cannot update phase selector: hass not available")
+            return
+
+        try:
+            entity_id = f"select.ogb_cropsteering_phases_{self.room.lower()}"
+            await self.hass.services.async_call(
+                domain="select",
+                service="select_option",
+                service_data={"entity_id": entity_id, "option": phase_lower.upper()},
+                blocking=False,
+            )
+            _LOGGER.debug(
+                f"{self.room} - Updated phase selector {entity_id} to {phase_lower.upper()}"
+            )
+        except Exception as e:
+            _LOGGER.warning(f"{self.room} - Failed to update phase selector to {phase_lower}: {e}")
+
     async def _sync_adjusted_presets_to_entities(self, plant_phase: str, gen_week: int):
         """
         Write the final adjusted preset values back to HA number entities,
@@ -1325,7 +1351,8 @@ class OGBCSManager:
             initial_phase = await self._determine_initial_phase()
             
             # Clear any old persisted phase and set the freshly determined one
-            self.data_store.setDeep("CropSteering.CropPhase", initial_phase)
+            # Update the phase in HA selector too
+            await self._set_crop_phase_and_update_selector(initial_phase)
 
             _LOGGER.debug(
                 f"{self.room} - Automatic CS cycle started in phase {initial_phase}"
@@ -1505,7 +1532,8 @@ class OGBCSManager:
                 f"{self.room} - P0: Lights are OFF, transitioning to P3 Night Dryback"
             )
             self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-            self.data_store.setDeep("CropSteering.CropPhase", "p3")
+            # Transition to P3
+            await self._set_crop_phase_and_update_selector("p3")
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change("p0", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
             return
@@ -1517,13 +1545,13 @@ class OGBCSManager:
             )
             return
         
-        # P0 is simple: Wait until VWC falls below minimum
-        if vwc < preset["VWCMin"]:
-            _LOGGER.debug(
-                f"{self.room} - P0: VWC {vwc:.1f}% < Min {preset['VWCMin']:.1f}% → Switching to P1"
-            )
-            self.data_store.setDeep("CropSteering.CropPhase", "p1")
-            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+            # P0 is simple: Wait until VWC falls below minimum
+            if vwc < preset["VWCMin"]:
+                _LOGGER.debug(
+                    f"{self.room} - P0: VWC {vwc:.1f}% < Min {preset['VWCMin']:.1f}% → Switching to P1"
+                )
+                await self._set_crop_phase_and_update_selector("p1")
+                self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change(
                 "p0",
                 "p1",
@@ -1563,7 +1591,7 @@ class OGBCSManager:
             # Set night moisture for dryback calculation
             self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
             # Transition to P3
-            self.data_store.setDeep("CropSteering.CropPhase", "p3")
+            await self._set_crop_phase_and_update_selector("p3")
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change("p1", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
             return
@@ -1579,7 +1607,7 @@ class OGBCSManager:
             self.data_store.setDeep("CropSteering.p1_last_vwc", None)
             self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
             self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
-            self.data_store.setDeep("CropSteering.CropPhase", "p3")
+            await self._set_crop_phase_and_update_selector("p3")
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change("p1", "p3", f"Lights turning off soon - early transition to night dryback (VWC: {vwc:.1f}%)")
             return
@@ -1840,7 +1868,7 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
 
         # Transition to P2
-        self.data_store.setDeep("CropSteering.CropPhase", "p2")
+        await self._set_crop_phase_and_update_selector("p2")
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
         # Log the transition
@@ -1870,7 +1898,7 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
         # Transition to P2
-        self.data_store.setDeep("CropSteering.CropPhase", "p2")
+        await self._set_crop_phase_and_update_selector("p2")
 
         message = f"Manual saturation complete - VWC: {vwc:.1f}%"
         await self._log_phase_change("p1", "p2", message)
@@ -1976,7 +2004,7 @@ class OGBCSManager:
                 _LOGGER.debug(f"{self.room} - P2: Light OFF → Switching to P3")
                 # Reset P2 state tracking before leaving phase
                 self._reset_p2_state_tracking()
-                self.data_store.setDeep("CropSteering.CropPhase", "p3")
+                await self._set_crop_phase_and_update_selector("p3")
                 self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
                 self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
                 await self._log_phase_change(
@@ -2188,7 +2216,7 @@ class OGBCSManager:
             )
             # Reset P3 state tracking before leaving phase
             self._reset_p3_state_tracking()
-            self.data_store.setDeep("CropSteering.CropPhase", "p0")
+            await self._set_crop_phase_and_update_selector("p0")
             self.data_store.setDeep(
                 "CropSteering.startNightMoisture", None
             )  # Reset for next night
@@ -2254,8 +2282,34 @@ class OGBCSManager:
                 },
             )
 
-            # Reset P3 tracking
-            self.data_store.setDeep("CropSteering.p3_emergency_count", 0)
+            # Reset P3 tracking before leaving phase
+            self._reset_p3_state_tracking()
+            await self._set_crop_phase_and_update_selector("p0")
+            self.data_store.setDeep(
+                "CropSteering.startNightMoisture", None
+            )  # Reset for next night
+
+            # Auto-calibration: track night minimum VWC for VWCMin
+            p3_vwc_mins = self.data_store.getDeep("CropSteering.p3_night_vwc_mins") or []
+            p3_vwc_mins.append(round(vwc, 1))
+            if len(p3_vwc_mins) > 5:
+                p3_vwc_mins.pop(0)
+            self.data_store.setDeep("CropSteering.p3_night_vwc_mins", p3_vwc_mins)
+
+            if len(p3_vwc_mins) >= 2:
+                if max(p3_vwc_mins) - min(p3_vwc_mins) <= 2.0:
+                    avg_vwc = sum(p3_vwc_mins) / len(p3_vwc_mins)
+                    _LOGGER.debug(
+                        f"{self.room} - P3: Consistent night minimum {avg_vwc:.1f}% - auto-calibrating VWCMin"
+                    )
+                    self.data_store.setDeep(
+                        "CropSteering.Calibration.p3.VWCMin", round(avg_vwc, 1)
+                    )
+                    self.data_store.setDeep(
+                        "CropSteering.Calibration.p3.timestamp",
+                        datetime.now().isoformat()
+                    )
+                    await self._update_number_entity("VWCMin", "p3", avg_vwc)
 
             await self._log_phase_change(
                 "p3",
