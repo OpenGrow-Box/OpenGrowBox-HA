@@ -2159,12 +2159,12 @@ class OGBCSManager:
                 {
                     "Name": self.room,
                     "Type": "CSLOG",
-                    "Message": f"P1 Shot {p1_irrigation_count}/{max_cycles} → VWC: {current_vwc:.1f}% (target: {target_max:.1f}%) | Duration: {shot_duration}s | Next in: {next_shot_min:.0f}min",
+                    "Message": f"P1 Shot {p1_irrigation_count}/{max_cycles} | VWC: {vwc:.1f}% → {current_vwc:.1f}% (target: {target_max:.1f}%) | Duration: {shot_duration}s | Next in: {next_shot_min:.0f}min",
                 },
                 haEvent=True,
             )
             _LOGGER.debug(
-                f"{self.room} - P1: Shot {p1_irrigation_count}/{max_cycles}, VWC={current_vwc:.1f}%, duration={shot_duration}s, next in {next_shot_min:.0f}min"
+                f"{self.room} - P1: Shot {p1_irrigation_count}/{max_cycles}, VWC {vwc:.1f}% → {current_vwc:.1f}%, duration={shot_duration}s, next in {next_shot_min:.0f}min"
             )
         else:
             # Not time yet - log waiting status
@@ -2809,12 +2809,16 @@ class OGBCSManager:
                             shot_counter += 1
                             self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
                             self.data_store.setDeep("CropSteering.lastIrrigationTime", datetime.now())
+
+                            # Post-shot VWC for logging
+                            post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+
                             await self.event_manager.emit(
                                 "LogForClient",
                                 {
                                     "Name": self.room,
                                     "Type": "Emergency irrigation",
-                                    "Message": f"CropSteering {phase}: Emergency irrigation ({shot_counter}/{shot_count})",
+                                    "Message": f"CropSteering {phase}: Emergency irrigation ({shot_counter}/{shot_count}) | VWC: {vwc:.1f}% → {post_vwc:.1f}%",
                                 },
                                 haEvent=True,
                             )
@@ -2853,12 +2857,15 @@ class OGBCSManager:
                             self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
                             self.data_store.setDeep("CropSteering.lastIrrigationTime", now)
 
+                            # Post-shot VWC for logging
+                            post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+
                             await self.event_manager.emit(
                                 "LogForClient",
                                 {
                                     "Name": self.room,
                                     "Type": "CSLOG",
-                                    "Message": f"CropSteering {phase}: Shot {shot_counter}/{shot_count}",
+                                    "Message": f"CropSteering {phase}: Shot {shot_counter}/{shot_count} | VWC: {vwc:.1f}% → {post_vwc:.1f}%",
                                 },
                                 haEvent=True,
                             )
@@ -3001,6 +3008,17 @@ class OGBCSManager:
                 await self.event_manager.emit("PumpAction", pumpAction)
                 _LOGGER.debug(f"{self.room} - Sent OFF to {dev_id}")
 
+            # Read post-irrigation sensor values for history/logging
+            post_sensor_data = await self._get_sensor_averages()
+            post_vwc = post_sensor_data.get("vwc", 0) if post_sensor_data else 0
+            post_ec = post_sensor_data.get("ec", 0) if post_sensor_data else 0
+            post_pore_ec = post_sensor_data.get("pore_ec", 0) if post_sensor_data else 0
+            post_temp = post_sensor_data.get("temperature", 25) if post_sensor_data else 25
+            try:
+                vwc_delta = round(float(post_vwc) - float(pre_vwc), 1) if post_vwc is not None and pre_vwc is not None else None
+            except (ValueError, TypeError):
+                vwc_delta = None
+
             # Emit AI irrigation event
             await self.event_manager.emit(
                 "CSIrrigation",
@@ -3016,6 +3034,11 @@ class OGBCSManager:
                     "pre_ec": pre_ec,
                     "pre_pore_ec": pre_pore_ec,
                     "pre_temperature": pre_temp,
+                    "post_vwc": post_vwc,
+                    "post_ec": post_ec,
+                    "post_pore_ec": post_pore_ec,
+                    "post_temperature": post_temp,
+                    "vwc_delta": vwc_delta,
                     "target_vwc": target_vwc,
                     "max_vwc": max_vwc,
                     "is_emergency": is_emergency,
