@@ -238,6 +238,19 @@ class OGBCastManager:
         
         # Hydro.Mode is "Crop-Steering" - forward to CS Manager
         _LOGGER.debug(f"{self.room} - CropSteeringChanges forwarded to CSManager (Hydro.Mode={hydro_mode})")
+
+        # Wait briefly for pump capabilities to be populated during startup.
+        # Device registration can lag behind the initial mode-change event, which causes
+        # "No pump devices in capabilities" and prevents CS from starting automatically.
+        for attempt in range(5):
+            pump_caps = self.data_store.getDeep("capabilities.canPump")
+            if pump_caps and pump_caps.get("devEntities"):
+                break
+            _LOGGER.debug(
+                f"{self.room} - CropSteering waiting for pump capabilities (attempt {attempt + 1}/5)"
+            )
+            await asyncio.sleep(0.5)
+
         await self.CropSteeringManager.handle_mode_change(data)
 
     ## Hydro Modes
@@ -324,8 +337,7 @@ class OGBCastManager:
             _LOGGER.debug(f"{self.room} - CropSteering Active={is_active} (mode={current_active_mode})")
             
             await self.CropSteeringManager.handle_mode_change(pumpAction)
-            # Start retrieve system alongside crop-steering
-            await self._ensure_retrieve_system("crop_steering")
+            # Retrieve system is only relevant for water-culture Hydro mode, not soil-based Crop-Steering
             await self._ensure_air_pump(False)
 
         elif mode == "Plant-Watering":

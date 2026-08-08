@@ -858,9 +858,13 @@ class Device:
         # CLEANUP: Remove this device from any capability it no longer matches.
         # Stale entries can remain in saved state and cause wrong behaviour
         # (e.g. a ReservoirPump incorrectly present in canAirPump).
+        # Action capabilities additionally require at least one switch entity; sensor-only
+        # or number-only entities must not be treated as actionable devices.
+        action_caps = set(CAP_MAPPING.keys()) - {"canWatch"}
         matching_caps = {
             cap for cap, deviceTypes in CAP_MAPPING.items()
             if self.deviceType.lower() in (dt.lower() for dt in deviceTypes)
+            and (cap not in action_caps or self.switches)
         }
         for cap in CAP_MAPPING.keys():
             if cap in matching_caps:
