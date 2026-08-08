@@ -594,41 +594,45 @@ class OGBActionManager:
     def _remove_duplicate_actions(self, actionMap: List) -> List:
         """
         Remove duplicate actions with the same capability.
-        Keeps the LAST occurrence while preserving original order of first occurrences.
-        
+        Keeps the HIGHEST PRIORITY occurrence; equal priority keeps the LAST.
+        Preserves original order of first occurrences.
+
         This must be called BEFORE cooldown filtering to prevent
         multiple registrations of the same capability.
-        
+
         Args:
             actionMap: List of actions to deduplicate
-            
+
         Returns:
             Deduplicated action list
         """
-        # Find the index of the LAST occurrence of each capability
-        last_occurrence = {}
+        prio_map = {"emergency": 4, "high": 3, "medium": 2, "low": 1}
+        best = {}  # capability -> (priority_score, index, action)
         first_occurrence = {}
+
         for i, action in enumerate(actionMap):
             cap = getattr(action, 'capability', None)
-            if cap:
-                last_occurrence[cap] = i
-                if cap not in first_occurrence:
-                    first_occurrence[cap] = i
-        
-        # Collect unique actions (only those at last occurrence indices)
-        last_actions = {cap: actionMap[i] for cap, i in last_occurrence.items()}
-        
+            if not cap:
+                continue
+            prio = prio_map.get(getattr(action, 'priority', 'medium') or 'medium', 0)
+            if cap not in first_occurrence:
+                first_occurrence[cap] = i
+            # Keep if higher priority, or same priority but later index
+            if cap not in best or prio > best[cap][0] or (
+                prio == best[cap][0] and i > best[cap][1]
+            ):
+                best[cap] = (prio, i, action)
+
+        if len(best) < len([a for a in actionMap if getattr(a, 'capability', None)]):
+            _LOGGER.debug(
+                f"{self.room}: Deduplicated {len(actionMap)} actions → {len(best)} unique"
+            )
+
         # Sort by first occurrence index to preserve original order
         unique_actions = [
-            last_actions[cap] 
-            for cap in sorted(first_occurrence.keys(), key=lambda c: first_occurrence[c])
+            best[cap][2]
+            for cap in sorted(best.keys(), key=lambda c: first_occurrence[c])
         ]
-        
-        if len(unique_actions) < len(actionMap):
-            _LOGGER.debug(
-                f"{self.room}: Deduplicated {len(actionMap)} actions → {len(unique_actions)} unique"
-            )
-            
         return unique_actions
 
     CONFLICTING_ACTION_PAIRS = [
@@ -1203,6 +1207,9 @@ class OGBActionManager:
             # No dampening - use enhanced actions directly
             final_actions = enhanced_actions
 
+        # Remove duplicate actions for the same capability, keeping highest priority
+        final_actions = self._remove_duplicate_actions(final_actions)
+
         # STEP 3: ENVIRONMENT GUARD (always active)
         final_actions = await self._apply_environment_guard(final_actions)
 
@@ -1291,6 +1298,9 @@ class OGBActionManager:
             final_actions = self.dampening_actions._resolve_action_conflicts(filtered_actions)
         else:
             final_actions = enhanced_actions
+
+        # Remove duplicate actions for the same capability, keeping highest priority
+        final_actions = self._remove_duplicate_actions(final_actions)
 
         # STEP 3: ENVIRONMENT GUARD (always active)
         final_actions = await self._apply_environment_guard(final_actions)
@@ -1433,6 +1443,7 @@ class OGBActionManager:
             )
             
             final_actions = await self._apply_environment_guard(actionMap)
+            final_actions = self._remove_duplicate_actions(final_actions)
             await self.publicationActionHandler(final_actions)
 
     async def publicationActionHandler(self, actionMap: List):

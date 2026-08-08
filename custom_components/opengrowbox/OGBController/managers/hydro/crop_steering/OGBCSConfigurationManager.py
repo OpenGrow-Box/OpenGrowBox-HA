@@ -62,16 +62,15 @@ class OGBCSConfigurationManager:
             "custom": {"vwc_offset": 0, "ec_offset": 0, "drainage_factor": 1.0},
         }
 
-    def get_base_presets(self) -> Dict[str, Dict[str, Any]]:
+    def get_raw_base_presets(self) -> Dict[str, Dict[str, Any]]:
         """
-        Base presets for automatic mode (rockwool defaults).
-        User configurations from DataStore are merged on top of defaults.
+        Raw base presets for automatic mode (rockwool defaults).
+        NO user overrides applied. Used for bulletproof automatic mode.
 
         Returns:
-            Dictionary of phase presets with user overrides applied
+            Dictionary of phase presets with default values only
         """
-        # Default presets
-        presets = {
+        return {
             "p0": {
                 # P0: Monitoring - Warte auf Dryback Signal
                 # No irrigation in P0 - just monitoring until VWC drops below min
@@ -87,8 +86,8 @@ class OGBCSConfigurationManager:
             "p1": {
                 # P1: Saturation - Schnelle Sättigung des Blocks
                 "description": "Saturation Phase",
-                "VWCTarget": 70.0,
-                "VWCMax": 68.0,
+                "VWCTarget": 68.0,
+                "VWCMax": 70.0,
                 "VWCMin": 55.0,
                 "ECTarget": 1.8,
                 "MinEC": 1.6,
@@ -135,9 +134,17 @@ class OGBCSConfigurationManager:
             },
         }
 
+    def get_base_presets(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Base presets for automatic mode (rockwool defaults).
+        User configurations from DataStore are merged on top of defaults.
+
+        Returns:
+            Dictionary of phase presets with user overrides applied
+        """
+        presets = self.get_raw_base_presets()
         # Merge with user configurations from DataStore
         self._apply_user_settings(presets)
-
         return presets
 
     def _is_valid_user_value(self, value, min_sensible: Optional[float] = None) -> bool:
@@ -393,6 +400,64 @@ class OGBCSConfigurationManager:
                 adjustments["ec_modifier"] = 0.3  # Noch höhere EC
 
         return adjustments
+
+    def get_automatic_bulletproof_preset(
+        self, phase: str, medium_type: str = "rockwool", plant_phase: str = "veg", generative_week: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get a bulletproof automatic preset WITHOUT user overrides.
+
+        Only base presets + medium offsets + plant phase growth adjustments are used.
+        This prevents user settings from influencing automatic mode.
+
+        Args:
+            phase: Phase identifier (p0, p1, p2, p3)
+            medium_type: Type of growing medium
+            plant_phase: Current plant phase ('veg', 'flower', etc.)
+            generative_week: Week number in generative phase
+
+        Returns:
+            Adjusted preset configuration (no user overrides)
+        """
+        base_preset = self.get_raw_base_presets()[phase].copy()
+
+        # Apply medium-specific adjustments (VWC/EC only)
+        adjustments = self._medium_adjustments.get(
+            medium_type, self._medium_adjustments["rockwool"]
+        )
+        vwc_offset = adjustments["vwc_offset"]
+        ec_offset = adjustments["ec_offset"]
+
+        for key in ["VWCTarget", "VWCMin", "VWCMax"]:
+            if key in base_preset and base_preset[key] is not None:
+                base_preset[key] = float(base_preset[key]) + vwc_offset
+
+        for key in ["ECTarget", "MinEC", "MaxEC"]:
+            if key in base_preset and base_preset[key] is not None:
+                base_preset[key] = float(base_preset[key]) + ec_offset
+
+        # Apply plant phase growth adjustments
+        growth_adjustments = self.get_phase_growth_adjustments(
+            plant_phase, generative_week
+        )
+        if "VWCTarget" in base_preset:
+            base_preset["VWCTarget"] += growth_adjustments["vwc_modifier"]
+        if "VWCMin" in base_preset:
+            base_preset["VWCMin"] += growth_adjustments["vwc_modifier"]
+        if "VWCMax" in base_preset:
+            base_preset["VWCMax"] += growth_adjustments["vwc_modifier"]
+        if "target_dryback_percent" in base_preset:
+            base_preset["target_dryback_percent"] += growth_adjustments["dryback_modifier"]
+        if "ECTarget" in base_preset:
+            base_preset["ECTarget"] += growth_adjustments["ec_modifier"]
+
+        # Ensure internal consistency: target <= max, min <= target
+        if base_preset.get("VWCMin", 0) > base_preset.get("VWCTarget", 0):
+            base_preset["VWCTarget"] = base_preset["VWCMin"]
+        if base_preset.get("VWCTarget", 0) > base_preset.get("VWCMax", 0):
+            base_preset["VWCTarget"] = base_preset["VWCMax"]
+
+        return base_preset
 
     def get_adjusted_preset(
         self,

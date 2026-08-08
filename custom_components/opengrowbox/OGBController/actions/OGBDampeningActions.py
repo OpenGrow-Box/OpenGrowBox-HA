@@ -184,6 +184,9 @@ class OGBDampeningActions:
         # Resolve conflicts between actions
         final_actions = self._resolve_action_conflicts(dampened_actions)
 
+        # Remove duplicate actions for the same capability, keeping highest priority
+        final_actions = self.action_manager._remove_duplicate_actions(final_actions)
+
         _LOGGER.debug(
             f"{self.ogb.room}: Executing {len(final_actions)} of {len(enhanced_action_map)} actions "
             f"(VPD status: {vpd_status}, blocked: {len(enhanced_action_map) - len(dampened_actions)})"

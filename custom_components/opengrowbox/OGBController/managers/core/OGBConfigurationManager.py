@@ -2217,6 +2217,12 @@ class OGBConfigurationManager:
         self.data_store.setDeep("CropSteering.CropPhase", phase_lower)
         _LOGGER.debug(f"{self.room}: Crop Steering phase changed to {phase_lower} (from {value})")
 
+        # Signal a running manual mode cycle so it can restart immediately
+        await self.event_manager.emit(
+            "CSManualPhaseChanged",
+            {"room": self.room, "phase": phase_lower},
+        )
+
     async def _crop_steering_sets(self, data, entity_key=None):
         """Dynamic setter for all Crop Steering parameters.
         

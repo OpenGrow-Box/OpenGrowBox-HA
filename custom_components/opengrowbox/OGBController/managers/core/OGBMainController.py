@@ -69,7 +69,6 @@ class OGBMainController:
         # Register core event handlers if components are available
         if self.event_manager:
             self._register_event_handlers()
-        self._register_event_handlers()
 
     # =================================================================
     # Compatibility Properties for Action Modules
@@ -184,9 +183,15 @@ class OGBMainController:
             notification_enabled=notification_enabled
         )
 
-        # Inject notificator into CO2 manager
+        # Inject notificator into managers that need critical alerts
         if hasattr(self, 'co2_manager'):
             self.co2_manager.notificator = self.notificator
+
+        if hasattr(self, 'plant_cast_manager') and hasattr(self.plant_cast_manager, 'CropSteeringManager'):
+            self.plant_cast_manager.CropSteeringManager.notificator = self.notificator
+
+        if hasattr(self, 'mode_manager') and hasattr(self.mode_manager, 'CropSteeringManager'):
+            self.mode_manager.CropSteeringManager.notificator = self.notificator
 
         # Monitoring and maintenance
         self.fallback_manager = OGBFallBackManager(
@@ -228,9 +233,6 @@ class OGBMainController:
         """Register core event handlers."""
         # Room updates
         self.event_manager.on("RoomUpdate", self.handle_room_update)
-
-        # VPD creation
-        self.event_manager.on("VPDCreation", self.handle_new_vpd)
 
         # Plant timing
         self.event_manager.on("PlantTimeChange", self._auto_update_plant_stages)
@@ -451,15 +453,6 @@ class OGBMainController:
         else:
             _LOGGER.debug(f"[{self.room}] config_manager not available, cannot route: {entity_key}")
             return False
-
-    async def handle_new_vpd(self, data):
-        """Handle new VPD data events."""
-        # This will be implemented in OGBVPDManager
-        control_option = self.data_store.get("mainControl")
-        if control_option not in ["HomeAssistant", "Premium"]:
-            return
-
-        # VPD processing logic will be in VPD manager
 
     async def _handle_ambient_data(self, event):
         """Handle ambient data from other rooms."""

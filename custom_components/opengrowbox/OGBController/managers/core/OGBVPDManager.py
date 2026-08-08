@@ -275,9 +275,6 @@ class OGBVPDManager:
                 currentMode = self.data_store.get("tentMode")
                 tentMode = OGBModeRunPublication(currentMode=currentMode)
 
-                currentMode = self.data_store.get("tentMode")
-                tentMode = OGBModeRunPublication(currentMode=currentMode)
-
                 if is_ambient_room(self.room):
                     _LOGGER.debug(f"📡 {self.room} AmbientData emitted: VPD={currentVPD}, Temp={convert_value(avgTemp)}, Hum={convert_value(avgHum)}")
                     await self.event_manager.emit("AmbientData",vpdPub,haEvent=True)
@@ -287,7 +284,6 @@ class OGBVPDManager:
                     return
 
                 await self.event_manager.emit("selectActionMode",tentMode)
-                await self.event_manager.emit("LogForClient",vpdPub,haEvent=True, debug_type="DEBUG")
 
                 # GROW DATA - DataRelease is emitted by OGBActionManager.publicationActionHandler()
                 # after actual device actions are taken (NOT on every VPD calculation)

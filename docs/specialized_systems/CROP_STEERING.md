@@ -81,10 +81,55 @@ class OGBAdvancedSensor:
 - **Phases**: P0 (Monitor) → P1 (Saturate) → P2 (Maintain) → P3 (Dryback)
 - **Use Case**: Optimal plant health with full automation
 
+#### Automatic Mode Preset Hierarchy
+
+In **Automatic** mode the active values are built from **presets only**. User settings entered via the HA number entities are **ignored** for control decisions (they are still used by Manual mode).
+
+| Layer | Source | Affected Parameters | Can user override? |
+|---|---|---|---|
+| **1. Base Presets** | Hardcoded rockwool defaults in `OGBCSConfigurationManager.get_raw_base_presets()` | VWC/EC targets, limits, timing defaults | No |
+| **2. Medium Adjustments** | `_medium_adjustments` table (rockwool/coco/soil/perlite/...) | `VWCMin`, `VWCMax`, `VWCTarget`, `ECTarget`, `MinEC`, `MaxEC` (offset only) | No – chosen by medium type |
+| **3. Plant Phase Adjustments** | `get_phase_growth_adjustments(plant_phase, generative_week)` | VWC modifier, dryback modifier, EC modifier | No – driven by `plantStage` and week |
+| **4. Dynamic Learning** | Observed max saturation, field capacity, night dryback minimum | Hard caps for flood/dryout guards and P2 target adaptation | No – learned from sensor data |
+
+The system learns from the actual sensor behaviour and clamps all thresholds to safe ranges:
+- `max_saturation_vwc` – highest VWC ever observed after P1 irrigation
+- `field_capacity_vwc` – stable post-irrigation plateau used for P2
+- `min_dryback_vwc` – lowest VWC observed during P3 night dryback
+
+Absolute safety limits: **VWC never < 5% and never > 90%**.
+
+**Base Presets (rockwool defaults):**
+
+| Phase | Description | VWCTarget | VWCMin | VWCMax | ECTarget | Default Duration | Default Interval | Default Max Shots |
+|---|---|---|---|---|---|---|---|---|
+| **P0** | Monitoring | 58.0 | 55.0 | 65.0 | 2.0 | - | - | - |
+| **P1** | Saturation | 68.0 | 55.0 | 70.0 | 1.8 | 45 s | 3 min | 10 |
+| **P2** | Maintenance | 65.0 | 62.0 | 68.0 | 2.0 | 20 s | 30 min | - |
+| **P3** | Night Dryback | 60.0 | 52.0 | 68.0 | 2.2 | 15 s | 1 h | 2 emergency |
+
+#### Automatic Mode Failsafe Guards
+
+All guards immediately stop irrigation and send a **critical push notification** via `OGBNotificator`:
+
+| Guard | Trigger | Action |
+|---|---|---|
+| **Flood Guard** | VWC ≥ 90% | Stop all irrigation, notify |
+| **Dryout Guard** | VWC ≤ 5% | Stop all irrigation, notify (do not add more water until sensor is checked) |
+| **Sensor Stuck** | VWC unchanged for 10 consecutive readings | Stop irrigation, notify |
+| **Sensor Jump** | VWC change > 30% between two readings | Discard reading, notify |
+| **Ineffective Irrigation** | 3+ shots without VWC rise ≥ 0.5% | Stop irrigation, notify (pump/empty/sensor issue) |
+| **Max Runtime** | Total pump runtime per cycle ≥ 5 min | Stop irrigation, notify |
+
+These guards are also active in **Manual** mode.
+
+
 ### 4. Manual Mode (Manual-P0, P1, P2, P3)
 - **Logic**: User selects specific phase to run
 - **Control**: Forces system into selected phase
-- **Use Case**: Testing, troubleshooting, specific interventions
+- **Settings**: Uses **all user-configured settings** (VWC/EC targets, limits, timing) from `CropSteering.Substrate.{phase}.*` paths — **not** the automatic presets or plant-stage adjustments
+- **Use Case**: Testing, troubleshooting, specific interventions where you want full control over thresholds and timing
+- **Phase Change**: Manual phase changes via the CropPhase selector are immediately signalled to the running manual cycle (`CSManualPhaseChanged` event), so the new phase starts without waiting for the previous cycle's sleep/irrigation to finish
 
 #### Manual Mode Phase Selection (v3.3)
 
@@ -132,10 +177,12 @@ def _extract_phase_from_value(self, value: str) -> str:
 ```
 
 **Manual Mode Flow:**
-1. User selects "Manual P1" in UI
+1. User selects a phase in the CropPhase selector (e.g. "P1")
 2. System reads `CropSteering.CropPhase` from DataStore
 3. Phase extraction converts "P1" → "p1"
-4. Manual cycle runs with correct phase settings
+4. `_crop_steering_phase()` emits `CSManualPhaseChanged` event
+5. `_run_manual_mode()` cancels the current phase cycle and restarts with the new phase immediately
+6. Manual cycle runs with all user settings for that phase
 
 ## Phase System
 
@@ -910,15 +957,15 @@ User values are validated by `_is_valid_user_value()` which accepts any parseabl
 
 #### Automatic Mode Timing Settings (v3.3)
 
-In Automatic mode, the system now uses **user-configurable timing values** while maintaining **preset-based VWC/EC thresholds**:
+In Automatic mode, the system reads **timing values directly from user settings** for the phase handlers, while the full preset (including VWC/EC thresholds) is loaded and adjusted separately.
 
 ```python
 def _get_automatic_timing_settings(self, phase: str) -> Dict[str, Any]:
     """Get USER timing settings for Automatic Mode.
 
     Reads Duration/Interval/ShotSum from user settings.
-    These are the ONLY user-settable parameters in Automatic mode.
-    All other parameters (VWC/EC/etc) come from presets.
+    These values are read directly for the phase handlers; the full preset
+    (including any user overrides for VWC/EC thresholds) is passed separately.
 
     Args:
         phase: Phase identifier (p0, p1, p2, p3)
@@ -933,9 +980,9 @@ def _get_automatic_timing_settings(self, phase: str) -> Dict[str, Any]:
 ```
 
 **Automatic Mode Logic:**
-- **Timing**: Uses user settings (duration, interval, shot_sum)
-- **VWC/EC Thresholds**: Uses preset values with medium adjustments
-- **Logging**: Shows both user timing and preset thresholds
+- **Timing**: User settings override defaults; if not set, preset defaults are used
+- **VWC/EC Thresholds**: User settings override defaults; base preset values are then adjusted by medium offset + plant phase/week modifier
+- **Logging**: Shows both raw user values and the final active thresholds after adjustments
 
 ### Medium-Specific Adjustments
 
@@ -1307,9 +1354,20 @@ $ cs_calibrate -h
 
 ---
 
-**Last Updated**: June 24, 2026
-**Version**: 3.4 (Auto-Calibration for P2/P3, Calibration Status Monitoring)
+**Last Updated**: August 8, 2026
+**Version**: 3.5 (Phase Transition Fixes, Manual Mode Responsiveness)
 **Status**: ✅ **PRODUCTION READY**
+
+### Changelog v3.5 (August 8, 2026)
+- **Fixed**: P0 → P1 automatic transition was unreachable due to indentation bug in `_handle_phase_p0_auto()`
+- **Fixed**: Manual phase changes now immediately restart the running manual cycle via `CSManualPhaseChanged` event (no more 10-second polling delay)
+- **Changed**: Automatic mode is now fully **preset-driven**. User settings from `CropSteering.Substrate.{phase}.*` entities are no longer used for control decisions; only base presets + medium offset + plant phase/week adjustments apply.
+- **Added**: Bulletproof failsafe guards with critical push notifications via `OGBNotificator`: flood guard, dryout guard, sensor stuck, sensor jump, ineffective irrigation, max runtime.
+- **Added**: Dynamic learning of `max_saturation_vwc`, `field_capacity_vwc`, and `min_dryback_vwc` from sensor data to clamp safe thresholds.
+- **Changed**: P3 emergency irrigation now triggers on the highest of: hard minimum (5%), learned dryback minimum + safety margin, or preset VWCMin. No longer based on `VWCMax * 0.85`.
+- **Changed**: P1/P2/P3 timing values in Automatic mode are now read from bulletproof base presets instead of user timing entities.
+- **Updated**: Manual mode documentation to clarify it uses **all** user settings (VWC/EC thresholds + timing), not only timing.
+- **Updated**: Removed duplicate P3 → P0 transition code block.
 
 ### Changelog v3.4 (June 24, 2026)
 - **Added**: P2 VWC Max auto-calibration via post-irrigation peak tracking (3+ consistent peaks within 2%)
