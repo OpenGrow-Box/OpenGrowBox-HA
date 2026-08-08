@@ -59,7 +59,6 @@ class OpenGrowBoxRoomSelector(SelectEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in self._options:
             self._attr_current_option = last_state.state
-            _LOGGER.debug(f"Restored state for '{self._name}': {last_state.state}")
         else:
             _LOGGER.debug(f"No valid previous state found for '{self._name}'")
 
@@ -98,17 +97,13 @@ class CustomSelect(SelectEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in self._attr_options:
             self._attr_current_option = last_state.state
-            _LOGGER.debug(f"Restored state for '{self._name}': {last_state.state}")
         elif last_state and last_state.state:
             # CRITICAL FIX: Remember the last state even if it's not in current options.
             # This happens for premium modes (AI Control, PID Control, MPC Control) that
             # are added dynamically at runtime. Store it so it can be restored later
             # when the option is added back.
             self._attr_current_option = last_state.state
-            _LOGGER.debug(
-                f"Restored state for '{self._name}': {last_state.state} "
-                f"(not in current options yet - will be available when premium modes load)"
-            )
+
         else:
             _LOGGER.debug(f"No valid previous state found for '{self._name}'")
 

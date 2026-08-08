@@ -50,7 +50,6 @@ class OGBConfigurationManager:
         Called from first_start() after initial config loading.
         """
         self._is_initialized = True
-        _LOGGER.debug(f"{self.room}: Configuration manager initialized - events now enabled")
 
     def _is_unavailable_state(self, value) -> bool:
         """Check if a value represents an unavailable/unknown HA state.
@@ -339,13 +338,7 @@ class OGBConfigurationManager:
         
         action = actions.get(entity_key)
         
-        # Debug: Log all incoming entity keys for troubleshooting
-        if "crop" in entity_key.lower() or "steering" in entity_key.lower():
-            _LOGGER.debug(f"OGB-Manager {self.room}: CropSteering entity update: {original_key} -> {entity_key}")
-            _LOGGER.debug(f"OGB-Manager {self.room}: Action found: {action is not None}")
-        
         if action:
-            _LOGGER.debug(f"OGB-Manager {self.room}: Routing {entity_key} to handler")
             asyncio.create_task(action(data))
             return True
         
@@ -355,17 +348,12 @@ class OGBConfigurationManager:
         has_phase = any(f"_p{i}_" in entity_key.lower() for i in range(4))
         is_cs_param = has_cropsteering and has_phase
         
-        _LOGGER.debug(f"OGB-Manager {self.room}: CS param check: key={entity_key}, has_cropsteering={has_cropsteering}, has_phase={has_phase}, is_cs={is_cs_param}")
-        
         if is_cs_param:
-            _LOGGER.debug(f"OGB-Manager {self.room}: ✅ Dynamic CropSteering parameter MATCHED: {entity_key}")
-            _LOGGER.debug(f"OGB-Manager {self.room}: ✅ Data newState: {getattr(data, 'newState', 'N/A')}")
             asyncio.create_task(self._crop_steering_sets(data, entity_key))
             return True
         
         # Only log if it's a relevant entity we might care about
         if "ogb_" in entity_key.lower():
-            _LOGGER.debug(f"OGB-Manager {self.room}: No action found for {entity_key} (original: {original_key}).")
         return False
 
     # Core control methods
@@ -391,7 +379,6 @@ class OGBConfigurationManager:
             )
             if value == "Disabled":
                 await self.event_manager.emit("DataRelease", True)
-                _LOGGER.debug(f"🔄 {self.room}: MainControl '{value}' during initialization - DataRelease sent")
         elif current_main_control != value:
             self.data_store.set("mainControl", value)
             await self.event_manager.emit("mainControlChange", value)
@@ -428,7 +415,7 @@ class OGBConfigurationManager:
         )
 
         if is_light_on is None:
-            _LOGGER.debug(f"{self.room}: Light state unknown, skipping VPD target day/night update")
+            _LOGGER.error(f"{self.room}: Light state unknown, skipping VPD target day/night update")
             return
 
         if not is_light_on and night_set_control:
@@ -447,7 +434,6 @@ class OGBConfigurationManager:
             if day_targeted is None:
                 day_targeted = self.data_store.getDeep("vpd.targeted")
             if day_targeted is None:
-                _LOGGER.debug(f"{self.room}: No day VPD target available, skipping restore")
                 return
             try:
                 target = float(day_targeted)
@@ -463,7 +449,7 @@ class OGBConfigurationManager:
                 raise ValueError("tolerance too small")
         except (TypeError, ValueError):
             tolerance_percent = 10.0
-            _LOGGER.debug(f"{self.room}: No valid VPD tolerance set, using default 10%")
+            _LOGGER.warning(f"{self.room}: No valid VPD tolerance set, using default 10%")
 
         tolerance_value = target * (tolerance_percent / 100)
         min_vpd = round(target - tolerance_value, 2)
@@ -481,11 +467,6 @@ class OGBConfigurationManager:
         )
         await _update_specific_sensor(
             "ogb_current_vpd_target_max_", self.room, max_vpd, self.hass
-        )
-
-        _LOGGER.debug(
-            f"{self.room}: Applied {label} VPD target "
-            f"(target={target}, min={min_vpd}, max={max_vpd})"
         )
 
     async def _update_vpd_tolerance(self, data):
@@ -533,7 +514,6 @@ class OGBConfigurationManager:
                 _LOGGER.warning(f"{self.room}: Invalid VPD deadband value: {value}")
                 return
             self.data_store.setDeep("controlOptionData.deadband.vpdDeadband", new_deadband)
-            _LOGGER.debug(f"{self.room}: Update VPD deadband to {new_deadband}")
 
     # Plant stage and type methods
     async def _update_plant_stage(self, data):
@@ -562,7 +542,6 @@ class OGBConfigurationManager:
         if current_light_plan != value:
             self.data_store.set("plantType", value)
             await self.event_manager.emit("LightPlanChange", value)
-            _LOGGER.debug(f"Light Plan changed to {value}")
 
     async def _update_plant_species(self, data):
         """Update plant species and reload plant stages with species-specific VPD values."""
@@ -594,7 +573,6 @@ class OGBConfigurationManager:
             await self.event_manager.emit("PlantSpeciesChange", value)
             await self.event_manager.emit("PlantStageChange", self.data_store.get("plantStage"))
             
-            _LOGGER.debug(f"{self.room}: Plant species changed to '{value}', updated plant stages")
 
     async def _update_plant_stage_select_options(self, new_stages: list):
         """Update PlantStage select entity options based on species stages.
@@ -622,7 +600,6 @@ class OGBConfigurationManager:
                     },
                     blocking=True
                 )
-                _LOGGER.debug(f"{self.room}: Called {service_name} service for {entity_id}")
             else:
                 # Fallback: Direct entity manipulation via hass.data
                 select_entity = None
@@ -653,18 +630,14 @@ class OGBConfigurationManager:
                         new_stage = new_stages[0] if new_stages else "Germination"
                         select_entity._attr_current_option = new_stage
                         self.data_store.set("plantStage", new_stage)
-                        _LOGGER.debug(
-                            f"{self.room}: PlantStage changed from '{current_stage}' to '{new_stage}' "
-                            f"(not available in new species)"
-                        )
+
                     
                     # Notify Home Assistant of the change
                     if hasattr(select_entity, 'async_write_ha_state'):
                         select_entity.async_write_ha_state()
                     
-                    _LOGGER.debug(f"{self.room}: Updated PlantStage select options: {new_stages}")
                 else:
-                    _LOGGER.warning(
+                    _LOGGER.error(
                         f"{self.room}: Could not find PlantStage select entity. "
                         f"Options will update on next restart."
                     )
@@ -687,9 +660,7 @@ class OGBConfigurationManager:
             # IMPORTANT: Also send DataRelease during init when Disabled
             if value == "Disabled":
                 await self.event_manager.emit("DataRelease", True)
-                _LOGGER.debug(f"🔄 {self.room}: Tent mode '{value}' during initialization - DataRelease sent")
-            else:
-                _LOGGER.debug(f"🔄 {self.room}: Tent mode set to '{value}' during initialization")
+
         elif hasattr(data, "newState"):  # OGBEventPublication
             if current_mode != value:
                 # Create proper mode publication for mode manager
@@ -736,7 +707,6 @@ class OGBConfigurationManager:
         current_max = self.data_store.getDeep("vpd.targetedMax")
 
         if current_value != value or current_min is None or current_max is None:
-            _LOGGER.debug(f"{self.room}: Update Target VPD to {value}")
 
             tolerance_raw = self.data_store.getDeep("vpd.tolerance")
             try:
@@ -745,7 +715,7 @@ class OGBConfigurationManager:
                     raise ValueError("tolerance too small")
             except (TypeError, ValueError):
                 tolerance_percent = 10.0
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.room}: No valid VPD tolerance set, using default 10%"
                 )
             tolerance_value = value * (tolerance_percent / 100)
@@ -798,7 +768,6 @@ class OGBConfigurationManager:
         current_value = self.data_store.getDeep("Energy.price_per_kwh")
         
         if current_value != value:
-            _LOGGER.debug(f"{self.room}: Update Energy Price to {value} EUR/kWh")
             
             # Update datastore
             energy_data = self.data_store.getDeep("Energy", {})
@@ -809,10 +778,7 @@ class OGBConfigurationManager:
             try:
                 if hasattr(self, 'energy_manager') and self.energy_manager:
                     await self.energy_manager.set_price_per_kwh(value)
-                else:
-                    # Try to find energy manager through main controller
-                    # This handles the case where energy_manager is not directly attached
-                    _LOGGER.debug(f"{self.room}: Energy manager not directly available, datastore updated only")
+
             except Exception as e:
                 _LOGGER.error(f"{self.room}: Error notifying energy manager: {e}")
 
@@ -865,7 +831,6 @@ class OGBConfigurationManager:
         current_value = self.data_store.getDeep("Light.ledType")
         if current_value != value:
             self.data_store.setDeep("Light.ledType", value)
-            _LOGGER.debug(f"{self.room}: LED type updated to '{value}'")
 
     async def _update_lux_to_ppfd_factor(self, data):
         """Update Lux to PPFD conversion factor."""
@@ -877,7 +842,6 @@ class OGBConfigurationManager:
             current_value = self.data_store.getDeep("Light.luxToPPFDFactor")
             if current_value != factor:
                 self.data_store.setDeep("Light.luxToPPFDFactor", factor)
-                _LOGGER.debug(f"{self.room}: Lux to PPFD factor updated to {factor}")
         except (ValueError, TypeError):
             _LOGGER.error(f"{self.room}: Invalid Lux to PPFD factor value: {value}")
 
@@ -956,7 +920,7 @@ class OGBConfigurationManager:
             grow_plan_active = self.data_store.get("growManagerActive")
 
             if grow_plan_active:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     f"{self.room}: GrowPlan is active, skipping tentData overwrite. "
                     f"GrowPlan values will be used via get_active_value()"
                 )
@@ -983,9 +947,7 @@ class OGBConfigurationManager:
 
                 # Would call update_min_max_sensors here
                 await self.event_manager.emit("PlantStageChange", plant_stage)
-                _LOGGER.debug(
-                    f"{self.room}: Plant stage '{plant_stage}' successfully transferred to VPD data."
-                )
+
             else:
                 self.data_store.setDeep("vpd.perfection", perfect_vpd)
                 self.data_store.setDeep("vpd.perfectMin", perfect_vpd_min)
@@ -1071,7 +1033,6 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.co2Control")
         )
         if current_value != value:
-            _LOGGER.debug(f"{self.room}: Update CO2 control to {value}")
             self.data_store.setDeep(
                 "controlOptions.co2Control", self._string_to_bool(value)
             )
@@ -1085,7 +1046,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update CO2 target value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.target", float(value))
 
     async def _update_co2_min_value(self, data):
@@ -1097,7 +1057,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update CO2 min value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.minPPM", float(value))
 
     async def _update_co2_max_value(self, data):
@@ -1109,7 +1068,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update CO2 max value to {value}")
             self.data_store.setDeep("controlOptionData.co2ppm.maxPPM", float(value))
 
     async def _update_ambient_control(self, data):
@@ -1165,7 +1123,6 @@ class OGBConfigurationManager:
         value = data.newState[0]
         current_value = self.data_store.getDeep("plantDates.breederbloomdays")
         if int(float(current_value)) != value:
-            _LOGGER.debug(f"{self.room}: Update breeder bloom days to {value}")
             self.data_store.setDeep("plantDates.breederbloomdays", int(float(value)))
             await self.event_manager.emit("PlantTimeChange", int(float(value)))
             # Would call _update_plant_dates here
@@ -1177,7 +1134,6 @@ class OGBConfigurationManager:
         value = data.newState[0]
         current_value = self.data_store.getDeep("plantDates.growstartdate")
         if current_value != value:
-            _LOGGER.debug(f"{self.room}: Update grow start to {value}")
             self.data_store.setDeep("plantDates.growstartdate", value)
             await self.event_manager.emit("PlantTimeChange", value)
             # Would call _update_plant_dates here
@@ -1235,16 +1191,12 @@ class OGBConfigurationManager:
                 
                 if min_temp is not None:
                     self.data_store.setDeep("tentData.minTemp", float(min_temp))
-                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.minTemp = {min_temp}")
                 if max_temp is not None:
                     self.data_store.setDeep("tentData.maxTemp", float(max_temp))
-                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.maxTemp = {max_temp}")
                 if min_hum is not None:
                     self.data_store.setDeep("tentData.minHumidity", float(min_hum))
-                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.minHumidity = {min_hum}")
                 if max_hum is not None:
                     self.data_store.setDeep("tentData.maxHumidity", float(max_hum))
-                    _LOGGER.debug(f"{self.room}: Min/max control activated -> tentData.maxHumidity = {max_hum}")
 
     async def _update_min_temp(self, data):
         """
@@ -1255,7 +1207,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update min temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minTemp", float(value))
             # Only update tentData if it currently holds day values
             is_light_on = self.data_store.getDeep("isPlantDay.islightON")
@@ -1274,7 +1225,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update min humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.minHum", float(value))
             # Only update tentData if it currently holds day values
             is_light_on = self.data_store.getDeep("isPlantDay.islightON")
@@ -1293,7 +1243,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update max temp to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxTemp", float(value))
             # Only update tentData if it currently holds day values
             is_light_on = self.data_store.getDeep("isPlantDay.islightON")
@@ -1312,7 +1261,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update max humidity to {value}")
             self.data_store.setDeep("controlOptionData.minmax.maxHum", float(value))
             # Only update tentData if it currently holds day values
             is_light_on = self.data_store.getDeep("isPlantDay.islightON")
@@ -1334,7 +1282,7 @@ class OGBConfigurationManager:
         )
 
         if is_light_on is None:
-            _LOGGER.debug(f"{self.room}: Light state unknown, skipping day/night limit update")
+            _LOGGER.warning(f"{self.room}: Light state unknown, skipping day/night limit update")
             return
 
         if not is_light_on and night_set_control:
@@ -1379,7 +1327,6 @@ class OGBConfigurationManager:
         if current_value != value:
             bool_value = self._string_to_bool(value)
             self.data_store.setDeep("controlOptions.nightSetControl", bool_value)
-            _LOGGER.debug(f"{self.room}: Update night set control to {bool_value}")
             await self._apply_day_night_limits()
             await self._apply_vpd_target_day_night()
 
@@ -1399,7 +1346,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update night min temp to {value}")
             self.data_store.setDeep(
                 "controlOptionData.nightMinmax.minTemp", float(value)
             )
@@ -1415,15 +1361,12 @@ class OGBConfigurationManager:
             self.data_store.getDeep("controlOptions.nightSetControl")
         )
         if not night_set_control:
-            _LOGGER.debug(
-                f"{self.room}: Night set control disabled - ignoring night max temp update"
-            )
+
             return
         current_value = self.data_store.getDeep("controlOptionData.nightMinmax.maxTemp")
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update night max temp to {value}")
             self.data_store.setDeep(
                 "controlOptionData.nightMinmax.maxTemp", float(value)
             )
@@ -1447,7 +1390,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update night min humidity to {value}")
             self.data_store.setDeep(
                 "controlOptionData.nightMinmax.minHum", float(value)
             )
@@ -1471,7 +1413,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update night max humidity to {value}")
             self.data_store.setDeep(
                 "controlOptionData.nightMinmax.maxHum", float(value)
             )
@@ -1495,7 +1436,6 @@ class OGBConfigurationManager:
         if current_value is None:
             current_value = 0
         if float(current_value) != float(value):
-            _LOGGER.debug(f"{self.room}: Update night VPD to {value}")
             self.data_store.setDeep("vpd.NightVPD", float(value))
             await self._apply_vpd_target_day_night()
 
@@ -1510,14 +1450,12 @@ class OGBConfigurationManager:
 
         value = data.newState[0]
         if value == "OFF":
-            _LOGGER.debug(f"{self.room}: Deactivate hydro mode")
             self.data_store.setDeep("Hydro.Active", False)
             self.data_store.setDeep("Hydro.Mode", value)
             # Only emit if initialized (after first_start)
             if self._is_initialized:
                 await self.event_manager.emit("HydroModeChange", value)
         else:
-            _LOGGER.debug(f"{self.room}: Update hydro mode to {value}")
             self.data_store.setDeep("Hydro.Active", True)
             self.data_store.setDeep("Hydro.Mode", value)
             # Only emit if initialized (after first_start)
@@ -1685,14 +1623,13 @@ class OGBConfigurationManager:
         """
         new_value = self._coerce_float(data.newState[0], context="reservoir_min_level")
         if new_value is None:
-            _LOGGER.debug(f"{self.room}: Invalid reservoir min level value, skipping update")
+            _LOGGER.warning(f"{self.room}: Invalid reservoir min level value, skipping update")
             return
             
         current_value = self.data_store.getDeep("Hydro.ReservoirMinLevel")
 
         if current_value != new_value:
             self.data_store.setDeep("Hydro.ReservoirMinLevel", new_value)
-            _LOGGER.debug(f"{self.room}: Reservoir min level updated to {new_value}%")
             await self.event_manager.emit(
                 "ReservoirLevelChange", {"type": "min_level", "value": new_value}
             )
@@ -1703,14 +1640,13 @@ class OGBConfigurationManager:
         """
         new_value = self._coerce_float(data.newState[0], context="reservoir_max_level")
         if new_value is None:
-            _LOGGER.debug(f"{self.room}: Invalid reservoir max level value, skipping update")
+            _LOGGER.warning(f"{self.room}: Invalid reservoir max level value, skipping update")
             return
             
         current_value = self.data_store.getDeep("Hydro.ReservoirMaxLevel")
 
         if current_value != new_value:
             self.data_store.setDeep("Hydro.ReservoirMaxLevel", new_value)
-            _LOGGER.debug(f"{self.room}: Reservoir max level updated to {new_value}%")
             await self.event_manager.emit(
                 "ReservoirLevelChange", {"type": "max_level", "value": new_value}
             )
@@ -1756,27 +1692,21 @@ class OGBConfigurationManager:
         if device_type == "Light":
             light_control = self.data_store.getDeep("controlOptions.lightbyOGBControl")
             if not light_control:
-                _LOGGER.debug(f"{self.room}: Light min/max toggle blocked — OGBLightControl is OFF")
                 return
 
         # Check current value and update if changed
         current_value = self.data_store.getDeep(active_path)
         if current_value != active_bool:
-            _LOGGER.debug(f"{self.room}: Updating {device_type} min/max active from {current_value} to {active_bool}")
             self.data_store.setDeep(active_path, active_bool)
-        else:
-            _LOGGER.debug(f"{self.room}: {device_type} min/max active already set to {active_bool}")
+
 
         # Ensure the active flag is set in the data store
         self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", active_bool)
-        _LOGGER.debug(f"{self.room}: {device_type} min/max active set to {active_bool}")
 
         # Emit event with correct device type
         if not active_bool:
-            _LOGGER.debug(f"{self.room}: Emitting MinMaxControlDisabled for {device_type}")
             await self.event_manager.emit("MinMaxControlDisabled", {"deviceType": device_type})
         else:
-            _LOGGER.debug(f"{self.room}: Emitting MinMaxControlEnabled for {device_type}")
             await self.event_manager.emit("MinMaxControlEnabled", {"deviceType": device_type})
 
     async def _device_min_max_setter(self, data):
@@ -1826,7 +1756,7 @@ class OGBConfigurationManager:
 
         # Ensure min/max active flag is set when setting values
         self.data_store.setDeep(f"DeviceMinMax.{device_type}.active", True)
-        _LOGGER.debug(f"{self.room}: Auto-activated {device_type} min/max control")
+
 
         numeric_value = self._coerce_float(value, context=name)
         if numeric_value is None:
@@ -1837,10 +1767,8 @@ class OGBConfigurationManager:
 
         if "min" in name:
             self.data_store.setDeep(min_path, numeric_value)
-            _LOGGER.debug(f"{self.room}: Set {device_type.lower()} min {('duty' if device_type != 'Light' else 'voltage')} = {value}")
         elif "max" in name:
             self.data_store.setDeep(max_path, numeric_value)
-            _LOGGER.debug(f"{self.room}: Set {device_type.lower()} max {('duty' if device_type != 'Light' else 'voltage')} = {value}")
 
         # Get current values and validate
         min_val = self._coerce_float(
@@ -1857,14 +1785,13 @@ class OGBConfigurationManager:
 
         if min_val is not None and max_val is not None and min_val >= max_val:
             adjustment = 10
-            _LOGGER.debug(
+            _LOGGER.warning(
                 f"{self.room}: Invalid {device_type} min/max: min={min_val} >= max={max_val}. "
                 f"Adjusting max to min+{adjustment}"
             )
             self.data_store.setDeep(max_path, min_val + adjustment)
 
         # Emit event to update devices
-        _LOGGER.debug(f"{self.room}: Emitting SetDeviceMinMax for {device_type}")
         await self.event_manager.emit("SetDeviceMinMax", device_type)
 
     async def _device_dimm_step_setter(self, data):
@@ -1901,7 +1828,7 @@ class OGBConfigurationManager:
 
         numeric_value = self._coerce_float(value, context=f"{device_type} dim step")
         if numeric_value is None:
-            _LOGGER.debug(
+            _LOGGER.warning(
                 f"{self.room}: Skipping {device_type} dim step update for invalid init value '{value}'"
             )
             return
@@ -1930,7 +1857,6 @@ class OGBConfigurationManager:
             bool_value = self._string_to_bool(value)
             self.data_store.setDeep("controlOptions.workMode", bool_value)
             await self.event_manager.emit("WorkModeChange", bool_value)
-            _LOGGER.debug(f"{self.room}: Work mode updated to {bool_value}")
 
     async def _update_strain_name(self, data):
         """Update strain name."""
@@ -1941,123 +1867,113 @@ class OGBConfigurationManager:
         """Update grow area in m²."""
         new_value = self._coerce_float(data.newState[0], context="grow_area_m2")
         if new_value is None:
-            _LOGGER.debug(f"{self.room}: Skipping invalid grow area state")
+            _LOGGER.warning(f"{self.room}: Skipping invalid grow area state")
             return
 
         current_value = self.data_store.get("growAreaM2")
 
         if current_value != new_value:
             self.data_store.set("growAreaM2", new_value)
-            _LOGGER.debug(f"{self.room}: Grow area updated to {new_value} m²")
 
     async def _update_reservoir_volume(self, data):
         """Update reservoir volume in liters."""
         new_value = self._coerce_float(data.newState[0], context="reservoir_volume_l")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid reservoir volume state (must be > 0)")
+            _LOGGER.warning(f"{self.room}: Skipping invalid reservoir volume state (must be > 0)")
             return
 
         current_value = self.data_store.getDeep("Hydro.ReservoirVolume")
 
         if current_value != new_value:
             self.data_store.setDeep("Hydro.ReservoirVolume", new_value)
-            _LOGGER.debug(f"{self.room}: Reservoir volume updated to {new_value} L")
 
     async def _update_pump_flowrate_a(self, data):
         """Update pump A flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_a")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump A flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump A flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_A")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_A", new_value)
-            _LOGGER.debug(f"{self.room}: Pump A flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_b(self, data):
         """Update pump B flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_b")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump B flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump B flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_B")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_B", new_value)
-            _LOGGER.debug(f"{self.room}: Pump B flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_c(self, data):
         """Update pump C flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_c")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump C flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump C flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_C")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_C", new_value)
-            _LOGGER.debug(f"{self.room}: Pump C flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_w(self, data):
         """Update pump W flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_w")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump W flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump W flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_W")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_W", new_value)
-            _LOGGER.debug(f"{self.room}: Pump W flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_ph_down(self, data):
         """Update pump PH-Down flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_ph_down")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump PH-Down flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump PH-Down flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Down")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_PH_Down", new_value)
-            _LOGGER.debug(f"{self.room}: Pump PH-Down flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_ph_up(self, data):
         """Update pump PH+ flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_ph_up")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump PH+ flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump PH+ flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_PH_Up")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_PH_Up", new_value)
-            _LOGGER.debug(f"{self.room}: Pump PH+ flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_x(self, data):
         """Update pump X flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_x")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump X flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump X flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_X")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_X", new_value)
-            _LOGGER.debug(f"{self.room}: Pump X flow rate updated to {new_value} ml/min")
 
     async def _update_pump_flowrate_y(self, data):
         """Update pump Y flow rate (ml/min)"""
         new_value = self._coerce_float(data.newState[0], context="pump_flowrate_y")
         if new_value is None or new_value <= 0:
-            _LOGGER.debug(f"{self.room}: Skipping invalid pump Y flow rate")
+            _LOGGER.warning(f"{self.room}: Skipping invalid pump Y flow rate")
             return
         
         current_value = self.data_store.getDeep("Hydro.Pump_FlowRate_Y")
         if current_value != new_value:
             self.data_store.setDeep("Hydro.Pump_FlowRate_Y", new_value)
-            _LOGGER.debug(f"{self.room}: Pump Y flow rate updated to {new_value} ml/min")
 
     async def _update_medium_type(self, data):
         """Update medium type - emits MediumChange event to create/update mediums.
@@ -2067,11 +1983,10 @@ class OGBConfigurationManager:
         instead of creating new empty mediums.
         """
         value = data.newState[0]
-        _LOGGER.debug(f"{self.room}: _update_medium_type called with value: '{value}'")
         
         # Skip invalid HA states (unavailable, unknown, etc.)
         if self._is_unavailable_state(value):
-            _LOGGER.debug(f"{self.room}: Skipping invalid medium type state: '{value}'")
+            _LOGGER.warning(f"{self.room}: Skipping invalid medium type state: '{value}'")
             return
         
         _LOGGER.debug(f"{self.room}: Medium type changed to: {value} - emitting MediumChange")
@@ -2081,7 +1996,6 @@ class OGBConfigurationManager:
             "room": self.room,
             "medium_type": str(value).strip()
         })
-        _LOGGER.debug(f"{self.room}: MediumChange event emitted with room filter")
 
     async def _update_multi_medium_control(self, data):
         """Update multi medium control setting."""
@@ -2092,7 +2006,6 @@ class OGBConfigurationManager:
         if current_value != value:
             bool_value = self._string_to_bool(value)
             self.data_store.setDeep("controlOptions.multiMediumCtrl", bool_value)
-            _LOGGER.debug(f"{self.room}: Multi medium control set to {bool_value}")
 
 
     async def _update_light_control_type(self, data):
@@ -2105,7 +2018,6 @@ class OGBConfigurationManager:
         current_value = self.data_store.getDeep("controlOptions.lightControlType")
         if current_value != value:
             self.data_store.setDeep("controlOptions.lightControlType", value)
-            _LOGGER.debug(f"{self.room}: Light control type updated to '{value}'")
 
     async def _update_retrieve_mode(self, data):
         """
@@ -2292,6 +2204,10 @@ class OGBConfigurationManager:
 
     async def _soil_moisture_threshold_sets(self, data):
         """Update global soil moisture thresholds and sync them to all mediums."""
+
+        if self.room == "Ambient":
+            return  # Ambient room does not have soil moisture thresholds
+            
         value = self._coerce_float(
             data.newState[0] if getattr(data, "newState", None) else None,
             context="soil moisture threshold",
@@ -2305,7 +2221,7 @@ class OGBConfigurationManager:
         is_max = f"ogb_soilmoisturemax{room_suffix}" in entity_name
 
         if not (is_min or is_max):
-            _LOGGER.debug(
+            _LOGGER.warning(
                 f"{self.room}: Ignoring soil moisture update for unknown entity '{entity_name}'"
             )
             return
@@ -2352,10 +2268,6 @@ class OGBConfigurationManager:
                 haEvent=True,
             )
 
-        _LOGGER.debug(
-            f"{self.room}: Soil moisture thresholds updated - min={new_min}, max={new_max}, mediums={medium_count}"
-        )
-
     def get_configuration_info(self):
         """Get current configuration information."""
         return {
@@ -2379,20 +2291,18 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.farRed.enabled", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"enabled": value})
-            _LOGGER.debug(f"{self.room}: Far Red enabled = {value}")
+
 
     async def _update_farred_mode(self, data):
         """Update Far Red light mode (Schedule, Always On, Always Off, Manual)."""
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.debug(f"{self.room}: Invalid Far Red mode '{value}', ignoring")
             return
         current = self.data_store.getDeep("specialLights.farRed.mode")
         if current != value:
             self.data_store.setDeep("specialLights.farRed.mode", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"mode": value})
-            _LOGGER.debug(f"{self.room}: Far Red mode = {value}")
 
     async def _update_farred_start_duration(self, data):
         """Update Far Red start duration (minutes at start of light cycle)."""
@@ -2401,7 +2311,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.farRed.startDurationMinutes", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"startDurationMinutes": value})
-            _LOGGER.debug(f"{self.room}: Far Red start duration = {value} min")
 
     async def _update_farred_end_duration(self, data):
         """Update Far Red end duration (minutes at end of light cycle)."""
@@ -2410,7 +2319,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.farRed.endDurationMinutes", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"endDurationMinutes": value})
-            _LOGGER.debug(f"{self.room}: Far Red end duration = {value} min")
 
     async def _update_farred_intensity(self, data):
         """Update Far Red intensity (0-100%)."""
@@ -2420,7 +2328,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.farRed.intensity", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"intensity": value})
-            _LOGGER.debug(f"{self.room}: Far Red intensity = {value}%")
 
     async def _update_farred_smart_start(self, data):
         """Enable/disable smart Far Red start (15 min before main lights)."""
@@ -2429,7 +2336,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.farRed.smartStartEnabled", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"smartStartEnabled": value})
-            _LOGGER.debug(f"{self.room}: Far Red smart start = {value}")
 
     async def _update_farred_smart_end(self, data):
         """Enable/disable smart Far Red end (15 min after main lights)."""
@@ -2438,7 +2344,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.farRed.smartEndEnabled", value)
             await self.event_manager.emit("FarRedSettingsUpdate", {"smartEndEnabled": value})
-            _LOGGER.debug(f"{self.room}: Far Red smart end = {value}")
 
     # --- UV Light Settings ---
     async def _update_uv_enabled(self, data):
@@ -2448,20 +2353,18 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.uv.enabled", value)
             await self.event_manager.emit("UVSettingsUpdate", {"enabled": value})
-            _LOGGER.debug(f"{self.room}: UV enabled = {value}")
 
     async def _update_uv_mode(self, data):
         """Update UV light mode (Schedule, Always On, Always Off, Manual)."""
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.debug(f"{self.room}: Invalid UV mode '{value}', ignoring")
+            _LOGGER.error(f"{self.room}: Invalid UV mode '{value}'")
             return
         current = self.data_store.getDeep("specialLights.uv.mode")
         if current != value:
             self.data_store.setDeep("specialLights.uv.mode", value)
             await self.event_manager.emit("UVSettingsUpdate", {"mode": value})
-            _LOGGER.debug(f"{self.room}: UV mode = {value}")
 
     async def _update_uv_delay_start(self, data):
         """Update UV delay after light start (minutes)."""
@@ -2470,7 +2373,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.uv.delayAfterStartMinutes", value)
             await self.event_manager.emit("UVSettingsUpdate", {"delayAfterStartMinutes": value})
-            _LOGGER.debug(f"{self.room}: UV delay after start = {value} min")
 
     async def _update_uv_stop_before_end(self, data):
         """Update UV stop before light end (minutes)."""
@@ -2479,7 +2381,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.uv.stopBeforeEndMinutes", value)
             await self.event_manager.emit("UVSettingsUpdate", {"stopBeforeEndMinutes": value})
-            _LOGGER.debug(f"{self.room}: UV stop before end = {value} min")
 
     async def _update_uv_max_duration(self, data):
         """Update UV max duration per day (hours)."""
@@ -2488,7 +2389,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.uv.maxDurationHours", value)
             await self.event_manager.emit("UVSettingsUpdate", {"maxDurationHours": value})
-            _LOGGER.debug(f"{self.room}: UV max duration = {value} hours")
 
     async def _update_uv_intensity(self, data):
         """Update UV intensity (0-100%)."""
@@ -2498,33 +2398,30 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.uv.intensity", value)
             await self.event_manager.emit("UVSettingsUpdate", {"intensity": value})
-            _LOGGER.debug(f"{self.room}: UV intensity = {value}%")
 
     async def _update_uv_midday_start(self, data):
         """Set UV midday start time (preset options)."""
         value = data.newState[0]
         valid_times = ["11:00", "11:30", "12:00", "12:30", "13:00"]
         if value not in valid_times:
-            _LOGGER.debug(f"{self.room}: Invalid UV midday start time '{value}', ignoring")
+            _LOGGER.error(f"{self.room}: Invalid UV midday start time '{value}'")
             return
         current = self.data_store.getDeep("specialLights.uv.middayStartTime")
         if current != value:
             self.data_store.setDeep("specialLights.uv.middayStartTime", value)
             await self.event_manager.emit("UVSettingsUpdate", {"middayStartTime": value})
-            _LOGGER.debug(f"{self.room}: UV midday start = {value}")
 
     async def _update_uv_midday_end(self, data):
         """Set UV midday end time (preset options)."""
         value = data.newState[0]
         valid_times = ["13:00", "13:30", "14:00", "14:30", "15:00"]
         if value not in valid_times:
-            _LOGGER.debug(f"{self.room}: Invalid UV midday end time '{value}', ignoring")
+            _LOGGER.error(f"{self.room}: Invalid UV midday end time '{value}'")
             return
         current = self.data_store.getDeep("specialLights.uv.middayEndTime")
         if current != value:
             self.data_store.setDeep("specialLights.uv.middayEndTime", value)
             await self.event_manager.emit("UVSettingsUpdate", {"middayEndTime": value})
-            _LOGGER.debug(f"{self.room}: UV midday end = {value}")
 
     # --- Blue Spectrum Light Settings ---
     async def _update_blue_enabled(self, data):
@@ -2534,20 +2431,18 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.blue.enabled", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"enabled": value}})
-            _LOGGER.debug(f"{self.room}: Blue spectrum enabled = {value}")
 
     async def _update_blue_mode(self, data):
         """Update Blue spectrum light mode (Schedule, Always On, Always Off, Manual)."""
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.debug(f"{self.room}: Invalid Blue mode '{value}', ignoring")
+            _LOGGER.error(f"{self.room}: Invalid Blue mode '{value}'")
             return
         current = self.data_store.getDeep("specialLights.spectrum.blue.mode")
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.blue.mode", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"mode": value}})
-            _LOGGER.debug(f"{self.room}: Blue spectrum mode = {value}")
 
     async def _update_blue_morning_boost(self, data):
         """Update Blue morning boost percentage."""
@@ -2557,7 +2452,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.blue.morningBoostPercent", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"morningBoostPercent": value}})
-            _LOGGER.debug(f"{self.room}: Blue morning boost = {value}%")
 
     async def _update_blue_evening_reduce(self, data):
         """Update Blue evening reduce percentage."""
@@ -2567,7 +2461,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.blue.eveningReducePercent", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"eveningReducePercent": value}})
-            _LOGGER.debug(f"{self.room}: Blue evening reduce = {value}%")
 
     async def _update_blue_transition(self, data):
         """Update Blue transition duration (minutes)."""
@@ -2576,7 +2469,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.blue.transitionMinutes", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"blue": {"transitionMinutes": value}})
-            _LOGGER.debug(f"{self.room}: Blue transition = {value} min")
 
     # --- Red Spectrum Light Settings ---
     async def _update_red_enabled(self, data):
@@ -2586,20 +2478,18 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.red.enabled", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"enabled": value}})
-            _LOGGER.debug(f"{self.room}: Red spectrum enabled = {value}")
 
     async def _update_red_mode(self, data):
         """Update Red spectrum light mode (Schedule, Always On, Always Off, Manual)."""
         value = data.newState[0]
         valid_modes = ["Schedule", "Always On", "Always Off", "Manual"]
         if value not in valid_modes:
-            _LOGGER.debug(f"{self.room}: Invalid Red mode '{value}', ignoring")
+            _LOGGER.error(f"{self.room}: Invalid Red mode '{value}'")
             return
         current = self.data_store.getDeep("specialLights.spectrum.red.mode")
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.red.mode", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"mode": value}})
-            _LOGGER.debug(f"{self.room}: Red spectrum mode = {value}")
 
     async def _update_red_morning_reduce(self, data):
         """Update Red morning reduce percentage."""
@@ -2609,7 +2499,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.red.morningReducePercent", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"morningReducePercent": value}})
-            _LOGGER.debug(f"{self.room}: Red morning reduce = {value}%")
 
     async def _update_red_evening_boost(self, data):
         """Update Red evening boost percentage."""
@@ -2619,7 +2508,6 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.red.eveningBoostPercent", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"eveningBoostPercent": value}})
-            _LOGGER.debug(f"{self.room}: Red evening boost = {value}%")
 
     async def _update_red_transition(self, data):
         """Update Red transition duration (minutes)."""
@@ -2628,4 +2516,3 @@ class OGBConfigurationManager:
         if current != value:
             self.data_store.setDeep("specialLights.spectrum.red.transitionMinutes", value)
             await self.event_manager.emit("SpectrumSettingsUpdate", {"red": {"transitionMinutes": value}})
-            _LOGGER.debug(f"{self.room}: Red transition = {value} min")

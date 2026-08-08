@@ -151,13 +151,6 @@ class CustomSensor(RestoreEntity):
                 # Only update if current state is None (initial state)
                 if self._state is None:
                     self._state = restored_value
-                    _LOGGER.debug(
-                        f"✅ RESTORED: '{self._name}' state restored to: {restored_value}"
-                    )
-                else:
-                    _LOGGER.debug(
-                        f"ℹ️ SKIP: '{self._name}' has initial value {self._state}, not restoring"
-                    )
             except Exception as e:
                 _LOGGER.error(
                     f"❌ ERROR: Failed to restore state for '{self._name}': {e}"

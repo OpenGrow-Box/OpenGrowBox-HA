@@ -173,7 +173,6 @@ class OpenGrowBox:
         action = actions.get(entity_key)
         
         if action:
-            _LOGGER.debug(f"OGB-Manager {self.room}: Executing action for {entity_key}")
             await action(entity)
             return True
         else:
@@ -270,10 +269,6 @@ class OpenGrowBox:
             entity_platform = entity.get('platform', 'unknown')
 
             try:
-                _LOGGER.debug(
-                    f"{self.room}: managerInit processing entity '{entity_id}' "
-                    f"(platform={entity_platform}, value={value})"
-                )
                 entityPublication = OGBInitData(Name=entity_id, newState=[value])
                 await self.manager(entityPublication)
             except Exception as e:

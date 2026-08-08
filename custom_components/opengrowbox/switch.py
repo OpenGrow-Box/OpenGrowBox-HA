@@ -71,9 +71,7 @@ class CustomSwitch(ToggleEntity, RestoreEntity):
         state = await self.async_get_last_state()
         if state and state.state is not None:
             self._state = state.state == "on"
-            _LOGGER.debug(
-                f"Restored state for '{self._name}': {'ON' if self._state else 'OFF'}."
-            )
+
 
 
 class ConfigEntryOptionSwitch(ToggleEntity):

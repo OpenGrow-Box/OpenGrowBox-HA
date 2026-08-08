@@ -151,8 +151,6 @@ class OGBDeviceManager:
             _LOGGER.error(f"Failed to identify device: {deviceName}")
             return None
 
-        _LOGGER.debug(f"Device:->{identified_device} identification Success")
-
         # Check again - race condition between identify and append
         current_devices = self.data_store.get("devices") or []
         if any(getattr(d, "deviceName", None) == deviceName for d in current_devices):

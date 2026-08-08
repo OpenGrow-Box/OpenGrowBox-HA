@@ -252,8 +252,6 @@ class Camera(Device):
         self.initialization = True
         self.isInitialized = True
 
-        _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
-
     def _is_device_for_event(self, device_name):
         """Check if this camera should handle the given event.
         Args:
@@ -291,7 +289,6 @@ class Camera(Device):
             return
 
         self._init_started = True
-        _LOGGER.debug(f"Device: {self.deviceName} Initialization started {self}")
 
         try:
             # Strong restore: read persisted plantsView directly from room state file

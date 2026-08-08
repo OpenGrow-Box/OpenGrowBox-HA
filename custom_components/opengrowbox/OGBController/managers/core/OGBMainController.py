@@ -106,7 +106,6 @@ class OGBMainController:
         self.medium_manager = OGBMediumManager(
             self.hass, self.data_store, self.event_manager, self.room
         )
-        _LOGGER.debug(f"🌱 {self.room}: Medium Manager initialized")
 
         # Plant cast manager - pass shared medium_manager to avoid duplicate
         self.plant_cast_manager = OGBCastManager(
@@ -230,7 +229,6 @@ class OGBMainController:
         self.device_recognition = OGBDeviceRecognitionManager(
             self.hass, self.data_store, self.event_manager, self.room, self.config_entry_id
         )
-        _LOGGER.debug(f"🔍 {self.room}: Device Recognition Manager initialized")
 
     def _register_event_handlers(self):
         """Register core event handlers."""
@@ -260,7 +258,6 @@ class OGBMainController:
         # Pass 'self' as the ogb reference - we have compatibility properties
         if self.action_manager:
             await self.action_manager.initialize_action_modules(self)
-            _LOGGER.debug(f"🔥 {self.room}: Action modules initialized")
         else:
             _LOGGER.error(f"❌ {self.room}: Action manager not available")
 
@@ -282,7 +279,7 @@ class OGBMainController:
         await self.event_manager.emit("PlantTimeChange", True)
 
         _LOGGER.debug(
-            f"OpenGrowBox for {self.room} started successfully. State: {self.data_store}"
+            f"OpenGrowBox for {self.room} started successfully."
         )
         return True
 
@@ -342,7 +339,6 @@ class OGBMainController:
 
         try:
             if not light_on_time_str or not light_off_time_str or light_on_time_str == "" or light_off_time_str == "":
-                _LOGGER.warning(f"{self.room}: Light times not configured (lightOnTime={light_on_time_str}, lightOffTime={light_off_time_str})")
                 return None
 
             # Convert time strings to time objects
@@ -361,7 +357,6 @@ class OGBMainController:
                 # Over midnight (e.g., 20:00 to 08:00)
                 is_light_on = current_time >= light_on_time or current_time < light_off_time
 
-            _LOGGER.debug(f"{self.room}: Light state check - Current: {current_time}, On: {light_on_time}, Off: {light_off_time}, Should be ON: {is_light_on}")
             return is_light_on
 
         except Exception as e:
@@ -385,9 +380,6 @@ class OGBMainController:
 
         # Update datastore with current desired state
         self.data_store.setDeep("isPlantDay.islightON", light_should_be_on)
-        _LOGGER.debug(
-            f"{self.room}: Light status checked and updated for {self.room} - Light status is {light_should_be_on}"
-        )
 
         # Apply day/night temperature and humidity limits
         if hasattr(self, 'config_manager') and self.config_manager:
@@ -411,7 +403,6 @@ class OGBMainController:
                 "state": light_should_be_on,
                 "target_devices": normal_light_devices
             })
-            _LOGGER.debug(f"{self.room}: Toggled {len(normal_light_devices)} normal lights to {light_should_be_on}")
         else:
             # Fallback: emit to all lights if no devices filtered (for backward compatibility)
             await self.event_manager.emit("toggleLight", light_should_be_on)
@@ -447,7 +438,6 @@ class OGBMainController:
             action = actions.get(entity_key)
             
             if action:
-                _LOGGER.debug(f"[{self.room}] Manager executing action for: {entity_key}")
                 await action(data)
                 return True
             else:

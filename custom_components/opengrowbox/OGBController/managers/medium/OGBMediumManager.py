@@ -134,16 +134,18 @@ class OGBMediumManager:
     async def _emit_initial_data(self):
         """Emit initial medium and plant data to UI on startup."""
         try:
-            _LOGGER.debug(f"{self.room}: Emitting initial data for {len(self.media)} mediums")
-            
             # Emit all plants data to MediumContext
             await self.emit_all_plants_update()
             
             # Also emit each medium's current values for monitoring
             for medium in self.media:
                 medium_data = medium.get_all_medium_values()
+
+                tentmode = self.data_store.get("tentMode")
+                if tentmode == "Drying" or tentmode == "Disabled" or tentmode == "Ambient":
+                    return
+
                 await self.event_manager.emit("LogForClient", medium_data, haEvent=True, debug_type="DEBUG")
-                _LOGGER.debug(f"Emitted initial data for medium: {medium.name}")
             
             _LOGGER.debug(f"{self.room}: Initial data emission complete")
         except Exception as e:
@@ -521,10 +523,10 @@ class OGBMediumManager:
             
             # 3. Emit medium values update for UI - only on actual changes
             medium_values = medium.get_all_medium_values()
-            _LOGGER.debug(
-                f"[{self.room}] 📊 Medium {medium.name} changed: {data.get('sensor_type')}="
-                f"{data.get('state') or data.get('last_reading')} -> Emitting LogForClient"
-            )
+            tentmode = self.data_store.get("tentMode")
+            if tentmode == "Drying" or tentmode == "Disabled" or tentmode == "Ambient":
+                return
+
             await self.event_manager.emit("LogForClient", medium_values, haEvent=True, debug_type="DEBUG")
 
         except Exception as e:

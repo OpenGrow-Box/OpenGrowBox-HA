@@ -98,7 +98,6 @@ class OGBFallBackManager:
 
         # Skip for ambient room - no devices/sensors to monitor
         if is_ambient_room(self.room):
-            _LOGGER.debug(f"{self.room}: FallBack Manager disabled - ambient room")
             return
 
         # State tracking
@@ -132,8 +131,6 @@ class OGBFallBackManager:
         self.event_manager.on("DeviceStateChange", self._on_device_state_change)
         self.event_manager.on("DeviceRemoved", self._on_entity_removed)
 
-        _LOGGER.debug(f"{self.room} FallBack Manager event listeners registered")
-
     async def start_monitoring(self):
         """Start the periodic health check monitoring."""
         if self._is_running:
@@ -150,7 +147,6 @@ class OGBFallBackManager:
 
         if self._check_task is None or self._check_task.done():
             self._check_task = asyncio.create_task(self._monitoring_loop())
-            _LOGGER.debug(f"🔍 {self.room} FallBack Manager monitoring started")
 
     async def _register_existing_devices(self):
         """Scan existing devices in dataStore and register them for monitoring."""
@@ -523,10 +519,6 @@ class OGBFallBackManager:
                 last_update=datetime.now(),
             )
 
-            _LOGGER.debug(
-                f"📊 {self.room} Registered sensor for monitoring: "
-                f"{sensor_type} ({device_name}) - {entity_id}"
-            )
 
         except Exception as e:
             _LOGGER.error(f"Error handling sensor initialization: {e}", exc_info=True)

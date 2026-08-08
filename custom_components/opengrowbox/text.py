@@ -62,7 +62,6 @@ class OpenGrowBoxAccessToken(TextEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (None, "", "unknown", "unavailable"):
             self._value = last_state.state
-            _LOGGER.debug(f"Restored access token: {self._value}")
         else:
             _LOGGER.debug(f"No state to restore for {self.name}")
         self.async_write_ha_state()

@@ -212,9 +212,9 @@ class OGBRegistryEvenListener:
                 state_value = entity_state.state if entity_state else None
                 if state_value not in INVALID_VALUES:
                     break
-                _LOGGER.debug(
-                    f"Value for {entity.entity_id} invalid ({state_value}), retry {attempt + 1}/{max_retries}"
-                )
+                #_LOGGER.debug(
+                #    f"Value for {entity.entity_id} invalid ({state_value}), retry {attempt + 1}/{max_retries}"
+                #)
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
@@ -391,9 +391,9 @@ class OGBRegistryEvenListener:
                 state_value = entity_state.state if entity_state else None
                 if state_value not in INVALID_VALUES:
                     break
-                _LOGGER.warning(
-                    f"Value for {entity.entity_id} is invalid ({state_value}). Retrying... ({attempt + 1}/{max_retries})"
-                )
+                #_LOGGER.warning(
+                #    f"Value for {entity.entity_id} is invalid ({state_value}). Retrying... ({attempt + 1}/{max_retries})"
+                #)
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
@@ -403,9 +403,9 @@ class OGBRegistryEvenListener:
                     )
                     state_value = None
                 else:
-                    _LOGGER.error(
-                        f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping..."
-                    )
+                    #_LOGGER.error(
+                    #    f"Value for {entity.entity_id} is still invalid ({state_value}) after {max_retries} retries. Skipping..."
+                    #)
                     return None
 
             # Platform information
