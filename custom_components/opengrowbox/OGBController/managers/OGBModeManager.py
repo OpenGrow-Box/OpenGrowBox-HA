@@ -23,16 +23,17 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class OGBModeManager:
-    def __init__(self, hass, dataStore, event_manager, room, action_manager=None):
+    def __init__(self, hass, dataStore, event_manager, room, action_manager=None, medium_manager=None):
         self.name = "OGB Mode Manager"
         self.hass = hass
         self.room = room
         self.data_store = dataStore
         self.event_manager = event_manager
         self.action_manager = action_manager
+        self.medium_manager = medium_manager
         self.isInitialized = False
 
-        self.CropSteeringManager = OGBCSManager(hass, dataStore, self.event_manager, room)
+        self.CropSteeringManager = OGBCSManager(hass, dataStore, self.event_manager, room, medium_manager=medium_manager)
 
         # Closed Environment Manager for ambient-enhanced control
         self.closedEnvironmentManager = ClosedEnvironmentManager(dataStore, self.event_manager, room, hass)

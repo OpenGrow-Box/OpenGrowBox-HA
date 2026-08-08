@@ -71,6 +71,22 @@ class OGBMediumManager:
         """Backwards compatibility alias for self.media."""
         return self.media
 
+    def _setup_event_listeners(self):
+        """Setup Home Assistant event listeners."""
+        self.event_manager.on("MediumChange", self._on_new_medium_change)
+        self.event_manager.on("RegisterSensorToMedium", self._on_register_sensor)
+        self.event_manager.on("UnregisterSensorFromMedium", self._on_unregister_sensor)
+        self.event_manager.on("MediumSensorUpdate", self._on_medium_sensor_update)
+        # Plant date update events
+        self.event_manager.on("UpdateMediumPlantDates", self._on_update_plant_dates)
+        self.event_manager.on("RequestMediumPlantsData", self._on_request_plants_data)
+        # Global plantStage changes - sync all mediums
+        self.event_manager.on("PlantStageChange", self._on_global_plant_stage_change)
+        # Finish grow event - complete a grow cycle
+        self.event_manager.on("FinishGrow", self._on_finish_grow)
+
+        _LOGGER.debug(f"[{self.room}] Medium Manager: Event listeners registered for MediumChange, RegisterSensorToMedium, MediumSensorUpdate, UpdateMediumPlantDates, RequestMediumPlantsData, PlantStageChange, FinishGrow")
+
     def _create_tracked_task(self, coro):
         """Create a background task and track it for cleanup."""
         task = asyncio.create_task(coro)
@@ -132,22 +148,6 @@ class OGBMediumManager:
             _LOGGER.debug(f"{self.room}: Initial data emission complete")
         except Exception as e:
             _LOGGER.error(f"Error emitting initial medium data: {e}", exc_info=True)
-
-    def _setup_event_listeners(self):
-        """Setup Home Assistant event listeners."""
-        self.event_manager.on("MediumChange", self._on_new_medium_change)
-        self.event_manager.on("RegisterSensorToMedium", self._on_register_sensor)
-        self.event_manager.on("UnregisterSensorFromMedium", self._on_unregister_sensor)
-        self.event_manager.on("MediumSensorUpdate", self._on_medium_sensor_update)
-        # Plant date update events
-        self.event_manager.on("UpdateMediumPlantDates", self._on_update_plant_dates)
-        self.event_manager.on("RequestMediumPlantsData", self._on_request_plants_data)
-        # Global plantStage changes - sync all mediums
-        self.event_manager.on("PlantStageChange", self._on_global_plant_stage_change)
-        # Finish grow event - complete a grow cycle
-        self.event_manager.on("FinishGrow", self._on_finish_grow)
-
-        _LOGGER.debug(f"[{self.room}] Medium Manager: Event listeners registered for MediumChange, RegisterSensorToMedium, MediumSensorUpdate, UpdateMediumPlantDates, RequestMediumPlantsData, PlantStageChange, FinishGrow")
 
     async def _on_update_plant_dates(self, data: Dict[str, Any]):
         """

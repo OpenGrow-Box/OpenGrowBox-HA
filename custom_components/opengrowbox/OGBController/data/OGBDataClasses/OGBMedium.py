@@ -279,9 +279,9 @@ class GrowMedium:
         ),
     }
 
-    SENSOR_HISTORY_LIMIT = 10
+    SENSOR_HISTORY_LIMIT = 15
 
-    FLOWER_STAGES = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
+    FLOWER_STAGES = {"EarlyFlower", "MidFlower", "LateFlower"}
 
     def __init__(
         self,
@@ -318,10 +318,13 @@ class GrowMedium:
         self.plant_stage = plant_stage or "Germination"
         self.grow_start_date = grow_start_date
         self.bloom_switch_date = bloom_switch_date
+
         if self.bloom_switch_date is None and self.plant_stage in self.FLOWER_STAGES:
             self.bloom_switch_date = datetime.now()
             _LOGGER.debug(f"{self.name}: Auto-set bloom_switch_date to {self.bloom_switch_date} from plant_stage={self.plant_stage}")
         
+
+        ## FIX THIS NEEDS TO BASED on OGB_PLANTS sets or user specified based on Wizzard
         # Plant stage definitions with DLI/light targets per stage
         self.plant_stage_config = {
             "Germination": {"dli_target": 12, "ppfd_target": 200, "light_hours": 18},
@@ -670,15 +673,13 @@ class GrowMedium:
         await self.event_manager.emit("LogForClient", mediumStats, haEvent=True, debug_type="DEBUG")
         self.last_log_event_time = datetime.now()
 
-    def _update_aggregated_value(self, sensor_type: str) -> None:
-        """Updates aggregated values based on history"""
-        latest = self.sensor_history[sensor_type].get_latest()
-        if not latest:
-            return
+    def _set_current_value(self, sensor_type: str, numeric_value: Optional[float]) -> bool:
+        """Set the current_* field for a known sensor type.
 
-        numeric_value = self._safe_float_convert(latest.value)
+        Returns True if the field was updated, False for unknown sensor types.
+        """
         if numeric_value is None:
-            return
+            return False
 
         if sensor_type == "ph":
             self.current_ph = numeric_value
@@ -689,7 +690,38 @@ class GrowMedium:
         elif sensor_type in ["temperature", "temp"]:
             self.current_temp = numeric_value
         elif sensor_type in ["light", "illuminance"]:
-            self.current_light = numeric_value
+            self.current_light = int(numeric_value)
+        else:
+            return False
+        return True
+
+    def _update_aggregated_value(self, sensor_type: str) -> None:
+        """Update aggregated current_* value by averaging the latest readings of all
+        registered sensors of this type. Zero/unavailable/None values are ignored,
+        because a 0 is usually a startup default rather than a real measurement.
+        """
+        entity_ids = self.registered_sensors.get(sensor_type, [])
+        if not entity_ids:
+            return
+
+        valid_values: List[float] = []
+        for entity_id in entity_ids:
+            reading = self.sensor_readings.get(entity_id)
+            if reading is None:
+                continue
+            numeric_value = self._safe_float_convert(reading.value)
+            if numeric_value is None:
+                continue
+            # Ignore 0 values - they are treated as invalid defaults
+            if numeric_value == 0:
+                continue
+            valid_values.append(numeric_value)
+
+        if not valid_values:
+            return
+
+        average = sum(valid_values) / len(valid_values)
+        self._set_current_value(sensor_type, round(average, 3))
 
     def _update_datastore_list(
         self, path: str, entity_id: str, value: Any, sensor_type: str
@@ -1012,6 +1044,13 @@ class GrowMedium:
             "grow_start_date": self.grow_start_date.isoformat() if self.grow_start_date else None,
             "bloom_switch_date": self.bloom_switch_date.isoformat() if self.bloom_switch_date else None,
             "breeder_bloom_days": self.breeder_bloom_days,
+            # Current sensor readings (single source of truth per medium)
+            "current_moisture": self.current_moisture,
+            "current_ec": self.current_ec,
+            "current_ph": self.current_ph,
+            "current_temp": self.current_temp,
+            "current_light": self.current_light,
+            "current_readings_updated_at": datetime.now().isoformat(),
         }
 
     @classmethod
@@ -1119,10 +1158,36 @@ class GrowMedium:
             except:
                 pass
 
+        # Restore current sensor readings so the medium is the source of truth
+        # even after a restart / reload from datastore.
+        if data.get("current_moisture") is not None:
+            medium.current_moisture = medium._safe_float_convert(data["current_moisture"])
+        if data.get("current_ec") is not None:
+            medium.current_ec = medium._safe_float_convert(data["current_ec"])
+        if data.get("current_ph") is not None:
+            medium.current_ph = medium._safe_float_convert(data["current_ph"])
+        if data.get("current_temp") is not None:
+            medium.current_temp = medium._safe_float_convert(data["current_temp"])
+        if data.get("current_light") is not None:
+            try:
+                medium.current_light = int(data["current_light"])
+            except (ValueError, TypeError):
+                medium.current_light = None
+
+        # Restore registered sensor mappings so the medium can receive updates again.
+        restored_registered_sensors = data.get("registered_sensors", {})
+        if isinstance(restored_registered_sensors, dict):
+            medium.registered_sensors = restored_registered_sensors
+            medium.sensor_type_map = {}
+            for sensor_type, entity_ids in medium.registered_sensors.items():
+                for entity_id in entity_ids:
+                    medium.sensor_type_map[entity_id] = sensor_type
+
         _LOGGER.debug(
             f"[{room}] GrowMedium.from_dict COMPLETE: {medium.name} - "
             f"plant_name={medium.plant_name}, breeder_name={medium.breeder_name}, "
-            f"registered_sensors={len(medium.registered_sensors)}, sensor_type_map={len(medium.sensor_type_map)}"
+            f"registered_sensors={len(medium.registered_sensors)}, sensor_type_map={len(medium.sensor_type_map)}, "
+            f"current_moisture={medium.current_moisture}, current_ec={medium.current_ec}, current_temp={medium.current_temp}"
         )
 
         return medium

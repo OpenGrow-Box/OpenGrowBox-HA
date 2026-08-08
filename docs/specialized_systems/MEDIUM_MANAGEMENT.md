@@ -169,6 +169,37 @@ async def route_sensor_data(self, sensor_data: Dict[str, Any]):
     await self.process_medium_sensor_data(medium_id, sensor_type, value)
 ```
 
+## Sensor Readings as Source of Truth
+
+Every `GrowMedium` object stores the **current aggregated readings** for its registered sensors. These fields are the single source of truth for the rest of the system (Plant Watering, Crop Steering, Terminal, etc.).
+
+```python
+class GrowMedium:
+    current_ph: Optional[float]        # Latest pH reading
+    current_ec: Optional[float]        # Latest EC reading (mS/cm)
+    current_moisture: Optional[float]  # Latest moisture / VWC reading
+    current_temp: Optional[float]      # Latest temperature reading
+    current_light: Optional[int]         # Latest light / DLI reading
+```
+
+### Aggregation Rules
+
+- For each sensor type, the latest value from **every registered sensor** of that type is collected.
+- `None`, `unavailable`, `unknown` and **`0` values are ignored** (0 is treated as an uninitialised default rather than a valid measurement).
+- The remaining valid values are averaged and stored in the matching `current_*` field.
+
+### Persistence
+
+`current_*` values and the `registered_sensors` map are serialised together with the medium and restored on startup. This means a medium keeps its most recent readings across Home Assistant restarts, and the terminal and irrigation modules can show values immediately after the integration is loaded.
+
+### Consumers
+
+| Consumer | Reading used |
+|----------|-------------|
+| Plant Watering | `current_moisture` + medium thresholds |
+| Crop Steering | `current_moisture`, `current_ec`, `current_temp` (averaged across mediums) |
+| Console `medium_sensors` | All `current_*` fields via `get_all_medium_values()` |
+
 ## Medium-Specific Calculations
 
 ### Water Retention Adjustments

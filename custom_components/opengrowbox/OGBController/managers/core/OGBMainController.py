@@ -124,7 +124,8 @@ class OGBMainController:
         )
 
         self.mode_manager = OGBModeManager(
-            self.hass, self.data_store, self.event_manager, self.room
+            self.hass, self.data_store, self.event_manager, self.room,
+            medium_manager=self.medium_manager
         )
 
         self.action_manager = OGBActionManager(
@@ -163,6 +164,8 @@ class OGBMainController:
         )
         # Inject data_store_manager for script storage access
         self.console_manager.set_data_store_manager(self.data_store_manager)
+        # Inject live medium_manager so terminal shows current readings
+        self.console_manager.set_medium_manager(self.medium_manager)
 
         self.calib_manager = OGBCalibManager(
             self.hass, self.data_store, self.event_manager, self.room

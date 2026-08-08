@@ -412,6 +412,28 @@ VWC measures the percentage of water volume in the soil:
 - **100%**: Saturated soil (not recommended)
 - **Optimal Range**: 50-80% depending on plant phase
 
+### Sensor Data Source
+
+Crop Steering reads its VWC, EC and temperature values from the **live `GrowMedium` objects** managed by `OGBMediumManager`. Each medium already aggregates the latest registered sensor readings in its `current_moisture`, `current_ec` and `current_temp` fields.
+
+The Crop Steering manager:
+1. Collects the current values from every medium in the room.
+2. Ignores missing / zero values (treated as uninitialised).
+3. Averages the remaining values.
+4. Applies medium-specific VWC calibration and EC unit conversion (µS → mS).
+5. Computes pore-water EC and validation.
+6. Writes the result to `CropSteering.vwc_current` / `CropSteering.ec_current` for the current cycle.
+
+```python
+# Conceptual flow
+mediums = self.medium_manager.get_mediums()
+vwc_values = [m.current_moisture for m in mediums if m.current_moisture]
+avg_vwc = mean(calibrate_vwc(v, medium_type) for v in vwc_values)
+self.data_store.setDeep("CropSteering.vwc_current", avg_vwc)
+```
+
+If `medium_manager` is unavailable, the system falls back to the legacy `workData.moisture` / `workData.ec` buffers until the medium manager is ready.
+
 ### Sensor Calibration
 
 #### VWC Calibration Overview

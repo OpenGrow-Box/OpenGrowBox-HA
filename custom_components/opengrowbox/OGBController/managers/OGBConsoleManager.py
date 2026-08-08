@@ -51,6 +51,7 @@ class OGBConsoleManager:
         # Reference to data_store_manager (set after initialization)
         self.data_store_manager = None
         self.calib_manager = None
+        self.medium_manager = None
     
     def set_data_store_manager(self, data_store_manager):
         """Set the data store manager for script storage access."""
@@ -59,6 +60,10 @@ class OGBConsoleManager:
     def set_calib_manager(self, calib_manager):
         """Set the calibration manager for cap calibration commands."""
         self.calib_manager = calib_manager
+
+    def set_medium_manager(self, medium_manager):
+        """Set the medium manager for live medium sensor readings."""
+        self.medium_manager = medium_manager
 
     def _register_commands(self):
         """Registers all available commands with their metadata"""
@@ -1031,8 +1036,25 @@ class OGBConsoleManager:
         await self._send_response(response)
 
     async def cmd_medium_sensors(self, params: List[str]):
-        """Shows current grow medium sensor readings."""
-        grow_mediums = self.data_store.get("growMediums") or []
+        """Shows current grow medium sensor readings.
+
+        Prefer live medium manager objects for current values; fall back to the
+        persisted growMediums datastore if the manager is not available.
+        """
+        # Try live mediums first so we show current RAM values even before
+        # the datastore has been saved.
+        grow_mediums = []
+        if self.medium_manager is not None:
+            try:
+                live_mediums = self.medium_manager.get_mediums()
+                if live_mediums:
+                    grow_mediums = live_mediums
+                    _LOGGER.debug(f"[{self.room}] medium_sensors using live medium_manager objects")
+            except Exception as e:
+                _LOGGER.warning(f"[{self.room}] medium_sensors could not use live medium_manager: {e}")
+
+        if not grow_mediums:
+            grow_mediums = self.data_store.get("growMediums") or []
 
         if not grow_mediums:
             # Fallback to CropSteering runtime values if no medium objects exist

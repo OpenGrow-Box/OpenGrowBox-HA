@@ -16,12 +16,13 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class OGBCSManager:
-    def __init__(self, hass, dataStore, eventManager, room):
+    def __init__(self, hass, dataStore, eventManager, room, medium_manager=None):
         self.name = "OGB Crop Steering Manager"
         self.hass = hass
         self.room = room
         self.data_store = dataStore
         self.event_manager = eventManager
+        self.medium_manager = medium_manager
         self.isInitialized = False
 
         # AMBIENT ROOM CHECK: Ambient rooms don't use Crop Steering
@@ -977,13 +978,12 @@ class OGBCSManager:
 
     async def _get_sensor_averages(self) -> Optional[Dict[str, Any]]:
         """
-        Get averaged sensor data with advanced processing.
+        Get averaged sensor data from the GrowMedium objects.
 
-        Uses TDR-style calibration with:
-        - Medium-specific VWC polynomial calibration
-        - Temperature-normalized EC
-        - Pore water EC calculation (Hilhorst/mass-balance hybrid)
-        - Validation and anomaly detection
+        The GrowMedium is the single source of truth for sensor readings.
+        We read current_moisture, current_ec and current_temp from every medium,
+        ignore None/0 values, calibrate/convert per reading, and compute the
+        room-wide average plus pore-water EC and validation.
         """
         vwc_values = []
         bulk_ec_values = []
@@ -994,53 +994,91 @@ class OGBCSManager:
             await self._sync_medium_type()
             self.isInitialized = True
 
-        # Moisture/VWC sensors
-        moistures = self.data_store.getDeep("workData.moisture") or []
-        for item in moistures:
-            raw = item.get("value")
-            if raw is None:
-                continue
+        # Read from live GrowMedium objects if available
+        mediums = []
+        if self.medium_manager is not None:
             try:
-                raw_val = float(raw)
-                # Apply medium-specific VWC calibration
-                if self.advanced_sensor:
-                    calibrated_vwc = self.advanced_sensor.calculate_vwc(
-                        raw_val, self.medium_type
-                    )
-                else:
-                    calibrated_vwc = raw_val  # Fallback to raw value
-                vwc_values.append(calibrated_vwc)
-            except (ValueError, TypeError) as e:
-                _LOGGER.debug(f"{self.room} - VWC conversion error: {e}")
-                continue
+                mediums = self.medium_manager.get_mediums() or []
+            except Exception as e:
+                _LOGGER.warning(f"{self.room} - Could not read mediums from medium_manager: {e}")
 
-        # EC sensors - with automatic µS/cm to mS/cm conversion
-        ecs = self.data_store.getDeep("workData.ec") or []
-        for item in ecs:
-            raw = item.get("value")
-            if raw is None:
-                continue
-            try:
-                ec_val = float(raw)
-                # Auto-detect unit: values > 20 are likely in µS/cm, convert to mS/cm
-                # Typical EC range: 0.5 - 4.0 mS/cm (500 - 4000 µS/cm)
-                if ec_val > 20:
-                    ec_val = ec_val / 1000  # Convert µS/cm to mS/cm
-                    _LOGGER.debug(f"{self.room} - EC auto-converted from µS to mS: {raw} -> {ec_val}")
-                bulk_ec_values.append(ec_val)
-            except (ValueError, TypeError):
-                continue
+        if mediums:
+            for medium in mediums:
+                raw_moisture = getattr(medium, "current_moisture", None)
+                if raw_moisture:
+                    try:
+                        raw_val = float(raw_moisture)
+                        if raw_val != 0:
+                            if self.advanced_sensor:
+                                calibrated_vwc = self.advanced_sensor.calculate_vwc(
+                                    raw_val, self.medium_type
+                                )
+                            else:
+                                calibrated_vwc = raw_val
+                            vwc_values.append(calibrated_vwc)
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.debug(f"{self.room} - VWC conversion error from medium: {e}")
 
-        # Temperature sensors (for EC normalization)
-        temps = self.data_store.getDeep("workData.temperature") or []
-        for item in temps:
-            raw = item.get("value")
-            if raw is None:
-                continue
-            try:
-                temp_values.append(float(raw))
-            except (ValueError, TypeError):
-                continue
+                raw_ec = getattr(medium, "current_ec", None)
+                if raw_ec:
+                    try:
+                        ec_val = float(raw_ec)
+                        if ec_val != 0:
+                            if ec_val > 20:
+                                ec_val = ec_val / 1000
+                                _LOGGER.debug(f"{self.room} - EC auto-converted from µS to mS: {raw_ec} -> {ec_val}")
+                            bulk_ec_values.append(ec_val)
+                    except (ValueError, TypeError):
+                        pass
+
+                raw_temp = getattr(medium, "current_temp", None)
+                if raw_temp:
+                    try:
+                        temp_val = float(raw_temp)
+                        if temp_val != 0:
+                            temp_values.append(temp_val)
+                    except (ValueError, TypeError):
+                        pass
+
+        # Fallback to legacy workData only if no live medium data is available
+        if not vwc_values and not bulk_ec_values:
+            _LOGGER.debug(f"{self.room} - No live medium sensor data, falling back to workData")
+            for item in self.data_store.getDeep("workData.moisture") or []:
+                raw = item.get("value")
+                if raw is None:
+                    continue
+                try:
+                    raw_val = float(raw)
+                    if self.advanced_sensor:
+                        calibrated_vwc = self.advanced_sensor.calculate_vwc(
+                            raw_val, self.medium_type
+                        )
+                    else:
+                        calibrated_vwc = raw_val
+                    vwc_values.append(calibrated_vwc)
+                except (ValueError, TypeError) as e:
+                    _LOGGER.debug(f"{self.room} - VWC conversion error from workData: {e}")
+
+            for item in self.data_store.getDeep("workData.ec") or []:
+                raw = item.get("value")
+                if raw is None:
+                    continue
+                try:
+                    ec_val = float(raw)
+                    if ec_val > 20:
+                        ec_val = ec_val / 1000
+                    bulk_ec_values.append(ec_val)
+                except (ValueError, TypeError):
+                    continue
+
+            for item in self.data_store.getDeep("workData.temperature") or []:
+                raw = item.get("value")
+                if raw is None:
+                    continue
+                try:
+                    temp_values.append(float(raw))
+                except (ValueError, TypeError):
+                    continue
 
         if not vwc_values and not bulk_ec_values:
             return None
@@ -1075,34 +1113,14 @@ class OGBCSManager:
                 corrected_values={}
             )
 
-        if validation.issues:
-            _LOGGER.warning(
-                f"{self.room} - Sensor validation issues: {validation.issues}"
-            )
-            # Apply corrections if available
-            if "vwc" in validation.corrected_values:
-                avg_vwc = validation.corrected_values["vwc"]
-            if "pore_ec" in validation.corrected_values:
-                pore_ec = validation.corrected_values["pore_ec"]
-
         result = {
-            "vwc": avg_vwc,
-            "ec": avg_bulk_ec,  # Keep 'ec' key for backward compatibility
-            "bulk_ec": avg_bulk_ec,
-            "pore_ec": pore_ec,
-            "temperature": avg_temp,
-            "medium_type": self.medium_type,
-            "validation_valid": validation.is_valid,
-            "sensor_count": {
-                "vwc": len(vwc_values),
-                "ec": len(bulk_ec_values),
-                "temp": len(temp_values),
-            },
+            "vwc": round(avg_vwc, 1),
+            "ec": round(avg_bulk_ec, 3),
+            "pore_ec": round(pore_ec, 3),
+            "temperature": round(avg_temp, 1),
+            "validation": validation,
+            "source": "medium" if mediums else "workData",
         }
-
-        _LOGGER.debug(
-            f"{self.room} - Sensor data: VWC={avg_vwc:.1f}%, EC={avg_bulk_ec:.2f}/{pore_ec:.2f} (bulk/pore), T={avg_temp:.1f}C [{self.medium_type}]"
-        )
 
         return result
 

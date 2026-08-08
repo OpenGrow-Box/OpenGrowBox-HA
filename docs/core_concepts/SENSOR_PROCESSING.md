@@ -97,6 +97,21 @@ def calculate_avg_value(sensor_readings):
     return sum(valid_readings) / len(valid_readings) if valid_readings else "unavailable"
 ```
 
+#### Medium-Based Aggregation
+
+For **soil/water** sensors that are bound to a growing medium, the latest value of each registered sensor is stored inside the `GrowMedium` object. The medium aggregates the values per sensor type and exposes them as `current_moisture`, `current_ec`, `current_ph` and `current_temp`.
+
+Rules applied by `GrowMedium._update_aggregated_value()`:
+- Only sensors registered to this medium are considered.
+- `None`, `unavailable`, `unknown` and `0` values are ignored.
+- Remaining valid values are averaged.
+- The result is persisted together with the medium.
+
+These `current_*` fields are the single source of truth for:
+- Plant Watering
+- Crop Steering
+- The `medium_sensors` console command
+
 #### Sensor Calibration Manager (`OGBSensorCalibrationManager`)
 
 Applies calibration corrections:
