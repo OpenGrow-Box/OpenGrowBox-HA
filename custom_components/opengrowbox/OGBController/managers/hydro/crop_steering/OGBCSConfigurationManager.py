@@ -65,7 +65,7 @@ class OGBCSConfigurationManager:
     def get_raw_base_presets(self) -> Dict[str, Dict[str, Any]]:
         """
         Raw base presets for automatic mode (rockwool defaults).
-        NO user overrides applied. Used for bulletproof automatic mode.
+        NO user overrides applied. Used for automatic mode.
 
         Returns:
             Dictionary of phase presets with default values only
@@ -401,11 +401,11 @@ class OGBCSConfigurationManager:
 
         return adjustments
 
-    def get_automatic_bulletproof_preset(
+    def get_automatic_preset(
         self, phase: str, medium_type: str = "rockwool", plant_phase: str = "veg", generative_week: int = 0
     ) -> Dict[str, Any]:
         """
-        Get a bulletproof automatic preset WITHOUT user overrides.
+        Get a automatic preset WITHOUT user overrides.
 
         Only base presets + medium offsets + plant phase growth adjustments are used.
         This prevents user settings from influencing automatic mode.

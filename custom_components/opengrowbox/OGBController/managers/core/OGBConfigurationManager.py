@@ -333,6 +333,7 @@ class OGBConfigurationManager:
         # Strip domain prefix (select., number., switch., text., time., date., etc.)
         # Entity keys from HA come as "domain.entity_id" but our mapping uses just "entity_id"
         original_key = entity_key
+        
         if "." in entity_key:
             entity_key = entity_key.split(".", 1)[1]
         
@@ -354,6 +355,7 @@ class OGBConfigurationManager:
         
         # Only log if it's a relevant entity we might care about
         if "ogb_" in entity_key.lower():
+            _LOGGER.warning(f"{self.room}: Unhandled entity update: {original_key}")
         return False
 
     # Core control methods

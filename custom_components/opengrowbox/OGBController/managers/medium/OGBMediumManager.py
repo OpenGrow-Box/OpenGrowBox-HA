@@ -476,6 +476,10 @@ class OGBMediumManager:
             ...
         }
         """
+        tentmode = self.data_store.get("tentMode")
+        if tentmode == "Drying" or tentmode == "Ambient":
+        return
+
         try:
             # Handle both dict and object data
             if hasattr(data, '__dict__'):
@@ -524,8 +528,7 @@ class OGBMediumManager:
             # 3. Emit medium values update for UI - only on actual changes
             medium_values = medium.get_all_medium_values()
             tentmode = self.data_store.get("tentMode")
-            if tentmode == "Drying" or tentmode == "Disabled" or tentmode == "Ambient":
-                return
+
 
             await self.event_manager.emit("LogForClient", medium_values, haEvent=True, debug_type="DEBUG")
 
@@ -552,6 +555,10 @@ class OGBMediumManager:
 
     async def _load_mediums_from_store(self):
         """Load existing mediums from dataStore on startup"""
+        tentmode = self.data_store.get("tentMode")
+        if tentmode == "Drying" or tentmode == "Ambient":
+        return
+
         stored_mediums = self.data_store.get("growMediums")
         
         _LOGGER.debug(f"[{self.room}] LOADING mediums from store: {len(stored_mediums) if stored_mediums else 0} found")

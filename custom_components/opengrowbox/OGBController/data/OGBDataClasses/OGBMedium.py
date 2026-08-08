@@ -327,7 +327,7 @@ class GrowMedium:
         ## FIX THIS NEEDS TO BASED on OGB_PLANTS sets or user specified based on Wizzard
         # Plant stage definitions with DLI/light targets per stage
         self.plant_stage_config = {
-            "Germination": {"dli_target": 12, "ppfd_target": 200, "light_hours": 18},
+            "Germination": {"dcurrent_moistureli_target": 12, "ppfd_target": 200, "light_hours": 18},
             "Clones": {"dli_target": 14, "ppfd_target": 250, "light_hours": 18},
             "EarlyVeg": {"dli_target": 20, "ppfd_target": 350, "light_hours": 18},
             "MidVeg": {"dli_target": 30, "ppfd_target": 450, "light_hours": 18},
@@ -681,11 +681,11 @@ class GrowMedium:
         if numeric_value is None:
             return False
 
-        if sensor_type == "ph":
+        if sensor_type in "ph":
             self.current_ph = numeric_value
-        elif sensor_type == "ec":
+        elif sensor_type in "ec":
             self.current_ec = numeric_value
-        elif sensor_type in ["moisture", "humidity"]:
+        elif sensor_type in ["moisture"]:
             self.current_moisture = numeric_value
         elif sensor_type in ["temperature", "temp"]:
             self.current_temp = numeric_value

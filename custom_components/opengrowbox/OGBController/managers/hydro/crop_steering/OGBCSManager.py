@@ -8,7 +8,6 @@ from ....data.OGBDataClasses.OGBPublications import OGBHydroAction, OGBWaterActi
 from .OGBAdvancedSensor import OGBAdvancedSensor
 from .OGBCSCalibrationManager import OGBCSCalibrationManager
 from .OGBCSConfigurationManager import CSMode, OGBCSConfigurationManager
-# OGBCSIrrigationManager removed - irrigation handled directly in CSManager like CastManager
 from .OGBCSPhaseManager import OGBCSPhaseManager
 from ....utils.ambient import is_ambient_room, is_not_ambient_room
 
@@ -158,7 +157,7 @@ class OGBCSManager:
             self.medium_type = new_medium
             self.data_store.setDeep("CropSteering.MediumType", new_medium)
 
-            _LOGGER.debug(
+            _LOGGER.info(
                 f"{self.room} - CropSteering medium changed: {old_medium} → {new_medium}"
             )
 
@@ -198,7 +197,7 @@ class OGBCSManager:
     # Failsafe / learning state
     _ABSOLUTE_VWC_MIN = 5.0
     _ABSOLUTE_VWC_MAX = 90.0
-    _SENSOR_STUCK_THRESHOLD = 10
+    _SENSOR_STUCK_THRESHOLD = 15
     _MAX_VWC_JUMP = 30.0
     _MAX_TOTAL_PUMP_SECONDS_PER_CYCLE = 300  # 5 minutes hard cap per saturation cycle
     _PUMP_SECONDS_INEFFECTIVE_THRESHOLD = 3  # after N shots, VWC must have risen
@@ -227,7 +226,7 @@ class OGBCSManager:
         self.data_store.setDeep(f"CropSteering.Learned.{key}", value)
 
     def _get_plant_info_for_preset(self) -> tuple:
-        """Return (plant_phase, generative_week) for bulletproof preset calculation."""
+        """Return (plant_phase, generative_week) for automatic preset calculation."""
         room_stage = self.data_store.get("plantStage")
         flower_stages = {"EarlyFlower", "MidFlower", "LateFlower", "Flush"}
         plant_phase = "flower" if room_stage in flower_stages else "veg"
@@ -238,10 +237,10 @@ class OGBCSManager:
             generative_week = 0
         return plant_phase, generative_week
 
-    def _get_automatic_bulletproof_preset(self, phase: str) -> Dict[str, Any]:
-        """Get bulletproof preset for automatic mode (no user overrides)."""
+    def _get_automatic_preset(self, phase: str) -> Dict[str, Any]:
+        """Get automatic preset for automatic mode (no user overrides)."""
         plant_phase, generative_week = self._get_plant_info_for_preset()
-        return self.config_manager.get_automatic_bulletproof_preset(
+        return self.config_manager.get_automatic_preset(
             phase=phase,
             medium_type=self.medium_type,
             plant_phase=plant_phase,
@@ -722,10 +721,10 @@ class OGBCSManager:
         self._last_mode_change_mode = requested_mode
 
         # ===== STEP 6: Validate prerequisites =====
-        multimediumCtrl = self.data_store.getDeep("controlOptions.multiMediumControl")
-        if multimediumCtrl is False:
-            _LOGGER.error(f"{self.room} - CropSteering requires multiMediumControl=True")
-            return
+        #multimediumCtrl = self.data_store.getDeep("controlOptions.multiMediumControl")
+        #if multimediumCtrl is False:
+        #    _LOGGER.error(f"{self.room} - CropSteering requires multiMediumControl=True")
+        #    return
 
         # Sync medium type
         if not self.isInitialized:
@@ -1005,6 +1004,7 @@ class OGBCSManager:
         if mediums:
             for medium in mediums:
                 raw_moisture = getattr(medium, "current_moisture", None)
+                _LOGGER.warning(f"{self.room} - VWC conversion Values: {raw_moisture}")
                 if raw_moisture:
                     try:
                         raw_val = float(raw_moisture)
@@ -1020,6 +1020,7 @@ class OGBCSManager:
                         _LOGGER.debug(f"{self.room} - VWC conversion error from medium: {e}")
 
                 raw_ec = getattr(medium, "current_ec", None)
+                _LOGGER.warning(f"{self.room} - EC conversion Values: {raw_ec}")
                 if raw_ec:
                     try:
                         ec_val = float(raw_ec)
@@ -1042,7 +1043,7 @@ class OGBCSManager:
 
         # Fallback to legacy workData only if no live medium data is available
         if not vwc_values and not bulk_ec_values:
-            _LOGGER.debug(f"{self.room} - No live medium sensor data, falling back to workData")
+            _LOGGER.error(f"{self.room} - WORKDATA MOISTURE : {self.data_store.getDeep('workData.moisture')}")
             for item in self.data_store.getDeep("workData.moisture") or []:
                 raw = item.get("value")
                 if raw is None:
@@ -1057,28 +1058,7 @@ class OGBCSManager:
                         calibrated_vwc = raw_val
                     vwc_values.append(calibrated_vwc)
                 except (ValueError, TypeError) as e:
-                    _LOGGER.debug(f"{self.room} - VWC conversion error from workData: {e}")
-
-            for item in self.data_store.getDeep("workData.ec") or []:
-                raw = item.get("value")
-                if raw is None:
-                    continue
-                try:
-                    ec_val = float(raw)
-                    if ec_val > 20:
-                        ec_val = ec_val / 1000
-                    bulk_ec_values.append(ec_val)
-                except (ValueError, TypeError):
-                    continue
-
-            for item in self.data_store.getDeep("workData.temperature") or []:
-                raw = item.get("value")
-                if raw is None:
-                    continue
-                try:
-                    temp_values.append(float(raw))
-                except (ValueError, TypeError):
-                    continue
+                    _LOGGER.error(f"{self.room} - VWC conversion error from workData: {e}")
 
         if not vwc_values and not bulk_ec_values:
             return None
@@ -2232,30 +2212,6 @@ class OGBCSManager:
             f"{self.room} - P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%, success={success}"
         )
 
-    async def _complete_manual_p1(self, vwc, target_max):
-        """
-        Complete manual P1 saturation phase and transition to P2.
-        Resets both P1 state tracking and manual shot counter.
-        """
-        self._reset_p1_state_tracking()
-        self.data_store.setDeep("CropSteering.shotCounter", 0)
-        self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
-
-        # Transition to P2
-        await self._set_crop_phase_and_update_selector("p2")
-
-        message = f"Manual saturation complete - VWC: {vwc:.1f}%"
-        await self._log_phase_change("p1", "p2", message)
-
-        await self.event_manager.emit(
-            "LogForClient",
-            {"Name": self.room, "Type": "CSLOG", "Message": f"P1 → P2: {message}"},
-            haEvent=True,
-        )
-
-        _LOGGER.debug(
-            f"{self.room} - Manual P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%"
-        )
 
     async def _handle_phase_p2_auto(self, vwc, ec, is_light_on, preset):
         """
@@ -2688,252 +2644,337 @@ class OGBCSManager:
             raise
 
     async def _manual_cycle(self, phase):
-        """Manual time-based cycle (uses USER settings)"""
-        _LOGGER.debug(f"{self.room} - CS - Manual {phase}: Started")
-        try:
-            settings = self._get_manual_phase_settings(phase)
+            """Manual time-based cycle (uses USER settings)"""
+            _LOGGER.debug(f"{self.room} - CS - Manual {phase}: Started")
+            try:
+                settings = self._get_manual_phase_settings(phase)
 
-            # Values are already converted to proper numeric types by _get_manual_phase_settings
-            shot_duration = settings["ShotDuration"]["value"]  # int (seconds)
-            shot_interval = settings["ShotIntervall"]["value"]  # float (minutes)
-            shot_count = settings["ShotSum"]["value"]  # int (count)
-            
-            _LOGGER.debug(f"{self.room} - Manual {phase} settings: duration={shot_duration}s, interval={shot_interval}min, count={shot_count}")
+                shot_duration = settings["ShotDuration"]["value"]
+                shot_interval = settings["ShotIntervall"]["value"]
+                shot_count = settings["ShotSum"]["value"]
 
-            # Apply sensible defaults if values are invalid
-            if shot_duration <= 0:
-                shot_duration = 30
-                _LOGGER.warning(f"{self.room} - Manual {phase}: Invalid duration, using default 30s")
-            if shot_interval <= 0:
-                shot_interval = 30  # 30 minutes default
-                _LOGGER.warning(f"{self.room} - Manual {phase}: Invalid interval, using default 30min")
-            if shot_count <= 0:
-                shot_count = 5
-                _LOGGER.warning(f"{self.room} - Manual {phase}: Invalid count, using default 5")
+                _LOGGER.warning(f"{self.room} - Manual {phase} settings: duration={shot_duration}s, interval={shot_interval}min, count={shot_count}")
 
-            self.data_store.setDeep("CropSteering.shotCounter", 0)
-            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+                if shot_duration <= 0:
+                    shot_duration = 30
+                    _LOGGER.warning(f"{self.room} - Manual {phase}: Invalid duration, using default 30s")
+                if shot_interval <= 0:
+                    shot_interval = 30
+                    _LOGGER.warning(f"{self.room} - Manual {phase}: Invalid interval, using default 30min")
+                if shot_count <= 0:
+                    shot_count = 5
+                    _LOGGER.warning(f"{self.room} - Manual {phase}: Invalid count, using default 5")
 
-            _LOGGER.debug(
-                f"{self.room} - Manual {phase}: {shot_count} shots every {shot_interval}min"
-            )
+                self.data_store.setDeep("CropSteering.shotCounter", 0)
+                self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
-            while True:
-                try:
-                    # === CRITICAL: Read sensor data NEWLY! ===
-                    sensor_data = await self._get_sensor_averages()
-                    if sensor_data:
-                        self.data_store.setDeep(
-                            "CropSteering.vwc_current", sensor_data["vwc"]
-                        )
-                        self.data_store.setDeep("CropSteering.ec_current", sensor_data["ec"])
+                _LOGGER.warning(f"{self.room} - Manual {phase}: {shot_count} shots every {shot_interval}min")
 
-                    vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
-                    ec = float(self.data_store.getDeep("CropSteering.ec_current") or 0)
+                while True:
+                    try:
+                        # === CRITICAL: Read sensor data NEWLY! ===
+                        sensor_data = await self._get_sensor_averages()
+                        if sensor_data:
+                            self.data_store.setDeep("CropSteering.vwc_current", sensor_data["vwc"])
+                            self.data_store.setDeep("CropSteering.ec_current", sensor_data["ec"])
 
-                    # Record sensor reading and run failsafe guards in manual mode too
-                    self._record_sensor_reading(vwc)
-                    safe, reason = await self._run_failsafe_checks(vwc, source="manual")
-                    if not safe:
-                        _LOGGER.warning(
-                            f"{self.room} - Manual {phase} failsafe triggered: {reason}. "
-                            f"Skipping irrigation this cycle."
-                        )
-                        await asyncio.sleep(10)
-                        continue
+                        vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                        ec = float(self.data_store.getDeep("CropSteering.ec_current") or 0)
 
-                    # If the phase changed externally (e.g. P1 completed and switched to P2),
-                    # exit this cycle so the manual runner can start the next phase.
-                    current_phase = self.data_store.getDeep("CropSteering.CropPhase") or phase
-                    if current_phase != phase:
-                        _LOGGER.debug(
-                            f"{self.room} - Manual {phase}: phase changed to {current_phase}, "
-                            f"exiting cycle"
-                        )
-                        return
-                    
-                    # Safe shot_counter read - handle None case
-                    raw_counter = self.data_store.getDeep("CropSteering.shotCounter")
-                    shot_counter = int(float(raw_counter)) if raw_counter is not None else 0
-
-                    # EC management - LOG ONLY (no actual adjustment, needs nutrient system integration)
-                    # Values are already proper numeric types from _get_manual_phase_settings
-                    ec_target = settings["ECTarget"]["value"]
-                    min_ec = settings["MinEC"]["value"]
-                    max_ec = settings["MaxEC"]["value"]
-                    
-                    if ec_target > 0 and ec:
-                        if ec < min_ec:
-                            _LOGGER.debug(f"{self.room} - Manual: EC {ec:.2f} < Min {min_ec:.2f} (would increase)")
-                        elif ec > max_ec:
-                            _LOGGER.debug(f"{self.room} - Manual: EC {ec:.2f} > Max {max_ec:.2f} (would decrease)")
-
-                    # VWC bounds for this phase
-                    vwc_min = settings["VWCMin"]["value"]
-                    vwc_max = settings["VWCMax"]["value"]
-                    vwc_target = settings["VWCTarget"]["value"]
-
-                    # === P1 Auto-transition logic ===
-                    # Manual P1 should behave like automatic P1: saturate until target
-                    # or max shots reached, then switch to P2 automatically.
-                    if phase == "p1":
-                        if vwc_target > 0 and vwc >= vwc_target:
-                            _LOGGER.debug(
-                                f"{self.room} - Manual P1: Target VWC reached "
-                                f"{vwc:.1f}% >= {vwc_target:.1f}%, switching to P2"
-                            )
-                            await self._complete_manual_p1(vwc, vwc_target)
-                            return
-
-                        if vwc_max > 0 and vwc >= vwc_max:
+                        self._record_sensor_reading(vwc)
+                        safe, reason = await self._run_failsafe_checks(vwc, source="manual")
+                        if not safe:
                             _LOGGER.warning(
-                                f"{self.room} - Manual P1: VWC at/above max cap "
-                                f"{vwc:.1f}% >= {vwc_max:.1f}%, switching to P2"
+                                f"{self.room} - Manual {phase} failsafe triggered: {reason}. "
+                                f"Skipping irrigation this cycle."
                             )
-                            await self._complete_manual_p1(vwc, vwc_target)
+                            await asyncio.sleep(10)
+                            continue
+
+                        current_phase = self.data_store.getDeep("CropSteering.CropPhase") or phase
+                        if current_phase != phase:
+                            _LOGGER.warning(
+                                f"{self.room} - Manual {phase}: phase changed to {current_phase}, exiting cycle"
+                            )
                             return
 
-                        if shot_counter >= shot_count:
-                            _LOGGER.debug(
-                                f"{self.room} - Manual P1: Max shots reached "
-                                f"({shot_counter}/{shot_count}), switching to P2"
-                            )
-                            await self._complete_manual_p1(vwc, vwc_target)
-                            return
+                        raw_counter = self.data_store.getDeep("CropSteering.shotCounter")
+                        shot_counter = int(float(raw_counter)) if raw_counter is not None else 0
 
-                    # Emergency irrigation - VWCMin is already a float
-                    if vwc and vwc_min > 0 and vwc < vwc_min * 0.9:
-                        if shot_counter >= shot_count:
-                            _LOGGER.debug(
-                                f"{self.room} - Manual {phase}: Emergency irrigation needed "
-                                f"but max shots reached ({shot_counter}/{shot_count})"
-                            )
-                            await self.event_manager.emit(
-                                "LogForClient",
-                                {
-                                    "Name": self.room,
-                                    "Type": "CSLOG",
-                                    "Message": f"Manual {phase}: Emergency irrigation blocked - max shots reached",
-                                },
-                                haEvent=True,
-                            )
-                        elif vwc_max > 0 and vwc >= vwc_max:
-                            _LOGGER.debug(
-                                f"{self.room} - Manual {phase}: VWC {vwc:.1f}% already at/above max "
-                                f"{vwc_max:.1f}%, skipping emergency irrigation"
-                            )
-                        else:
-                            await self._irrigate(duration=shot_duration, target_vwc=vwc_target, max_vwc=vwc_max)
-                            shot_counter += 1
-                            self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
-                            self.data_store.setDeep("CropSteering.lastIrrigationTime", datetime.now())
+                        # EC management - LOG ONLY
+                        ec_target = settings["ECTarget"]["value"]
+                        min_ec = settings["MinEC"]["value"]
+                        max_ec = settings["MaxEC"]["value"]
 
-                            # Post-shot VWC for logging
-                            post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                        if ec_target > 0 and ec:
+                            if ec < min_ec:
+                                _LOGGER.warning(f"{self.room} - Manual: EC {ec:.2f} < Min {min_ec:.2f} (would increase)")
+                            elif ec > max_ec:
+                                _LOGGER.warning(f"{self.room} - Manual: EC {ec:.2f} > Max {max_ec:.2f} (would decrease)")
 
-                            await self.event_manager.emit(
-                                "LogForClient",
-                                {
-                                    "Name": self.room,
-                                    "Type": "Emergency irrigation",
-                                    "Message": f"CropSteering {phase}: Emergency irrigation ({shot_counter}/{shot_count}) | VWC: {vwc:.1f}% → {post_vwc:.1f}%",
-                                },
-                                haEvent=True,
-                            )
+                        vwc_min = settings["VWCMin"]["value"]
+                        vwc_max = settings["VWCMax"]["value"]
+                        vwc_target = settings["VWCTarget"]["value"]
 
-                            # P1: check if emergency shot finished the saturation
-                            if phase == "p1" and vwc_target > 0:
-                                current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
-                                if current_vwc >= vwc_target:
-                                    await self._complete_manual_p1(current_vwc, vwc_target)
-                                    return
-                                if vwc_max > 0 and current_vwc >= vwc_max:
-                                    await self._complete_manual_p1(current_vwc, vwc_target)
-                                    return
+                        # ==================================================
+                        # === Phase-spezifische Auto-Transition-Logik ===
+                        # ==================================================
+                        if phase == "p1":
+                            if vwc_target > 0 and vwc >= vwc_target:
+                                _LOGGER.warning(
+                                    f"{self.room} - Manual P1: Target VWC reached "
+                                    f"{vwc:.1f}% >= {vwc_target:.1f}%, switching to P2"
+                                )
+                                await self._complete_manual_p1(vwc, vwc_target)
+                                return
 
-                    # Scheduled irrigation
-                    last_irrigation = self.data_store.getDeep(
-                        "CropSteering.lastIrrigationTime"
-                    )
-                    now = datetime.now()
+                            if vwc_max > 0 and vwc >= vwc_max:
+                                _LOGGER.warning(
+                                    f"{self.room} - Manual P1: VWC at/above max cap "
+                                    f"{vwc:.1f}% >= {vwc_max:.1f}%, switching to P2"
+                                )
+                                await self._complete_manual_p1(vwc, vwc_target)
+                                return
 
-                    should_irrigate = (
-                        last_irrigation is None
-                        or (now - last_irrigation).total_seconds() / 60 >= shot_interval
-                    )
+                            if shot_counter >= shot_count:
+                                _LOGGER.warning(
+                                    f"{self.room} - Manual P1: Max shots reached "
+                                    f"({shot_counter}/{shot_count}), switching to P2"
+                                )
+                                await self._complete_manual_p1(vwc, vwc_target)
+                                return
 
-                    if should_irrigate and shot_counter < shot_count:
-                        # Safety: never schedule irrigation above VWC max
-                        if vwc_max > 0 and vwc >= vwc_max:
-                            _LOGGER.debug(
-                                f"{self.room} - Manual {phase}: VWC {vwc:.1f}% already at/above max "
-                                f"{vwc_max:.1f}%, skipping scheduled irrigation"
-                            )
-                        else:
-                            await self._irrigate(duration=shot_duration, target_vwc=vwc_target, max_vwc=vwc_max)
-                            shot_counter += 1
-                            self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
-                            self.data_store.setDeep("CropSteering.lastIrrigationTime", now)
+                        elif phase == "p2":
+                            minutes_to_off = self._minutes_until_lights_off()
+                            p2_to_p3_offset = settings.get("P2ToP3Minutes", {}).get("value", 30)
+                            if minutes_to_off is not None and minutes_to_off <= p2_to_p3_offset:
+                                _LOGGER.debug(
+                                    f"{self.room} - Manual P2: {minutes_to_off:.0f}min bis Lights-Off "
+                                    f"(<= {p2_to_p3_offset}min), switching to P3"
+                                )
+                                await self._complete_manual_p2(vwc)
+                                return
 
-                            # Post-shot VWC for logging
-                            post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                        elif phase == "p3":
+                            # Dryback-Phase: keine Bewässerung. Endet mit Lights-ON.
+                            if self._is_lights_on():
+                                _LOGGER.debug(f"{self.room} - Manual P3: Lights on, switching to P0")
+                                await self._complete_manual_p3(vwc)
+                                return
 
-                            await self.event_manager.emit(
-                                "LogForClient",
-                                {
-                                    "Name": self.room,
-                                    "Type": "CSLOG",
-                                    "Message": f"CropSteering {phase}: Shot {shot_counter}/{shot_count} | VWC: {vwc:.1f}% → {post_vwc:.1f}%",
-                                },
-                                haEvent=True,
-                            )
+                        elif phase == "p0":
+                            # Dryback-Phase: keine Bewässerung. Endet, wenn Lights-ON UND
+                            # VWC unter den Bewässerungs-Schwellenwert von P1 gefallen ist.
+                            p1_settings = self._get_manual_phase_settings("p1")
+                            p1_vwc_min = p1_settings.get("VWCMin", {}).get("value", 0)
+                            if self._is_lights_on() and p1_vwc_min > 0 and vwc < p1_vwc_min:
+                                _LOGGER.debug(
+                                    f"{self.room} - Manual P0: Lights on and VWC {vwc:.1f}% < "
+                                    f"{p1_vwc_min:.1f}%, switching to P1"
+                                )
+                                await self._complete_manual_p0(vwc)
+                                return
 
-                            # P1: check if scheduled shot finished the saturation
-                            if phase == "p1" and vwc_target > 0:
-                                current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
-                                if current_vwc >= vwc_target:
-                                    await self._complete_manual_p1(current_vwc, vwc_target)
-                                    return
-                                if vwc_max > 0 and current_vwc >= vwc_max:
-                                    await self._complete_manual_p1(current_vwc, vwc_target)
-                                    return
+                        # P0/P3 sind reine Dryback-Phasen: keine Bewässerung.
+                        if phase in ("p0", "p3"):
+                            await asyncio.sleep(10)
+                            continue
 
-                    # Reset counter after full cycle (non-P1 phases only).
-                    # P1 auto-transitions to P2 instead of looping.
-                    if phase != "p1" and shot_counter >= shot_count:
-                        phase_start = self.data_store.getDeep("CropSteering.phaseStartTime")
-                        if phase_start:
-                            elapsed = (now - phase_start).total_seconds() / 60
-
-                            if elapsed >= shot_interval:
-                                self.data_store.setDeep("CropSteering.shotCounter", 0)
-                                self.data_store.setDeep("CropSteering.phaseStartTime", now)
+                        # === Emergency irrigation (nur p1/p2) ===
+                        if vwc and vwc_min > 0 and vwc < vwc_min * 0.9:
+                            if shot_counter >= shot_count:
+                                _LOGGER.debug(
+                                    f"{self.room} - Manual {phase}: Emergency irrigation needed "
+                                    f"but max shots reached ({shot_counter}/{shot_count})"
+                                )
                                 await self.event_manager.emit(
                                     "LogForClient",
                                     {
                                         "Name": self.room,
                                         "Type": "CSLOG",
-                                        "Message": f"CropSteering {phase}: New cycle started",
+                                        "Message": f"Manual {phase}: Emergency irrigation blocked - max shots reached",
                                     },
                                     haEvent=True,
                                 )
-                        else:
-                            # phaseStartTime was None, reset it
-                            self.data_store.setDeep("CropSteering.phaseStartTime", now)
+                            elif vwc_max > 0 and vwc >= vwc_max:
+                                _LOGGER.debug(
+                                    f"{self.room} - Manual {phase}: VWC {vwc:.1f}% already at/above max "
+                                    f"{vwc_max:.1f}%, skipping emergency irrigation"
+                                )
+                            else:
+                                await self._irrigate(duration=shot_duration, target_vwc=vwc_target, max_vwc=vwc_max)
+                                shot_counter += 1
+                                self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
+                                self.data_store.setDeep("CropSteering.lastIrrigationTime", datetime.now())
 
-                except Exception as loop_error:
-                    # Don't kill the whole cycle for one iteration's error
-                    _LOGGER.error(f"{self.room} - Manual cycle iteration error: {loop_error}", exc_info=True)
+                                post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
 
-                await asyncio.sleep(10)
+                                await self.event_manager.emit(
+                                    "LogForClient",
+                                    {
+                                        "Name": self.room,
+                                        "Type": "Emergency irrigation",
+                                        "Message": f"CropSteering {phase}: Emergency irrigation ({shot_counter}/{shot_count}) | VWC: {vwc:.1f}% → {post_vwc:.1f}%",
+                                    },
+                                    haEvent=True,
+                                )
 
-        except asyncio.CancelledError:
-            _LOGGER.warning(f"{self.room} - Manual cycle CANCELLED")
-            await self._turn_off_all_drippers()
-            raise
-        except Exception as e:
-            _LOGGER.error(f"{self.room} - Manual cycle FATAL error: {e}", exc_info=True)
-            await self._emergency_stop()
+                                if phase == "p1" and vwc_target > 0:
+                                    current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                                    if current_vwc >= vwc_target:
+                                        await self._complete_manual_p1(current_vwc, vwc_target)
+                                        return
+                                    if vwc_max > 0 and current_vwc >= vwc_max:
+                                        await self._complete_manual_p1(current_vwc, vwc_target)
+                                        return
+
+                        # === Scheduled irrigation (nur p1/p2) ===
+                        last_irrigation = self.data_store.getDeep("CropSteering.lastIrrigationTime")
+                        now = datetime.now()
+
+                        should_irrigate = (
+                            last_irrigation is None
+                            or (now - last_irrigation).total_seconds() / 60 >= shot_interval
+                        )
+
+                        if should_irrigate and shot_counter < shot_count:
+                            if vwc_max > 0 and vwc >= vwc_max:
+                                _LOGGER.debug(
+                                    f"{self.room} - Manual {phase}: VWC {vwc:.1f}% already at/above max "
+                                    f"{vwc_max:.1f}%, skipping scheduled irrigation"
+                                )
+                            else:
+                                await self._irrigate(duration=shot_duration, target_vwc=vwc_target, max_vwc=vwc_max)
+                                shot_counter += 1
+                                self.data_store.setDeep("CropSteering.shotCounter", shot_counter)
+                                self.data_store.setDeep("CropSteering.lastIrrigationTime", now)
+
+                                post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+
+                                await self.event_manager.emit(
+                                    "LogForClient",
+                                    {
+                                        "Name": self.room,
+                                        "Type": "CSLOG",
+                                        "Message": f"CropSteering {phase}: Shot {shot_counter}/{shot_count} | VWC: {vwc:.1f}% → {post_vwc:.1f}%",
+                                    },
+                                    haEvent=True,
+                                )
+
+                                if phase == "p1" and vwc_target > 0:
+                                    current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                                    if current_vwc >= vwc_target:
+                                        await self._complete_manual_p1(current_vwc, vwc_target)
+                                        return
+                                    if vwc_max > 0 and current_vwc >= vwc_max:
+                                        await self._complete_manual_p1(current_vwc, vwc_target)
+                                        return
+
+                        # Reset counter after full cycle (nur P2 - P1/P0/P3 haben eigene Transition-Logik).
+                        if phase == "p2" and shot_counter >= shot_count:
+                            phase_start = self.data_store.getDeep("CropSteering.phaseStartTime")
+                            if phase_start:
+                                elapsed = (now - phase_start).total_seconds() / 60
+                                if elapsed >= shot_interval:
+                                    self.data_store.setDeep("CropSteering.shotCounter", 0)
+                                    self.data_store.setDeep("CropSteering.phaseStartTime", now)
+                                    await self.event_manager.emit(
+                                        "LogForClient",
+                                        {
+                                            "Name": self.room,
+                                            "Type": "CSLOG",
+                                            "Message": f"CropSteering {phase}: New cycle started",
+                                        },
+                                        haEvent=True,
+                                    )
+                            else:
+                                self.data_store.setDeep("CropSteering.phaseStartTime", now)
+
+                    except Exception as loop_error:
+                        _LOGGER.error(f"{self.room} - Manual cycle iteration error: {loop_error}", exc_info=True)
+
+                    await asyncio.sleep(10)
+
+            except asyncio.CancelledError:
+                _LOGGER.warning(f"{self.room} - Manual cycle CANCELLED")
+                await self._turn_off_all_drippers()
+                raise
+            except Exception as e:
+                _LOGGER.error(f"{self.room} - Manual cycle FATAL error: {e}", exc_info=True)
+                await self._emergency_stop()
+
+    async def _complete_manual_p0(self, vwc):
+        """Complete P0 dryback phase and transition to P1 (lights on + VWC below P1 threshold)."""
+        self.data_store.setDeep("CropSteering.shotCounter", 0)
+        self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+
+        await self._set_crop_phase_and_update_selector("p1")
+
+        message = f"P0 → P1: VWC unter Schwelle - VWC: {vwc:.1f}%"
+        await self._log_phase_change("p0", "p1", message)
+        await self.event_manager.emit(
+            "LogForClient",
+            {"Name": self.room, "Type": "CSLOG", "Message": message},
+            haEvent=True,
+        )
+        _LOGGER.debug(f"{self.room} - Manual P0 complete: VWC={vwc:.1f}%")
+
+    async def _complete_manual_p1(self, vwc, target_max):
+        """
+        Complete manual P1 saturation phase and transition to P2.
+        Resets both P1 state tracking and manual shot counter.
+        """
+        self._reset_p1_state_tracking()
+        self.data_store.setDeep("CropSteering.shotCounter", 0)
+        self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+
+        # Transition to P2
+        await self._set_crop_phase_and_update_selector("p2")
+
+        message = f"Manual saturation complete - VWC: {vwc:.1f}%"
+        await self._log_phase_change("p1", "p2", message)
+
+        await self.event_manager.emit(
+            "LogForClient",
+            {"Name": self.room, "Type": "CSLOG", "Message": f"P1 → P2: {message}"},
+            haEvent=True,
+        )
+
+        _LOGGER.debug(
+            f"{self.room} - Manual P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%"
+        )
+
+    async def _complete_manual_p2(self, vwc):
+        """Complete P2 maintenance phase and transition to P3 (pre-lights-off dryback)."""
+        self.data_store.setDeep("CropSteering.shotCounter", 0)
+        self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+
+        await self._set_crop_phase_and_update_selector("p3")
+
+        message = f"P2 → P3: Lights-off in Kürze - VWC: {vwc:.1f}%"
+        await self._log_phase_change("p2", "p3", message)
+        await self.event_manager.emit(
+            "LogForClient",
+            {"Name": self.room, "Type": "CSLOG", "Message": message},
+            haEvent=True,
+        )
+        _LOGGER.debug(f"{self.room} - Manual P2 complete: VWC={vwc:.1f}%")
+
+    async def _complete_manual_p3(self, vwc):
+        """Complete P3 dryback phase and transition to P0 (triggered by lights-on)."""
+        self.data_store.setDeep("CropSteering.shotCounter", 0)
+        self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+
+        await self._set_crop_phase_and_update_selector("p0")
+
+        message = f"P3 → P0: Lights on - VWC: {vwc:.1f}%"
+        await self._log_phase_change("p3", "p0", message)
+        await self.event_manager.emit(
+            "LogForClient",
+            {"Name": self.room, "Type": "CSLOG", "Message": message},
+            haEvent=True,
+        )
+        _LOGGER.debug(f"{self.room} - Manual P3 complete: VWC={vwc:.1f}%")
 
     # ==================== IRRIGATION ====================
 
@@ -3157,6 +3198,31 @@ class OGBCSManager:
             return sum(numeric_values) / len(numeric_values) if numeric_values else None
         except Exception:
             return None
+
+    def _is_lights_on(self) -> bool:
+        """Return True if lights are currently on. Adjust the data_store key
+        (or swap for an HA entity lookup) to match your setup."""
+        return bool(self.data_store.getDeep("CropSteering.LightsOn"))
+
+    def _minutes_until_lights_off(self):
+        """Minutes remaining until lights turn off, or None if unknown.
+        Adjust the data_store key / time source to match your setup."""
+        lights_off_time = self.data_store.getDeep("CropSteering.LightsOffTime")
+        if not lights_off_time:
+            return None
+
+        now = datetime.now()
+        target = now.replace(
+            hour=lights_off_time.hour,
+            minute=lights_off_time.minute,
+            second=0,
+            microsecond=0,
+        )
+        if target < now:
+            target += timedelta(days=1)
+
+        return (target - now).total_seconds() / 60
+
 
     # ==================== LOGGING ====================
 
