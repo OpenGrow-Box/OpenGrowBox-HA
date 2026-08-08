@@ -8,7 +8,6 @@ from ....data.OGBDataClasses.OGBPublications import OGBHydroAction, OGBWaterActi
 from .OGBAdvancedSensor import OGBAdvancedSensor
 from .OGBCSCalibrationManager import OGBCSCalibrationManager
 from .OGBCSConfigurationManager import CSMode, OGBCSConfigurationManager
-from .OGBCSPhaseManager import OGBCSPhaseManager
 from ....utils.ambient import is_ambient_room, is_not_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,12 +32,6 @@ class OGBCSManager:
         self.advanced_sensor = OGBAdvancedSensor()
         self.medium_type = "rockwool"  # Default, will be synced from medium manager
 
-        # Initialize specialized managers
-        self.phase_manager = OGBCSPhaseManager(
-            data_store=dataStore,
-            room=room,
-            event_manager=eventManager
-        )
         # Calibration Manager - handles VWC max/min calibration
         self.calibration_manager = OGBCSCalibrationManager(
             room=room,
@@ -3070,9 +3063,18 @@ class OGBCSManager:
             # Read post-irrigation sensor values for history/logging
             post_sensor_data = await self._get_sensor_averages()
             post_vwc = post_sensor_data.get("vwc", 0) if post_sensor_data else 0
+            self.data_store.setDeep("CropSteering.vwc_current", post_vwc)
             post_ec = post_sensor_data.get("ec", 0) if post_sensor_data else 0
+            self.data_store.setDeep("CropSteering.ec_current", post_ec)
             post_pore_ec = post_sensor_data.get("pore_ec", 0) if post_sensor_data else 0
+            self.data_store.setDeep("CropSteering.pore_ec_current", post_pore_ec)
             post_temp = post_sensor_data.get("temperature", 25) if post_sensor_data else 25
+            self.data_store.setDeep("CropSteering.temperature_current", post_temp)
+            _LOGGER.warning(
+                f"{self.room} - Irrigation completed: {elapsed}s (requested {duration}s), "
+                f"VWC: {pre_vwc:.1f}% → {post_vwc:.1f}%, EC: {pre_ec:.2f} → {post_ec:.2f}, Pore EC: {pre_pore_ec:.2f} → {post_pore_ec:.2f}, Temperature: {pre_temp:.1f}°C → {post_temp:.1f}°C"
+            )
+
             try:
                 vwc_delta = round(float(post_vwc) - float(pre_vwc), 1) if post_vwc is not None and pre_vwc is not None else None
             except (ValueError, TypeError):

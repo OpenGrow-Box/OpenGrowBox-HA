@@ -476,11 +476,14 @@ class OGBMediumManager:
             ...
         }
         """
-        tentmode = self.data_store.get("tentMode")
-        if tentmode == "Drying" or tentmode == "Ambient":
-        return
 
         try:
+
+            tentmode = self.data_store.get("tentMode")
+            if tentmode == "Drying" or tentmode == "Ambient":
+                return
+
+
             # Handle both dict and object data
             if hasattr(data, '__dict__'):
                 data = vars(data)
@@ -557,7 +560,7 @@ class OGBMediumManager:
         """Load existing mediums from dataStore on startup"""
         tentmode = self.data_store.get("tentMode")
         if tentmode == "Drying" or tentmode == "Ambient":
-        return
+            return
 
         stored_mediums = self.data_store.get("growMediums")
         
