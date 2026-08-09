@@ -623,15 +623,6 @@ class OGBConsoleManager:
             )
             return
 
-        # Check if CropSteering is in Automatic mode
-        current_mode = self.data_store.getDeep("CropSteering.ActiveMode") or ""
-        if "Automatic" not in current_mode and action != "stop":
-            await self._send_response(
-                "⚠️ VWC Calibration only available in Automatic Mode.\n"
-                f"Current mode: {current_mode or 'Not set'}"
-            )
-            return
-
         # Build command data
         if action == "stop":
             command_data = {"action": "stop"}

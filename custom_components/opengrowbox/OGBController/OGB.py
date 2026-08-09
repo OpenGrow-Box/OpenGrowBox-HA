@@ -229,6 +229,9 @@ class OpenGrowBox:
         await self.orchestrator.start()
         _LOGGER.debug(f"✅ {self.room} Orchestrator control loop started")
 
+        # Start periodic light schedule check (keeps isPlantDay.islightON fresh)
+        asyncio.create_task(self.main_controller._periodic_light_schedule_check())
+
         # Start device recognition discovery
         try:
             if hasattr(self.main_controller, 'device_recognition') and self.main_controller.device_recognition:

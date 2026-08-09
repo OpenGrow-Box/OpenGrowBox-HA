@@ -451,6 +451,29 @@ class OGBCSConfigurationManager:
         if "ECTarget" in base_preset:
             base_preset["ECTarget"] += growth_adjustments["ec_modifier"]
 
+        # Apply calibrated VWC thresholds as overrides (when available).
+        # Auto-calibration writes these during normal operation (p1/p2 -> VWCMax,
+        # p3 -> VWCMin) and manual calibration via ConsoleManager writes the same
+        # keys, so a calibration actually steers the active thresholds.
+        cal_max = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMax")
+        cal_min = self.data_store.getDeep(f"CropSteering.Calibration.{phase}.VWCMin")
+        if cal_max is not None:
+            try:
+                base_preset["VWCMax"] = float(cal_max)
+                _LOGGER.debug(
+                    f"{self.room} - {phase}: Using calibrated VWCMax {float(cal_max):.1f}%"
+                )
+            except (ValueError, TypeError):
+                pass
+        if cal_min is not None:
+            try:
+                base_preset["VWCMin"] = float(cal_min)
+                _LOGGER.debug(
+                    f"{self.room} - {phase}: Using calibrated VWCMin {float(cal_min):.1f}%"
+                )
+            except (ValueError, TypeError):
+                pass
+
         # Ensure internal consistency: target <= max, min <= target
         if base_preset.get("VWCMin", 0) > base_preset.get("VWCTarget", 0):
             base_preset["VWCTarget"] = base_preset["VWCMin"]
