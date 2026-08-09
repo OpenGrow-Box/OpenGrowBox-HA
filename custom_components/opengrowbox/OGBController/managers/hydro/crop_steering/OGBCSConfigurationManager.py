@@ -98,17 +98,19 @@ class OGBCSConfigurationManager:
                 "trigger_condition": "vwc_above_target",
             },
             "p2": {
-                # P2: Maintenance - Halte Level während Lichtphase
+                # P2: Maintenance - Trockne auf Moisture_Dryback % von VWCMax zurück,
+                # dann wieder auf VWCMax (Container capacity) giessen.
+                # Wiederholt bis 1h vor Licht aus.
                 "description": "Day Maintenance Phase",
                 "VWCTarget": 65.0,
                 "VWCMax": 68.0,
                 "VWCMin": 62.0,
-                "hold_percentage": 0.95,
+                "moisture_dryback": 10.0,  # % Rücktrocknung von VWCMax
                 "ECTarget": 2.0,
                 "MinEC": 1.8,
                 "MaxEC": 2.2,
                 "irrigation_duration": 20,
-                "irrigation_interval": 1800,  # 30 min between maintenance shots
+                "irrigation_interval": 60,  # min check interval between dryback shots
                 "emergency_interval": 300,    # 5 min between emergency shots
                 "max_emergency_shots": 5,   # allow repeated emergency shots if needed
                 "check_light": True,

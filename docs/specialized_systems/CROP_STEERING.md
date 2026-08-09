@@ -101,12 +101,12 @@ Absolute safety limits: **VWC never < 5% and never > 90%**.
 
 **Base Presets (rockwool defaults):**
 
-| Phase | Description | VWCTarget | VWCMin | VWCMax | ECTarget | Default Duration | Default Interval | Default Max Shots |
-|---|---|---|---|---|---|---|---|---|
-| **P0** | Monitoring | 58.0 | 55.0 | 65.0 | 2.0 | - | - | - |
-| **P1** | Saturation | 68.0 | 55.0 | 70.0 | 1.8 | 45 s | 3 min | 10 |
-| **P2** | Maintenance | 65.0 | 62.0 | 68.0 | 2.0 | 20 s | 30 min | - |
-| **P3** | Night Dryback | 60.0 | 52.0 | 68.0 | 2.2 | 15 s | 1 h | 2 emergency |
+| Phase | Description | VWCTarget | VWCMin | VWCMax | ECTarget | Default Duration | Default Interval | Default Max Shots | Dryback % |
+|---|---|---|---|---|---|---|---|---|---|
+| **P0** | Monitoring | 58.0 | 55.0 | 65.0 | 2.0 | - | - | - | - |
+| **P1** | Saturation | 68.0 | 55.0 | 70.0 | 1.8 | 45 s | 3 min | 10 | - |
+| **P2** | Maintenance | 65.0 | 62.0 | 68.0 | 2.0 | 20 s | 60 s | 10 | 10% of VWCMax |
+| **P3** | Night Dryback | 60.0 | 52.0 | 68.0 | 2.2 | 15 s | 5 min | 5 | - |
 
 #### Automatic Mode Failsafe Guards
 
@@ -215,8 +215,8 @@ The CropSteering system operates in 4 phases that follow the natural day/night c
 |-------|------|--------------|---------|---------|
 | **P0** | Monitoring | ON only | Wait for dryback signal | No irrigation, monitor VWC |
 | **P1** | Saturation | ON only | Rapid block saturation | Multiple irrigation shots |
-| **P2** | Maintenance | ON only | Hold VWC level | Maintenance irrigation |
-| **P3** | Night Dryback | OFF only | Controlled dryback | Emergency irrigation only |
+| **P2** | Maintenance | ON only | Controlled day dryback from VWCMax, then refill to capacity | Irrigation when dryback % reached |
+| **P3** | Night Dryback | OFF only | Controlled dryback overnight | Emergency irrigation only |
 
 ### Complete Phase Transition Diagram
 
@@ -275,7 +275,7 @@ The CropSteering system operates in 4 phases that follow the natural day/night c
 | P1 | P2 | Stagnation detected (VWC not increasing after 3+ shots) |
 | P1 | P2 | Max irrigation attempts reached |
 | P1 | P3 | Lights OFF (interrupts saturation) |
-| P2 | P3 | Lights OFF |
+| P2 | P3 | Lights OFF or ≤1 hour before lights OFF (starts night dryback) |
 | P3 | P0 | Lights ON (new day begins) |
 
 ### Light-Based Phase Transitions
@@ -299,7 +299,7 @@ else:
 ```
 
 #### During Operation
-- **Light turns OFF** → Any phase (P0, P1, P2) immediately transitions to P3
+- **Light turns OFF (or within 1 hour of it)** → Any phase (P0, P1, P2) transitions to P3
 - **Light turns ON** → P3 transitions back to P0 (monitoring)
 
 ### Phase Details
@@ -344,11 +344,19 @@ else:
 - The system now warns about potential issues instead of saving incorrect calibration
 
 #### P2: Day Maintenance Phase
-- **Active during**: Lights ON
-- **Purpose**: Maintain VWC level during light period
-- **Actions**: Small maintenance irrigations when VWC drops below hold threshold
-- **Hold threshold**: VWCMax × 0.95 (configurable)
-- **On light OFF**: Transitions to P3
+- **Active during**: Lights ON (more than 1 hour before lights OFF)
+- **Purpose**: Allow a slight controlled dryback from container capacity, then refill to capacity without drain
+- **Actions**:
+  - Track container capacity from `VWCMax` (calibrated or preset)
+  - Wait until VWC drops by the configured dryback percentage (`Moisture_Dryback`, default 10%)
+  - Irrigate to `VWCMax` with early-stop safety (`max_vwc = VWCMax`) so no excess drain occurs
+  - Repeat until 1 hour before lights OFF
+- **Dryback trigger**: `VWCMax × (1 - Moisture_Dryback / 100)`
+- **Refill target**: `VWCMax` (container capacity)
+- **Safety**: Emergency irrigation still triggers if VWC falls below `VWCMin`
+- **On light OFF or ≤1h before light OFF**: Transitions to P3
+
+**Why VWCMax (and not VWCTarget) is used for the refill target**: VWCTarget is only a lower hold level. Refilling to VWCTarget would leave the medium underfilled and cause a constant deficit. VWCMax represents the calibrated container capacity — the level the block reaches after a full irrigation shot. By stopping early at VWCMax we avoid drain while still returning to full capacity.
 
 #### P3: Night Dryback Phase
 - **Active during**: Lights OFF only

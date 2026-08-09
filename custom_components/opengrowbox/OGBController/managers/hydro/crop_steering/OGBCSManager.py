@@ -327,6 +327,46 @@ class OGBCSManager:
             "VWCMin": vwc_min,
         }
 
+    def _get_p2_dryback_threshold(
+        self, vwc_max: float, vwc_min: float, dryback_percent: float
+    ) -> float:
+        """
+        P2 dryback trigger threshold: VWCMax reduced by the configured dryback
+        percentage. Never goes below the calibrated minimum.
+        """
+        threshold = vwc_max * (1.0 - dryback_percent / 100.0)
+        return max(threshold, vwc_min)
+
+    async def _irrigate_p2_to_capacity(
+        self, vwc: float, vwc_max_cap: float, shot_duration: int, phase: str = "p2"
+    ) -> bool:
+        """
+        Irrigate P2 back up to container capacity (VWCMax) without exceeding it.
+        Returns True if a shot was executed, False if it was skipped.
+        """
+        if vwc >= vwc_max_cap:
+            _LOGGER.debug(
+                f"{self.room} - P2: VWC {vwc:.1f}% already at/above capacity "
+                f"{vwc_max_cap:.1f}%, skipping irrigation"
+            )
+            return False
+
+        await self._irrigate(
+            duration=shot_duration,
+            target_vwc=vwc_max_cap,
+            max_vwc=vwc_max_cap,
+        )
+        return True
+
+    def _record_p2_irrigation(self, now: datetime):
+        """Record a P2 irrigation shot and update counters."""
+        p2_shot_count = self.data_store.getDeep("CropSteering.p2_shot_count") or 0
+        p2_shot_count = int(p2_shot_count) + 1
+        self.data_store.setDeep("CropSteering.p2_shot_count", p2_shot_count)
+        self.data_store.setDeep("CropSteering.p2_last_irrigation_time", now)
+        self.data_store.setDeep("CropSteering.p2_last_check_time", now)
+        return p2_shot_count
+
     def _record_sensor_reading(self, vwc: float):
         """Record VWC reading for jump/stuck detection."""
         from datetime import datetime
@@ -1438,14 +1478,83 @@ class OGBCSManager:
         except Exception:
             return None
 
-    def _get_calibration_snapshot(self) -> Dict[str, Any]:
-        """Structured calibration data for the frontend calibration cards."""
-        learned = self._load_learned_values()
+    def _get_active_phase_thresholds(self, phase: str) -> Dict[str, Any]:
+        """Return the active VWC/EC thresholds for the current phase and mode.
+
+        Includes the configured dryback percentage so the frontend can show the
+        current trigger (e.g. P2 dryback from VWCMax, P3 target dryback).
+        """
+        try:
+            active_mode = self.data_store.getDeep("CropSteering.ActiveMode") or "Automatic"
+            if isinstance(active_mode, str) and active_mode.startswith("Manual"):
+                settings = self._get_manual_phase_settings(phase)
+                return {
+                    "VWCMax": self._to_float_or_none(settings.get("VWCMax", {}).get("value")),
+                    "VWCMin": self._to_float_or_none(settings.get("VWCMin", {}).get("value")),
+                    "VWCTarget": self._to_float_or_none(settings.get("VWCTarget", {}).get("value")),
+                    "MoistureDryback": self._to_float_or_none(settings.get("MoistureDryBack", {}).get("value")),
+                }
+            preset = self._get_automatic_preset(phase)
+            safe = self._get_safe_vwc_bounds(preset)
+            return {
+                "VWCMax": safe.get("VWCMax"),
+                "VWCMin": safe.get("VWCMin"),
+                "VWCTarget": safe.get("VWCTarget"),
+                "MoistureDryback": float(preset.get("moisture_dryback", 10.0)),
+                "DrybackTargetPercent": float(preset.get("target_dryback_percent", 10.0)),
+                "MinDrybackPercent": float(preset.get("min_dryback_percent", 8.0)),
+                "MaxDrybackPercent": float(preset.get("max_dryback_percent", 12.0)),
+            }
+        except Exception as e:
+            _LOGGER.debug(f"{self.room} - Could not get active phase thresholds: {e}")
+            return {}
+
+    @staticmethod
+    def _to_float_or_none(value):
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    def _get_current_dryback_info(self, vwc: float, phase: str) -> Dict[str, Any]:
+        """Compute the current P3 dryback percentage relative to the night start VWC."""
+        if phase != "p3":
+            return {}
+        start = self.data_store.getDeep("CropSteering.startNightMoisture")
+        if start is None or float(start) <= 0:
+            return {}
+        start_f = float(start)
+        dryback = ((start_f - vwc) / start_f) * 100.0 if vwc is not None else 0.0
+        thresholds = self._get_active_phase_thresholds(phase)
         return {
-            "P1": {"VWCMax": self.data_store.getDeep("CropSteering.Calibration.p1.VWCMax")},
-            "P2": {"VWCMax": self.data_store.getDeep("CropSteering.Calibration.p2.VWCMax")},
-            "P3": {"VWCMin": self.data_store.getDeep("CropSteering.Calibration.p3.VWCMin")},
+            "drybackPercent": round(dryback, 1),
+            "startNightMoisture": round(start_f, 1),
+            "targetDrybackPercent": thresholds.get("DrybackTargetPercent", 10.0),
+            "minDrybackPercent": thresholds.get("MinDrybackPercent", 8.0),
+            "maxDrybackPercent": thresholds.get("MaxDrybackPercent", 12.0),
+        }
+
+    def _get_calibration_snapshot(self) -> Dict[str, Any]:
+        """Structured calibration data for the frontend calibration cards.
+
+        Falls back to the active phase thresholds when calibration has not been
+        completed yet, so the dashboard never shows empty cards before the first
+        auto-calibration cycle.
+        """
+        phase = self.data_store.getDeep("CropSteering.CropPhase") or "p0"
+        thresholds = self._get_active_phase_thresholds(phase)
+        learned = self._load_learned_values()
+        p1_max = self.data_store.getDeep("CropSteering.Calibration.p1.VWCMax")
+        p2_max = self.data_store.getDeep("CropSteering.Calibration.p2.VWCMax")
+        p3_min = self.data_store.getDeep("CropSteering.Calibration.p3.VWCMin")
+        return {
+            "P1": {"VWCMax": p1_max if p1_max is not None else thresholds.get("VWCMax")},
+            "P2": {"VWCMax": p2_max if p2_max is not None else thresholds.get("VWCMax")},
+            "P3": {"VWCMin": p3_min if p3_min is not None else thresholds.get("VWCMin")},
             "Learned": learned,
+            "Targets": thresholds,
         }
 
     def _build_cs_log(self, message: str, phase: Optional[str] = None, calibration: bool = False, **extra) -> Dict[str, Any]:
@@ -1491,6 +1600,10 @@ class OGBCSManager:
         ec_current = float(self.data_store.getDeep("CropSteering.ec_current") or 0)
 
         try:
+            thresholds = self._get_active_phase_thresholds(phase)
+            previous_vwc = self._to_float_or_none(
+                self.data_store.getDeep("CropSteering.lastIrrigationVWC")
+            )
             payload = {
                 "Name": self.room,
                 "Type": "CSSTATE",
@@ -1502,6 +1615,12 @@ class OGBCSManager:
                 "VWCTarget": round(float(target), 1) if target is not None else None,
                 "VWC": round(vwc_current, 1) if vwc_current > 0 else None,
                 "EC": round(ec_current, 2) if ec_current > 0 else None,
+                "VWCMax": thresholds.get("VWCMax"),
+                "VWCMin": thresholds.get("VWCMin"),
+                "MoistureDryback": thresholds.get("MoistureDryback"),
+                "DrybackTargetPercent": thresholds.get("DrybackTargetPercent"),
+                "PreviousVWC": round(previous_vwc, 1) if previous_vwc is not None else None,
+                "Dryback": self._get_current_dryback_info(vwc_current, phase),
                 "Calibration": self._get_calibration_snapshot(),
             }
             await self.event_manager.emit(
@@ -1558,6 +1677,10 @@ class OGBCSManager:
             target = self._get_active_vwc_target(phase)
             vwc_current = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
             ec_current = float(self.data_store.getDeep("CropSteering.ec_current") or 0)
+            thresholds = self._get_active_phase_thresholds(phase)
+            previous_vwc = self._to_float_or_none(
+                self.data_store.getDeep("CropSteering.lastIrrigationVWC")
+            )
 
             state = {
                 "mode": active_mode,
@@ -1567,6 +1690,12 @@ class OGBCSManager:
                 "VWCTarget": round(float(target), 1) if target is not None else None,
                 "VWC": round(vwc_current, 1) if vwc_current > 0 else None,
                 "EC": round(ec_current, 2) if ec_current > 0 else None,
+                "VWCMax": thresholds.get("VWCMax"),
+                "VWCMin": thresholds.get("VWCMin"),
+                "MoistureDryback": thresholds.get("MoistureDryback"),
+                "DrybackTargetPercent": thresholds.get("DrybackTargetPercent"),
+                "PreviousVWC": round(previous_vwc, 1) if previous_vwc is not None else None,
+                "Dryback": self._get_current_dryback_info(vwc_current, phase),
                 "Calibration": self._get_calibration_snapshot(),
             }
 
@@ -2440,6 +2569,7 @@ class OGBCSManager:
 
         # Reset per-cycle irrigation tracking for P2
         self._reset_irrigation_tracking()
+        self._reset_p2_state_tracking()
 
         # Transition to P2
         await self._set_crop_phase_and_update_selector("p2")
@@ -2465,67 +2595,73 @@ class OGBCSManager:
 
     async def _handle_phase_p2_auto(self, vwc, ec, is_light_on, preset):
         """
-        P2: Maintenance phase - Maintain level during light phase
-        Uses bulletproof preset values (no user settings).
+        P2: Day maintenance - allow a slight dryback from container capacity,
+        then irrigate back to capacity (VWCMax). Repeats until 1 hour before lights off.
+
+        The trigger is the configured moisture dryback percentage (Moisture_Dryback)
+        relative to VWCMax, not an arbitrary target level. This matches the principle:
+        "P2 - slight dryback of ~10-15%, then irrigate to container capacity without drain".
         """
-        # Get timing from bulletproof preset
         shot_duration = int(preset.get("irrigation_duration", 20))
-        check_interval_seconds = int(preset.get("irrigation_interval", 1800))
+        check_interval_seconds = int(preset.get("irrigation_interval", 60))
         max_shots = int(preset.get("max_cycles", 10))
 
-        # Get safe bounds (clamped by learned values and absolute limits)
         safe_bounds = self._get_safe_vwc_bounds(preset)
         vwc_max_cap = safe_bounds["VWCMax"]
         vwc_min = safe_bounds["VWCMin"]
-        target_vwc = safe_bounds["VWCTarget"]
 
-        # Use learned field capacity as target if available
-        learned_fc = self._load_learned_values()["field_capacity_vwc"]
-        if learned_fc is not None:
-            target_vwc = min(learned_fc, vwc_max_cap)
-            _LOGGER.debug(
-                f"{self.room} - P2: Using learned field capacity {learned_fc:.1f}% as target"
-            )
+        dryback_percent = float(preset.get("moisture_dryback", 10.0))
+        dryback_threshold = self._get_p2_dryback_threshold(
+            vwc_max_cap, vwc_min, dryback_percent
+        )
 
-        # Hold threshold: 95% of target, but never below min
-        hold_threshold = max(vwc_min, target_vwc * preset.get("hold_percentage", 0.95))
-
-        # === P2 State Tracking ===
         p2_last_check_time = self.data_store.getDeep("CropSteering.p2_last_check_time")
         p2_shot_count = self.data_store.getDeep("CropSteering.p2_shot_count") or 0
         now = datetime.now()
 
-        # Initialize on first entry into P2
         if p2_last_check_time is None:
             self.data_store.setDeep(
                 "CropSteering.p2_last_check_time",
-                now - timedelta(seconds=check_interval_seconds)  # Allow immediate first check
+                now - timedelta(seconds=check_interval_seconds)
             )
             p2_last_check_time = now - timedelta(seconds=check_interval_seconds)
 
-        # Check if it's time for P2 maintenance check
         time_since_last_check = (now - p2_last_check_time).total_seconds()
 
-        # === STAGE-CHECKER: Light OFF -> Switch to P3 immediately (don't wait for interval)
+        # === STAGE-CHECKER: Light OFF -> Switch to P3 immediately
         if not is_light_on:
             _LOGGER.debug(f"{self.room} - P2: Light OFF → Switching to P3")
             self._reset_p2_state_tracking()
             await self._set_crop_phase_and_update_selector("p3")
-            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+            self.data_store.setDeep("CropSteering.phaseStartTime", now)
             self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
             await self._log_phase_change(
-                "p2", "p3", f"Night begins - Starting VWC: {vwc:.1f}%"
+                "p2", "p3", f"Night begins - VWC: {vwc:.1f}%"
             )
             return
 
-        # === P2 EMERGENCY: If VWC drops below the calibrated minimum, bypass the regular
-        # check interval and irrigate immediately. This prevents the block from drying out
-        # while waiting for the next scheduled maintenance check.
+        # === STAGE-CHECKER: Within 1 hour of light off -> start night dryback
+        if self._is_near_light_off(buffer_minutes=60):
+            _LOGGER.debug(
+                f"{self.room} - P2: Lights off within 60 min → Switching to P3"
+            )
+            self._reset_p2_state_tracking()
+            await self._set_crop_phase_and_update_selector("p3")
+            self.data_store.setDeep("CropSteering.phaseStartTime", now)
+            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+            await self._log_phase_change(
+                "p2", "p3", f"Pre-night dryback - VWC: {vwc:.1f}%"
+            )
+            return
+
+        # === P2 EMERGENCY: VWC below calibrated minimum -> irrigate immediately
         emergency_level = max(self._ABSOLUTE_VWC_MIN, vwc_min)
         if vwc < emergency_level:
-            last_p2_irrigation = self.data_store.getDeep("CropSteering.p2_last_irrigation_time")
             emergency_interval = int(preset.get("emergency_interval", 300))
             max_emergency_shots = int(preset.get("max_emergency_shots", 5))
+            last_p2_irrigation = self.data_store.getDeep(
+                "CropSteering.p2_last_irrigation_time"
+            )
             if last_p2_irrigation and (now - last_p2_irrigation).total_seconds() < emergency_interval:
                 _LOGGER.debug(
                     f"{self.room} - P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% "
@@ -2545,90 +2681,83 @@ class OGBCSManager:
                     haEvent=True,
                 )
             else:
-                await self._irrigate(
-                    duration=shot_duration, target_vwc=target_vwc, max_vwc=vwc_max_cap
-                )
-                p2_shot_count += 1
-                self.data_store.setDeep("CropSteering.p2_shot_count", p2_shot_count)
-                self.data_store.setDeep("CropSteering.p2_last_irrigation_time", now)
-                # Update last check time too so the regular maintenance slot resets
-                self.data_store.setDeep("CropSteering.p2_last_check_time", now)
-                await self.event_manager.emit(
-                    "LogForClient",
-                    self._build_cs_log(
-                        f"P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% → Irrigation",
-                        phase="p2",
-                    ),
-                    haEvent=True,
-                )
-                _LOGGER.warning(
-                    f"{self.room} - P2 Emergency irrigation (VWC {vwc:.1f}% < {emergency_level:.1f}%)"
-                )
-            return
-
-        # Adaptive check interval: if VWC is already below the hold threshold, check
-        # more often so normal maintenance shots fire before VWC hits the emergency level.
-        effective_check_interval = check_interval_seconds
-        if vwc < hold_threshold:
-            effective_check_interval = min(check_interval_seconds, int(preset.get("emergency_interval", 300)))
-
-        if time_since_last_check >= effective_check_interval:
-            # Time for P2 check - update timestamp
-            self.data_store.setDeep("CropSteering.p2_last_check_time", now)
-
-            # Normal day maintenance
-            if vwc < hold_threshold:
-                # Check if we've reached max shots limit
-                if p2_shot_count >= max_shots:
-                    _LOGGER.debug(f"{self.room} - P2: Max shots reached ({max_shots}) - skipping irrigation")
+                if await self._irrigate_p2_to_capacity(vwc, vwc_max_cap, shot_duration):
+                    p2_shot_count = self._record_p2_irrigation(now)
                     await self.event_manager.emit(
                         "LogForClient",
                         self._build_cs_log(
-                            f"P2 Maintenance: Max shots reached ({max_shots})",
+                            f"P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% → Irrigation",
                             phase="p2",
                         ),
                         haEvent=True,
                     )
-                else:
-                    await self._irrigate(
-                        duration=shot_duration, target_vwc=target_vwc, max_vwc=vwc_max_cap
+                    _LOGGER.warning(
+                        f"{self.room} - P2 Emergency irrigation (VWC {vwc:.1f}% < {emergency_level:.1f}%)"
                     )
-                    p2_shot_count += 1
-                    self.data_store.setDeep("CropSteering.p2_shot_count", p2_shot_count)
-                    self.data_store.setDeep("CropSteering.p2_last_irrigation_time", now)
-                    # Learn field capacity from post-irrigation VWC (if stable-ish)
-                    post_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or vwc)
-                    if post_vwc > vwc_min:
-                        self._update_learned_field_capacity(post_vwc)
+            return
+
+        if time_since_last_check < check_interval_seconds:
+            # Too soon for a regular dryback check
+            return
+
+        # === P2 DRYBACK SHOT: VWC has dropped enough from capacity -> irrigate to capacity
+        if vwc <= dryback_threshold:
+            if p2_shot_count >= max_shots:
+                _LOGGER.debug(
+                    f"{self.room} - P2: Dryback reached ({vwc:.1f}% <= {dryback_threshold:.1f}%) "
+                    f"but max shots ({max_shots}) reached"
+                )
                 await self.event_manager.emit(
                     "LogForClient",
                     self._build_cs_log(
-                        f"P2 Maintenance: VWC {vwc:.1f}% < Hold {hold_threshold:.1f}% → Irrigation",
+                        f"P2 Dryback: Max shots reached ({max_shots}), VWC {vwc:.1f}%",
                         phase="p2",
                     ),
                     haEvent=True,
                 )
-                _LOGGER.debug(
-                    f"{self.room} - P2: Irrigated (VWC {vwc:.1f}% < {hold_threshold:.1f}%)"
-                )
             else:
-                # Debug: Show status in P2
-                _LOGGER.debug(
-                    f"{self.room} - P2 maintenance: VWC {vwc:.1f}% (hold at {hold_threshold:.1f}%, OK)"
+                irrigated = await self._irrigate_p2_to_capacity(
+                    vwc, vwc_max_cap, shot_duration
                 )
-                # Track post-irrigation peaks for calibration
-                p2_last_irrigation_time = self.data_store.getDeep("CropSteering.p2_last_irrigation_time")
-                if p2_last_irrigation_time:
-                    time_since_p2_irrigation = (now - p2_last_irrigation_time).total_seconds()
-                    if time_since_p2_irrigation <= check_interval_seconds * 2:
-                        await self._track_p2_vwc_peak(vwc)
-        else:
-            # Not time for check yet - log waiting status
-            time_until_next_check = check_interval_seconds - time_since_last_check
-            _LOGGER.debug(
-                f"{self.room} - P2: Waiting for next check, {time_until_next_check:.0f}s remaining "
-                f"(interval: {check_interval_seconds / 60:.0f}min)"
-            )
+                if irrigated:
+                    p2_shot_count = self._record_p2_irrigation(now)
+                    post_vwc = float(
+                        self.data_store.getDeep("CropSteering.vwc_current") or vwc
+                    )
+                    if post_vwc > vwc_min:
+                        self._update_learned_field_capacity(post_vwc)
+                    await self._track_p2_vwc_peak(post_vwc)
+                    await self.event_manager.emit(
+                        "LogForClient",
+                        self._build_cs_log(
+                            f"P2 Dryback: VWC {vwc:.1f}% ≤ {dryback_threshold:.1f}% "
+                            f"(dryback {dryback_percent:.0f}%) → Irrigation {p2_shot_count}/{max_shots}",
+                            phase="p2",
+                        ),
+                        haEvent=True,
+                    )
+                    _LOGGER.debug(
+                        f"{self.room} - P2: Irrigated to capacity (VWC {vwc:.1f}% → {post_vwc:.1f}%)"
+                    )
+                else:
+                    _LOGGER.debug(
+                        f"{self.room} - P2: VWC at capacity, no irrigation needed"
+                    )
+            return
+
+        # === P2 CALIBRATION: Track post-irrigation peaks while VWC is still high
+        p2_last_irrigation_time = self.data_store.getDeep(
+            "CropSteering.p2_last_irrigation_time"
+        )
+        if p2_last_irrigation_time:
+            time_since_p2_irrigation = (now - p2_last_irrigation_time).total_seconds()
+            if time_since_p2_irrigation <= check_interval_seconds * 2:
+                await self._track_p2_vwc_peak(vwc)
+
+        _LOGGER.debug(
+            f"{self.room} - P2: VWC {vwc:.1f}% (capacity {vwc_max_cap:.1f}%, "
+            f"dryback threshold {dryback_threshold:.1f}%, dryback {dryback_percent:.0f}%)"
+        )
 
     async def _track_p2_vwc_peak(self, vwc: float):
         """
@@ -2907,9 +3036,16 @@ class OGBCSManager:
         should exit so the manual runner restarts with the new phase).
         """
         if phase == "p2":
-            # Wie Automatic P2: bei Lights-Off zur Nacht-Dryback P3 wechseln.
+            # Wie Automatic P2: 1h vor Licht-Aus oder Lights-Off -> P3.
             if not self._is_lights_on():
                 _LOGGER.debug(f"{self.room} - Manual P2: Lights off, switching to P3")
+                await self._complete_manual_p2(vwc)
+                return True
+
+            if self._is_near_light_off(buffer_minutes=60):
+                _LOGGER.debug(
+                    f"{self.room} - Manual P2: Lights off within 60 min, switching to P3"
+                )
                 await self._complete_manual_p2(vwc)
                 return True
 
@@ -3093,6 +3229,98 @@ class OGBCSManager:
                             await asyncio.sleep(10)
                             continue
 
+                        # === P2: Dryback von VWCMax, dann wieder auf VWCMax giessen ===
+                        if phase == "p2":
+                            dryback_percent = float(
+                                settings.get("MoistureDryBack", {}).get("value", 10.0)
+                            )
+                            dryback_threshold = self._get_p2_dryback_threshold(
+                                vwc_max, vwc_min, dryback_percent
+                            )
+
+                            p2_check_interval = 60  # seconds
+                            p2_last_check = self.data_store.getDeep(
+                                "CropSteering.p2_last_check_time"
+                            )
+                            now = datetime.now()
+                            if p2_last_check is None:
+                                p2_last_check = now - timedelta(seconds=p2_check_interval)
+                                self.data_store.setDeep(
+                                    "CropSteering.p2_last_check_time", p2_last_check
+                                )
+
+                            time_since_check = (now - p2_last_check).total_seconds()
+                            if time_since_check >= p2_check_interval:
+                                self.data_store.setDeep(
+                                    "CropSteering.p2_last_check_time", now
+                                )
+
+                                if vwc <= dryback_threshold:
+                                    if shot_counter < shot_count:
+                                        irrigated = await self._irrigate_p2_to_capacity(
+                                            vwc, vwc_max, shot_duration
+                                        )
+                                        if irrigated:
+                                            shot_counter += 1
+                                            self.data_store.setDeep(
+                                                "CropSteering.shotCounter", shot_counter
+                                            )
+                                            self.data_store.setDeep(
+                                                "CropSteering.lastIrrigationTime", now
+                                            )
+                                            post_vwc = float(
+                                                self.data_store.getDeep(
+                                                    "CropSteering.vwc_current"
+                                                )
+                                                or vwc
+                                            )
+                                            if post_vwc > vwc_min:
+                                                self._update_learned_field_capacity(post_vwc)
+                                            await self._track_p2_vwc_peak(post_vwc)
+                                            await self.event_manager.emit(
+                                                "LogForClient",
+                                                self._build_cs_log(
+                                                    f"Manual P2 Dryback: VWC {vwc:.1f}% ≤ {dryback_threshold:.1f}% "
+                                                    f"(dryback {dryback_percent:.0f}%) → Shot {shot_counter}/{shot_count}",
+                                                    phase="p2",
+                                                ),
+                                                haEvent=True,
+                                            )
+                                            _LOGGER.debug(
+                                                f"{self.room} - Manual P2: Irrigated to capacity "
+                                                f"(VWC {vwc:.1f}% → {post_vwc:.1f}%)"
+                                            )
+                                    else:
+                                        _LOGGER.debug(
+                                            f"{self.room} - Manual P2: Dryback reached but max shots "
+                                            f"({shot_count}) reached"
+                                        )
+                                        await self.event_manager.emit(
+                                            "LogForClient",
+                                            self._build_cs_log(
+                                                f"Manual P2: Max shots reached ({shot_count}), VWC {vwc:.1f}%",
+                                                phase="p2",
+                                            ),
+                                            haEvent=True,
+                                        )
+                                else:
+                                    _LOGGER.debug(
+                                        f"{self.room} - Manual P2: VWC {vwc:.1f}% above dryback threshold "
+                                        f"{dryback_threshold:.1f}% (capacity {vwc_max:.1f}%, dryback {dryback_percent:.0f}%)"
+                                    )
+                                    last_irrigation = self.data_store.getDeep(
+                                        "CropSteering.lastIrrigationTime"
+                                    )
+                                    if last_irrigation:
+                                        time_since_irr = (
+                                            now - last_irrigation
+                                        ).total_seconds()
+                                        if time_since_irr <= p2_check_interval * 2:
+                                            await self._track_p2_vwc_peak(vwc)
+
+                            await asyncio.sleep(10)
+                            continue
+
                         # === Emergency irrigation (nur p1/p2) ===
                         if vwc and vwc_min > 0 and vwc < vwc_min * 0.9:
                             if shot_counter >= shot_count:
@@ -3257,6 +3485,7 @@ class OGBCSManager:
         user_vwc_max = p1_settings.get("VWCMax", {}).get("value") if p1_settings else None
 
         self._reset_p1_state_tracking()
+        self._reset_p2_state_tracking()
         self.data_store.setDeep("CropSteering.shotCounter", 0)
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
@@ -3310,8 +3539,10 @@ class OGBCSManager:
 
     async def _complete_manual_p2(self, vwc):
         """Complete P2 maintenance phase and transition to P3 (pre-lights-off dryback)."""
+        self._reset_p2_state_tracking()
         self.data_store.setDeep("CropSteering.shotCounter", 0)
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+        self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
 
         await self._set_crop_phase_and_update_selector("p3")
 
@@ -3517,6 +3748,7 @@ class OGBCSManager:
             post_sensor_data = await self._get_sensor_averages()
             post_vwc = post_sensor_data.get("vwc", 0) if post_sensor_data else 0
             self.data_store.setDeep("CropSteering.vwc_current", post_vwc)
+            self.data_store.setDeep("CropSteering.lastIrrigationVWC", post_vwc)
             post_ec = post_sensor_data.get("ec", 0) if post_sensor_data else 0
             self.data_store.setDeep("CropSteering.ec_current", post_ec)
             post_pore_ec = post_sensor_data.get("pore_ec", 0) if post_sensor_data else 0
