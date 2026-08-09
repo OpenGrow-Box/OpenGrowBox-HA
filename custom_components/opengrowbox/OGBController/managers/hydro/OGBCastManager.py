@@ -30,6 +30,7 @@ class OGBCastManager:
         # Use shared medium_manager if provided, otherwise create new one
         self.mediumManager = medium_manager if medium_manager else OGBMediumManager(hass, dataStore, eventManager, room)
         self.CropSteeringManager = OGBCSManager(hass, dataStore, eventManager, room, medium_manager=self.mediumManager)
+        self.CropSteeringManager.register_event_handlers()
         self.plantWateringManager = OGBPlantWateringManager(
             hass, dataStore, eventManager, room, self.mediumManager, self
         )

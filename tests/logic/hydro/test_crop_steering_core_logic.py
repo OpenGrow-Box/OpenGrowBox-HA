@@ -270,6 +270,285 @@ async def test_manual_phase_change_event_signals_running_cycle():
     assert manager._manual_phase_changed_event.is_set() is True
 
 
+@pytest.mark.asyncio
+async def test_manual_p0_transitions_to_p1_uses_own_vwc_min_in_window():
+    """Manual P0→P1 must use P0's own VWC_Min (like automatic), not P1's."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p0",
+                "Substrate": {
+                    "p0": {"VWC_Min": "50"},
+                    "p1": {"VWC_Min": "30"},  # must NOT be used for P0→P1
+                },
+            },
+        }
+    )
+    manager._is_in_irrigation_window = lambda: True
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p0")
+    transitioned = await manager._manual_phase_light_transition(
+        "p0", vwc=40.0, settings=settings
+    )
+
+    assert transitioned is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
+
+
+@pytest.mark.asyncio
+async def test_manual_p0_stays_in_p0_outside_irrigation_window():
+    """Manual P0→P1 must only happen inside the irrigation window (like automatic)."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p0",
+                "Substrate": {"p0": {"VWC_Min": "50"}},
+            },
+        }
+    )
+    manager._is_in_irrigation_window = lambda: False
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p0")
+    transitioned = await manager._manual_phase_light_transition(
+        "p0", vwc=40.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+@pytest.mark.asyncio
+async def test_manual_p0_transitions_to_p3_when_lights_off():
+    """Manual P0 at night must go to P3 (night dryback), like automatic."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": False},
+            "CropSteering": {"CropPhase": "p0"},
+        }
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p0")
+    transitioned = await manager._manual_phase_light_transition(
+        "p0", vwc=55.0, settings=settings
+    )
+
+    assert transitioned is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_manual_p2_transitions_to_p3_when_lights_off():
+    """Manual P2 at night must go to P3, like automatic."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": False},
+            "CropSteering": {"CropPhase": "p2"},
+        }
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p2")
+    transitioned = await manager._manual_phase_light_transition(
+        "p2", vwc=60.0, settings=settings
+    )
+
+    assert transitioned is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_manual_p2_stays_in_p2_when_lights_on():
+    """Manual P2 stays in P2 during the day."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {"CropPhase": "p2"},
+        }
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p2")
+    transitioned = await manager._manual_phase_light_transition(
+        "p2", vwc=60.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p2"
+
+
+def _manual_cycle_manager(initial=None, near_light_off=False):
+    """Build a manager whose _manual_cycle can run a single iteration."""
+    manager = _cs_manager(
+        initial
+        or {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {"CropPhase": "p1"},
+        }
+    )
+
+    async def _get_sensor_averages():
+        return {
+            "vwc": 55.0,
+            "ec": 1.0,
+            "pore_ec": 1.0,
+            "temperature": 25.0,
+            "bulk_ec": 1.0,
+        }
+
+    async def _failsafe(vwc, source):
+        return True, None
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._get_sensor_averages = _get_sensor_averages
+    manager._run_failsafe_checks = _failsafe
+    manager._record_sensor_reading = lambda vwc: None
+    manager._is_near_light_off = lambda buffer_minutes=120: near_light_off
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_manual_p1_transitions_to_p3_when_lights_off():
+    """Manual P1 must stop irrigating at night and go to P3 (like automatic)."""
+    manager = _manual_cycle_manager(
+        {
+            "isPlantDay": {"islightON": False},
+            "CropSteering": {"CropPhase": "p1"},
+        }
+    )
+
+    await manager._manual_cycle("p1")
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_manual_p1_transitions_to_p3_when_lights_near_off():
+    """Manual P1 must stop early when lights are about to turn off (2h buffer)."""
+    manager = _manual_cycle_manager(near_light_off=True)
+
+    await manager._manual_cycle("p1")
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_manual_p3_emergency_irrigation_when_vwc_too_low():
+    """Manual P3 must run conservative emergency irrigation at night, like automatic."""
+    manager = _cs_manager(
+        {
+            "CropSteering": {
+                "CropPhase": "p3",
+                "phaseStartTime": datetime.now() - timedelta(hours=6),
+                "Substrate": {"p3": {"VWC_Min": "52"}},
+            },
+        }
+    )
+    manager._ABSOLUTE_VWC_MIN = 5.0
+    manager._load_learned_values = lambda: {"min_dryback_vwc": None}
+
+    irrigated = []
+
+    async def _irrigate(duration=None, is_emergency=False, target_vwc=None, max_vwc=None):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+
+    settings = manager._get_manual_phase_settings("p3")
+    await manager._manual_p3_emergency(vwc=30.0, settings=settings)
+
+    assert irrigated == [15]  # duration capped at 15s
+    assert manager.data_store.getDeep("CropSteering.p3_emergency_count") == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_p3_no_emergency_when_vwc_ok():
+    manager = _cs_manager(
+        {
+            "CropSteering": {
+                "CropPhase": "p3",
+                "phaseStartTime": datetime.now() - timedelta(hours=6),
+                "Substrate": {"p3": {"VWC_Min": "52"}},
+            },
+        }
+    )
+    manager._ABSOLUTE_VWC_MIN = 5.0
+    manager._load_learned_values = lambda: {"min_dryback_vwc": None}
+
+    irrigated = []
+
+    async def _irrigate(duration=None, is_emergency=False, target_vwc=None, max_vwc=None):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+
+    settings = manager._get_manual_phase_settings("p3")
+    await manager._manual_p3_emergency(vwc=55.0, settings=settings)
+
+    assert irrigated == []
+
+
+@pytest.mark.asyncio
+async def test_manual_p3_waits_4h_before_emergency():
+    manager = _cs_manager(
+        {
+            "CropSteering": {
+                "CropPhase": "p3",
+                "phaseStartTime": datetime.now() - timedelta(minutes=30),
+                "Substrate": {"p3": {"VWC_Min": "52"}},
+            },
+        }
+    )
+    manager._ABSOLUTE_VWC_MIN = 5.0
+    manager._load_learned_values = lambda: {"min_dryback_vwc": None}
+
+    irrigated = []
+
+    async def _irrigate(duration=None, is_emergency=False, target_vwc=None, max_vwc=None):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+
+    settings = manager._get_manual_phase_settings("p3")
+    await manager._manual_p3_emergency(vwc=30.0, settings=settings)
+
+    assert irrigated == []
+    assert manager.data_store.getDeep("CropSteering.p3_emergency_count") in (None, 0)
+
+
 class FakeNotificator:
     def __init__(self):
         self.criticals = []
@@ -305,7 +584,7 @@ def test_bulletproof_preset_ignores_user_settings():
         }
     )
     manager.medium_type = "rockwool"
-    preset = manager._get_automatic_bulletproof_preset("p1")
+    preset =     manager._get_automatic_preset("p1")
     # Default plant stage is veg (+2% VWC modifier), so base values are shifted.
     # Raw p1 base: VWCMax=70, VWCTarget=68 -> shifted by +2.
     assert preset["VWCMax"] == 72.0

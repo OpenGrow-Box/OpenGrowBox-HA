@@ -109,6 +109,8 @@ class OGBCSConfigurationManager:
                 "MaxEC": 2.2,
                 "irrigation_duration": 20,
                 "irrigation_interval": 1800,  # 30 min between maintenance shots
+                "emergency_interval": 300,    # 5 min between emergency shots
+                "max_emergency_shots": 5,   # allow repeated emergency shots if needed
                 "check_light": True,
                 "trigger_condition": "light_off",
             },
@@ -128,8 +130,9 @@ class OGBCSConfigurationManager:
                 "ec_increase_step": 0.1,
                 "ec_decrease_step": 0.1,
                 "irrigation_duration": 15,
-                "max_emergency_shots": 2,  # Max 2 emergency irrigations per night
-                "irrigation_interval": 3600,  # 1 hour between P3 emergency shots
+                "emergency_interval": 300,    # 5 min between emergency shots
+                "max_emergency_shots": 5,    # allow repeated emergency shots per night
+                "irrigation_interval": 3600,  # 1 hour between P3 emergency shots (legacy)
                 "trigger_condition": "light_on",
             },
         }
