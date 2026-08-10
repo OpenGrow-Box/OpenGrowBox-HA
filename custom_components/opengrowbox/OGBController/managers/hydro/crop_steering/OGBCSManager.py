@@ -327,6 +327,27 @@ class OGBCSManager:
             "VWCMin": vwc_min,
         }
 
+    def _get_emergency_level(self, phase: str, preset: Dict[str, Any]) -> float:
+        """Compute the emergency VWC threshold for a phase.
+
+        A reading below this level is considered a dryout emergency and may
+        bypass sensor-stuck failsafes to force a rescue irrigation shot.
+        """
+        emergency_candidates = [self._ABSOLUTE_VWC_MIN]
+
+        if phase == "p2":
+            safe_bounds = self._get_safe_vwc_bounds(preset)
+            emergency_candidates.append(safe_bounds["VWCMin"])
+        elif phase == "p3":
+            emergency_candidates.append(preset.get("VWCMin", 0))
+            learned_min_dry = self._load_learned_values()["min_dryback_vwc"]
+            if learned_min_dry is not None:
+                emergency_candidates.append(learned_min_dry + 3.0)
+        else:
+            emergency_candidates.append(preset.get("VWCMin", 0))
+
+        return max(emergency_candidates)
+
     def _get_p2_dryback_threshold(
         self, vwc_max: float, vwc_min: float, dryback_percent: float
     ) -> float:
@@ -366,6 +387,18 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.p2_last_irrigation_time", now)
         self.data_store.setDeep("CropSteering.p2_last_check_time", now)
         return p2_shot_count
+
+    def _record_p2_emergency_irrigation(self, now: datetime):
+        """Record a P2 emergency irrigation shot and update counters.
+
+        Uses a separate counter so normal P2 dryback shots do not consume
+        the emergency budget and vice versa.
+        """
+        p2_emergency_count = self.data_store.getDeep("CropSteering.p2_emergency_shot_count") or 0
+        p2_emergency_count = int(p2_emergency_count) + 1
+        self.data_store.setDeep("CropSteering.p2_emergency_shot_count", p2_emergency_count)
+        self.data_store.setDeep("CropSteering.p2_last_emergency_time", now)
+        return p2_emergency_count
 
     def _record_sensor_reading(self, vwc: float):
         """Record VWC reading for jump/stuck detection."""
@@ -537,6 +570,85 @@ class OGBCSManager:
             )
 
         return False, reason
+
+    async def _run_dryout_override(
+        self, vwc: float, preset: Dict[str, Any], phase: str, reason: str
+    ) -> bool:
+        """Last-resort dryout override when the failsafe would otherwise block irrigation.
+
+        If the VWC is below the phase emergency threshold and the only active guard
+        is a sensor-stuck/invalid or dryout/ineffective guard, force a small emergency
+        irrigation shot instead of letting the plant sit dry. This uses the phase's
+        dedicated emergency counter, so it never consumes normal dryback shots.
+
+        Never bypasses flood_guard or max_runtime.
+        """
+        if reason not in ("sensor_invalid", "dryout_guard", "irrigation_ineffective"):
+            return False
+
+        if phase not in ("p2", "p3"):
+            return False
+
+        emergency_level = self._get_emergency_level(phase, preset)
+        if vwc >= emergency_level:
+            return False
+
+        if phase == "p2":
+            counter_key = "CropSteering.p2_emergency_shot_count"
+            last_time_key = "CropSteering.p2_last_emergency_time"
+            max_shots = int(preset.get("max_emergency_shots", 5))
+            shot_duration = int(preset.get("irrigation_duration", 20))
+        else:  # p3
+            counter_key = "CropSteering.p3_emergency_count"
+            last_time_key = "CropSteering.p3_last_emergency_time"
+            max_shots = int(preset.get("max_emergency_shots", 5))
+            shot_duration = int(preset.get("emergency_shot_duration", 15))
+
+        emergency_interval = int(preset.get("emergency_interval", 300))
+        now = datetime.now()
+
+        emergency_count = self.data_store.getDeep(counter_key) or 0
+        last_emergency_time = self.data_store.getDeep(last_time_key)
+        if last_emergency_time is None:
+            self.data_store.setDeep(
+                last_time_key, now - timedelta(seconds=emergency_interval)
+            )
+            last_emergency_time = now - timedelta(seconds=emergency_interval)
+
+        time_since_last_emergency = (now - last_emergency_time).total_seconds()
+
+        if emergency_count >= max_shots or time_since_last_emergency < emergency_interval:
+            _LOGGER.warning(
+                f"{self.room} - Dryout override: VWC {vwc:.1f}% < {emergency_level:.1f}% "
+                f"but limit reached ({emergency_count}/{max_shots}) or interval not elapsed"
+            )
+            return False
+
+        target_vwc = preset.get("VWCTarget", emergency_level + 5)
+        max_vwc = preset.get("VWCMax", emergency_level + 5)
+        await self._irrigate(
+            duration=shot_duration,
+            target_vwc=target_vwc,
+            max_vwc=max_vwc,
+        )
+
+        self.data_store.setDeep(counter_key, emergency_count + 1)
+        self.data_store.setDeep(last_time_key, now)
+
+        _LOGGER.warning(
+            f"{self.room} - {phase.upper()} Dryout override: Emergency irrigation Shot {emergency_count + 1}/{max_shots}: "
+            f"VWC {vwc:.1f}% < {emergency_level:.1f}% (duration {shot_duration}s, failsafe reason: {reason})"
+        )
+        await self.event_manager.emit(
+            "LogForClient",
+            self._build_cs_log(
+                f"{phase.upper()} Dryout override: Emergency irrigation Shot {emergency_count + 1}/{max_shots} "
+                f"(VWC {vwc:.1f}% < {emergency_level:.1f}%, duration {shot_duration}s, failsafe: {reason})",
+                phase=phase,
+            ),
+            haEvent=True,
+        )
+        return True
 
     async def _stop_all_irrigation(self, reason: str):
         """Turn off all drippers and reset irrigation tracking."""
@@ -1014,6 +1126,8 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.p2_last_check_time", None)
         self.data_store.setDeep("CropSteering.p2_shot_count", 0)
         self.data_store.setDeep("CropSteering.p2_last_irrigation_time", None)
+        self.data_store.setDeep("CropSteering.p2_emergency_shot_count", 0)
+        self.data_store.setDeep("CropSteering.p2_last_emergency_time", None)
 
     # ==================== MODE PARSING ====================
 
@@ -1458,6 +1572,36 @@ class OGBCSManager:
             "VWCMax": {"value": get_numeric_value("VWC_Max", "VWCMax", 70, as_int=False)},
             "VWCMin": {"value": get_numeric_value("VWC_Min", "VWCMin", 55, as_int=False)},
         }
+
+    def _flatten_manual_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert nested manual settings dict to flat automatic-style preset keys.
+
+        Shared helpers like _run_dryout_override expect the same flat key/value
+        shape that _get_automatic_preset returns.
+        """
+        preset = {}
+        for key in ("VWCMin", "VWCMax", "VWCTarget", "ECTarget"):
+            value = settings.get(key, {}).get("value")
+            if value is not None:
+                preset[key] = float(value)
+
+        shot_duration = settings.get("ShotDuration", {}).get("value")
+        if shot_duration is not None:
+            # Cap emergency rescue shots conservatively.
+            capped = min(float(shot_duration), 15.0)
+            preset["irrigation_duration"] = capped
+            preset["emergency_shot_duration"] = capped
+
+        shot_interval = settings.get("ShotIntervall", {}).get("value")
+        if shot_interval is not None:
+            # Emergency interval should be short; cap at 5 min (300 s).
+            preset["emergency_interval"] = min(int(float(shot_interval) * 60), 300)
+
+        shot_sum = settings.get("ShotSum", {}).get("value")
+        if shot_sum is not None:
+            preset["max_emergency_shots"] = int(shot_sum)
+
+        return preset
 
     def _get_active_vwc_target(self, phase: str) -> Optional[float]:
         """Return the effective VWC target for a phase based on the active mode.
@@ -2134,6 +2278,16 @@ class OGBCSManager:
                                 f"{self.room} - Automatic failsafe triggered: {reason}. "
                                 f"Skipping phase logic this cycle."
                             )
+
+                        # Dryout override: never let a stuck-sensor/ineffective failsafe
+                        # keep the medium below the emergency level without trying a rescue shot.
+                        override = await self._run_dryout_override(
+                            vwc, preset, current_phase, reason
+                        )
+                        if override:
+                            await asyncio.sleep(self.blockCheckIntervall)
+                            continue
+
                         await asyncio.sleep(self.blockCheckIntervall)
                         continue
 
@@ -2659,15 +2813,29 @@ class OGBCSManager:
         if vwc < emergency_level:
             emergency_interval = int(preset.get("emergency_interval", 300))
             max_emergency_shots = int(preset.get("max_emergency_shots", 5))
-            last_p2_irrigation = self.data_store.getDeep(
-                "CropSteering.p2_last_irrigation_time"
+            p2_emergency_count = (
+                self.data_store.getDeep("CropSteering.p2_emergency_shot_count") or 0
             )
-            if last_p2_irrigation and (now - last_p2_irrigation).total_seconds() < emergency_interval:
+            last_p2_emergency = self.data_store.getDeep(
+                "CropSteering.p2_last_emergency_time"
+            )
+            if last_p2_emergency is None:
+                self.data_store.setDeep(
+                    "CropSteering.p2_last_emergency_time",
+                    now - timedelta(seconds=emergency_interval),
+                )
+                last_p2_emergency = now - timedelta(seconds=emergency_interval)
+
+            time_since_last_emergency = (
+                now - last_p2_emergency
+            ).total_seconds()
+
+            if time_since_last_emergency < emergency_interval:
                 _LOGGER.debug(
                     f"{self.room} - P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% "
                     f"but emergency interval not elapsed yet"
                 )
-            elif p2_shot_count >= max_emergency_shots:
+            elif p2_emergency_count >= max_emergency_shots:
                 _LOGGER.warning(
                     f"{self.room} - P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% "
                     f"but max emergency shots ({max_emergency_shots}) reached"
@@ -2682,19 +2850,23 @@ class OGBCSManager:
                 )
             else:
                 if await self._irrigate_p2_to_capacity(vwc, vwc_max_cap, shot_duration):
-                    p2_shot_count = self._record_p2_irrigation(now)
+                    p2_emergency_count = self._record_p2_emergency_irrigation(now)
                     await self.event_manager.emit(
                         "LogForClient",
                         self._build_cs_log(
-                            f"P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% → Irrigation",
-                            phase="p2",
-                        ),
-                        haEvent=True,
-                    )
-                    _LOGGER.warning(
-                        f"{self.room} - P2 Emergency irrigation (VWC {vwc:.1f}% < {emergency_level:.1f}%)"
+                        f"P2 Emergency: VWC {vwc:.1f}% < {emergency_level:.1f}% → Irrigation Shot {p2_emergency_count}/{max_emergency_shots}",
+                        phase="p2",
+                    ),
+                    haEvent=True,
+                )
+                _LOGGER.warning(
+                    f"{self.room} - P2 Emergency irrigation Shot {p2_emergency_count}/{max_emergency_shots} "
+                    f"(VWC {vwc:.1f}% < {emergency_level:.1f}%)"
                     )
             return
+        else:
+            # VWC recovered above emergency level -> reset emergency counter for next crisis
+            self.data_store.setDeep("CropSteering.p2_emergency_shot_count", 0)
 
         if time_since_last_check < check_interval_seconds:
             # Too soon for a regular dryback check
@@ -2921,13 +3093,13 @@ class OGBCSManager:
                     await self.event_manager.emit(
                         "LogForClient",
                         self._build_cs_log(
-                            f"P3 CONSERVATIVE Emergency irrigation {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s)",
+                            f"P3 CONSERVATIVE Emergency irrigation Shot {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s)",
                             phase="p3",
                         ),
                         haEvent=True,
                     )
                     _LOGGER.warning(
-                        f"{self.room} - P3: CONSERVATIVE Emergency irrigation {p3_emergency_count + 1}/{max_emergency} "
+                        f"{self.room} - P3: CONSERVATIVE Emergency irrigation Shot {p3_emergency_count + 1}/{max_emergency} "
                         f"(VWC {vwc:.1f}% < {emergency_level:.1f}%, duration: {emergency_shot_duration}s)"
                     )
                 else:
@@ -3106,6 +3278,14 @@ class OGBCSManager:
                 self.data_store.setDeep("CropSteering.shotCounter", 0)
                 self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
+                # Reset per-run emergency counters so a fresh manual run has its full budget
+                if phase == "p2":
+                    self.data_store.setDeep("CropSteering.p2_emergency_shot_count", 0)
+                    self.data_store.setDeep("CropSteering.p2_last_emergency_time", None)
+                elif phase == "p3":
+                    self.data_store.setDeep("CropSteering.p3_emergency_count", 0)
+                    self.data_store.setDeep("CropSteering.p3_last_emergency_time", None)
+
                 _LOGGER.warning(f"{self.room} - Manual {phase}: {shot_count} shots every {shot_interval}min")
 
                 while True:
@@ -3136,6 +3316,19 @@ class OGBCSManager:
                                     f"{self.room} - Manual {phase} failsafe triggered: {reason}. "
                                     f"Skipping irrigation this cycle."
                                 )
+
+                            # Manual dryout override: never let a stuck/invalid sensor
+                            # keep the medium below emergency level without a rescue shot.
+                            override = await self._run_dryout_override(
+                                vwc,
+                                self._flatten_manual_settings(settings),
+                                phase,
+                                reason,
+                            )
+                            if override:
+                                await asyncio.sleep(10)
+                                continue
+
                             await asyncio.sleep(10)
                             continue
 
@@ -3639,13 +3832,13 @@ class OGBCSManager:
             await self.event_manager.emit(
                 "LogForClient",
                 self._build_cs_log(
-                    f"Manual P3 CONSERVATIVE Emergency irrigation {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s)",
+                    f"Manual P3 CONSERVATIVE Emergency irrigation Shot {p3_emergency_count + 1}/{max_emergency}: VWC {vwc:.1f}% < {emergency_level:.1f}% (duration: {emergency_shot_duration}s)",
                     phase="p3",
                 ),
                 haEvent=True,
             )
             _LOGGER.warning(
-                f"{self.room} - Manual P3: CONSERVATIVE Emergency irrigation {p3_emergency_count + 1}/{max_emergency} "
+                f"{self.room} - Manual P3: CONSERVATIVE Emergency irrigation Shot {p3_emergency_count + 1}/{max_emergency} "
                 f"(VWC {vwc:.1f}% < {emergency_level:.1f}%, duration: {emergency_shot_duration}s)"
             )
         else:
