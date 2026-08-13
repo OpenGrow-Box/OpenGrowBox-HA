@@ -54,6 +54,17 @@ class OGBAdvancedSensor:
 
 ## Crop Steering Modes
 
+The CropSteering mode is selected via the mode entity (`select.ogb_cropsteering_mode_*`).
+Available options:
+
+| Select option | Meaning |
+|---|---|
+| `Automatic` | Fully sensor-driven 4-phase system (preset-driven, see §3) |
+| `Manual-Transition` | Manual thresholds, but automatic light/VWC phase transitions + auto-calibration (the former single Manual behavior) |
+| `Manual` | Pure manual: user-selected phase is kept, scheduled shots only, no auto-transitions, no auto-calibration; failsafes warn (see §4) |
+| `Config` | Pre-configuration without activation (see §2) |
+| `Disabled` | Safety mode, all automation disabled (see §1) |
+
 ### 1. Disabled Mode
 - **Purpose**: Safety mode, all automation disabled
 - **Watering**: Manual or external systems only
@@ -121,15 +132,36 @@ All guards immediately stop irrigation and send a **critical push notification**
 | **Ineffective Irrigation** | 3+ shots without VWC rise ≥ 0.5% | Stop irrigation, notify (pump/empty/sensor issue) |
 | **Max Runtime** | Total pump runtime per cycle ≥ 5 min | Stop irrigation, notify |
 
-These guards are also active in **Manual** mode.
+These guards are active in **Automatic** mode (hard stop) and in **Manual-Transition** mode.
+In pure **Manual** mode the non-critical guards warn instead of block (see §4).
 
 
-### 4. Manual Mode (Manual-P0, P1, P2, P3)
-- **Logic**: User selects specific phase to run
-- **Control**: Forces system into selected phase
-- **Settings**: Uses **all user-configured settings** (VWC/EC targets, limits, timing) from `CropSteering.Substrate.{phase}.*` paths — **not** the automatic presets or plant-stage adjustments
-- **Use Case**: Testing, troubleshooting, specific interventions where you want full control over thresholds and timing
-- **Phase Change**: Manual phase changes via the CropPhase selector are immediately signalled to the running manual cycle (`CSManualPhaseChanged` event), so the new phase starts without waiting for the previous cycle's sleep/irrigation to finish
+### 4. Manual Mode (Manual vs Manual-Transition)
+Manual mode comes in two flavours, selected via the CropSteering mode entity:
+
+- **Manual** (pure, default): The user-selected phase is **kept**. No automatic phase transitions
+  and no auto-calibration (VWCMax/VWCMin). Irrigation only happens per the user's own timing
+  settings (`Shot_Duration_Sec`, `Shot_Intervall`, `Shot_Sum`) for the active phase. P0/P3 are
+  intentionally "dry" phases; pick P1/P2 to get scheduled shots. The shot counter resets after
+  a full cycle so P1 keeps irrigating instead of completing itself.
+- **Manual-Transition**: The previous behavior - the cycle still performs **automatic phase
+  transitions** based on light status and VWC conditions, just like Automatic mode (P1/P2 → P3
+  at lights-off, P3 → P0 at lights-on, P0 → P1 below VWCMin, P1 → P2 at target/cap/shot-count,
+  plus auto-calibration of VWCMax/VWCMin).
+
+- **Control**: Both flavours use **all user-configured settings** (VWC/EC targets, limits,
+  timing) from `CropSteering.Substrate.{phase}.*` paths — **not** the automatic presets or
+  plant-stage adjustments
+- **Use Case**: Pure Manual for full control / testing (the user decides everything, including
+  when to irrigate); Manual-Transition for "manual thresholds but safe light-based phase flow"
+- **Phase Change**: Manual phase changes via the CropPhase selector are immediately signalled to
+  the running manual cycle (`CSManualPhaseChanged` event), so the new phase starts without
+  waiting for the previous cycle's sleep/irrigation to finish
+
+> **Failsafes in Manual**: non-critical guards (sensor invalid/stuck, dryout, ineffective
+> irrigation) **warn** (one notification per reason, rate-limited) but do **not** block manual
+> irrigation — the user is in control. Only the hardware-critical guards (`flood_guard` VWC ≥ 90%,
+> `max_runtime` pump cap) still hard-stop in Manual mode.
 
 #### Manual Mode Phase Selection (v3.3)
 
@@ -177,12 +209,33 @@ def _extract_phase_from_value(self, value: str) -> str:
 ```
 
 **Manual Mode Flow:**
-1. User selects a phase in the CropPhase selector (e.g. "P1")
-2. System reads `CropSteering.CropPhase` from DataStore
-3. Phase extraction converts "P1" → "p1"
-4. `_crop_steering_phase()` emits `CSManualPhaseChanged` event
-5. `_run_manual_mode()` cancels the current phase cycle and restarts with the new phase immediately
-6. Manual cycle runs with all user settings for that phase
+1. User selects a mode in the CropSteering mode selector: `Manual` (pure) or `Manual-Transition`
+2. User selects a phase in the CropPhase selector (e.g. "P1")
+3. System reads `CropSteering.CropPhase` from DataStore
+4. Phase extraction converts "P1" → "p1"
+5. `_crop_steering_phase()` emits `CSManualPhaseChanged` event
+6. `_run_manual_mode()` cancels the current phase cycle and restarts with the new phase immediately
+7. Manual cycle runs with all user settings for that phase
+8. In **Manual-Transition** mode the cycle additionally evaluates the same light/VWC triggers as
+   Automatic mode and auto-transitions when conditions are met (P1 → P2 at target VWC, P1/P2 → P3
+   at lights off, ...). In pure **Manual** mode this step is skipped entirely.
+
+#### Manual Mode Phase Auto-Transitions (Manual-Transition only)
+
+In **Manual-Transition** mode the selected phase is only the starting point. The manager monitors the same safety/light/VWC triggers as Automatic mode and switches phases automatically to protect the plants:
+
+| From | To | Trigger Condition | Notes |
+|------|-----|-------------------|-------|
+| **P0** | **P1** | Lights ON and VWC < P0 `VWCMin` (inside irrigation window) | Uses user P0 thresholds |
+| **P0** | **P3** | Lights OFF | Same as Automatic mode |
+| **P1** | **P2** | VWC ≥ P1 `VWCTarget` | User target reached |
+| **P1** | **P2** | VWC ≥ P1 `VWCMax` | User max cap reached |
+| **P1** | **P2** | Max irrigation attempts (`Shot_Sum`) reached | Same as Automatic mode |
+| **P1** | **P3** | Lights OFF or ≤ 2 hours before lights OFF | Prevents night irrigation |
+| **P2** | **P3** | Lights OFF or ≤ 1 hour before lights OFF | Same as Automatic mode |
+| **P3** | **P0** | Lights ON | New day begins |
+
+**Why this matters**: You can still force a specific phase for testing or troubleshooting, but the system will not keep irrigating at night or stay stuck in a phase that the plant/environment conditions have already left.
 
 ## Phase System
 
@@ -301,6 +354,9 @@ else:
 #### During Operation
 - **Light turns OFF (or within 1 hour of it)** → Any phase (P0, P1, P2) transitions to P3
 - **Light turns ON** → P3 transitions back to P0 (monitoring)
+- These light-driven transitions apply to **Automatic** mode and **Manual-Transition** mode.
+  In pure **Manual** mode the user-selected phase is **kept** — no automatic light/VWC transitions
+  happen; the cycle only irrigates per the user's timing settings (see §4).
 
 ### Phase Details
 
@@ -511,7 +567,7 @@ class OGBCSCalibrationManager:
     - Sensor stabilization monitoring
     - Multiple reading averaging (6 readings)
     - Timeout handling
-    - Persistent storage of calibrated values
+    - Storage of calibrated values (runtime; persistence pending)
     - Real irrigation via callback to OGBCSManager._irrigate()
     """
 
@@ -541,7 +597,7 @@ class OGBCSCalibrationManager:
 
 #### Calibration Data Persistence
 
-Calibration values are stored in the DataStore and persisted to disk:
+Calibration values are stored in the runtime DataStore under `CropSteering.Calibration`:
 
 ```python
 # Storage structure in CropSteering.Calibration
@@ -557,11 +613,17 @@ Calibration values are stored in the DataStore and persisted to disk:
 }
 ```
 
-**Important**: Calibration values are now persisted across HA restarts.
+> **Known limitation**: `CropSteering` is currently **runtime-only** — calibration values are
+> **lost on HA restart** (the `CropSteering` subtree is in `IGNORED_STATE_KEYS` and not written
+> to the state file). Persistence across restarts is a known open item.
 
 #### Auto-Calibration During Regular Operation
 
 The system automatically calibrates VWC values during normal operation across multiple phases:
+
+> **Mode note**: Auto-calibration runs only in **Automatic** mode and **Manual-Transition** mode.
+> In pure **Manual** mode there is **no** auto-calibration — the user is in control and must
+> calibrate manually via `cs_calibrate max` / `cs_calibrate min`.
 
 | Phase | Value | Method | Conditions |
 |-------|-------|--------|------------|
@@ -985,30 +1047,6 @@ User values are validated by `_is_valid_user_value()` which accepts any parseabl
 - `Shot_Duration=0` → allowed (skips irrigation shot)
 - `None` / empty string / unparseable → rejected, falls back to default
 
-#### Automatic Mode Timing Settings (v3.3)
-
-In Automatic mode, the system reads **timing values directly from user settings** for the phase handlers, while the full preset (including VWC/EC thresholds) is loaded and adjusted separately.
-
-```python
-def _get_automatic_timing_settings(self, phase: str) -> Dict[str, Any]:
-    """Get USER timing settings for Automatic Mode.
-
-    Reads Duration/Interval/ShotSum from user settings.
-    These values are read directly for the phase handlers; the full preset
-    (including any user overrides for VWC/EC thresholds) is passed separately.
-
-    Args:
-        phase: Phase identifier (p0, p1, p2, p3)
-
-    Returns:
-        Dictionary with timing settings as proper numeric types
-    """
-    # Reads from CropSteering.Substrate.{phase}.Shot_Duration_Sec
-    # Reads from CropSteering.Substrate.{phase}.Shot_Intervall
-    # Reads from CropSteering.Substrate.{phase}.Shot_Sum
-    # Converts minutes to seconds, validates ranges
-```
-
 **Automatic Mode Logic:**
 - **Timing**: User settings override defaults; if not set, preset defaults are used
 - **VWC/EC Thresholds**: User settings override defaults; base preset values are then adjusted by medium offset + plant phase/week modifier
@@ -1356,10 +1394,10 @@ $ cs_calibrate -h
 ### Key Features ✅ **FULLY IMPLEMENTED**
 
 - **4-Phase Automatic Mode**: P0-P3 with intelligent transitions
-- **Manual Mode**: User-configurable timing per phase
+- **Manual Mode**: Two flavours via mode selector - `Manual` (pure: user keeps the selected phase, only scheduled shots, failsafes warn) and `Manual-Transition` (previous behavior: manual thresholds + automatic light/VWC phase transitions). Both use user-configurable timing per phase
 - **Medium-Specific Adjustments**: Rockwool, coco, soil, perlite, aero, water
 - **Growth Phase Optimization**: Vegetative vs generative watering strategies (driven by `plantStage`)
-- **VWC Calibration**: Dedicated CalibrationManager with persistence
+- **VWC Calibration**: Dedicated CalibrationManager (auto in Automatic/Manual-Transition, manual via `cs_calibrate`)
 - **Auto-Calibration P1**: VWCMax via stagnation detection during saturation
 - **Auto-Calibration P2**: VWCMax via post-irrigation peak tracking
 - **Auto-Calibration P3**: VWCMin via night dryback minimum observation
@@ -1370,7 +1408,7 @@ $ cs_calibrate -h
 - **Irrigation Validation**: Effectiveness monitoring and anomaly detection
 - **Emergency Systems**: Safety irrigation and dryback protection
 - **AI Learning Integration**: Sensor data collection for analytics
-- **Calibration Persistence**: Values survive HA restarts
+- **Calibration Persistence**: Runtime-only (lost on HA restart) — known open item
 
 ### Integration Points ✅ **CONNECTED**
 
@@ -1380,13 +1418,29 @@ $ cs_calibrate -h
 - **HA Entities**: Controls pumps, valves, sensors
 - **Event System**: Emits irrigation events for monitoring
 - **Console Manager**: Exposes `cs_calibrate` and `cs_status` commands
-- **DataStore**: Persistent calibration storage
+- **DataStore**: Calibration storage (runtime; persistence pending)
 
 ---
 
-**Last Updated**: August 8, 2026
-**Version**: 3.5 (Phase Transition Fixes, Manual Mode Responsiveness)
+**Last Updated**: August 13, 2026
+**Version**: 3.8 (Docs: Modes & Calibration Corrections)
 **Status**: ✅ **PRODUCTION READY**
+
+### Changelog v3.8 (August 13, 2026)
+- **Fixed**: Documentation corrected to match the Manual/Manual-Transition implementation:
+  - Mode overview now lists all select options (`Automatic`, `Manual-Transition`, `Manual`, `Config`, `Disabled`)
+  - Light-driven phase transitions documented as **Automatic + Manual-Transition only** (pure Manual keeps the selected phase)
+  - Auto-calibration documented as **Automatic + Manual-Transition only** (pure Manual calibrates manually via `cs_calibrate`)
+  - **Corrected false persistence claims**: VWC calibration values are **runtime-only** and **lost on HA restart** (`CropSteering` excluded from the persisted state file). Persistence is a known open item.
+
+### Changelog v3.7 (August 13, 2026)
+- **Added**: New mode `Manual` (pure): user-selected phase is kept, **no** automatic transitions and **no** auto-calibration. The cycle only irrigates per the user's timing settings (P0/P3 stay dry, P1/P2 shoot on schedule; P1 shot counter resets after a full cycle).
+- **Added**: New mode `Manual-Transition` = previous Manual behavior (automatic light/VWC/shot-based phase transitions + auto-calibration).
+- **Changed**: In pure `Manual` mode non-critical failsafe guards (sensor invalid/stuck, dryout, ineffective irrigation) now **warn** (rate-limited notification) instead of silently blocking irrigation. Only `flood_guard` (VWC ≥ 90%) and `max_runtime` (pump cap) hard-stop.
+- **Fixed**: Restored `_run_manual_mode()` which had been left orphaned as dead code (Manual mode crashed with `AttributeError`).
+
+### Changelog v3.6 (August 12, 2026)
+- **Updated**: Manual mode documentation to reflect that P0–P3 phases now auto-transition based on light status and VWC conditions, just like Automatic mode. The user-selected phase is only the starting phase; the system will not irrigate at night or stay stuck in a completed phase.
 
 ### Changelog v3.5 (August 8, 2026)
 - **Fixed**: P0 → P1 automatic transition was unreachable due to indentation bug in `_handle_phase_p0_auto()`
@@ -1415,7 +1469,6 @@ $ cs_calibrate -h
 - **Fixed**: Pump filtering bug - `_get_drippers()` now filters by "dripper" keyword to exclude pumpcloner
 - **Added**: Automatic mode user timing settings - Duration/Interval/ShotSum now use user values instead of hardcoded presets
 - **Added**: Phase extraction helper methods `_extract_phase_from_mode()` and `_extract_phase_from_value()`
-- **Added**: Automatic timing settings method `_get_automatic_timing_settings()` for user-configurable timing
 - **Fixed**: Indentation and syntax errors in `_irrigate()` method try/catch blocks
 - **Improved**: Better logging for user timing values vs preset VWC/EC values in Automatic mode
 

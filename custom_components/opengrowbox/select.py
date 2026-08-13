@@ -361,7 +361,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"OGB_CropSteering_Mode_{coordinator.room_name}",
             coordinator.room_name,
             coordinator,
-            options=["Automatic", "Manual", "Config", "Disabled"],
+            options=["Automatic", "Manual-Transition", "Manual", "Config", "Disabled"],
             initial_value="Disabled",
         ),
         CustomSelect(

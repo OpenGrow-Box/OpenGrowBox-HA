@@ -47,6 +47,9 @@ PRESERVED_STATE_KEYS = {
     
     # Energy consumption data (daily/weekly/monthly tracking)
     "Energy",
+
+    # Crop Steering (nur Calibration + Learned - siehe _extract_persisted_crop_steering)
+    "CropSteering",
 }
 
 # Keys die NIEMALS aus State File geladen werden (Code-Defaults)
@@ -67,7 +70,8 @@ IGNORED_STATE_KEYS = {
     "plantStages",
     
     # Hydro-Settings (werden durch HA Entities restored)
-    "Hydro", "CropSteering",
+    # NOTE: CropSteering wird persistiert (nur Calibration + Learned), siehe PRESERVED_STATE_KEYS
+    "Hydro",
     
     # Control Options (werden durch HA Entities restored)
     "controlOptions",
@@ -84,9 +88,70 @@ IGNORED_STATE_KEYS = {
 }
 
 
+CROP_STEERING_CALIBRATION_PHASES = ("p1", "p2", "p3")
+CROP_STEERING_LEARNED_KEYS = (
+    "max_saturation_vwc",
+    "field_capacity_vwc",
+    "min_dryback_vwc",
+    "saturation_samples",
+    "dryback_samples",
+)
+
+
+def _extract_persisted_crop_steering(cs: Any) -> Dict[str, Any]:
+    """Reduce a full CropSteering subtree to the persistable parts.
+
+    Only Calibration (VWCMax/VWCMin per phase + LastRun) and Learned VWC
+    bounds survive restarts. All runtime state (Mode, shotCounter, current
+    VWC/EC, phase start times, phase config trees) is restored via HA
+    entities or code defaults and must not be persisted.
+    """
+    if not isinstance(cs, dict):
+        return {}
+
+    result = {}
+
+    cal = cs.get("Calibration")
+    if isinstance(cal, dict):
+        clean_cal = {}
+        for phase in CROP_STEERING_CALIBRATION_PHASES:
+            p = cal.get(phase)
+            if not isinstance(p, dict):
+                continue
+            clean_phase = {}
+            for key in ("VWCMax", "VWCMin"):
+                value = p.get(key)
+                if value is not None:
+                    try:
+                        fvalue = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if fvalue > 0:
+                        clean_phase[key] = fvalue
+            if p.get("timestamp") is not None:
+                clean_phase["timestamp"] = p["timestamp"]
+            if clean_phase:
+                clean_cal[phase] = clean_phase
+        if cal.get("LastRun") is not None:
+            clean_cal["LastRun"] = cal["LastRun"]
+        if clean_cal:
+            result["Calibration"] = clean_cal
+
+    learned = cs.get("Learned")
+    if isinstance(learned, dict):
+        clean_learned = {}
+        for key in CROP_STEERING_LEARNED_KEYS:
+            if learned.get(key) is not None:
+                clean_learned[key] = learned[key]
+        if clean_learned:
+            result["Learned"] = clean_learned
+
+    return result
+
+
 def _is_corrupted_tuple_string(value: Any) -> bool:
     """Detect if a value is a corrupted tuple string.
-    
+
     Corrupted tuples look like: "('(', \"'\", '(', \"'\", ',', ..."
     These are created when:
     1. A tuple (5.5, 6.5) is converted to string "(5.5, 6.5)"
@@ -356,6 +421,13 @@ class OGBDSManager:
                     _LOGGER.warning(f"[{self.room}] '{key}' is not in PRESERVED_STATE_KEYS - ignoring from state file")
                     continue
                 
+                if key == "CropSteering":
+                    # Only restore Calibration + Learned, discard runtime subtree
+                    value = _extract_persisted_crop_steering(value)
+                    if not value:
+                        _LOGGER.debug(f"[{self.room}] No persistable CropSteering data in state file - keeping defaults")
+                        continue
+                
                 self.data_store.set(key, value)
                 loaded_count += 1
             
@@ -531,6 +603,12 @@ class OGBDSManager:
             pv.setdefault("daily_snapshot_time", "09:00")
             pv.setdefault("capture_at_night", False)
             state["plantsView"] = pv
+        
+        # Reduce CropSteering to persistable parts (Calibration + Learned)
+        if "CropSteering" in state:
+            state["CropSteering"] = _extract_persisted_crop_steering(state["CropSteering"])
+            if not state["CropSteering"]:
+                state.pop("CropSteering", None)
         
         return state
 

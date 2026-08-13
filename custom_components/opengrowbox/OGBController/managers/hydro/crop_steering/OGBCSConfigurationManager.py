@@ -24,6 +24,8 @@ class CSMode(Enum):
     DISABLED = "Disabled"
     CONFIG = "Config"
     AUTOMATIC = "Automatic"
+    MANUAL = "Manual"
+    MANUAL_TRANSITION = "Manual-Transition"
     MANUAL_P0 = "Manual-p0"
     MANUAL_P1 = "Manual-p1"
     MANUAL_P2 = "Manual-p2"
@@ -111,6 +113,7 @@ class OGBCSConfigurationManager:
                 "MaxEC": 2.2,
                 "irrigation_duration": 20,
                 "irrigation_interval": 60,  # min check interval between dryback shots
+                "emergency_threshold": 0.50,  # 50% of VWCMin = dryout emergency threshold
                 "emergency_interval": 300,    # 5 min between emergency shots
                 "max_emergency_shots": 5,   # allow repeated emergency shots if needed
                 "check_light": True,
@@ -125,7 +128,7 @@ class OGBCSConfigurationManager:
                 "target_dryback_percent": 10.0,
                 "min_dryback_percent": 8.0,
                 "max_dryback_percent": 12.0,
-                "emergency_threshold": 0.85,  # 85% of VWCMin = emergency
+                "emergency_threshold": 0.50,  # 50% of VWCMin = dryout emergency threshold
                 "ECTarget": 2.2,
                 "MinEC": 2.0,
                 "MaxEC": 2.5,

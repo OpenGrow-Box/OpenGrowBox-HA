@@ -76,6 +76,9 @@ class OGBCSManager:
         # Periodic state heartbeat tracking
         self._last_state_heartbeat_time = None
 
+        # Track phase in automatic cycle to reset per-phase counters on entry
+        self._last_automatic_phase = None
+
         # Manual phase change signalling - allows immediate restart of manual cycle
         self._manual_phase_changed_event = asyncio.Event()
 
@@ -91,6 +94,18 @@ class OGBCSManager:
         )
         self.event_manager.on("MediumChange", self._on_medium_change)
         self.event_manager.on("CSManualPhaseChanged", self._on_manual_phase_changed)
+
+    def register_event_handlers(self):
+        """Register internal and HA event handlers for dashboard state snapshots."""
+        # Avoid duplicate registration if called multiple times.
+        if getattr(self, "_cs_event_handlers_registered", False):
+            return
+        self._cs_event_handlers_registered = True
+        self.event_manager.on("LogForClient", self._on_log_for_client_event)
+        self.hass.bus.async_listen(self.REQUEST_EVENT, self._handle_request_state)
+        _LOGGER.debug(f"{self.room} - Crop steering event handlers registered")
+
+
 
     # ==================== MEDIUM SYNC ====================
 
@@ -215,6 +230,7 @@ class OGBCSManager:
         self._last_irrigation_vwc = None
         self._notification_cooldowns = {}
         self._failsafe_stop = None  # {"reason": str, "source": str} once a failsafe latched
+        self._manual_failsafe_warnings = {}  # reason -> last warning time (manual warn-not-block)
 
     def _load_learned_values(self) -> Dict[str, Any]:
         """Load learned VWC bounds from DataStore (persisted across restarts)."""
@@ -332,19 +348,30 @@ class OGBCSManager:
 
         A reading below this level is considered a dryout emergency and may
         bypass sensor-stuck failsafes to force a rescue irrigation shot.
+        The threshold is a fraction of the phase's configured VWCMin so that
+        normal dryback is never mistaken for an emergency.
         """
         emergency_candidates = [self._ABSOLUTE_VWC_MIN]
+        threshold_factor = float(preset.get("emergency_threshold", 0.5))
+        if not (0.0 < threshold_factor <= 1.0):
+            threshold_factor = 0.5
 
         if phase == "p2":
             safe_bounds = self._get_safe_vwc_bounds(preset)
-            emergency_candidates.append(safe_bounds["VWCMin"])
+            vwc_min = safe_bounds.get("VWCMin")
+            if vwc_min is not None and vwc_min > 0:
+                emergency_candidates.append(vwc_min * threshold_factor)
         elif phase == "p3":
-            emergency_candidates.append(preset.get("VWCMin", 0))
+            vwc_min = preset.get("VWCMin")
+            if vwc_min is not None and vwc_min > 0:
+                emergency_candidates.append(vwc_min * threshold_factor)
             learned_min_dry = self._load_learned_values()["min_dryback_vwc"]
             if learned_min_dry is not None:
                 emergency_candidates.append(learned_min_dry + 3.0)
         else:
-            emergency_candidates.append(preset.get("VWCMin", 0))
+            vwc_min = preset.get("VWCMin")
+            if vwc_min is not None and vwc_min > 0:
+                emergency_candidates.append(vwc_min * threshold_factor)
 
         return max(emergency_candidates)
 
@@ -571,6 +598,35 @@ class OGBCSManager:
 
         return False, reason
 
+    async def _warn_manual_failsafe(self, reason: str, vwc: float, phase: str):
+        """Warn about a non-critical failsafe in manual mode WITHOUT blocking irrigation.
+
+        Rate-limited: one notification per reason per cooldown window, so the
+        user is informed but not spammed while manual irrigation keeps running.
+        """
+        now = datetime.now()
+        cooldown_seconds = 30 * 60  # 30 minutes
+        if not hasattr(self, "_manual_failsafe_warnings"):
+            self._manual_failsafe_warnings = {}
+        last = self._manual_failsafe_warnings.get(reason)
+        if last is not None and (now - last).total_seconds() < cooldown_seconds:
+            return
+        self._manual_failsafe_warnings[reason] = now
+
+        messages = {
+            "sensor_invalid": "Sensor value invalid/stuck - manual irrigation continues anyway (you decide).",
+            "dryout_guard": f"VWC {vwc:.1f}% is at/below the absolute minimum - manual irrigation continues anyway.",
+            "irrigation_ineffective": "Irrigation seems ineffective (VWC not rising) - manual irrigation continues anyway.",
+        }
+        message = messages.get(
+            reason, f"Failsafe condition '{reason}' detected - manual irrigation continues anyway."
+        )
+        _LOGGER.warning(f"{self.room} - Manual {phase}: {message}")
+        await self._send_critical_notification(
+            f"OGB {self.room}: CropSteering Manual Warning",
+            f"{message}\n\nMode: Manual\nIrrigation is NOT stopped - you are in control.",
+        )
+
     async def _run_dryout_override(
         self, vwc: float, preset: Dict[str, Any], phase: str, reason: str
     ) -> bool:
@@ -657,31 +713,6 @@ class OGBCSManager:
         self._reset_irrigation_tracking()
 
     # ==================== CALIBRATION RESET ====================
-
-    async def reset_calibration(self, phase: str = None):
-        """Reset calibration values to force re-calibration.
-        
-        Args:
-            phase: Optional phase to reset (p0, p1, p2, p3). If None, resets all.
-        """
-        phases_to_reset = [phase] if phase else ["p0", "p1", "p2", "p3"]
-        
-        for p in phases_to_reset:
-            # Clear calibration values
-            self.data_store.setDeep(f"CropSteering.Calibration.{p}.VWCMax", None)
-            self.data_store.setDeep(f"CropSteering.Calibration.{p}.VWCMin", None)
-            self.data_store.setDeep(f"CropSteering.Calibration.{p}.timestamp", None)
-            _LOGGER.warning(f"{self.room} - Reset calibration for phase {p}")
-        
-        await self.event_manager.emit(
-            "LogForClient",
-            {
-                "Name": self.room,
-                "Type": "CSLOG",
-                "Message": f"Calibration reset for phases: {', '.join(phases_to_reset)}",
-            },
-            haEvent=True,
-        )
     
     def debug_dump_cropsteering_config(self):
         """Dump all CropSteering config from DataStore for debugging."""
@@ -794,37 +825,6 @@ class OGBCSManager:
             )
         except Exception as e:
             _LOGGER.warning(f"{self.room} - Failed to update phase selector to {phase_lower}: {e}")
-
-    async def _sync_adjusted_presets_to_entities(self, plant_phase: str, gen_week: int):
-        """
-        Write the final adjusted preset values back to HA number entities,
-        so the UI shows what thresholds are actually active.
-        Only fires HA service calls when values change (tracked by old values).
-        """
-        if not self.hass:
-            return
-
-        params = [
-            ("VWCTarget", "vwc_target"),
-            ("VWCMin", "vwc_min"),
-            ("VWCMax", "vwc_max"),
-            ("ECTarget", "ec_target"),
-        ]
-        for phase in ("p0", "p1", "p2", "p3"):
-            preset = self._get_adjusted_preset(phase, plant_phase, gen_week)
-            for key, ent_suffix in params:
-                val = preset.get(key)
-                if val is not None:
-                    entity_id = f"number.ogb_cropsteering_{phase}_{ent_suffix}_{self.room.lower()}"
-                    try:
-                        await self.hass.services.async_call(
-                            domain="number",
-                            service="set_value",
-                            service_data={"entity_id": entity_id, "value": float(val)},
-                            blocking=True,
-                        )
-                    except Exception:
-                        pass
 
     # ==================== ENTRY POINT ====================
     async def handle_mode_change(self, data):
@@ -1087,10 +1087,6 @@ class OGBCSManager:
         await self._turn_off_all_drippers()
         _LOGGER.debug(f"{self.room} - FORCE STOP COMPLETE: All CS operations stopped")
 
-    async def handle_stop(self, event=None):
-        """Stop handler for external stop events"""
-        await self.stop_all_operations()
-
     def _reset_p1_state_tracking(self):
         """Reset P1 state tracking variables.
         
@@ -1146,7 +1142,12 @@ class OGBCSManager:
             return CSMode.DISABLED
         elif "Config" in cropMode:
             return CSMode.CONFIG
+        elif "Manual-Transition" in cropMode:
+            # Phase-steering with automatic transitions (previous manual behavior).
+            return CSMode.MANUAL_TRANSITION
         elif "Manual" in cropMode:
+            # Pure manual: no automatic transitions. Phase comes from the
+            # Phases selector (CropSteering.CropPhase).
             # First check if phase is in the mode string (e.g., "Manual-p1")
             for phase in ["p0", "p1", "p2", "p3"]:
                 if phase in cropMode.lower():
@@ -1164,6 +1165,18 @@ class OGBCSManager:
         return CSMode.DISABLED
 
     # ==================== SENSOR DATA ====================
+
+    def _use_auto_transitions(self) -> bool:
+        """
+        True when Manual mode should use automatic phase transitions.
+
+        Checks the RAW ActiveMode string: only "Manual-Transition" enables the
+        automatic light/VWC/shot transitions (previous manual behavior).
+        Pure "Manual" (and any legacy "Manual-pX" string) stays user-driven:
+        the selected phase is kept, no automatic transitions, no auto-calibration.
+        """
+        mode = self.data_store.getDeep("CropSteering.ActiveMode") or ""
+        return "Manual-Transition" in str(mode)
 
     async def _get_sensor_averages(self) -> Optional[Dict[str, Any]]:
         """
@@ -1464,58 +1477,6 @@ class OGBCSManager:
             )
             _LOGGER.error(f"{self.room} - No dripper devices available for Crop-Steering mode")
 
-    def _get_automatic_timing_settings(self, phase: str) -> Dict[str, Any]:
-        """
-        Get USER timing settings for Automatic Mode.
-        
-        Reads Duration/Interval/ShotSum from user settings.
-        These values are read directly for the phase handlers; the full preset
-        (including any user overrides for VWC/EC thresholds) is passed separately.
-        
-        Args:
-            phase: Phase identifier (p0, p1, p2, p3)
-            
-        Returns:
-            Dictionary with timing settings as proper numeric types
-        """
-        def get_timing_value(path: str, default: float, as_int: bool = False):
-            """Get timing value with proper type conversion."""
-            val = self.data_store.getDeep(path)
-            if val is not None:
-                try:
-                    numeric_val = float(val)
-                    return int(numeric_val) if as_int else numeric_val
-                except (ValueError, TypeError):
-                    pass
-            return default
-        
-        settings = {
-            "ShotDuration": get_timing_value(
-                f"CropSteering.Substrate.{phase}.Shot_Duration_Sec",
-                30.0,  # Default 30 seconds
-                as_int=True
-            ),
-            "ShotIntervall": get_timing_value(
-                f"CropSteering.Substrate.{phase}.Shot_Intervall",
-                60.0,  # Default 60 minutes
-                as_int=False
-            ),
-            "ShotSum": get_timing_value(
-                f"CropSteering.Substrate.{phase}.Shot_Sum",
-                5,  # Default 5 shots
-                as_int=True
-            )
-        }
-        
-        _LOGGER.debug(
-            f"{self.room} - Automatic timing settings for {phase}: "
-            f"Duration={settings['ShotDuration']}s, "
-            f"Interval={settings['ShotIntervall']}min, "
-            f"Count={settings['ShotSum']}"
-        )
-        
-        return settings
-
     def _get_manual_phase_settings(self, phase):
         """
         Get USER settings for Manual Mode.
@@ -1662,6 +1623,27 @@ class OGBCSManager:
         except (ValueError, TypeError):
             return None
 
+    def _compute_dryback_percent(self, start_night, vwc) -> float:
+        """Compute the relative moisture loss from the night-start VWC.
+
+        Clamped to the physically possible range 0-100%. A negative value
+        (moisture rose above the night start, e.g. due to irrigation) is
+        reported as 0 instead of an absurd negative percentage.
+        """
+        if not start_night:
+            return 0.0
+        if vwc is None:
+            return 0.0
+        try:
+            start_f = float(start_night)
+            vwc_f = float(vwc)
+        except (TypeError, ValueError):
+            return 0.0
+        if start_f <= 0:
+            return 0.0
+        dryback = ((start_f - vwc_f) / start_f) * 100.0
+        return max(0.0, min(dryback, 100.0))
+
     def _get_current_dryback_info(self, vwc: float, phase: str) -> Dict[str, Any]:
         """Compute the current P3 dryback percentage relative to the night start VWC."""
         if phase != "p3":
@@ -1670,7 +1652,7 @@ class OGBCSManager:
         if start is None or float(start) <= 0:
             return {}
         start_f = float(start)
-        dryback = ((start_f - vwc) / start_f) * 100.0 if vwc is not None else 0.0
+        dryback = self._compute_dryback_percent(start_f, vwc)
         thresholds = self._get_active_phase_thresholds(phase)
         return {
             "drybackPercent": round(dryback, 1),
@@ -1774,16 +1756,6 @@ class OGBCSManager:
             _LOGGER.debug(
                 f"{self.room} - State heartbeat emit error (non-critical): {e}"
             )
-
-    def register_event_handlers(self):
-        """Register internal and HA event handlers for dashboard state snapshots."""
-        # Avoid duplicate registration if called multiple times.
-        if getattr(self, "_cs_event_handlers_registered", False):
-            return
-        self._cs_event_handlers_registered = True
-        self.event_manager.on("LogForClient", self._on_log_for_client_event)
-        self.hass.bus.async_listen(self.REQUEST_EVENT, self._handle_request_state)
-        _LOGGER.debug(f"{self.room} - Crop steering event handlers registered")
 
     def _on_log_for_client_event(self, payload):
         """Capture recent LogForClient events so they can be replayed on dashboard load."""
@@ -1914,9 +1886,6 @@ class OGBCSManager:
             )
 
     # ==================== AUTOMATIC MODE ====================
-
-
-
     async def _determine_initial_phase(self):
         """
         Intelligente Bestimmung der Start-Phase basierend auf:
@@ -2096,46 +2065,6 @@ class OGBCSManager:
         
         return in_window
 
-    def _is_near_light_off(self, buffer_minutes=120):
-        """Check if lights will turn off soon.
-        
-        Args:
-            buffer_minutes: Minutes before light off to check (default 120 = 2h)
-            
-        Returns:
-            bool: True if lights turn off within buffer period
-        """
-        try:
-            light_off_time_str = self.data_store.getDeep("isPlantDay.lightOffTime")
-            if not light_off_time_str:
-                return False
-            
-            # Parse light off time
-            try:
-                light_off = datetime.strptime(light_off_time_str, "%H:%M:%S").time()
-            except ValueError:
-                light_off = datetime.strptime(light_off_time_str, "%H:%M").time()
-            
-            now = datetime.now()
-            today = now.date()
-            
-            # Create datetime for light off today
-            light_off_dt = datetime.combine(today, light_off)
-            
-            # Check if light off is in the future today
-            if light_off_dt <= now:
-                # Light off already passed, check tomorrow
-                light_off_dt += timedelta(days=1)
-            
-            # Calculate time until light off
-            time_until_off = (light_off_dt - now).total_seconds() / 60  # minutes
-            
-            return time_until_off <= buffer_minutes
-            
-        except Exception as e:
-            _LOGGER.error(f"{self.room} - Error checking light off time: {e}")
-            return False
-
     def _get_plant_info_from_medium(self) -> tuple:
         """
         Get plant phase and week from room-level plantStage (authoritative).
@@ -2261,6 +2190,28 @@ class OGBCSManager:
                     vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
                     ec = float(self.data_store.getDeep("CropSteering.ec_current") or 0)
 
+                    is_light_on = self._is_lights_on()
+
+                    # Light-based phase transitions are independent of VWC sensor
+                    # readings and must run even if a failsafe is latched, otherwise
+                    # the cycle could stay stuck in the wrong phase (e.g. P3 at day).
+                    light_transition = await self._check_forced_light_phase_transition(
+                        current_phase, is_light_on, vwc
+                    )
+                    if light_transition:
+                        await asyncio.sleep(self.blockCheckIntervall)
+                        continue
+
+                    # Reset per-phase emergency counters when entering a phase.
+                    # This prevents stale counters (e.g. from a previous night or a
+                    # restart) from blocking rescue irrigation in the new phase.
+                    if current_phase != self._last_automatic_phase:
+                        if current_phase == "p2":
+                            self._reset_p2_state_tracking()
+                        elif current_phase == "p3":
+                            self._reset_p3_state_tracking()
+                        self._last_automatic_phase = current_phase
+
                     # Record sensor reading for jump/stuck detection
                     self._record_sensor_reading(vwc)
 
@@ -2290,8 +2241,6 @@ class OGBCSManager:
 
                         await asyncio.sleep(self.blockCheckIntervall)
                         continue
-
-                    is_light_on = self._is_lights_on()
 
                     if vwc == 0:
                         _LOGGER.debug(f"{self.room} - Automatic: No VWC data yet, waiting...")
@@ -2746,7 +2695,6 @@ class OGBCSManager:
             f"{self.room} - P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%, success={success}"
         )
 
-
     async def _handle_phase_p2_auto(self, vwc, ec, is_light_on, preset):
         """
         P2: Day maintenance - allow a slight dryback from container capacity,
@@ -2809,7 +2757,10 @@ class OGBCSManager:
             return
 
         # === P2 EMERGENCY: VWC below calibrated minimum -> irrigate immediately
-        emergency_level = max(self._ABSOLUTE_VWC_MIN, vwc_min)
+        threshold_factor = float(preset.get("emergency_threshold", 0.5))
+        if not (0.0 < threshold_factor <= 1.0):
+            threshold_factor = 0.5
+        emergency_level = max(self._ABSOLUTE_VWC_MIN, vwc_min * threshold_factor)
         if vwc < emergency_level:
             emergency_interval = int(preset.get("emergency_interval", 300))
             max_emergency_shots = int(preset.get("max_emergency_shots", 5))
@@ -2992,9 +2943,7 @@ class OGBCSManager:
                 )
 
             target_dryback = preset.get("target_dryback_percent", 10.0)
-            current_dryback = (
-                ((start_night - vwc) / start_night) * 100 if start_night else 0
-            )
+            current_dryback = self._compute_dryback_percent(start_night, vwc)
 
             _LOGGER.debug(
                 f"{self.room} - P3: Dryback {current_dryback:.1f}% (target {target_dryback:.1f}%, start {start_night:.1f}%, current {vwc:.1f}%)"
@@ -3047,10 +2996,15 @@ class OGBCSManager:
             vwc_min = safe_bounds["VWCMin"]
             learned_min_dry = self._load_learned_values()["min_dryback_vwc"]
 
-            # Emergency level: highest of hard min, learned min + safety margin, preset min
+            # Emergency level: highest of hard min, learned min + safety margin,
+            # and a fraction of the phase VWCMin so normal dryback is not treated
+            # as an emergency (which would waste the nightly emergency shot budget).
+            threshold_factor = float(preset.get("emergency_threshold", 0.5))
+            if not (0.0 < threshold_factor <= 1.0):
+                threshold_factor = 0.5
             emergency_candidates = [self._ABSOLUTE_VWC_MIN]
-            if vwc_min is not None:
-                emergency_candidates.append(vwc_min)
+            if vwc_min is not None and vwc_min > 0:
+                emergency_candidates.append(vwc_min * threshold_factor)
             if learned_min_dry is not None:
                 emergency_candidates.append(learned_min_dry + 3.0)
             emergency_level = max(emergency_candidates)
@@ -3109,9 +3063,7 @@ class OGBCSManager:
         else:
             # STAGE-CHECKER: Light is on -> Back to P0
             start_night = self.data_store.getDeep("CropSteering.startNightMoisture")
-            current_dryback = (
-                ((start_night - vwc) / start_night) * 100 if start_night else 0
-            )
+            current_dryback = self._compute_dryback_percent(start_night, vwc)
             night_start_time = self.data_store.getDeep("CropSteering.phaseStartTime")
 
             _LOGGER.debug(
@@ -3162,6 +3114,57 @@ class OGBCSManager:
                 f"Day starts - Final VWC: {vwc:.1f}%, Dryback: {current_dryback:.1f}%",
             )
 
+    async def _check_forced_light_phase_transition(
+        self, current_phase: str, is_light_on: bool, vwc: float
+    ) -> bool:
+        """Force light-based phase transitions even when the sensor is invalid.
+
+        The normal phase handlers already perform these transitions, but they are
+        skipped when a failsafe is latched. If the sensor gets stuck at a critical
+        VWC (e.g. 8%) the cycle must still leave P3 when the lights turn on, and
+        must enter P3 when the lights turn off, so the next day can start fresh.
+        This method only transitions; it never irrigates.
+        """
+        now = datetime.now()
+
+        if current_phase == "p3" and is_light_on:
+            _LOGGER.warning(
+                f"{self.room} - Forced light transition: P3 → P0 (lights ON, sensor may be invalid)"
+            )
+            self._reset_p3_state_tracking()
+            await self._set_crop_phase_and_update_selector("p0")
+            self.data_store.setDeep("CropSteering.startNightMoisture", None)
+            await self._log_phase_change(
+                "p3",
+                "p0",
+                f"Lights ON - forced transition from night dryback (VWC: {vwc:.1f}%)",
+            )
+            return True
+
+        if current_phase in ("p0", "p1", "p2") and not is_light_on:
+            _LOGGER.warning(
+                f"{self.room} - Forced light transition: {current_phase.upper()} → P3 (lights OFF, sensor may be invalid)"
+            )
+            if current_phase == "p1":
+                self.data_store.setDeep("CropSteering.p1_start_vwc", None)
+                self.data_store.setDeep("CropSteering.p1_irrigation_count", 0)
+                self.data_store.setDeep("CropSteering.p1_last_vwc", None)
+                self.data_store.setDeep("CropSteering.p1_last_irrigation_time", None)
+            elif current_phase == "p2":
+                self._reset_p2_state_tracking()
+
+            await self._set_crop_phase_and_update_selector("p3")
+            self.data_store.setDeep("CropSteering.phaseStartTime", now)
+            self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+            await self._log_phase_change(
+                current_phase,
+                "p3",
+                f"Lights OFF - forced transition to night dryback (VWC: {vwc:.1f}%)",
+            )
+            return True
+
+        return False
+
     # ==================== MANUAL MODE ====================
 
     async def _run_manual_mode(self):
@@ -3204,9 +3207,15 @@ class OGBCSManager:
         """
         Check manual-phase light/dryback transitions for P0/P2/P3.
 
+        Only active in Manual-Transition mode. In pure Manual mode the
+        user-selected phase is kept - no automatic transitions.
+
         Returns True if a phase transition was performed (the calling cycle
         should exit so the manual runner restarts with the new phase).
         """
+        if not self._use_auto_transitions():
+            return False
+
         if phase == "p2":
             # Wie Automatic P2: 1h vor Licht-Aus oder Lights-Off -> P3.
             if not self._is_lights_on():
@@ -3303,34 +3312,22 @@ class OGBCSManager:
                         await self._emit_state_heartbeat()
 
                         self._record_sensor_reading(vwc)
-                        failsafe_latched = self._failsafe_stop is not None
-                        safe, reason = await self._run_failsafe_checks(vwc, source="manual")
-                        if not safe:
-                            if failsafe_latched:
-                                _LOGGER.debug(
-                                    f"{self.room} - Manual {phase} failsafe still active: {reason}. "
-                                    f"Skipping irrigation this cycle."
-                                )
+                        failsafe_reason = self._evaluate_failsafe_condition(vwc)
+                        if failsafe_reason is not None:
+                            if failsafe_reason in ("flood_guard", "max_runtime"):
+                                # Hardware-critical guards stay hard stops even in manual.
+                                safe, _ = await self._run_failsafe_checks(vwc, source="manual")
+                                if not safe:
+                                    _LOGGER.warning(
+                                        f"{self.room} - Manual {phase} critical failsafe: {failsafe_reason}. "
+                                        f"Stopping irrigation."
+                                    )
+                                    await asyncio.sleep(10)
+                                    continue
                             else:
-                                _LOGGER.warning(
-                                    f"{self.room} - Manual {phase} failsafe triggered: {reason}. "
-                                    f"Skipping irrigation this cycle."
-                                )
-
-                            # Manual dryout override: never let a stuck/invalid sensor
-                            # keep the medium below emergency level without a rescue shot.
-                            override = await self._run_dryout_override(
-                                vwc,
-                                self._flatten_manual_settings(settings),
-                                phase,
-                                reason,
-                            )
-                            if override:
-                                await asyncio.sleep(10)
-                                continue
-
-                            await asyncio.sleep(10)
-                            continue
+                                # Non-critical guards warn but do NOT block manual irrigation:
+                                # the user decides, not the failsafe.
+                                await self._warn_manual_failsafe(failsafe_reason, vwc, phase)
 
                         current_phase = self.data_store.getDeep("CropSteering.CropPhase") or phase
                         if current_phase != phase:
@@ -3359,55 +3356,58 @@ class OGBCSManager:
 
                         # ==================================================
                         # === Phase-spezifische Auto-Transition-Logik ===
+                        # (nur in Manual-Transition aktiv - reines Manual
+                        # behält die vom User gewählte Phase.)
                         # ==================================================
-                        if phase == "p1":
-                            # Wie Automatic P1: bei Lights-Off oder kurz vor
-                            # Lights-Off zur Nacht-Dryback P3 wechseln (keine
-                            # nächtliche Bewässerung mehr).
-                            if not self._is_lights_on():
-                                _LOGGER.warning(
-                                    f"{self.room} - Manual P1: Lights off, switching to P3 night dryback"
-                                )
-                                await self._complete_manual_p1_to_p3(vwc)
-                                return
+                        if self._use_auto_transitions():
+                            if phase == "p1":
+                                # Wie Automatic P1: bei Lights-Off oder kurz vor
+                                # Lights-Off zur Nacht-Dryback P3 wechseln (keine
+                                # nächtliche Bewässerung mehr).
+                                if not self._is_lights_on():
+                                    _LOGGER.warning(
+                                        f"{self.room} - Manual P1: Lights off, switching to P3 night dryback"
+                                    )
+                                    await self._complete_manual_p1_to_p3(vwc)
+                                    return
 
-                            if self._is_near_light_off(buffer_minutes=120):
-                                _LOGGER.warning(
-                                    f"{self.room} - Manual P1: Lights off soon, switching to P3 early dryback"
-                                )
-                                await self._complete_manual_p1_to_p3(vwc)
-                                return
+                                if self._is_near_light_off(buffer_minutes=120):
+                                    _LOGGER.warning(
+                                        f"{self.room} - Manual P1: Lights off soon, switching to P3 early dryback"
+                                    )
+                                    await self._complete_manual_p1_to_p3(vwc)
+                                    return
 
-                            if vwc_target > 0 and vwc >= vwc_target:
-                                _LOGGER.warning(
-                                    f"{self.room} - Manual P1: Target VWC reached "
-                                    f"{vwc:.1f}% >= {vwc_target:.1f}%, switching to P2"
-                                )
-                                await self._complete_manual_p1(vwc, vwc_target)
-                                return
+                                if vwc_target > 0 and vwc >= vwc_target:
+                                    _LOGGER.warning(
+                                        f"{self.room} - Manual P1: Target VWC reached "
+                                        f"{vwc:.1f}% >= {vwc_target:.1f}%, switching to P2"
+                                    )
+                                    await self._complete_manual_p1(vwc, vwc_target)
+                                    return
 
-                            if vwc_max > 0 and vwc >= vwc_max:
-                                _LOGGER.warning(
-                                    f"{self.room} - Manual P1: VWC at/above max cap "
-                                    f"{vwc:.1f}% >= {vwc_max:.1f}%, switching to P2"
-                                )
-                                await self._complete_manual_p1(vwc, vwc_target)
-                                return
+                                if vwc_max > 0 and vwc >= vwc_max:
+                                    _LOGGER.warning(
+                                        f"{self.room} - Manual P1: VWC at/above max cap "
+                                        f"{vwc:.1f}% >= {vwc_max:.1f}%, switching to P2"
+                                    )
+                                    await self._complete_manual_p1(vwc, vwc_target)
+                                    return
 
-                            if shot_counter >= shot_count:
-                                _LOGGER.warning(
-                                    f"{self.room} - Manual P1: Max shots reached "
-                                    f"({shot_counter}/{shot_count}), switching to P2"
-                                )
-                                await self._complete_manual_p1(vwc, vwc_target)
-                                return
+                                if shot_counter >= shot_count:
+                                    _LOGGER.warning(
+                                        f"{self.room} - Manual P1: Max shots reached "
+                                        f"({shot_counter}/{shot_count}), switching to P2"
+                                    )
+                                    await self._complete_manual_p1(vwc, vwc_target)
+                                    return
 
-                        elif phase in ("p0", "p2", "p3"):
-                            # Licht-/Dryback-Übergänge: P0→P3, P0→P1, P2→P3, P3→P0
-                            if await self._manual_phase_light_transition(
-                                phase, vwc, settings
-                            ):
-                                return
+                            elif phase in ("p0", "p2", "p3"):
+                                # Licht-/Dryback-Übergänge: P0→P3, P0→P1, P2→P3, P3→P0
+                                if await self._manual_phase_light_transition(
+                                    phase, vwc, settings
+                                ):
+                                    return
 
                         # P0: reine Dryback-Phase, keine Bewässerung.
                         if phase == "p0":
@@ -3593,7 +3593,7 @@ class OGBCSManager:
                                     haEvent=True,
                                 )
 
-                                if phase == "p1" and vwc_target > 0:
+                                if phase == "p1" and vwc_target > 0 and self._use_auto_transitions():
                                     current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
                                     if current_vwc >= vwc_target:
                                         await self._complete_manual_p1(current_vwc, vwc_target)
@@ -3602,8 +3602,10 @@ class OGBCSManager:
                                         await self._complete_manual_p1(current_vwc, vwc_target)
                                         return
 
-                        # Reset counter after full cycle (nur P2 - P1/P0/P3 haben eigene Transition-Logik).
-                        if phase == "p2" and shot_counter >= shot_count:
+                        # Reset counter after full cycle.
+                        # In Manual-Transition hat P1 eigene Transition-Logik,
+                        # in reinem Manual muss P1 (wie P2) den Zähler zurücksetzen.
+                        if phase in ("p1", "p2") and shot_counter >= shot_count:
                             phase_start = self.data_store.getDeep("CropSteering.phaseStartTime")
                             if phase_start:
                                 elapsed = (now - phase_start).total_seconds() / 60
@@ -4020,15 +4022,6 @@ class OGBCSManager:
         # Here the actual EC adjustment would take place via fertilizer dosing
         # TODO: Integration with Nutrient-System
 
-    async def _adjust_ec_to_target(self, target_ec, increase=True):
-        """EC adjustment for Manual Mode"""
-        direction = "increase" if increase else "decrease"
-        await self.event_manager.emit(
-            "LogForClient",
-            f"CropSteering: Adjusting EC {direction} towards {target_ec}",
-            haEvent=True,
-        )
-
     # ==================== STOP & CLEANUP ====================
 
     async def stop_all_operations(self):
@@ -4058,6 +4051,48 @@ class OGBCSManager:
                 await self.event_manager.emit("PumpAction", pumpAction)
             except Exception as e:
                 _LOGGER.error(f"Error turning off {dev_id}: {e}")
+
+
+    def _is_near_light_off(self, buffer_minutes=120):
+        """Check if lights will turn off soon.
+        
+        Args:
+            buffer_minutes: Minutes before light off to check (default 120 = 2h)
+            
+        Returns:
+            bool: True if lights turn off within buffer period
+        """
+        try:
+            light_off_time_str = self.data_store.getDeep("isPlantDay.lightOffTime")
+            if not light_off_time_str:
+                return False
+            
+            # Parse light off time
+            try:
+                light_off = datetime.strptime(light_off_time_str, "%H:%M:%S").time()
+            except ValueError:
+                light_off = datetime.strptime(light_off_time_str, "%H:%M").time()
+            
+            now = datetime.now()
+            today = now.date()
+            
+            # Create datetime for light off today
+            light_off_dt = datetime.combine(today, light_off)
+            
+            # Check if light off is in the future today
+            if light_off_dt <= now:
+                # Light off already passed, check tomorrow
+                light_off_dt += timedelta(days=1)
+            
+            # Calculate time until light off
+            time_until_off = (light_off_dt - now).total_seconds() / 60  # minutes
+            
+            return time_until_off <= buffer_minutes
+            
+        except Exception as e:
+            _LOGGER.error(f"{self.room} - Error checking light off time: {e}")
+            return False
+
 
     # ==================== HELPERS ====================
 
@@ -4123,37 +4158,6 @@ class OGBCSManager:
             return True
         # Stale/missing flag: trust the schedule instead of assuming night.
         return self._light_schedule_state() is True
-
-    def _minutes_until_lights_off(self):
-        """Minutes remaining until lights turn off, or None if unknown."""
-        lights_off_time_str = self.data_store.getDeep("isPlantDay.lightOffTime")
-        if not lights_off_time_str:
-            return None
-
-        try:
-            lights_off_time = datetime.strptime(
-                str(lights_off_time_str), "%H:%M:%S"
-            ).time()
-        except (ValueError, TypeError):
-            try:
-                lights_off_time = datetime.strptime(
-                    str(lights_off_time_str), "%H:%M"
-                ).time()
-            except (ValueError, TypeError):
-                return None
-
-        now = datetime.now()
-        target = now.replace(
-            hour=lights_off_time.hour,
-            minute=lights_off_time.minute,
-            second=lights_off_time.second,
-            microsecond=0,
-        )
-        if target < now:
-            target += timedelta(days=1)
-
-        return (target - now).total_seconds() / 60
-
 
     # ==================== LOGGING ====================
 

@@ -256,6 +256,10 @@ CropSteering.Calibration.p1.timestamp = "2026-01-03T16:30:00"
 
 The CropSteering system also performs automatic calibration during normal operation across multiple phases:
 
+> **Mode note**: Auto-calibration runs only in **Automatic** mode and **Manual-Transition** mode.
+> In pure **Manual** mode there is **no** auto-calibration — the user is in control and must
+> calibrate manually via `cs_calibrate max` / `cs_calibrate min`.
+
 | Phase | Value | Method |
 |-------|-------|--------|
 | **P1** (Saturation) | VWCMax | Stagnation detection — VWC stops increasing after 3+ shots |
@@ -426,7 +430,9 @@ If aborted (manually or by safety), the original `tentMode` is always restored.
 
 #### VWC Calibration Data Persistence
 
-**Important**: VWC calibration values are now persisted across HA restarts:
+**Note**: VWC calibration values are currently stored **runtime-only** in the DataStore and are
+**lost on HA restart** (the `CropSteering` subtree is excluded from the persisted state file).
+Persistence across restarts is a known open item. The storage structure is:
 
 ```python
 # Storage structure

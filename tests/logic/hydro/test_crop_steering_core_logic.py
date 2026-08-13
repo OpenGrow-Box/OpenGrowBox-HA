@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -37,6 +38,27 @@ def test_extract_phase_from_mode_and_value():
     assert manager._extract_phase_from_value(None) == "p0"
 
 
+def test_parse_mode_distinguishes_manual_and_manual_transition():
+    manager = _cs_manager()
+
+    assert manager._parse_mode("Automatic") == CSMode.AUTOMATIC
+    assert manager._parse_mode("Manual-Transition") == CSMode.MANUAL_TRANSITION
+
+    manager.data_store.setDeep("CropSteering.CropPhase", "p2")
+    assert manager._parse_mode("Manual") == CSMode.MANUAL_P2
+
+
+def test_use_auto_transitions_only_for_manual_transition():
+    manager = _cs_manager()
+    assert manager._use_auto_transitions() is False
+
+    manager.data_store.setDeep("CropSteering.ActiveMode", "Manual")
+    assert manager._use_auto_transitions() is False
+
+    manager.data_store.setDeep("CropSteering.ActiveMode", "Manual-Transition")
+    assert manager._use_auto_transitions() is True
+
+
 def test_get_drippers_filters_only_dripper_devices():
     manager = _cs_manager(
         {
@@ -56,27 +78,6 @@ def test_get_drippers_filters_only_dripper_devices():
     assert "switch.dripper_front" in drippers
     assert "switch.dripper_back" in drippers
     assert "switch.water_pump" not in drippers
-
-
-def test_get_automatic_timing_settings_reads_numeric_values():
-    manager = _cs_manager(
-        {
-            "CropSteering": {
-                "Substrate": {
-                    "p1": {
-                        "Shot_Duration_Sec": "45",
-                        "Shot_Intervall": "30.5",
-                        "Shot_Sum": "7",
-                    }
-                }
-            }
-        }
-    )
-
-    settings = manager._get_automatic_timing_settings("p1")
-    assert settings["ShotDuration"] == 45
-    assert settings["ShotIntervall"] == 30.5
-    assert settings["ShotSum"] == 7
 
 
 def test_get_manual_phase_settings_prefers_new_paths_and_converts_types():
@@ -272,11 +273,12 @@ async def test_manual_phase_change_event_signals_running_cycle():
 
 @pytest.mark.asyncio
 async def test_manual_p0_transitions_to_p1_uses_own_vwc_min_in_window():
-    """Manual P0→P1 must use P0's own VWC_Min (like automatic), not P1's."""
+    """Manual-Transition P0→P1 must use P0's own VWC_Min (like automatic), not P1's."""
     manager = _cs_manager(
         {
             "isPlantDay": {"islightON": True},
             "CropSteering": {
+                "ActiveMode": "Manual-Transition",
                 "CropPhase": "p0",
                 "Substrate": {
                     "p0": {"VWC_Min": "50"},
@@ -303,12 +305,43 @@ async def test_manual_p0_transitions_to_p1_uses_own_vwc_min_in_window():
 
 
 @pytest.mark.asyncio
-async def test_manual_p0_stays_in_p0_outside_irrigation_window():
-    """Manual P0→P1 must only happen inside the irrigation window (like automatic)."""
+async def test_pure_manual_p0_stays_p0_when_dry_in_window():
+    """Pure Manual: P0 stays P0 even when VWC is below VWC_Min in the window."""
     manager = _cs_manager(
         {
             "isPlantDay": {"islightON": True},
             "CropSteering": {
+                "ActiveMode": "Manual",
+                "CropPhase": "p0",
+                "Substrate": {"p0": {"VWC_Min": "50"}},
+            },
+        }
+    )
+    manager._is_in_irrigation_window = lambda: True
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p0")
+    transitioned = await manager._manual_phase_light_transition(
+        "p0", vwc=40.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+@pytest.mark.asyncio
+async def test_manual_p0_stays_in_p0_outside_irrigation_window():
+    """Manual-Transition P0→P1 must only happen inside the irrigation window (like automatic)."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "ActiveMode": "Manual-Transition",
                 "CropPhase": "p0",
                 "Substrate": {"p0": {"VWC_Min": "50"}},
             },
@@ -333,11 +366,11 @@ async def test_manual_p0_stays_in_p0_outside_irrigation_window():
 
 @pytest.mark.asyncio
 async def test_manual_p0_transitions_to_p3_when_lights_off():
-    """Manual P0 at night must go to P3 (night dryback), like automatic."""
+    """Manual-Transition: P0 at night must go to P3 (night dryback)."""
     manager = _cs_manager(
         {
             "isPlantDay": {"islightON": False},
-            "CropSteering": {"CropPhase": "p0"},
+            "CropSteering": {"ActiveMode": "Manual-Transition", "CropPhase": "p0"},
         }
     )
 
@@ -357,12 +390,37 @@ async def test_manual_p0_transitions_to_p3_when_lights_off():
 
 
 @pytest.mark.asyncio
-async def test_manual_p2_transitions_to_p3_when_lights_off():
-    """Manual P2 at night must go to P3, like automatic."""
+async def test_pure_manual_p0_stays_p0_at_night():
+    """Pure Manual: P0 stays P0 at night - no forced P3 transition."""
     manager = _cs_manager(
         {
             "isPlantDay": {"islightON": False},
-            "CropSteering": {"CropPhase": "p2"},
+            "CropSteering": {"ActiveMode": "Manual", "CropPhase": "p0"},
+        }
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p0")
+    transitioned = await manager._manual_phase_light_transition(
+        "p0", vwc=55.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+@pytest.mark.asyncio
+async def test_manual_p2_transitions_to_p3_when_lights_off():
+    """Manual-Transition: P2 at night must go to P3."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": False},
+            "CropSteering": {"ActiveMode": "Manual-Transition", "CropPhase": "p2"},
         }
     )
 
@@ -382,12 +440,12 @@ async def test_manual_p2_transitions_to_p3_when_lights_off():
 
 
 @pytest.mark.asyncio
-async def test_manual_p2_stays_in_p2_when_lights_on():
-    """Manual P2 stays in P2 during the day."""
+async def test_pure_manual_p2_stays_p2_at_night():
+    """Pure Manual: P2 stays P2 at night - no forced P3 transition."""
     manager = _cs_manager(
         {
-            "isPlantDay": {"islightON": True},
-            "CropSteering": {"CropPhase": "p2"},
+            "isPlantDay": {"islightON": False},
+            "CropSteering": {"ActiveMode": "Manual", "CropPhase": "p2"},
         }
     )
 
@@ -406,15 +464,92 @@ async def test_manual_p2_stays_in_p2_when_lights_on():
     assert manager.data_store.getDeep("CropSteering.CropPhase") == "p2"
 
 
-def _manual_cycle_manager(initial=None, near_light_off=False):
-    """Build a manager whose _manual_cycle can run a single iteration."""
+@pytest.mark.asyncio
+async def test_manual_p2_stays_in_p2_when_lights_on():
+    """Manual-Transition: P2 stays in P2 during the day."""
     manager = _cs_manager(
-        initial
-        or {
+        {
             "isPlantDay": {"islightON": True},
-            "CropSteering": {"CropPhase": "p1"},
+            "CropSteering": {"ActiveMode": "Manual-Transition", "CropPhase": "p2"},
         }
     )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p2")
+    transitioned = await manager._manual_phase_light_transition(
+        "p2", vwc=60.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p2"
+
+
+@pytest.mark.asyncio
+async def test_pure_manual_p3_stays_p3_at_day():
+    """Pure Manual: P3 stays P3 during the day - no forced P0 transition."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {"ActiveMode": "Manual", "CropPhase": "p3"},
+        }
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p3")
+    transitioned = await manager._manual_phase_light_transition(
+        "p3", vwc=55.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_manual_p3_transitions_to_p0_when_lights_on():
+    """Manual-Transition: P3 goes to P0 when lights turn on."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {"ActiveMode": "Manual-Transition", "CropPhase": "p3"},
+        }
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._calibrate_p3_vwc_min = lambda vwc: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p3")
+    transitioned = await manager._manual_phase_light_transition(
+        "p3", vwc=55.0, settings=settings
+    )
+
+    assert transitioned is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+def _manual_cycle_manager(initial=None, near_light_off=False, mode="Manual"):
+    """Build a manager whose _manual_cycle can run a single iteration."""
+    initial = initial or {
+        "isPlantDay": {"islightON": True},
+        "CropSteering": {"CropPhase": "p1"},
+    }
+    if "CropSteering" not in initial:
+        initial["CropSteering"] = {}
+    initial["CropSteering"].setdefault("ActiveMode", mode)
+    manager = _cs_manager(initial)
 
     async def _get_sensor_averages():
         return {
@@ -431,23 +566,56 @@ def _manual_cycle_manager(initial=None, near_light_off=False):
     async def _set_phase(phase):
         manager.data_store.setDeep("CropSteering.CropPhase", phase)
 
+    manager._irrigate_calls = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        manager._irrigate_calls.append(
+            {"duration": duration, "target_vwc": target_vwc, "max_vwc": max_vwc}
+        )
+
     manager._get_sensor_averages = _get_sensor_averages
     manager._run_failsafe_checks = _failsafe
+    manager._evaluate_failsafe_condition = lambda vwc: None
     manager._record_sensor_reading = lambda vwc: None
     manager._is_near_light_off = lambda buffer_minutes=120: near_light_off
     manager._set_crop_phase_and_update_selector = _set_phase
     manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._irrigate = _irrigate
+    manager._emit_state_heartbeat = lambda force=False: _noop_coroutine()
+    manager._calibrate_p1_vwc_max = lambda vwc, cap=None: _noop_coroutine()
+    manager._calibrate_p3_vwc_min = lambda vwc: _noop_coroutine()
+    manager._update_number_entity = lambda *a, **kw: _noop_coroutine()
     return manager
+
+
+async def _run_manual_cycle_once(manager, phase):
+    """Run a single _manual_cycle iteration.
+
+    _manual_cycle loops forever (sleeping 10s per iteration); the sleep is
+    patched so the run exits after the first full iteration for testing.
+    """
+    manager._turn_off_all_drippers = lambda: _noop_coroutine()
+    manager._emergency_stop = lambda: _noop_coroutine()
+
+    class _StopCycle(Exception):
+        pass
+
+    async def _sleep(seconds):
+        raise _StopCycle()
+
+    with patch("asyncio.sleep", _sleep):
+        await manager._manual_cycle(phase)
 
 
 @pytest.mark.asyncio
 async def test_manual_p1_transitions_to_p3_when_lights_off():
-    """Manual P1 must stop irrigating at night and go to P3 (like automatic)."""
+    """Manual-Transition: P1 must stop irrigating at night and go to P3."""
     manager = _manual_cycle_manager(
         {
             "isPlantDay": {"islightON": False},
             "CropSteering": {"CropPhase": "p1"},
-        }
+        },
+        mode="Manual-Transition",
     )
 
     await manager._manual_cycle("p1")
@@ -457,12 +625,38 @@ async def test_manual_p1_transitions_to_p3_when_lights_off():
 
 @pytest.mark.asyncio
 async def test_manual_p1_transitions_to_p3_when_lights_near_off():
-    """Manual P1 must stop early when lights are about to turn off (2h buffer)."""
-    manager = _manual_cycle_manager(near_light_off=True)
+    """Manual-Transition: P1 must stop early when lights are about to turn off (2h buffer)."""
+    manager = _manual_cycle_manager(near_light_off=True, mode="Manual-Transition")
 
     await manager._manual_cycle("p1")
 
     assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_pure_manual_p1_stays_p1_at_night():
+    """Pure Manual: P1 stays P1 at night - no automatic transition to P3."""
+    manager = _manual_cycle_manager(
+        {
+            "isPlantDay": {"islightON": False},
+            "CropSteering": {"CropPhase": "p1"},
+        },
+        mode="Manual",
+    )
+
+    await _run_manual_cycle_once(manager, "p1")
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
+
+
+@pytest.mark.asyncio
+async def test_pure_manual_p1_stays_p1_when_near_light_off():
+    """Pure Manual: P1 stays P1 even shortly before lights off."""
+    manager = _manual_cycle_manager(near_light_off=True, mode="Manual")
+
+    await _run_manual_cycle_once(manager, "p1")
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
 
 
 @pytest.mark.asyncio
@@ -695,4 +889,47 @@ async def test_max_runtime_guard_stops_and_notifies():
     assert safe is False
     assert "max_runtime" in reason
     assert len(manager.notificator.criticals) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_non_critical_failsafe_warns_but_does_not_block():
+    """In Manual mode non-critical guards must warn once (cooldown) and NOT block irrigation."""
+    manager = _cs_manager_with_failsafe()
+
+    calls = []
+
+    async def _send_critical_notification(title, message):
+        calls.append({"title": title, "message": message})
+
+    manager._send_critical_notification = _send_critical_notification
+
+    await manager._warn_manual_failsafe("sensor_invalid", 55.0, "p1")
+    await manager._warn_manual_failsafe("sensor_invalid", 55.0, "p1")
+
+    assert len(calls) == 1
+    assert "NOT stopped" in calls[0]["message"]
+
+    await manager._warn_manual_failsafe("dryout_guard", 4.0, "p1")
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_cycle_non_critical_failsafe_still_irrigates():
+    """In pure Manual a non-critical failsafe must not skip the scheduled shot."""
+    manager = _manual_cycle_manager(mode="Manual")
+    manager._evaluate_failsafe_condition = lambda vwc: "sensor_invalid"
+    manager._warn_manual_failsafe = lambda reason, vwc, phase: _noop_coroutine()
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    manager.data_store.setDeep("CropSteering.lastIrrigationTime", None)
+    manager.data_store.setDeep("CropSteering.shotCounter", 0)
+
+    await _run_manual_cycle_once(manager, "p1")
+
+    assert irrigated, "Manual irrigation must run despite non-critical failsafe"
 
