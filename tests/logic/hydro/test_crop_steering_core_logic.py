@@ -258,6 +258,128 @@ async def test_p3_transitions_to_p0_when_lights_on():
 
 
 @pytest.mark.asyncio
+async def test_p3_stays_in_p3_during_ramp_down_when_light_near_off():
+    """Regression: P3 entered early (near light-off) must NOT bounce to P0
+    while the light entity still reports ON during the end-of-day ramp-down."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p3",
+                "phaseStartTime": datetime.now() - timedelta(minutes=10),
+                "startNightMoisture": 62.0,
+            },
+        }
+    )
+    manager._is_near_light_off = lambda buffer_minutes=120: True
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    await manager._handle_phase_p3_auto(
+        vwc=55.0,
+        ec=0.0,
+        is_light_on=True,
+        preset={
+            "VWCMin": 50.0,
+            "VWCMax": 70.0,
+            "VWCTarget": 60.0,
+            "target_dryback_percent": 10.0,
+            "min_dryback_percent": 8.0,
+            "max_dryback_percent": 12.0,
+            "emergency_threshold": 0.90,
+            "ec_increase_step": 0.1,
+            "ec_decrease_step": 0.1,
+            "ECTarget": 2.0,
+        },
+    )
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_forced_transition_p3_to_p0_when_lights_on_day():
+    """Forced transition must still leave P3 when lights are ON during the day."""
+    manager = _cs_manager(
+        {"isPlantDay": {"islightON": True}, "CropSteering": {"CropPhase": "p3"}}
+    )
+    manager._is_near_light_off = lambda buffer_minutes=120: False
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    transitioned = await manager._check_forced_light_phase_transition("p3", True, 55.0)
+
+    assert transitioned is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+@pytest.mark.asyncio
+async def test_forced_transition_keeps_p3_during_ramp_down():
+    """Regression: the forced light transition must NOT undo the early P1/P2 -> P3
+    transition during the end-of-day ramp-down (light still ON, going off soon)."""
+    manager = _cs_manager(
+        {"isPlantDay": {"islightON": True}, "CropSteering": {"CropPhase": "p3"}}
+    )
+    manager._is_near_light_off = lambda buffer_minutes=120: True
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    transitioned = await manager._check_forced_light_phase_transition("p3", True, 55.0)
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_forced_transition_p0_to_p3_when_lights_off():
+    """Forced transition must enter P3 when lights are OFF and P0 is stuck."""
+    manager = _cs_manager(
+        {"isPlantDay": {"islightON": False}, "CropSteering": {"CropPhase": "p0"}}
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    transitioned = await manager._check_forced_light_phase_transition("p0", False, 55.0)
+
+    assert transitioned is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
+
+
+@pytest.mark.asyncio
+async def test_forced_transition_no_op_when_phase_matches_light():
+    """No forced transition when the phase already matches the light state."""
+    manager = _cs_manager(
+        {"isPlantDay": {"islightON": True}, "CropSteering": {"CropPhase": "p1"}}
+    )
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    transitioned = await manager._check_forced_light_phase_transition("p1", True, 55.0)
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
+
+
+@pytest.mark.asyncio
 async def test_manual_phase_change_event_signals_running_cycle():
     """Manual phase change should set the asyncio event to restart the cycle."""
     import asyncio
@@ -538,6 +660,34 @@ async def test_manual_p3_transitions_to_p0_when_lights_on():
 
     assert transitioned is True
     assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+@pytest.mark.asyncio
+async def test_manual_p3_stays_in_p3_during_ramp_down():
+    """Regression: Manual-Transition P3 must not bounce to P0 while the light
+    is still ON during the end-of-day ramp-down (P3 was entered early)."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {"ActiveMode": "Manual-Transition", "CropPhase": "p3"},
+        }
+    )
+    manager._is_near_light_off = lambda buffer_minutes=120: True
+
+    async def _set_phase(phase):
+        manager.data_store.setDeep("CropSteering.CropPhase", phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._calibrate_p3_vwc_min = lambda vwc: _noop_coroutine()
+
+    settings = manager._get_manual_phase_settings("p3")
+    transitioned = await manager._manual_phase_light_transition(
+        "p3", vwc=55.0, settings=settings
+    )
+
+    assert transitioned is False
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
 
 
 def _manual_cycle_manager(initial=None, near_light_off=False, mode="Manual"):

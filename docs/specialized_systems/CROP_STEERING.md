@@ -1635,6 +1635,14 @@ $ cs_calibrate -h
   `CropSteering.InitialSoak` flag: while armed, P0 starts P1 immediately (no transpiration buffer)
   and P1 saturates to **full container capacity** ignoring any learned `p1_peak_vwc`; the flag
   auto-disarms after the first **successful** soak. A failed soak stays armed (retry next day).
+- **Fixed**: **P3 → P0 bounce during the end-of-day ramp-down.** P1/P2 transition to P3 early
+  (up to 2 h / 1 h before the scheduled light-off, see "Light-Based Phase Transitions"), but the
+  light entity still reports "on" during that ramp-down window. Both the forced light transition
+  (`_check_forced_light_phase_transition`) and the P3 handler / Manual-Transition P3 then forced
+  P3 → P0 again, undoing the early night transition every cycle. All three now respect
+  `_is_near_light_off()`: while lights are going off soon, P3 keeps running the night dryback
+  instead of bouncing back to P0. Regression tests added for the forced transition, the automatic
+  P3 handler and Manual-Transition P3.
 - **Added**: `p2_introduced` to the persisted learned values (`CROP_STEERING_LEARNED_KEYS`).
 - **Added**: Console helper commands for crop steering:
   - `cs_soak [on|off|status]` — arm the one-shot Initial Soak in **any week** (not just veg

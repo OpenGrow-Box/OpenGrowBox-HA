@@ -3270,7 +3270,20 @@ class OGBCSManager:
                         f"{self.room} - P3: Max emergency irrigations reached ({max_emergency}) or too soon, skipping"
                     )
         else:
-            # STAGE-CHECKER: Light is on -> Back to P0
+            # STAGE-CHECKER: Light is on -> Back to P0.
+            # Exception: the lights can still report "on" during the end-of-day
+            # ramp-down while P3 was already entered early (near-light-off, see
+            # `_is_near_light_off`). In that window P3 must keep running the night
+            # dryback instead of bouncing back to P0.
+            if self._is_near_light_off():
+                _LOGGER.debug(
+                    f"{self.room} - P3: Light ON but lights going off soon - continuing night dryback (VWC: {vwc:.1f}%)"
+                )
+                start_night = self.data_store.getDeep("CropSteering.startNightMoisture")
+                if start_night is None or start_night == 0:
+                    self.data_store.setDeep("CropSteering.startNightMoisture", vwc)
+                return
+
             start_night = self.data_store.getDeep("CropSteering.startNightMoisture")
             current_dryback = self._compute_dryback_percent(start_night, vwc)
             night_start_time = self.data_store.getDeep("CropSteering.phaseStartTime")
@@ -3333,10 +3346,16 @@ class OGBCSManager:
         VWC (e.g. 8%) the cycle must still leave P3 when the lights turn on, and
         must enter P3 when the lights turn off, so the next day can start fresh.
         This method only transitions; it never irrigates.
+
+        End-of-day guard: the early transition to P3 happens up to 2 h *before*
+        the lights actually go off (see `_is_near_light_off`). During that
+        ramp-down window the light entity still reports "on", but P3 is the
+        intended phase. The forced P3 → P0 must therefore not fire there,
+        otherwise it would undo the early night transition on every cycle.
         """
         now = datetime.now()
 
-        if current_phase == "p3" and is_light_on:
+        if current_phase == "p3" and is_light_on and not self._is_near_light_off():
             _LOGGER.warning(
                 f"{self.room} - Forced light transition: P3 → P0 (lights ON, sensor may be invalid)"
             )
@@ -3441,7 +3460,10 @@ class OGBCSManager:
 
         elif phase == "p3":
             # Dryback-Phase: keine Bewässerung. Endet mit Lights-ON.
-            if self._is_lights_on():
+            # Exception: während der Ramp-Down-Phase (Licht-Aus steht kurz bevor,
+            # P3 wurde vorzeitig gestartet) bleibt P3 bestehen, statt zurück zu P0
+            # zu springen.
+            if self._is_lights_on() and not self._is_near_light_off():
                 _LOGGER.debug(f"{self.room} - Manual P3: Lights on, switching to P0")
                 await self._complete_manual_p3(vwc)
                 return True
