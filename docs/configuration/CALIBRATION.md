@@ -430,9 +430,11 @@ If aborted (manually or by safety), the original `tentMode` is always restored.
 
 #### VWC Calibration Data Persistence
 
-**Note**: VWC calibration values are currently stored **runtime-only** in the DataStore and are
-**lost on HA restart** (the `CropSteering` subtree is excluded from the persisted state file).
-Persistence across restarts is a known open item. The storage structure is:
+**Note (since v3.8.1)**: `CropSteering.Calibration` and `CropSteering.Learned` **are now persisted**
+across HA restarts. They are written to `ogb_data/ogb_<room>_state.json` (`CropSteering` is in
+`PRESERVED_STATE_KEYS`) and restored on startup. Only the `Calibration` + `Learned` subtrees are
+persisted; all runtime state (`Mode`, `shotCounter`, `vwc_current`, `phaseStartTime`, phase config
+trees) is deliberately excluded and restored via HA entities or code defaults. The storage structure is:
 
 ```python
 # Storage structure
@@ -442,6 +444,16 @@ CropSteering: {
         "p2": {"VWCMax": null, "VWCMin": null, "timestamp": null},
         "p3": {"VWCMax": null, "VWCMin": null, "timestamp": null},
         "LastRun": "2026-01-03T14:30:00"
+    },
+    "Learned": {
+        "max_saturation_vwc": 72.0,
+        "field_capacity_vwc": 66.0,
+        "min_dryback_vwc": 35.0,
+        "p1_peak_vwc": 61.5,      # achieved P1 peak (EMA) -> day target
+        "next_ec_target": 2.3,    # P3 dryback EC adjustment -> next day's P1 target
+        "p2_introduced": false,   # P2 maintenance introduced ('auto' mode, dryback-rate trigger)
+        "saturation_samples": 5,
+        "dryback_samples": 3
     }
 }
 ```

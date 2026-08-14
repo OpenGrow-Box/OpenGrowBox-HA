@@ -238,6 +238,7 @@ class OGBCSManager:
             "max_saturation_vwc": self.data_store.getDeep("CropSteering.Learned.max_saturation_vwc"),
             "min_dryback_vwc": self.data_store.getDeep("CropSteering.Learned.min_dryback_vwc"),
             "field_capacity_vwc": self.data_store.getDeep("CropSteering.Learned.field_capacity_vwc"),
+            "p1_peak_vwc": self.data_store.getDeep("CropSteering.Learned.p1_peak_vwc"),
             "saturation_samples": self.data_store.getDeep("CropSteering.Learned.saturation_samples") or 0,
             "dryback_samples": self.data_store.getDeep("CropSteering.Learned.dryback_samples") or 0,
         }
@@ -283,21 +284,54 @@ class OGBCSManager:
             )
 
     def _update_learned_field_capacity(self, vwc: float):
-        """Update learned field capacity from stable post-irrigation VWC."""
+        """
+        Update learned field capacity from stable post-irrigation VWC.
+
+        Ratchets UP only (monotonic): a lower value is never accepted so
+        undershooting P2 shots can never drag the day-to-day capacity ceiling
+        down. Bounded by the observed max saturation and absolute limits.
+        """
         learned = self._load_learned_values()
         current_fc = learned["field_capacity_vwc"]
         # Only update if within plausible range and not above saturation
         max_sat = learned["max_saturation_vwc"] or self._ABSOLUTE_VWC_MAX
         if vwc < self._ABSOLUTE_VWC_MIN or vwc > max_sat:
             return
-        if current_fc is None:
-            self._save_learned_value("field_capacity_vwc", round(vwc, 1))
-        else:
-            # Exponential moving average for stability
-            new_fc = round(current_fc * 0.7 + vwc * 0.3, 1)
+        if current_fc is None or vwc > current_fc:
+            if current_fc is None:
+                new_fc = round(vwc, 1)
+            else:
+                # Exponential moving average for stability (only moves up)
+                new_fc = round(current_fc * 0.7 + vwc * 0.3, 1)
+                if new_fc <= current_fc:
+                    return
             self._save_learned_value("field_capacity_vwc", new_fc)
         _LOGGER.debug(
             f"{self.room} - Learned field_capacity_vwc updated to {self._load_learned_values()['field_capacity_vwc']}%"
+        )
+
+    def _update_learned_p1_peak(self, vwc: float):
+        """Update learned P1 saturation peak (EMA) for the adaptive VWCTarget.
+
+        The daily saturation target is derived from the actually achieved P1 peak
+        (exponential moving average) instead of a fixed preset, so P1 stops at a
+        reachable level. The preset remains the fallback (no data yet) and the
+        upper cap. Only called on *successful* P1 completions (target reached,
+        valid stagnation or acceptable max-attempt level) - a bad day (pump or
+        sensor issue, VWC far below the minimum) must not ratchet the target down.
+        """
+        learned = self._load_learned_values()
+        current_peak = learned["p1_peak_vwc"]
+        if vwc < self._ABSOLUTE_VWC_MIN or vwc > self._ABSOLUTE_VWC_MAX:
+            return
+        if current_peak is None:
+            self._save_learned_value("p1_peak_vwc", round(vwc, 1))
+        else:
+            # Exponential moving average for stability
+            new_peak = round(current_peak * 0.7 + vwc * 0.3, 1)
+            self._save_learned_value("p1_peak_vwc", new_peak)
+        _LOGGER.debug(
+            f"{self.room} - Learned p1_peak_vwc updated to {self._load_learned_values()['p1_peak_vwc']}%"
         )
 
     def _update_learned_min_dryback(self, vwc: float):
@@ -317,17 +351,29 @@ class OGBCSManager:
     def _get_safe_vwc_bounds(self, preset: Dict[str, Any]) -> Dict[str, float]:
         """
         Compute safe VWC bounds clamped by learned values and absolute limits.
+
+        The capacity ceiling (used by P1's target cap and P2's refill/trigger)
+        is the minimum of the preset VWCMax and BOTH learned references:
+        - `max_saturation_vwc` (highest observed P1 peak) - never above it
+        - `field_capacity_vwc` (highest observed stable plateau) - day-to-day
+          capacity reference
+        This keeps the system working with CAPACITY, never driving the medium
+        toward full saturation (no +headroom that would let it overshoot).
         """
         learned = self._load_learned_values()
         max_sat = learned["max_saturation_vwc"]
+        field_capacity = learned["field_capacity_vwc"]
         min_dry = learned["min_dryback_vwc"]
 
         hard_max = self._ABSOLUTE_VWC_MAX
         hard_min = self._ABSOLUTE_VWC_MIN
 
-        # Clamp max by learned saturation (with small headroom) if available
+        # Capacity ceiling: never above the highest observed P1 peak ...
         if max_sat is not None:
-            hard_max = min(hard_max, max_sat + 5.0)
+            hard_max = min(hard_max, max_sat)
+        # ... nor above the highest observed stable plateau (field capacity).
+        if field_capacity is not None:
+            hard_max = min(hard_max, field_capacity)
 
         # Clamp min by learned dryback (with small safety margin) if available
         if min_dry is not None:
@@ -384,6 +430,47 @@ class OGBCSManager:
         """
         threshold = vwc_max * (1.0 - dryback_percent / 100.0)
         return max(threshold, vwc_min)
+
+    def _get_p2_introduction_mode(self) -> str:
+        """Return the P2 introduction mode: 'auto', 'enabled' or 'disabled'.
+
+        Defaults to 'auto' (reference practice: P2 is introduced once the daily
+        dryback rate exceeds the configured threshold). Anything else falls back
+        to 'auto'.
+        """
+        mode = self.data_store.getDeep("CropSteering.P2_Introduction")
+        if isinstance(mode, str):
+            mode = mode.strip().lower()
+            if mode in ("auto", "enabled", "disabled"):
+                return mode
+        return "auto"
+
+    def _get_p2_introduction_threshold(self) -> float:
+        """Daily dryback % at which P2 is auto-introduced (default 25%)."""
+        raw = self.data_store.getDeep("CropSteering.P2_Intro_Dryback_Threshold")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 25.0
+        return value if value > 0 else 25.0
+
+    def _should_use_p2(self) -> bool:
+        """Whether P2 maintenance should run after P1 saturation.
+
+        'enabled' always runs P2, 'disabled' never does (P1 + P3 only), and
+        'auto' only once the daily dryback rate has triggered introduction
+        (CropSteering.p2_introduced).
+        """
+        mode = self._get_p2_introduction_mode()
+        if mode == "enabled":
+            return True
+        if mode == "disabled":
+            return False
+        return bool(self.data_store.getDeep("CropSteering.p2_introduced"))
+
+    def _is_initial_soak_armed(self) -> bool:
+        """Whether the one-shot Initial Soak is armed (veg start)."""
+        return bool(self.data_store.getDeep("CropSteering.InitialSoak"))
 
     async def _irrigate_p2_to_capacity(
         self, vwc: float, vwc_max_cap: float, shot_duration: int, phase: str = "p2"
@@ -808,6 +895,12 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.CropPhase", phase_lower)
         self._clear_failsafe("phase change")
 
+        # The day's saturation peak is only meaningful while the plant is awake.
+        # Entering night dryback (P3) ends the day, so a stale peak from an old
+        # day must not drive a P2 introduction decision tomorrow.
+        if phase_lower == "p3":
+            self.data_store.setDeep("CropSteering.day_peak_vwc", None)
+
         if not self.hass:
             _LOGGER.debug(f"{self.room} - Cannot update phase selector: hass not available")
             return
@@ -1110,6 +1203,7 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.p3_emergency_count", 0)
         self.data_store.setDeep("CropSteering.p3_last_emergency_time", None)
         self.data_store.setDeep("CropSteering.p3_last_irrigation_time", None)
+        self.data_store.setDeep("CropSteering.p3_ec_adjusted", False)
 
     def _reset_p2_state_tracking(self):
         """Reset P2 state tracking variables.
@@ -1928,7 +2022,15 @@ class OGBCSManager:
         if vwc == 0:
             _LOGGER.warning(f"{self.room} - No VWC data, starting P0 Monitoring")
             return "p0"
-        
+
+        # One-shot Initial Soak (veg start): saturate to capacity immediately,
+        # bypassing the pre-irrigation P0 buffer.
+        if self._is_initial_soak_armed():
+            _LOGGER.debug(
+                f"{self.room} - Day, Initial Soak armed - starting P1 Saturation immediately"
+            )
+            return "p1"
+
         vwc_max = p2_preset.get("VWCMax", 68)
         vwc_min = p0_preset.get("VWCMin", 55)
         
@@ -1947,7 +2049,15 @@ class OGBCSManager:
             _LOGGER.debug(f"{self.room} - Day, VWC low ({vwc:.1f}% < {vwc_min:.1f}%), starting P1 Saturation")
             return "p1"
         elif vwc >= vwc_max:
-            # Block is already at max -> P2 Maintenance (just hold it)
+            # Block is already at max. If P2 is not in use yet (early veg), fall
+            # back to P0 monitoring instead of holding via P2 maintenance.
+            if not self._should_use_p2():
+                _LOGGER.debug(
+                    f"{self.room} - Day, VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), "
+                    f"but P2 not in use - starting P0 Monitoring"
+                )
+                return "p0"
+            # P2 Maintenance (just hold it)
             _LOGGER.debug(f"{self.room} - Day, VWC at max ({vwc:.1f}% >= {vwc_max:.1f}%), starting P2 Maintenance")
             return "p2"
         else:
@@ -1960,7 +2070,15 @@ class OGBCSManager:
                 )
                 return "p0"
             else:
-                # Irrigation window active (or no schedule) -> P2 Maintenance
+                # Irrigation window active (or no schedule). If P2 is not in use
+                # yet (early veg), monitor instead of maintaining via P2.
+                if not self._should_use_p2():
+                    _LOGGER.debug(
+                        f"{self.room} - Day, VWC normal ({vwc:.1f}% between "
+                        f"{vwc_min:.1f}%-{vwc_max:.1f}%), but P2 not in use - starting P0 Monitoring"
+                    )
+                    return "p0"
+                # P2 Maintenance
                 _LOGGER.debug(
                     f"{self.room} - Day, VWC normal ({vwc:.1f}% between "
                     f"{vwc_min:.1f}%-{vwc_max:.1f}%), irrigation window active -> P2 Maintenance"
@@ -2373,6 +2491,9 @@ class OGBCSManager:
         - If lights go OFF during P0, transition to P3.
         - If VWC drops below the phase minimum, transition to P1 immediately
           so the block does not dry out (no irrigation-window delay).
+        - If an Initial Soak is armed (veg start), start P1 immediately.
+        - In 'auto' P2 introduction mode, the daily dryback rate is watched
+          here and P2 is introduced once it exceeds the configured threshold.
         """
         # Check light status first - ensure proper boolean conversion
         is_light_on = self._is_lights_on()
@@ -2386,6 +2507,44 @@ class OGBCSManager:
             self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
             await self._log_phase_change("p0", "p3", f"Lights OFF - switching to night dryback (VWC: {vwc:.1f}%)")
             return
+
+        # One-shot Initial Soak (veg start): bypass the P0 buffer and start
+        # saturating to capacity right away.
+        if self._is_initial_soak_armed():
+            _LOGGER.debug(f"{self.room} - P0: Initial Soak armed - starting P1 immediately")
+            await self._set_crop_phase_and_update_selector("p1")
+            self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
+            await self._log_phase_change(
+                "p0", "p1", "Initial Soak armed - saturating to capacity immediately"
+            )
+            return
+
+        # P2 auto-introduction: while P2 is not yet in use ('auto' mode), watch
+        # the day's dryback relative to the P1 saturation peak and introduce P2
+        # once it exceeds the configured threshold (reference practice: introduce
+        # P2 when the daily dryback rate climbs above ~25 %).
+        if (
+            self._get_p2_introduction_mode() == "auto"
+            and not self._should_use_p2()
+        ):
+            day_peak = self.data_store.getDeep("CropSteering.day_peak_vwc")
+            if day_peak and vwc and vwc > 0:
+                dryback_pct = self._compute_dryback_percent(day_peak, vwc)
+                threshold = self._get_p2_introduction_threshold()
+                if dryback_pct >= threshold:
+                    self.data_store.setDeep("CropSteering.p2_introduced", True)
+                    _LOGGER.warning(
+                        f"{self.room} - P2 introduced: daily dryback {dryback_pct:.1f}% "
+                        f"exceeded threshold {threshold:.1f}% - P2 maintenance will run from now on"
+                    )
+                    await self.event_manager.emit(
+                        "LogForClient",
+                        self._build_cs_log(
+                            f"P2 introduced - daily dryback {dryback_pct:.1f}% exceeded threshold {threshold:.1f}%",
+                            phase="p0",
+                        ),
+                        haEvent=True,
+                    )
 
         # P0 is simple: Wait until VWC falls below minimum, then start P1.
         if vwc < preset["VWCMin"]:
@@ -2453,10 +2612,28 @@ class OGBCSManager:
         target_vwc = safe_bounds["VWCTarget"]
         vwc_max_cap = safe_bounds["VWCMax"]
         vwc_min = safe_bounds["VWCMin"]
-        # Saturation target: never exceed learned max saturation or hard cap
-        learned_max_sat = self._load_learned_values()["max_saturation_vwc"]
-        if learned_max_sat is not None:
-            target_vwc = min(target_vwc, learned_max_sat)
+        # Use the next-day EC target from the previous night's P3 dryback adjustment
+        effective_ec = self._get_effective_ec_target(preset)
+        if effective_ec is not None:
+            preset["ECTarget"] = effective_ec
+        # Saturation target: dynamic, derived from the actually achieved P1 peak (EMA).
+        # The preset is the fallback (no learned data yet) and the upper cap, so P1
+        # stops at a reachable level instead of fighting an unreachable preset daily.
+        learned = self._load_learned_values()
+
+        # One-shot Initial Soak (veg start): saturate to full container capacity,
+        # ignoring any learned peak, so freshly transplanted media are pre-soaked
+        # to field capacity once before the regular P1/P3 cycle begins.
+        if self._is_initial_soak_armed():
+            target_vwc = vwc_max_cap
+        else:
+            learned_peak = learned["p1_peak_vwc"]
+            if learned_peak is not None:
+                target_vwc = min(target_vwc, learned_peak)
+            # Additional safety: never exceed the monotonic learned max saturation or hard cap
+            learned_max_sat = learned["max_saturation_vwc"]
+            if learned_max_sat is not None:
+                target_vwc = min(target_vwc, learned_max_sat)
         target_max = min(target_vwc, vwc_max_cap)
 
         # Get timing from bulletproof preset (no user settings in automatic)
@@ -2656,13 +2833,25 @@ class OGBCSManager:
         self, vwc, target_max, success=True, updated_max=False
     ):
         """
-        Complete P1 saturation phase and transition to P2.
+        Complete P1 saturation phase and transition to P2 (or P0 when P2 is not
+        in use yet, e.g. early veg running P1 + P3 only).
         Called when target VWC is reached, stagnation detected, or max attempts reached.
         """
         # Learn max saturation from successful P1 completion
         if vwc > 0:
             self._update_learned_max_saturation(vwc)
             self._update_learned_field_capacity(vwc)
+            # Only successful completions feed the adaptive VWCTarget (p1_peak_vwc).
+            # success=False means max attempts with VWC far below minimum (pump/sensor
+            # problem) - a bad day must not ratchet the daily target down.
+            if success:
+                self._update_learned_p1_peak(vwc)
+
+        # Remember the achieved saturation peak as the day's reference for the
+        # P2 auto-introduction decision (dryback is measured relative to it).
+        self.data_store.setDeep(
+            "CropSteering.day_peak_vwc", vwc if vwc > 0 else None
+        )
 
         # Clear P1 state tracking
         self.data_store.setDeep("CropSteering.p1_start_vwc", None)
@@ -2674,25 +2863,39 @@ class OGBCSManager:
         self._reset_irrigation_tracking()
         self._reset_p2_state_tracking()
 
-        # Transition to P2
-        await self._set_crop_phase_and_update_selector("p2")
+        # One-shot Initial Soak (veg start): the soak is done, disarm it so the
+        # regular P1/P3 cycle takes over from tomorrow.
+        soak_was_armed = self._is_initial_soak_armed()
+        if soak_was_armed and success:
+            self.data_store.setDeep("CropSteering.InitialSoak", False)
+
+        # Reference practice: early veg runs P1 + P3 only; P2 is introduced when
+        # the daily dryback rate climbs. Until then, monitor (P0) after saturation.
+        target_phase = "p2" if self._should_use_p2() else "p0"
+
+        # Transition to the target phase
+        await self._set_crop_phase_and_update_selector(target_phase)
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
         # Log the transition
-        message = f"Saturation complete - VWC: {vwc:.1f}%"
+        if soak_was_armed and success:
+            message = f"Initial Soak complete - medium saturated to capacity (VWC: {vwc:.1f}%)"
+        else:
+            message = f"Saturation complete - VWC: {vwc:.1f}%"
         if updated_max:
             message += f" (new calibrated max)"
 
-        await self._log_phase_change("p1", "p2", message)
+        await self._log_phase_change("p1", target_phase, message)
 
         await self.event_manager.emit(
             "LogForClient",
-            self._build_cs_log(f"P1 → P2: {message}", phase="p2"),
+            self._build_cs_log(f"P1 → {target_phase.upper()}: {message}", phase=target_phase),
             haEvent=True,
         )
 
         _LOGGER.debug(
-            f"{self.room} - P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%, success={success}"
+            f"{self.room} - P1 complete: VWC={vwc:.1f}%, target={target_max:.1f}%, "
+            f"success={success}, next_phase={target_phase}"
         )
 
     async def _handle_phase_p2_auto(self, vwc, ec, is_light_on, preset):
@@ -2705,7 +2908,9 @@ class OGBCSManager:
         "P2 - slight dryback of ~10-15%, then irrigate to container capacity without drain".
         """
         shot_duration = int(preset.get("irrigation_duration", 20))
-        check_interval_seconds = int(preset.get("irrigation_interval", 60))
+        # `irrigation_interval` is configured in MINUTES (preset: 60 min between dryback checks)
+        check_interval_minutes = int(preset.get("irrigation_interval", 60))
+        check_interval_seconds = check_interval_minutes * 60
         max_shots = int(preset.get("max_cycles", 10))
 
         safe_bounds = self._get_safe_vwc_bounds(preset)
@@ -2949,13 +3154,15 @@ class OGBCSManager:
                 f"{self.room} - P3: Dryback {current_dryback:.1f}% (target {target_dryback:.1f}%, start {start_night:.1f}%, current {vwc:.1f}%)"
             )
 
-            # EC adjustment based on dryback
+            # EC adjustment based on dryback (next-day target, max 1x per night)
             if current_dryback < preset.get("min_dryback_percent", 8.0):
                 # Too little dryback -> increase EC (more stress)
                 await self._adjust_ec_for_dryback(
                     preset["ECTarget"],
                     increase=True,
                     step=preset.get("ec_increase_step", 0.1),
+                    min_ec=preset.get("MinEC"),
+                    max_ec=preset.get("MaxEC"),
                 )
                 await self.event_manager.emit(
                     "LogForClient",
@@ -2973,6 +3180,8 @@ class OGBCSManager:
                     preset["ECTarget"],
                     increase=False,
                     step=preset.get("ec_decrease_step", 0.1),
+                    min_ec=preset.get("MinEC"),
+                    max_ec=preset.get("MaxEC"),
                 )
                 await self.event_manager.emit(
                     "LogForClient",
@@ -3431,7 +3640,8 @@ class OGBCSManager:
                                 vwc_max, vwc_min, dryback_percent
                             )
 
-                            p2_check_interval = 60  # seconds
+                            # ShotIntervall is configured in MINUTES (see _manual_cycle)
+                            p2_check_interval = int(shot_interval) * 60  # seconds
                             p2_last_check = self.data_store.getDeep(
                                 "CropSteering.p2_last_check_time"
                             )
@@ -3461,6 +3671,7 @@ class OGBCSManager:
                                             self.data_store.setDeep(
                                                 "CropSteering.lastIrrigationTime", now
                                             )
+                                            self._record_p2_irrigation(now)
                                             post_vwc = float(
                                                 self.data_store.getDeep(
                                                     "CropSteering.vwc_current"
@@ -4001,26 +4212,73 @@ class OGBCSManager:
 
     # ==================== EC ADJUSTMENT ====================
 
-    async def _adjust_ec_for_dryback(self, target_ec, increase=True, step=0.1):
+    async def _adjust_ec_for_dryback(self, target_ec, increase=True, step=0.1, min_ec=None, max_ec=None):
         """
-        Adjust EC based on dryback performance
-        Only used in Automatic Mode P3
+        Adjust EC based on dryback performance (Automatic Mode P3 only).
+
+        Writes the adjusted target to `CropSteering.Learned.next_ec_target` so it
+        takes effect on the NEXT day's P1 (see `_get_effective_ec_target`).
+        At most ONE adjustment per night (`CropSteering.p3_ec_adjusted` flag) to
+        prevent runaway steps, and the result is clamped to [MinEC, MaxEC].
+        Actual nutrient dosing is still a TODO (Nutrient-System integration);
+        this only persists the target value.
         """
         direction = "increase" if increase else "decrease"
         new_ec = target_ec + step if increase else target_ec - step
+
+        if min_ec is not None and new_ec < min_ec:
+            new_ec = min_ec
+        if max_ec is not None and new_ec > max_ec:
+            new_ec = max_ec
+
+        if self.data_store.getDeep("CropSteering.p3_ec_adjusted"):
+            _LOGGER.debug(
+                f"{self.room} - P3: EC already adjusted this night, skipping"
+            )
+            return
+
+        self.data_store.setDeep(
+            "CropSteering.Learned.next_ec_target", round(new_ec, 2)
+        )
+        self.data_store.setDeep("CropSteering.p3_ec_adjusted", True)
 
         await self.event_manager.emit(
             "LogForClient",
             {
                 "Name": self.room,
                 "Type": "CSLOG",
-                "Message": f"EC {direction}: {target_ec:.1f} -> {new_ec:.1f} (Dryback control)",
+                "Message": f"EC {direction}: {target_ec:.1f} -> {new_ec:.1f} (Dryback control, next day target)",
             },
             haEvent=True,
         )
 
         # Here the actual EC adjustment would take place via fertilizer dosing
         # TODO: Integration with Nutrient-System
+
+    def _get_effective_ec_target(self, preset: Dict[str, Any]) -> Any:
+        """
+        Return the next-day EC target (from the previous night's P3 dryback
+        adjustment) or the preset target as fallback.
+
+        Used by P1 so a night-time dryback-based EC adjustment actually takes
+        effect the next day. The stored value is re-clamped to the phase
+        MinEC/MaxEC band defensively.
+        """
+        target = preset.get("ECTarget")
+        next_target = self.data_store.getDeep("CropSteering.Learned.next_ec_target")
+        if next_target is None:
+            return target
+        try:
+            next_float = float(next_target)
+        except (TypeError, ValueError):
+            return target
+        min_ec = preset.get("MinEC")
+        max_ec = preset.get("MaxEC")
+        if min_ec is not None:
+            next_float = max(next_float, float(min_ec))
+        if max_ec is not None:
+            next_float = min(next_float, float(max_ec))
+        return round(next_float, 2)
 
     # ==================== STOP & CLEANUP ====================
 

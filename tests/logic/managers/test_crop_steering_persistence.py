@@ -27,6 +27,8 @@ def _full_crop_steering():
             "max_saturation_vwc": 72.0,
             "field_capacity_vwc": 66.0,
             "min_dryback_vwc": 35.0,
+            "p1_peak_vwc": 61.5,
+            "next_ec_target": 2.3,
             "saturation_samples": 5,
             "dryback_samples": 3,
         },
@@ -54,6 +56,8 @@ def test_extract_keeps_calibration_and_learned():
         "max_saturation_vwc": 72.0,
         "field_capacity_vwc": 66.0,
         "min_dryback_vwc": 35.0,
+        "p1_peak_vwc": 61.5,
+        "next_ec_target": 2.3,
         "saturation_samples": 5,
         "dryback_samples": 3,
     }

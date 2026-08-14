@@ -93,6 +93,9 @@ CROP_STEERING_LEARNED_KEYS = (
     "max_saturation_vwc",
     "field_capacity_vwc",
     "min_dryback_vwc",
+    "p1_peak_vwc",
+    "next_ec_target",
+    "p2_introduced",
     "saturation_samples",
     "dryback_samples",
 )

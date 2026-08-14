@@ -716,7 +716,11 @@ async def test_manual_p3_no_emergency_when_vwc_ok():
 
 
 @pytest.mark.asyncio
-async def test_manual_p3_waits_4h_before_emergency():
+async def test_manual_p3_emergency_fires_immediately_below_threshold():
+    """Manual P3 fires a conservative emergency shot immediately when VWC drops
+    below the emergency level - no grace period, because leaving a critically
+    dry medium unwatered would be unsafe (matches Automatic P3 behavior).
+    Subsequent shots are gated by a 5-minute interval."""
     manager = _cs_manager(
         {
             "CropSteering": {
@@ -737,10 +741,16 @@ async def test_manual_p3_waits_4h_before_emergency():
     manager._irrigate = _irrigate
 
     settings = manager._get_manual_phase_settings("p3")
-    await manager._manual_p3_emergency(vwc=30.0, settings=settings)
 
-    assert irrigated == []
-    assert manager.data_store.getDeep("CropSteering.p3_emergency_count") in (None, 0)
+    # VWC 30 < 52 -> immediate conservative 15s shot
+    await manager._manual_p3_emergency(vwc=30.0, settings=settings)
+    assert irrigated == [15]
+    assert manager.data_store.getDeep("CropSteering.p3_emergency_count") == 1
+
+    # Immediate second call -> 5-minute interval gate, no additional shot
+    await manager._manual_p3_emergency(vwc=30.0, settings=settings)
+    assert irrigated == [15]
+    assert manager.data_store.getDeep("CropSteering.p3_emergency_count") == 1
 
 
 class FakeNotificator:
@@ -793,11 +803,47 @@ def test_safe_vwc_bounds_clamp_by_learned_max_saturation():
     manager.data_store.setDeep("CropSteering.Learned.max_saturation_vwc", 65.0)
     preset = {"VWCMin": 55.0, "VWCMax": 70.0, "VWCTarget": 68.0}
     bounds = manager._get_safe_vwc_bounds(preset)
-    # Hard max should be capped at learned max + 5 (and never exceed 90)
-    assert bounds["VWCMax"] <= 70.0
+    # Hard max is capped at the observed P1 peak (no +5 headroom)
+    assert bounds["VWCMax"] == 65.0
     assert bounds["VWCMax"] <= 70.0
     assert bounds["VWCTarget"] <= bounds["VWCMax"]
     assert bounds["VWCMin"] >= manager._ABSOLUTE_VWC_MIN
+
+
+def test_safe_vwc_bounds_clamp_by_field_capacity():
+    manager = _cs_manager_with_failsafe()
+    manager.data_store.setDeep("CropSteering.Learned.max_saturation_vwc", 66.0)
+    manager.data_store.setDeep("CropSteering.Learned.field_capacity_vwc", 63.0)
+    preset = {"VWCMin": 55.0, "VWCMax": 70.0, "VWCTarget": 68.0}
+    bounds = manager._get_safe_vwc_bounds(preset)
+    # Field capacity (plateau) is the day-to-day capacity reference
+    assert bounds["VWCMax"] == 63.0
+    assert bounds["VWCTarget"] <= bounds["VWCMax"]
+
+
+def test_learned_field_capacity_ratchets_up_only():
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.Learned.field_capacity_vwc", 64.0)
+
+    # A lower plateau reading must NOT drag field capacity down
+    manager._update_learned_field_capacity(62.0)
+    assert manager.data_store.getDeep("CropSteering.Learned.field_capacity_vwc") == 64.0
+
+    # A higher reading ratchets it up
+    manager._update_learned_field_capacity(66.0)
+    assert manager.data_store.getDeep("CropSteering.Learned.field_capacity_vwc") == 64.6
+
+
+def test_learned_field_capacity_init_and_bounds():
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.Learned.max_saturation_vwc", 68.0)
+
+    manager._update_learned_field_capacity(60.0)
+    assert manager.data_store.getDeep("CropSteering.Learned.field_capacity_vwc") == 60.0
+
+    # Values above the observed saturation are rejected
+    manager._update_learned_field_capacity(70.0)
+    assert manager.data_store.getDeep("CropSteering.Learned.field_capacity_vwc") == 60.0
 
 
 @pytest.mark.asyncio
@@ -829,17 +875,18 @@ async def test_sensor_stuck_guard_stops_irrigation_and_notifies():
     manager = _cs_manager_with_failsafe()
     manager._stop_all_irrigation = lambda reason: _noop_coroutine()
 
-    # First validation call detects stuck but allows it once (stuck_counter=1)
-    for _ in range(11):
+    # _SENSOR_STUCK_THRESHOLD (15) identical readings -> check runs but allows once (stuck_counter=1)
+    for _ in range(manager._SENSOR_STUCK_THRESHOLD):
         manager._record_sensor_reading(55.0)
     safe, reason = await manager._run_failsafe_checks(55.0, source="automatic")
     assert safe is True
 
-    # Second call with still-stuck sensor triggers the guard
+    # Still-stuck sensor on the next cycle triggers the guard
     manager._record_sensor_reading(55.0)
     safe, reason = await manager._run_failsafe_checks(55.0, source="automatic")
     assert safe is False
-    assert "stuck" in reason.lower()
+    assert reason == "sensor_invalid"
+    assert "Sensor stuck" in manager.notificator.criticals[0]["message"]
     assert len(manager.notificator.criticals) == 1
 
 
@@ -932,4 +979,486 @@ async def test_manual_cycle_non_critical_failsafe_still_irrigates():
     await _run_manual_cycle_once(manager, "p1")
 
     assert irrigated, "Manual irrigation must run despite non-critical failsafe"
+
+
+# --- Adaptive VWCTarget (p1_peak_vwc) ---
+
+
+def test_update_learned_p1_peak_first_value():
+    manager = _cs_manager()
+
+    manager._update_learned_p1_peak(58.0)
+
+    assert manager.data_store.getDeep("CropSteering.Learned.p1_peak_vwc") == 58.0
+
+
+def test_update_learned_p1_peak_uses_ema():
+    manager = _cs_manager()
+    manager._update_learned_p1_peak(60.0)
+
+    manager._update_learned_p1_peak(50.0)
+
+    # 60.0 * 0.7 + 50.0 * 0.3 = 57.0 (EMA smooths, does not jump to the raw value)
+    assert manager.data_store.getDeep("CropSteering.Learned.p1_peak_vwc") == 57.0
+
+
+def test_update_learned_p1_peak_ignores_out_of_range():
+    manager = _cs_manager()
+    manager._update_learned_p1_peak(58.0)
+
+    manager._update_learned_p1_peak(manager._ABSOLUTE_VWC_MIN - 1)
+    manager._update_learned_p1_peak(manager._ABSOLUTE_VWC_MAX + 1)
+
+    assert manager.data_store.getDeep("CropSteering.Learned.p1_peak_vwc") == 58.0
+
+
+@pytest.mark.asyncio
+async def test_complete_p1_saturation_success_updates_p1_peak():
+    manager = _cs_manager_with_failsafe()
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+
+    await manager._complete_p1_saturation(58.0, 58.0, success=True)
+
+    assert manager.data_store.getDeep("CropSteering.Learned.p1_peak_vwc") == 58.0
+
+
+@pytest.mark.asyncio
+async def test_complete_p1_saturation_failure_keeps_p1_peak():
+    """A bad day (max attempts, VWC far below minimum) must not ratchet the target down."""
+    manager = _cs_manager_with_failsafe()
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+    manager.data_store.setDeep("CropSteering.Learned.p1_peak_vwc", 58.0)
+
+    await manager._complete_p1_saturation(40.0, 68.0, success=False)
+
+    assert manager.data_store.getDeep("CropSteering.Learned.p1_peak_vwc") == 58.0
+
+
+def _p1_target_manager():
+    """Manager with _is_lights_on forced and _irrigate captured for P1 target tests."""
+    manager = _cs_manager_with_failsafe({"isPlantDay": {"islightON": True}})
+    manager._irrigate_calls = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        manager._irrigate_calls.append(
+            {"duration": duration, "target_vwc": target_vwc, "max_vwc": max_vwc}
+        )
+
+    manager._irrigate = _irrigate
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_p1_auto_target_clamped_by_learned_peak():
+    """P1 must irrigate towards min(preset, learned p1_peak_vwc), not the raw preset."""
+    manager = _p1_target_manager()
+    manager.data_store.setDeep("CropSteering.Learned.p1_peak_vwc", 60.0)
+    preset = {
+        "VWCMin": 55.0,
+        "VWCMax": 70.0,
+        "VWCTarget": 68.0,
+        "irrigation_duration": 45,
+        "wait_between": 180,
+        "max_cycles": 10,
+    }
+
+    await manager._handle_phase_p1_auto(55.0, 1.0, preset)
+
+    assert manager._irrigate_calls, "P1 should have irrigated on first entry"
+    # target_vwc passed to _irrigate is the effective saturation target
+    assert manager._irrigate_calls[0]["target_vwc"] == 60.0
+    assert manager._irrigate_calls[0]["target_vwc"] != 68.0
+
+
+@pytest.mark.asyncio
+async def test_p1_auto_target_uses_preset_when_no_peak_learned():
+    """Without learned data the preset acts as fallback target."""
+    manager = _p1_target_manager()
+    preset = {
+        "VWCMin": 55.0,
+        "VWCMax": 70.0,
+        "VWCTarget": 68.0,
+        "irrigation_duration": 45,
+        "wait_between": 180,
+        "max_cycles": 10,
+    }
+
+    await manager._handle_phase_p1_auto(55.0, 1.0, preset)
+
+    assert manager._irrigate_calls
+    assert manager._irrigate_calls[0]["target_vwc"] == 68.0
+
+
+# --- Next-day EC target (P3 dryback adjustment) ---
+
+
+def test_adjust_ec_for_dryback_writes_next_ec_target():
+    manager = _cs_manager()
+
+    async def _call():
+        await manager._adjust_ec_for_dryback(
+            2.0, increase=True, step=0.1, min_ec=1.8, max_ec=2.2
+        )
+
+    import asyncio
+    asyncio.run(_call())
+
+    assert manager.data_store.getDeep("CropSteering.Learned.next_ec_target") == 2.1
+    assert manager.data_store.getDeep("CropSteering.p3_ec_adjusted") is True
+
+
+def test_adjust_ec_for_dryback_clamps_to_band():
+    manager = _cs_manager()
+
+    async def _call():
+        await manager._adjust_ec_for_dryback(
+            2.1, increase=True, step=0.5, min_ec=1.8, max_ec=2.2
+        )
+
+    import asyncio
+    asyncio.run(_call())
+
+    # 2.1 + 0.5 = 2.6 -> clamped to 2.2
+    assert manager.data_store.getDeep("CropSteering.Learned.next_ec_target") == 2.2
+
+
+def test_adjust_ec_for_dryback_only_once_per_night():
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.p3_ec_adjusted", True)
+
+    async def _call():
+        await manager._adjust_ec_for_dryback(
+            2.0, increase=True, step=0.1, min_ec=1.8, max_ec=2.2
+        )
+
+    import asyncio
+    asyncio.run(_call())
+
+    assert manager.data_store.getDeep("CropSteering.Learned.next_ec_target") is None
+
+
+def test_reset_p3_state_tracking_clears_ec_adjustment_flag():
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.p3_ec_adjusted", True)
+
+    manager._reset_p3_state_tracking()
+
+    assert manager.data_store.getDeep("CropSteering.p3_ec_adjusted") is False
+
+
+def test_p1_automatic_default_wait_between_is_15_minutes():
+    """P1 shots must follow the reference 15-30 min cadence by default."""
+    manager = _cs_manager()
+
+    base = manager.config_manager.get_raw_base_presets()
+
+    assert base["p1"]["wait_between"] == 900
+    assert 15 * 60 <= base["p1"]["wait_between"] <= 30 * 60
+    assert base["p1"]["irrigation_duration"] == 45
+    assert base["p1"]["max_cycles"] == 10
+
+
+def test_get_effective_ec_target_uses_next_ec_target():
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.Learned.next_ec_target", 2.3)
+    preset = {"ECTarget": 2.0, "MinEC": 1.8, "MaxEC": 2.2}
+
+    # 2.3 > MaxEC 2.2 -> clamped to 2.2
+    assert manager._get_effective_ec_target(preset) == 2.2
+
+
+def test_get_effective_ec_target_falls_back_to_preset():
+    manager = _cs_manager()
+    preset = {"ECTarget": 2.0, "MinEC": 1.8, "MaxEC": 2.2}
+
+    assert manager._get_effective_ec_target(preset) == 2.0
+
+
+# --- Manual P2 auto-calibration (p2_shot_count) ---
+
+
+def test_record_p2_irrigation_increments_p2_shot_count():
+    manager = _cs_manager()
+    from datetime import datetime
+
+    manager._record_p2_irrigation(datetime.now())
+    manager._record_p2_irrigation(datetime.now())
+
+    assert manager.data_store.getDeep("CropSteering.p2_shot_count") == 2
+    assert manager.data_store.getDeep("CropSteering.p2_last_irrigation_time") is not None
+
+
+@pytest.mark.asyncio
+async def test_track_p2_vwc_peak_calibrates_after_3_consistent_peaks():
+    """P2 VWCMax auto-calibration must fire once enough cycles are recorded."""
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.p2_shot_count", 3)
+
+    await manager._track_p2_vwc_peak(68.0)
+    await manager._track_p2_vwc_peak(68.2)
+    await manager._track_p2_vwc_peak(68.1)
+
+    assert manager.data_store.getDeep("CropSteering.Calibration.p2.VWCMax") == pytest.approx(68.1, abs=0.1)
+
+
+@pytest.mark.asyncio
+async def test_track_p2_vwc_peak_requires_minimum_cycles():
+    """With fewer than 3 recorded irrigation cycles no calibration may happen."""
+    manager = _cs_manager()
+    manager.data_store.setDeep("CropSteering.p2_shot_count", 1)
+
+    await manager._track_p2_vwc_peak(68.0)
+    await manager._track_p2_vwc_peak(68.1)
+    await manager._track_p2_vwc_peak(68.0)
+
+    assert manager.data_store.getDeep("CropSteering.Calibration.p2.VWCMax") is None
+
+
+# --- P2 introduction (reference practice: P1+P3 only in early veg) ---
+
+
+def test_p2_introduction_mode_defaults_to_auto():
+    manager = _cs_manager()
+    assert manager._get_p2_introduction_mode() == "auto"
+
+    manager.data_store.setDeep("CropSteering.P2_Introduction", "enabled")
+    assert manager._get_p2_introduction_mode() == "enabled"
+
+    manager.data_store.setDeep("CropSteering.P2_Introduction", "DISABLED")
+    assert manager._get_p2_introduction_mode() == "disabled"
+
+    manager.data_store.setDeep("CropSteering.P2_Introduction", "garbage")
+    assert manager._get_p2_introduction_mode() == "auto"
+
+
+def test_p2_introduction_threshold_defaults_to_25():
+    manager = _cs_manager()
+    assert manager._get_p2_introduction_threshold() == 25.0
+
+    manager.data_store.setDeep("CropSteering.P2_Intro_Dryback_Threshold", "30")
+    assert manager._get_p2_introduction_threshold() == 30.0
+
+    manager.data_store.setDeep("CropSteering.P2_Intro_Dryback_Threshold", "0")
+    assert manager._get_p2_introduction_threshold() == 25.0
+
+
+def test_should_use_p2_by_mode_and_introduction_flag():
+    manager = _cs_manager()
+
+    # default: auto, not introduced yet -> no P2
+    assert manager._should_use_p2() is False
+
+    manager.data_store.setDeep("CropSteering.P2_Introduction", "enabled")
+    assert manager._should_use_p2() is True
+
+    manager.data_store.setDeep("CropSteering.P2_Introduction", "disabled")
+    assert manager._should_use_p2() is False
+
+    manager.data_store.setDeep("CropSteering.P2_Introduction", "auto")
+    manager.data_store.setDeep("CropSteering.p2_introduced", True)
+    assert manager._should_use_p2() is True
+
+
+@pytest.mark.asyncio
+async def test_p2_disabled_after_saturation_goes_to_p0():
+    """Early veg (P2 disabled) must monitor (P0) after P1 saturation, not run P2."""
+    manager = _cs_manager({"CropSteering": {"P2_Introduction": "disabled"}})
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    phases = []
+
+    async def _set_phase(phase):
+        phases.append(phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+
+    await manager._complete_p1_saturation(65.0, 65.0, success=True)
+
+    assert phases == ["p0"]
+
+
+@pytest.mark.asyncio
+async def test_p2_auto_introduced_when_daily_dryback_exceeds_threshold():
+    """In 'auto' mode P2 is introduced once the day's dryback hits the threshold."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p0",
+                "P2_Introduction": "auto",
+                "P2_Intro_Dryback_Threshold": 25.0,
+                "day_peak_vwc": 65.0,
+                "Substrate": {"p0": {"VWC_Min": "50"}},
+            },
+        }
+    )
+    manager._is_lights_on = lambda: True
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    # vwc=48 -> dryback (65-48)/65 = 26.2% >= 25% -> introduced
+    await manager._handle_phase_p0_auto(48.0, 1.0, {"VWCMin": 50.0})
+
+    assert manager.data_store.getDeep("CropSteering.p2_introduced") is True
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p0"
+
+
+@pytest.mark.asyncio
+async def test_p2_auto_not_introduced_below_threshold():
+    """Below the threshold the introduction must not fire."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p0",
+                "P2_Introduction": "auto",
+                "day_peak_vwc": 65.0,
+                "Substrate": {"p0": {"VWC_Min": "50"}},
+            },
+        }
+    )
+    manager._is_lights_on = lambda: True
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    # vwc=60 -> dryback (65-60)/65 = 7.7% < 25% -> not introduced
+    await manager._handle_phase_p0_auto(60.0, 1.0, {"VWCMin": 50.0})
+
+    assert manager.data_store.getDeep("CropSteering.p2_introduced") is None
+
+
+@pytest.mark.asyncio
+async def test_p2_introduced_after_saturation_goes_to_p2():
+    """Once introduced, P1 saturation must run P2 maintenance again."""
+    manager = _cs_manager(
+        {
+            "CropSteering": {
+                "P2_Introduction": "auto",
+                "p2_introduced": True,
+            }
+        }
+    )
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    phases = []
+
+    async def _set_phase(phase):
+        phases.append(phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+
+    await manager._complete_p1_saturation(65.0, 65.0, success=True)
+
+    assert phases == ["p2"]
+
+
+# --- Initial Soak (veg start, one-shot saturation to capacity) ---
+
+
+def test_initial_soak_armed_reads_flag():
+    manager = _cs_manager()
+    assert manager._is_initial_soak_armed() is False
+
+    manager.data_store.setDeep("CropSteering.InitialSoak", True)
+    assert manager._is_initial_soak_armed() is True
+
+
+@pytest.mark.asyncio
+async def test_p0_initial_soak_bypasses_buffer_and_starts_p1():
+    """With an armed Initial Soak, P0 must start P1 immediately (no buffer wait)."""
+    manager = _cs_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p0",
+                "InitialSoak": True,
+                "Substrate": {"p0": {"VWC_Min": "50"}},
+            },
+        }
+    )
+    manager._is_lights_on = lambda: True
+
+    phases = []
+
+    async def _set_phase(phase):
+        phases.append(phase)
+
+    manager._set_crop_phase_and_update_selector = _set_phase
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+
+    await manager._handle_phase_p0_auto(58.0, 1.0, {"VWCMin": 50.0})
+
+    assert phases == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_p1_soak_targets_capacity_not_learned_peak():
+    """During an Initial Soak P1 must saturate to full capacity, ignoring learned peaks."""
+    manager = _p1_target_manager()
+    manager.data_store.setDeep("CropSteering.InitialSoak", True)
+    manager.data_store.setDeep("CropSteering.Learned.p1_peak_vwc", 60.0)
+    preset = {
+        "VWCMin": 55.0,
+        "VWCMax": 70.0,
+        "VWCTarget": 68.0,
+        "irrigation_duration": 45,
+        "wait_between": 180,
+        "max_cycles": 10,
+    }
+
+    await manager._handle_phase_p1_auto(55.0, 1.0, preset)
+
+    assert manager._irrigate_calls
+    # Capacity (VWCMax = 70.0) wins over the learned peak (60.0)
+    assert manager._irrigate_calls[0]["target_vwc"] == 70.0
+    assert manager._irrigate_calls[0]["max_vwc"] == 70.0
+
+
+@pytest.mark.asyncio
+async def test_initial_soak_disarmed_after_successful_completion():
+    """A successful soak must disarm the flag and record the day peak."""
+    manager = _cs_manager(
+        {
+            "CropSteering": {
+                "InitialSoak": True,
+                "P2_Introduction": "enabled",
+            }
+        }
+    )
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+
+    await manager._complete_p1_saturation(70.0, 70.0, success=True)
+
+    assert manager.data_store.getDeep("CropSteering.InitialSoak") is False
+    assert manager.data_store.getDeep("CropSteering.day_peak_vwc") == 70.0
+
+
+@pytest.mark.asyncio
+async def test_initial_soak_stays_armed_after_failed_completion():
+    """A failed soak (pump/sensor issue) must stay armed so it retries next day."""
+    manager = _cs_manager({"CropSteering": {"InitialSoak": True}})
+    manager._log_phase_change = lambda a, b, reason: _noop_coroutine()
+    manager._set_crop_phase_and_update_selector = lambda phase: _noop_coroutine()
+
+    await manager._complete_p1_saturation(30.0, 68.0, success=False)
+
+    assert manager.data_store.getDeep("CropSteering.InitialSoak") is True
+
+
+@pytest.mark.asyncio
+async def test_day_peak_cleared_on_p3_entry():
+    """Entering P3 (lights off) must clear the day's peak reference."""
+    manager = _cs_manager({"CropSteering": {"day_peak_vwc": 68.0}})
+    manager.hass = None
+    manager._clear_failsafe = lambda reason: None
+
+    await manager._set_crop_phase_and_update_selector("p3")
+
+    assert manager.data_store.getDeep("CropSteering.day_peak_vwc") is None
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p3"
 

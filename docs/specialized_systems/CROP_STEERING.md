@@ -104,9 +104,17 @@ In **Automatic** mode the active values are built from **presets only**. User se
 | **4. Dynamic Learning** | Observed max saturation, field capacity, night dryback minimum | Hard caps for flood/dryout guards and P2 target adaptation | No – learned from sensor data |
 
 The system learns from the actual sensor behaviour and clamps all thresholds to safe ranges:
-- `max_saturation_vwc` – highest VWC ever observed after P1 irrigation
-- `field_capacity_vwc` – stable post-irrigation plateau used for P2
+- `max_saturation_vwc` – highest VWC ever observed after P1 irrigation (monotonic) — the **capacity ceiling**: P1/P2 never target above it (no headroom, so the system works with capacity, never drives toward full saturation)
+- `field_capacity_vwc` – highest stable post-irrigation plateau (ratchets up only) — day-to-day **capacity reference**, also part of the P2 ceiling
 - `min_dryback_vwc` – lowest VWC observed during P3 night dryback
+- `p1_peak_vwc` – achieved P1 saturation peak (EMA), becomes the **day target**
+- `next_ec_target` – P3 dryback-based EC adjustment, effective on the **next day's** P1
+- `p2_introduced` – whether P2 maintenance has been introduced ('auto' mode, once the daily
+  dryback rate exceeds the threshold) — persisted like the other learned values
+
+The effective capacity used by P1 (target cap) and P2 (dryback trigger + refill) is
+`min(preset VWCMax, max_saturation_vwc, field_capacity_vwc)` — the medium is refilled to the
+achievable capacity, **not** to full saturation (which would just produce runoff).
 
 Absolute safety limits: **VWC never < 5% and never > 90%**.
 
@@ -115,7 +123,7 @@ Absolute safety limits: **VWC never < 5% and never > 90%**.
 | Phase | Description | VWCTarget | VWCMin | VWCMax | ECTarget | Default Duration | Default Interval | Default Max Shots | Dryback % |
 |---|---|---|---|---|---|---|---|---|---|
 | **P0** | Monitoring | 58.0 | 55.0 | 65.0 | 2.0 | - | - | - | - |
-| **P1** | Saturation | 68.0 | 55.0 | 70.0 | 1.8 | 45 s | 3 min | 10 | - |
+| **P1** | Saturation | 68.0 | 55.0 | 70.0 | 1.8 | 45 s | 15 min | 10 | - |
 | **P2** | Maintenance | 65.0 | 62.0 | 68.0 | 2.0 | 20 s | 60 s | 10 | 10% of VWCMax |
 | **P3** | Night Dryback | 60.0 | 52.0 | 68.0 | 2.2 | 15 s | 5 min | 5 | - |
 
@@ -127,7 +135,7 @@ All guards immediately stop irrigation and send a **critical push notification**
 |---|---|---|
 | **Flood Guard** | VWC ≥ 90% | Stop all irrigation, notify |
 | **Dryout Guard** | VWC ≤ 5% | Stop all irrigation, notify (do not add more water until sensor is checked) |
-| **Sensor Stuck** | VWC unchanged for 10 consecutive readings | Stop irrigation, notify |
+| **Sensor Stuck** | VWC unchanged for 15 consecutive readings | Stop irrigation, notify |
 | **Sensor Jump** | VWC change > 30% between two readings | Discard reading, notify |
 | **Ineffective Irrigation** | 3+ shots without VWC rise ≥ 0.5% | Stop irrigation, notify (pump/empty/sensor issue) |
 | **Max Runtime** | Total pump runtime per cycle ≥ 5 min | Stop irrigation, notify |
@@ -308,7 +316,8 @@ The CropSteering system operates in 4 phases that follow the natural day/night c
         │            Night Dryback                 │
         │                                          │
         │   • Monitor dryback percentage           │
-        │   • Emergency irrigation if VWC < 85%    │
+        │   • Emergency irrigation if VWC below    │
+        │     emergency level (see P3 details)     │
         │   • Adjust EC based on dryback rate      │
         │                                          │
         └────────────────────┬─────────────────────┘
@@ -323,12 +332,12 @@ The CropSteering system operates in 4 phases that follow the natural day/night c
 | From | To | Trigger Condition |
 |------|-----|-------------------|
 | P0 | P1 | VWC < VWCMin (dryback detected) |
-| P0 | P3 | Lights OFF |
-| P1 | P2 | VWC >= VWCMax (saturation complete) |
-| P1 | P2 | Stagnation detected (VWC not increasing after 3+ shots) |
-| P1 | P2 | Max irrigation attempts reached |
-| P1 | P3 | Lights OFF (interrupts saturation) |
-| P2 | P3 | Lights OFF or ≤1 hour before lights OFF (starts night dryback) |
+| P0 | P3 | Lights OFF (no saturation started yet → night dryback) |
+| P1 | P2 | VWC >= effective target (`VWCTarget`, clamped by learned max saturation) |
+| P1 | P2 | Stagnation detected (VWC not increasing after 3+ shots, VWC >= 25% / preset min) |
+| P1 | P2 | Max irrigation attempts reached (`max_cycles`) |
+| P1 | P3 | **Abort**: Lights OFF or ≤ 2 h before lights OFF (interrupts saturation → night dryback, **not** P2) |
+| P2 | P3 | **Normal path**: ≤ 1 h before lights OFF (pre-night dryback start). **Fallback**: lights OFF directly (e.g. missed check after restart) |
 | P3 | P0 | Lights ON (new day begins) |
 
 ### Light-Based Phase Transitions
@@ -358,6 +367,69 @@ else:
   In pure **Manual** mode the user-selected phase is **kept** — no automatic light/VWC transitions
   happen; the cycle only irrigates per the user's timing settings (see §4).
 
+### Reference Method Comparison
+
+The 4-phase concept follows established crop-steering practice. The table below compares the
+commonly published reference approach with the OGB implementation, per phase:
+
+| Aspect | Reference practice | OGB implementation | Status |
+|---|---|---|---|
+| **P0: irrigation** | No irrigation, pure rest/monitoring | No irrigation, monitoring only | ✅ |
+| **P0 → P1 trigger** | Relative dryback % from start-of-night moisture | Absolute: VWC < `VWCMin` | ⚠️ |
+| **P0 → P3 (lights off)** | Night dryback starts | Immediate transition to P3 | ✅ |
+| **P1: first shot timing** | 1–2 h after lights ON (plant starts transpiring) | P0 monitoring buffer; immediate if critically dry (safety) | ⚠️ |
+| **P1: shot size** | Small volume shots (2–6 % of substrate volume) | Time-based: fixed duration (default 45 s) | ⚠️ |
+| **P1: shot cadence** | Every 15–30 min | 15 min default (`wait_between`, user-adjustable) | ✅ |
+| **P1: saturation stop** | Runoff detection (2–7 % runoff) | VWC target / stagnation / max shots | ⚠️ |
+| **P1: peak = day target** | Reached peak VWC becomes day target | Yes — learned `p1_peak_vwc` (EMA) | ✅ |
+| **P1: initial soak (veg start)** | One-time pre-soak to field capacity for fresh transplants | Yes — one-shot `InitialSoak` flag, then regular P1/P3 cycle | ✅ |
+| **P2: dryback trigger** | Relative dryback from full saturation | Yes: `VWCMax × (1 − Moisture_Dryback/100)` | ✅ |
+| **P2: refill** | Refill to full saturation without runoff | Yes: early-stop at `VWCMax` | ✅ |
+| **P2: introduction timing** | Weekly decision — early veg runs P1+P3 only, introduce P2 when daily dryback rate > ~25 % | Yes — `P2_Introduction` = auto/enabled/disabled | ✅ |
+| **P2: shot size as EC lever** | Adjust shot size to steer EC | Not implemented (time-based shots) | ❌ |
+| **P2: weekly EC decision** | Weekly check of runoff EC vs. feed EC | Not implemented | ❌ |
+| **P3: dryback control** | Relative dryback % from start-of-night moisture | Yes: `_compute_dryback_percent` | ✅ |
+| **P3: target band** | Dryback into the 30–50 % band | Default band 8–12 % (configurable via presets) | ⚠️ |
+| **P3: rate of dryback** | Monitor dryback *rate* (too fast / too slow) | Only level-based, no rate tracking | ❌ |
+| **P3: irrigation** | No irrigation during night (normally) | None except emergency shots | ✅ |
+| **P3: EC adjustment** | Adjust EC based on dryback performance | Yes: `next_ec_target` (1×/night, next-day effective) | ⚠️ |
+| **EC fertigation control** | Actually dose to the EC target | TODO — Nutrient-System integration | ❌ |
+
+Legend: ✅ implemented as in the reference · ⚠️ implemented differently/simplified ·
+❌ deliberately not implemented (see below).
+
+#### Deliberately Not Implemented
+
+These parts of the reference practice are **intentionally** not implemented, with reasons:
+
+- **Runoff-based stop criterion (2–7 % runoff)** — Detecting runoff needs a runoff sensor or
+  precise volume metering. OGB stops saturation on the VWC target, stagnation, or max shot count,
+  which is safe without runoff hardware.
+- **Volume-based shots (2–6 % of substrate volume)** — No flow meter; shots are duration-based.
+- **Shot-size as an EC lever in P2** — Requires per-shot volume control; not available.
+- **Rate of dryback monitoring** — Only the dryback *level* is monitored, not its *rate*.
+- **Weekly runoff-EC vs. feed-EC decision** — Requires runoff EC measurement; not available.
+
+#### OGB-Specific Extensions
+
+Features that go **beyond** the reference practice:
+
+- **Emergency shots** in P2 and P3 with pre-night buffers (P1 aborts 2 h before lights OFF, P2
+  ends 1 h before lights OFF) — the reference relies on runoff detection instead.
+- **Absolute safety guards**: flood (VWC ≥ 90 %), dryout (VWC ≤ 5 %), sensor-stuck/jump,
+  ineffective-irrigation and max-runtime guards.
+- **Immediate saturation** when VWC is critically low, even before the 1–2 h transpiration buffer.
+- **Dynamic VWCTarget learning** (`p1_peak_vwc` EMA): the actually achieved P1 peak becomes the
+  day target — no hardcoded target needed.
+- **P3 EC → `next_ec_target`**: the night's dryback-based EC adjustment is persisted and applied
+  as the next day's effective EC target (1× per night, clamped to `[MinEC, MaxEC]`).
+- **P2 introduction control** (`P2_Introduction` auto/enabled/disabled): P2 is held back until the
+  daily dryback rate exceeds a threshold ('auto'), so early veg can run P1 + P3 only.
+- **One-shot Initial Soak** (`InitialSoak`): veg-start pre-soak to full capacity, bypassing the P0
+  buffer and any learned peak; auto-disarms after the first successful saturation.
+- **Persistence & restart-safety**: all learned/calibration values survive restarts and are
+  re-loaded (`p1_peak_vwc`, `next_ec_target`, `p2_introduced`, etc.).
+
 ### Phase Details
 
 #### P0: Monitoring Phase
@@ -368,22 +440,38 @@ else:
 
 #### P1: Saturation Phase  
 - **Active during**: Lights ON only
-- **Purpose**: Rapidly saturate the growing medium
-- **Actions**: Multiple irrigation shots with wait periods
+- **Purpose**: Saturate the growing medium from the night-dryback trough up to the day target, using **small, frequent shots** (2–6% of substrate volume in the reference practice) to avoid channeling — the shots here are time-based (default 45 s).
+- **Actions**: Multiple small irrigation shots, spaced **15 min apart by default** (`wait_between`, within the reference 15–30 min band; user-adjustable via `Shot_Intervall`). The first shot normally comes **1–2 h after lights ON** (the P0 monitoring buffer gives the plant time to start transpiring). If VWC is already critically low the system skips the buffer and starts saturating immediately (safety override).
 - **Completion Conditions**:
-  1. VWC reaches target (VWCMax or calibrated max)
+  1. VWC reaches the effective target (`VWCTarget`, clamped by learned `p1_peak_vwc` / `max_saturation_vwc`)
   2. Stagnation detected (VWC not increasing after 3+ shots)
   3. Max irrigation attempts reached (Shot Sum)
-- **On light OFF**: Immediately stops, transitions to P3
-- **Auto-calibration**: Updates VWCMax when saturation detected
+- **On light OFF (or ≤ 2 h before lights OFF)**: Aborts, transitions to P3 (night dryback)
+- **Auto-calibration**: Updates `VWCMax` when saturation detected; the actually achieved peak is learned as `p1_peak_vwc` (EMA) and becomes the **day target** for the next days — the medium is only saturated as far as the plant actually pulled it.
+
+##### P1 Initial Soak (Veg Start)
+
+When a grow starts (freshly transplanted clones), the reference practice pre-soaks the medium
+once to **field capacity** before the regular P1/P3 cycle begins. OGB implements this as a
+**one-shot** flag:
+
+- Arm it via `CropSteering.InitialSoak = true` (DataStore / integration) or the console command
+  `cs_soak on` — the console works in **any week**, so a full pre-soak can also be triggered later
+  (e.g. after transplanting or a restart).
+- While armed, P1 **bypasses the P0 transpiration buffer** and saturates to **full container
+  capacity** (`VWCMax`, the `min(VWCMax, max_saturation_vwc, field_capacity_vwc)` ceiling),
+  ignoring any learned `p1_peak_vwc`.
+- After a **successful** soak the flag is cleared automatically (`InitialSoak = false`) and the
+  regular P1/P3 cycle resumes the next day. A failed soak (max attempts, VWC far below minimum —
+  pump/sensor issue) stays armed so it retries the next day.
 
 ##### P1 Stagnation Detection & Calibration Safety
 
 **CRITICAL**: The system includes safety checks to prevent invalid calibration values:
 
 ```python
-# Stagnation is only accepted as "block full" if VWC >= 40%
-min_vwc_for_stagnation = max(40.0, preset_vwc_min)
+# Stagnation is only accepted as "block full" if VWC >= 25% (or the preset minimum)
+min_vwc_for_stagnation = max(25.0, preset_vwc_min)
 
 if stagnation_detected and vwc >= min_vwc_for_stagnation:
     # Valid stagnation - block is actually full
@@ -403,26 +491,69 @@ else:
 - **Active during**: Lights ON (more than 1 hour before lights OFF)
 - **Purpose**: Allow a slight controlled dryback from container capacity, then refill to capacity without drain
 - **Actions**:
-  - Track container capacity from `VWCMax` (calibrated or preset)
+  - Track container capacity from `VWCMax` (calibrated or preset, clamped to `min(VWCMax, max_saturation_vwc, field_capacity_vwc)`)
   - Wait until VWC drops by the configured dryback percentage (`Moisture_Dryback`, default 10%)
   - Irrigate to `VWCMax` with early-stop safety (`max_vwc = VWCMax`) so no excess drain occurs
   - Repeat until 1 hour before lights OFF
 - **Dryback trigger**: `VWCMax × (1 - Moisture_Dryback / 100)`
 - **Refill target**: `VWCMax` (container capacity)
-- **Safety**: Emergency irrigation still triggers if VWC falls below `VWCMin`
+- **Safety**: Emergency irrigation triggers if VWC falls below the **emergency level**
+  `max(ABS_VWC_MIN, VWCMin × emergency_threshold)` with `emergency_threshold` default **0.5**
+  (= 50% of `VWCMin`) — well below the normal dryback trigger, so routine dryback is not treated as an emergency.
 - **On light OFF or ≤1h before light OFF**: Transitions to P3
 
+##### P2 Introduction (weekly decision)
+
+The reference practice treats **when to run P2 at all** as a weekly decision: early veg often runs
+**P1 + P3 only** (plants are small and transpire slowly); P2 maintenance is introduced once the
+daily dryback rate climbs above roughly **25 %**. OGB exposes this via
+`CropSteering.P2_Introduction`:
+
+- **`auto`** (default): P2 is skipped until the **daily dryback rate** — measured relative to the
+  day's P1 saturation peak (`day_peak_vwc`) — exceeds `CropSteering.P2_Intro_Dryback_Threshold`
+  (default **25 %**). From then on `CropSteering.p2_introduced` is `true` (persisted) and P2 runs.
+  To restart a grow, reset `p2_introduced = false` (console: `cs_p2 reset`).
+- **`enabled`**: P2 always runs after P1 saturation (pre-v3.9 behavior).
+- **`disabled`**: P2 never runs — after P1 saturation the system returns to **P0 monitoring**
+  (no mid-day refills). VWC is still protected: if it drops below `VWCMin` during the day, P0
+  starts another P1 saturation.
+
+Mode, threshold and introduced state can be inspected/changed via the console
+(`cs_p2 status`, `cs_p2 mode <auto|enabled|disabled>`, `cs_p2 threshold <n>`, `cs_p2 reset`).
+
+While P2 is not in use, `_determine_initial_phase` also returns P0 instead of P2 at startup.
+
 **Why VWCMax (and not VWCTarget) is used for the refill target**: VWCTarget is only a lower hold level. Refilling to VWCTarget would leave the medium underfilled and cause a constant deficit. VWCMax represents the calibrated container capacity — the level the block reaches after a full irrigation shot. By stopping early at VWCMax we avoid drain while still returning to full capacity.
+
+> **Steering dimensions**: P2 steers watering via **amount** (refill to `VWCMax`) and **shot count**
+> per cycle. The reference practice additionally uses **shot size** as an EC lever (reduce shot size
+> to raise EC, increase it to lower EC) and a **weekly runoff-EC review**; both are deliberately not
+> implemented (see "Deliberately Not Implemented").
 
 #### P3: Night Dryback Phase
 - **Active during**: Lights OFF only
 - **Purpose**: Allow controlled dryback overnight
-- **Actions**: 
-  - Monitor dryback percentage
-  - Adjust EC target based on dryback rate
+- **Actions**:
+  - Monitor dryback percentage from `startNightMoisture`
+  - Adjust EC target based on dryback rate (Automatic only — **log-only**, see note below)
   - Emergency irrigation if VWC critically low
-- **Emergency threshold**: VWCMax × 0.85
+- **Emergency threshold**: `max(ABS_VWC_MIN, VWCMin × emergency_threshold, learned_min_dryback + 3.0)`
+  with `emergency_threshold` default **0.5**. (This is **not** `VWCMax × 0.85` — that formula was removed in v3.5.)
+- **Emergency shot**: duration = `min(irrigation_duration, 15)` s, max **5 per night**, min **5 min** between shots
 - **On light ON**: Transitions to P0
+
+> **EC adjustment during P3 (`next_ec_target`)**: Adjusting the EC *while* P3 runs cannot
+> influence the current dryback — the medium is not being fertigated during the night. The
+> `_adjust_ec_for_dryback()` call in Automatic P3 therefore computes a **next-day EC target**
+> (`CropSteering.Learned.next_ec_target`) instead of changing the running feed:
+> - At most **one adjustment per night** (`CropSteering.p3_ec_adjusted` flag, reset on P3 entry/exit)
+>   to prevent runaway steps.
+> - The new target is **clamped to `[MinEC, MaxEC]`** of the active phase preset.
+> - The value is **persisted** and used by the **next day's P1** as its effective `ECTarget`
+>   (see `_get_effective_ec_target()`), so the dryback-based EC adjustment takes effect on the
+>   next fertigation.
+> - It still does **not** dose anything (actual nutrient dosing is a TODO — Nutrient-System integration);
+>   only the target value is persisted and shown.
 
 ## Plant Growth Phase (veg / flower)
 
@@ -556,6 +687,45 @@ $ cs_status
 💡 Use 'cs_calibrate max' or 'cs_calibrate min' to calibrate
 ```
 
+#### Console Commands for Initial Soak & P2 Introduction (v3.9)
+
+```bash
+# Arm the one-shot Initial Soak - works in ANY week, not just veg start
+# (next successful P1 fills the medium to full capacity)
+cs_soak on
+
+# Disarm it manually
+cs_soak off
+
+# Show current state
+cs_soak status
+
+# P2 introduction - control mode
+cs_p2 status                              # Show mode, threshold, introduced state
+cs_p2 mode auto                           # Default: introduce P2 via weekly dryback rule
+cs_p2 mode enabled                        # Always run P2 after P1 (pre-v3.9 behavior)
+cs_p2 mode disabled                       # P1 + P3 only (early veg)
+
+# P2 introduction - threshold + reset
+cs_p2 threshold 25                        # Daily dryback % that triggers P2 (default 25)
+cs_p2 reset                               # Hold P2 back again (clears introduced state)
+```
+
+`cs_status` additionally shows the steering settings block:
+
+```
+🎛 Steering Settings:
+   Initial Soak: ARMED
+   P2 Mode: auto (introduced: yes, threshold: 25.0%)
+   Today's saturation peak: 68.5%
+   Current dryback vs peak: 41.6%     ← how close P2 introduction is (needs ≥ threshold)
+   Learned P1 peak: 61.5%
+   Next-day EC target: 2.30
+```
+
+`cs_p2 status` shows the same dryback line with the "needs ≥ X% in 'auto' mode" note, so you can
+directly judge how necessary P2 is right now.
+
 #### Calibration Manager Architecture
 
 ```python
@@ -613,9 +783,10 @@ Calibration values are stored in the runtime DataStore under `CropSteering.Calib
 }
 ```
 
-> **Known limitation**: `CropSteering` is currently **runtime-only** — calibration values are
-> **lost on HA restart** (the `CropSteering` subtree is in `IGNORED_STATE_KEYS` and not written
-> to the state file). Persistence across restarts is a known open item.
+> **Persistence (since v3.8.1)**: `CropSteering.Calibration` and `CropSteering.Learned` **are now
+> persisted** to `ogb_data/ogb_<room>_state.json` and restored on HA restart (`CropSteering` is in
+> `PRESERVED_STATE_KEYS`; only the `Calibration` + `Learned` subtrees are written, all runtime state
+> such as `Mode`, `shotCounter`, `vwc_current`, `phaseStartTime` is deliberately excluded).
 
 #### Auto-Calibration During Regular Operation
 
@@ -1408,7 +1579,7 @@ $ cs_calibrate -h
 - **Irrigation Validation**: Effectiveness monitoring and anomaly detection
 - **Emergency Systems**: Safety irrigation and dryback protection
 - **AI Learning Integration**: Sensor data collection for analytics
-- **Calibration Persistence**: Runtime-only (lost on HA restart) — known open item
+- **Calibration Persistence**: `Calibration` + `Learned` persisted across restarts (v3.8.1)
 
 ### Integration Points ✅ **CONNECTED**
 
@@ -1418,13 +1589,71 @@ $ cs_calibrate -h
 - **HA Entities**: Controls pumps, valves, sensors
 - **Event System**: Emits irrigation events for monitoring
 - **Console Manager**: Exposes `cs_calibrate` and `cs_status` commands
-- **DataStore**: Calibration storage (runtime; persistence pending)
+- **DataStore**: Calibration + Learned storage (persisted in `ogb_data/ogb_<room>_state.json`)
 
 ---
 
-**Last Updated**: August 13, 2026
-**Version**: 3.8 (Docs: Modes & Calibration Corrections)
+**Last Updated**: August 14, 2026
+**Version**: 3.9 (Reference Alignment: P1 Cadence & Next-Day EC Target)
 **Status**: ✅ **PRODUCTION READY**
+
+### Changelog v3.9 (August 14, 2026)
+- **Changed**: Capacity semantics cleaned up — the P1/P2 capacity ceiling is now
+  `min(preset VWCMax, max_saturation_vwc, field_capacity_vwc)`:
+  - Removed the **+5 % headroom** on the learned `max_saturation_vwc` clamp — the observed P1
+    peak is now the hard ceiling (no more overshoot toward full saturation).
+  - `field_capacity_vwc` is now actually **used as a capacity reference** (it was learned and
+    displayed but never used in control). Its learning **ratchets up only**, so undershooting
+    P2 shots can never drag the day-to-day capacity down.
+- **Changed**: Automatic P1 shot cadence now follows the reference practice band — `wait_between`
+  default **180 s → 900 s (15 min)** (reference: 15–30 min between small shots). User-adjustable via
+  P1 `Shot_Intervall`.
+- **Changed**: P3 dryback-based EC adjustment is no longer log-only. `_adjust_ec_for_dryback()`
+  now writes a **persisted next-day EC target** (`CropSteering.Learned.next_ec_target`), clamped to
+  `[MinEC, MaxEC]`, with **at most one adjustment per night** (`CropSteering.p3_ec_adjusted` flag,
+  reset on P3 entry/exit). The next day's P1 uses it as its effective `ECTarget`
+  (`_get_effective_ec_target()`). Actual dosing remains a TODO (Nutrient-System integration).
+- **Fixed**: Manual P2 never incremented `CropSteering.p2_shot_count` (only the manual
+  `shotCounter`), so `_track_p2_vwc_peak()`'s cycle requirement (`irrigation_count >= 3`) was never
+  met and the P2 VWCMax auto-calibration could never fire in Manual/Manual-Transition. The manual
+  P2 handler now also records the shot via `_record_p2_irrigation()`.
+- **Added**: Documentation section "Reference Method Comparison" (P0–P3 matrix, ✅/⚠️/❌),
+  "Deliberately Not Implemented" (runoff, volume-based shots, shot-size EC lever, dryback rate,
+  weekly runoff-EC review) and "OGB-Specific Extensions" (emergency shots, pre-night buffers,
+  absolute guards, `p1_peak_vwc` learning, `next_ec_target`, persistence).
+- **Fixed**: P3 EC adjustment note updated from "log-only" to the new persisted `next_ec_target`
+  behavior.
+- **Fixed**: Failsafe guard table corrected — Sensor Stuck threshold is **15** consecutive
+  unchanged readings (matches `_SENSOR_STUCK_THRESHOLD`), not 10. Tests updated accordingly.
+- **Added**: **P2 introduction control** (reference practice — weekly decision). New
+  `CropSteering.P2_Introduction` setting: `auto` (default — P2 skipped until the **daily dryback
+  rate** relative to the day's P1 peak exceeds `P2_Intro_Dryback_Threshold`, default 25 %; the
+  resulting `p2_introduced` state is persisted), `enabled` (always run P2), `disabled` (early veg
+  runs P1 + P3 only — after saturation the system returns to P0 monitoring). When P2 is not in
+  use, `_determine_initial_phase` returns P0 instead of P2.
+- **Added**: **Initial Soak at veg start** (reference practice — P1 special case). New one-shot
+  `CropSteering.InitialSoak` flag: while armed, P0 starts P1 immediately (no transpiration buffer)
+  and P1 saturates to **full container capacity** ignoring any learned `p1_peak_vwc`; the flag
+  auto-disarms after the first **successful** soak. A failed soak stays armed (retry next day).
+- **Added**: `p2_introduced` to the persisted learned values (`CROP_STEERING_LEARNED_KEYS`).
+- **Added**: Console helper commands for crop steering:
+  - `cs_soak [on|off|status]` — arm the one-shot Initial Soak in **any week** (not just veg
+    start), disarm it, or show its state.
+  - `cs_p2 [status|mode <auto|enabled|disabled>|threshold <n>|reset]` — control the P2
+    introduction mode, its dryback threshold, and reset the introduced state.
+  - `cs_status` now shows the steering settings block (Initial Soak, P2 mode/introduced/
+    threshold, today's saturation peak + **current dryback vs peak**, learned P1 peak,
+    next-day EC target).
+
+### Changelog v3.8.1 (August 14, 2026)
+- **Changed**: VWC calibration data (`CropSteering.Calibration` + `CropSteering.Learned`) is now **persisted across HA restarts** (`CropSteering` added to `PRESERVED_STATE_KEYS`; only Calibration + Learned subtrees are written, runtime state excluded). Removed the previous "runtime-only / known open item" notices.
+- **Fixed**: Documentation errors relative to the implementation:
+  - P1 stagnation threshold corrected from `max(40.0, preset_vwc_min)` to `max(25.0, preset_vwc_min)` (matches code)
+  - P3 emergency threshold corrected — it is `max(ABS_VWC_MIN, VWCMin × emergency_threshold, learned_min_dryback + 3.0)`, **not** `VWCMax × 0.85`
+  - P2 emergency level clarified (`VWCMin × emergency_threshold`, default 0.5)
+  - P1→P2 vs. P1→P3 triggers separated: lights-off during P1 always goes to **P3** (abort), never to P2
+  - P2→P3 documented as **pre-night (≤1 h before lights off) = normal path**, lights-off = fallback
+  - P3 EC adjustment documented as **log-only** (no DataStore write, no dosing) with effect on the **next** fertigation only
 
 ### Changelog v3.8 (August 13, 2026)
 - **Fixed**: Documentation corrected to match the Manual/Manual-Transition implementation:

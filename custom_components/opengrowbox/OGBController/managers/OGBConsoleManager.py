@@ -128,6 +128,22 @@ class OGBConsoleManager:
             ["cs_status"],
         )
 
+        self.register_command(
+            "cs_soak",
+            self.cmd_cs_soak,
+            "Arms/disarms/shows the one-shot Initial Soak (any week, not just veg start)",
+            "cs_soak [on|off|status]",
+            ["cs_soak", "cs_soak on", "cs_soak off"],
+        )
+
+        self.register_command(
+            "cs_p2",
+            self.cmd_cs_p2,
+            "Controls P2 introduction (auto/enabled/disabled, threshold, reset)",
+            "cs_p2 [status|mode <auto|enabled|disabled>|threshold <n>|reset]",
+            ["cs_p2", "cs_p2 mode disabled", "cs_p2 threshold 25", "cs_p2 reset"],
+        )
+
         # Script Mode Commands
         self.register_command(
             "script",
@@ -661,6 +677,31 @@ class OGBConsoleManager:
         response += f"   VWC: {vwc:.1f}%\n" if vwc else "   VWC: N/A\n"
         response += f"   EC: {ec:.2f} mS/cm\n" if ec else "   EC: N/A\n"
 
+        # Steering settings (v3.9: Initial Soak + P2 introduction)
+        p2_mode = self.data_store.getDeep("CropSteering.P2_Introduction") or "auto"
+        raw_threshold = self.data_store.getDeep("CropSteering.P2_Intro_Dryback_Threshold")
+        p2_threshold = float(raw_threshold) if raw_threshold else 25.0
+        p2_introduced = bool(self.data_store.getDeep("CropSteering.p2_introduced"))
+        soak = bool(self.data_store.getDeep("CropSteering.InitialSoak"))
+        day_peak = self.data_store.getDeep("CropSteering.day_peak_vwc")
+        p1_peak = self.data_store.getDeep("CropSteering.Learned.p1_peak_vwc")
+        next_ec = self.data_store.getDeep("CropSteering.Learned.next_ec_target")
+
+        response += f"\n🎛 Steering Settings:\n"
+        response += f"   Initial Soak: {'ARMED' if soak else 'disarmed'}\n"
+        response += (
+            f"   P2 Mode: {p2_mode} (introduced: {'yes' if p2_introduced else 'no'}, "
+            f"threshold: {p2_threshold:.1f}%)\n"
+        )
+        if day_peak:
+            dryback = self._cs_dryback_percent(day_peak, vwc)
+            response += f"   Today's saturation peak: {day_peak:.1f}%\n"
+            response += f"   Current dryback vs peak: {dryback:.1f}%\n"
+        if p1_peak:
+            response += f"   Learned P1 peak: {p1_peak:.1f}%\n"
+        if next_ec:
+            response += f"   Next-day EC target: {next_ec:.2f}\n"
+
         # Calibration values
         response += f"\n🔧 Calibration Values:\n"
         for phase in ["p1", "p2", "p3"]:
@@ -683,6 +724,149 @@ class OGBConsoleManager:
         response += "\n💡 Use 'cs_calibrate max' or 'cs_calibrate min' to calibrate"
         
         await self._send_response(response)
+
+    async def cmd_cs_soak(self, params: List[str]):
+        """
+        Arms/disarms/shows the one-shot Initial Soak.
+        Usage: cs_soak [on|off|status]
+        """
+        action = params[0].lower() if params else "status"
+
+        if action == "on":
+            self.data_store.setDeep("CropSteering.InitialSoak", True)
+            await self._send_response(
+                "💦 Initial Soak ARMED.\n"
+                "The next P1 saturation will fill the medium to full capacity "
+                "(bypassing the transpiration buffer and any learned peak).\n"
+                "The flag disarms automatically after a successful soak - use it "
+                "at veg start or any week when the medium needs a full pre-soak."
+            )
+            return
+
+        if action == "off":
+            self.data_store.setDeep("CropSteering.InitialSoak", False)
+            await self._send_response("🚫 Initial Soak DISARMED.")
+            return
+
+        if action == "status":
+            armed = bool(self.data_store.getDeep("CropSteering.InitialSoak"))
+            await self._send_response(
+                f"💦 Initial Soak: {'ARMED' if armed else 'disarmed'}\n"
+                "Use 'cs_soak on' to arm it (next successful P1 fills to capacity)."
+            )
+            return
+
+        await self._send_response(
+            "⚠️ Unknown action.\n"
+            "Usage: cs_soak [on|off|status]\n"
+            "  on     - Arm the one-shot Initial Soak (next successful P1 fills to capacity)\n"
+            "  off    - Disarm it manually\n"
+            "  status - Show current state (default)"
+        )
+
+    async def cmd_cs_p2(self, params: List[str]):
+        """
+        Controls P2 introduction (reference practice: early veg runs P1 + P3 only).
+        Usage: cs_p2 [status|mode <auto|enabled|disabled>|threshold <n>|reset]
+        """
+        action = params[0].lower() if params else "status"
+
+        if action == "mode":
+            if len(params) < 2:
+                await self._send_response("⚠️ Missing mode.\nUsage: cs_p2 mode <auto|enabled|disabled>")
+                return
+            mode = params[1].lower()
+            if mode not in ("auto", "enabled", "disabled"):
+                await self._send_response(
+                    f"⚠️ Invalid mode: '{mode}'\nValid modes: auto, enabled, disabled"
+                )
+                return
+            self.data_store.setDeep("CropSteering.P2_Introduction", mode)
+            await self._send_response(
+                f"⚙️ P2 introduction mode set to '{mode}'.\n"
+                + {
+                    "auto": "P2 runs once the daily dryback rate exceeds the threshold.",
+                    "enabled": "P2 always runs after P1 saturation.",
+                    "disabled": "P2 never runs (P1 + P3 only).",
+                }[mode]
+            )
+            return
+
+        if action == "threshold":
+            if len(params) < 2:
+                await self._send_response("⚠️ Missing value.\nUsage: cs_p2 threshold <percent>")
+                return
+            try:
+                value = float(params[1])
+            except ValueError:
+                await self._send_response(
+                    f"⚠️ Invalid threshold: '{params[1]}' (must be a number)"
+                )
+                return
+            if value <= 0:
+                await self._send_response("⚠️ Threshold must be greater than 0.")
+                return
+            self.data_store.setDeep("CropSteering.P2_Intro_Dryback_Threshold", value)
+            await self._send_response(
+                f"🎯 P2 introduction dryback threshold set to {value:.1f}%."
+            )
+            return
+
+        if action == "reset":
+            self.data_store.setDeep("CropSteering.p2_introduced", False)
+            await self._send_response(
+                "🔄 P2 introduction state reset - P2 will be held back until the "
+                "daily dryback rate exceeds the threshold again (in 'auto' mode)."
+            )
+            return
+
+        if action == "status":
+            mode = self.data_store.getDeep("CropSteering.P2_Introduction") or "auto"
+            raw_threshold = self.data_store.getDeep("CropSteering.P2_Intro_Dryback_Threshold")
+            threshold = float(raw_threshold) if raw_threshold else 25.0
+            introduced = bool(self.data_store.getDeep("CropSteering.p2_introduced"))
+            day_peak = self.data_store.getDeep("CropSteering.day_peak_vwc")
+            vwc = self.data_store.getDeep("CropSteering.vwc_current")
+            in_use = introduced if mode == "auto" else (mode == "enabled")
+            response = (
+                "⚙️ P2 Introduction:\n"
+                f"   Mode: {mode}\n"
+                f"   Dryback threshold: {threshold:.1f}%\n"
+                f"   Introduced: {'yes' if introduced else 'no'}\n"
+                f"   P2 in use: {'yes' if in_use else 'no'}"
+            )
+            if day_peak:
+                dryback = self._cs_dryback_percent(day_peak, vwc)
+                response += (
+                    f"\n   Today's saturation peak: {day_peak:.1f}%\n"
+                    f"   Current dryback vs peak: {dryback:.1f}%"
+                    f" (needs ≥ {threshold:.1f}% in 'auto' mode)"
+                )
+            await self._send_response(response)
+            return
+
+        await self._send_response(
+            "⚠️ Unknown action.\n"
+            "Usage: cs_p2 [status|mode <auto|enabled|disabled>|threshold <n>|reset]\n"
+            "  status    - Show P2 introduction state (default)\n"
+            "  mode      - 'auto' (default), 'enabled' or 'disabled'\n"
+            "  threshold - Daily dryback % that triggers P2 introduction (default 25)\n"
+            "  reset     - Reset p2_introduced so P2 is held back again"
+        )
+
+    def _cs_dryback_percent(self, base_vwc, current_vwc) -> float:
+        """Relative moisture loss vs a base VWC, clamped to 0-100 (mirrors OGBCSManager)."""
+        if not base_vwc or not current_vwc:
+            return 0.0
+        try:
+            base_f = float(base_vwc)
+            current_f = float(current_vwc)
+        except (TypeError, ValueError):
+            return 0.0
+        if base_f <= 0:
+            return 0.0
+        dryback = ((base_f - current_f) / base_f) * 100.0
+        return max(0.0, min(dryback, 100.0))
 
     # =========================
     # SCRIPT MODE COMMANDS

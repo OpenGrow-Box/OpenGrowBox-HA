@@ -96,7 +96,7 @@ class OGBCSConfigurationManager:
                 "MaxEC": 2.0,
                 "irrigation_duration": 45,
                 "max_cycles": 10,
-                "wait_between": 180,
+                "wait_between": 900,  # 15 min between P1 shots (reference band: 15-30 min)
                 "trigger_condition": "vwc_above_target",
             },
             "p2": {
