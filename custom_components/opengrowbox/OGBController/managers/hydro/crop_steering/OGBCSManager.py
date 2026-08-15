@@ -719,24 +719,55 @@ class OGBCSManager:
     ) -> bool:
         """Last-resort dryout override when the failsafe would otherwise block irrigation.
 
-        If the VWC is below the phase emergency threshold and the only active guard
-        is a sensor-stuck/invalid or dryout/ineffective guard, force a small emergency
-        irrigation shot instead of letting the plant sit dry. This uses the phase's
-        dedicated emergency counter, so it never consumes normal dryback shots.
+        If the medium is (or may be) below the phase emergency threshold and the only
+        active guard is a sensor-stuck/invalid or dryout/ineffective guard, force a small
+        emergency irrigation shot instead of letting the plant sit dry. This uses the
+        phase's dedicated emergency counter, so it never consumes normal dryback shots.
+
+        Works in every phase (P0-P3): a stuck sensor can appear at any point of the day
+        cycle and the medium must never sit unattended for hours. When the reason is
+        sensor_invalid the current reading itself is untrustworthy, so the last *trusted*
+        VWC reading decides whether a rescue shot is needed.
 
         Never bypasses flood_guard or max_runtime.
         """
         if reason not in ("sensor_invalid", "dryout_guard", "irrigation_ineffective"):
             return False
 
-        if phase not in ("p2", "p3"):
-            return False
-
         emergency_level = self._get_emergency_level(phase, preset)
-        if vwc >= emergency_level:
+
+        # A stuck/invalid reading says nothing about the real medium moisture, so
+        # judge against the last value we could trust (pre-stuck history, then
+        # persisted state), not against the (stale) current reading.
+        if reason == "sensor_invalid":
+            trusted = self._get_last_trusted_vwc()
+            if trusted is not None:
+                check_vwc = trusted
+            else:
+                fallback = self.data_store.getDeep("CropSteering.lastIrrigationVWC")
+                if fallback is None:
+                    fallback = self.data_store.getDeep("CropSteering.day_peak_vwc")
+                try:
+                    check_vwc = float(fallback) if fallback is not None else vwc
+                except (TypeError, ValueError):
+                    check_vwc = vwc
+        else:
+            check_vwc = vwc
+
+        if check_vwc >= emergency_level:
             return False
 
-        if phase == "p2":
+        if phase == "p0":
+            counter_key = "CropSteering.p0_emergency_count"
+            last_time_key = "CropSteering.p0_last_emergency_time"
+            max_shots = int(preset.get("max_emergency_shots", 5))
+            shot_duration = int(preset.get("emergency_shot_duration", 15))
+        elif phase == "p1":
+            counter_key = "CropSteering.p1_emergency_count"
+            last_time_key = "CropSteering.p1_last_emergency_time"
+            max_shots = int(preset.get("max_emergency_shots", 5))
+            shot_duration = int(preset.get("emergency_shot_duration", 15))
+        elif phase == "p2":
             counter_key = "CropSteering.p2_emergency_shot_count"
             last_time_key = "CropSteering.p2_last_emergency_time"
             max_shots = int(preset.get("max_emergency_shots", 5))
@@ -780,18 +811,33 @@ class OGBCSManager:
 
         _LOGGER.warning(
             f"{self.room} - {phase.upper()} Dryout override: Emergency irrigation Shot {emergency_count + 1}/{max_shots}: "
-            f"VWC {vwc:.1f}% < {emergency_level:.1f}% (duration {shot_duration}s, failsafe reason: {reason})"
+            f"VWC {check_vwc:.1f}% < {emergency_level:.1f}% (current reading {vwc:.1f}%, duration {shot_duration}s, failsafe reason: {reason})"
         )
         await self.event_manager.emit(
             "LogForClient",
             self._build_cs_log(
                 f"{phase.upper()} Dryout override: Emergency irrigation Shot {emergency_count + 1}/{max_shots} "
-                f"(VWC {vwc:.1f}% < {emergency_level:.1f}%, duration {shot_duration}s, failsafe: {reason})",
+                f"(VWC {check_vwc:.1f}% < {emergency_level:.1f}%, duration {shot_duration}s, failsafe: {reason})",
                 phase=phase,
             ),
             haEvent=True,
         )
         return True
+
+    def _get_last_trusted_vwc(self) -> Optional[float]:
+        """Most recent VWC reading before the current (possibly stuck) value.
+
+        Returns None when the in-memory history window holds no earlier distinct
+        reading (sensor stuck longer than the history, or no readings yet).
+        """
+        history = getattr(self, "_vwc_history", None) or []
+        if not history:
+            return None
+        current = history[-1][1]
+        for _, value in reversed(history):
+            if round(value, 1) != round(current, 1):
+                return value
+        return None
 
     async def _stop_all_irrigation(self, reason: str):
         """Turn off all drippers and reset irrigation tracking."""

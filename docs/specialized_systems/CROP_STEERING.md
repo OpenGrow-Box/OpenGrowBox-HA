@@ -1652,6 +1652,11 @@ $ cs_calibrate -h
   - `cs_status` now shows the steering settings block (Initial Soak, P2 mode/introduced/
     threshold, today's saturation peak + **current dryback vs peak**, learned P1 peak,
     next-day EC target).
+- **Fixed**: **Dryout override (rescue shots for stuck sensors) now fires in all phases and uses the last trusted VWC.** Previously the override only ran in P2/P3 and gated against the *current* (stuck) reading, so a sensor stuck at 30.5 % with emergency level 28 % blocked the rescue even though the medium was critically dry. Now:
+  - Works in P0–P3 (dedicated per-phase emergency counters `p0_emergency_count`, `p1_emergency_count`).
+  - For `sensor_invalid` the override judges against the last reading before the stuck window (in-memory `_vwc_history`, then persisted `lastIrrigationVWC`/`day_peak_vwc`), not the stale sensor value.
+  - Bounded as before: max 5 shots à 15 s, 5-min interval. Flood-guard and max-runtime remain hard stops.
+  - Regression tests cover P0/P1/P3 firing, trusted-vs-stuck decision, fallback, and counter limits.
 
 ### Changelog v3.8.1 (August 14, 2026)
 - **Changed**: VWC calibration data (`CropSteering.Calibration` + `CropSteering.Learned`) is now **persisted across HA restarts** (`CropSteering` added to `PRESERVED_STATE_KEYS`; only Calibration + Learned subtrees are written, runtime state excluded). Removed the previous "runtime-only / known open item" notices.

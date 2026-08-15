@@ -1131,6 +1131,153 @@ async def test_manual_cycle_non_critical_failsafe_still_irrigates():
     assert irrigated, "Manual irrigation must run despite non-critical failsafe"
 
 
+# --- Dryout override (stuck sensor rescue) ---
+
+
+def _stuck_sensor_history(stuck_vwc, trusted_vwc, stuck_readings=15):
+    """VWC history: trusted value first, then a long run of an identical stuck value."""
+    now = datetime.now()
+    history = [(now - timedelta(minutes=30), trusted_vwc)]
+    history += [
+        (now - timedelta(seconds=30 - i), stuck_vwc) for i in range(stuck_readings)
+    ]
+    return history
+
+
+@pytest.mark.asyncio
+async def test_dryout_override_sensor_invalid_fires_in_p0_using_trusted_vwc():
+    """A stuck sensor in P0 must trigger a rescue shot based on the last trusted VWC."""
+    manager = _cs_manager_with_failsafe()
+    manager._vwc_history = _stuck_sensor_history(stuck_vwc=30.5, trusted_vwc=20.0)
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    preset = {"VWCMin": 60.0, "VWCTarget": 62.0, "VWCMax": 65.0}
+
+    fired = await manager._run_dryout_override(30.5, preset, "p0", "sensor_invalid")
+
+    assert fired is True
+    assert irrigated == [15]
+    assert manager.data_store.getDeep("CropSteering.p0_emergency_count") == 1
+
+
+@pytest.mark.asyncio
+async def test_dryout_override_sensor_invalid_blocked_when_trusted_above_emergency():
+    """If the last trusted VWC is healthy, a stuck sensor must NOT trigger a rescue."""
+    manager = _cs_manager_with_failsafe()
+    manager._vwc_history = _stuck_sensor_history(stuck_vwc=30.5, trusted_vwc=60.0)
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    preset = {"VWCMin": 60.0, "VWCTarget": 62.0, "VWCMax": 65.0}
+
+    fired = await manager._run_dryout_override(30.5, preset, "p0", "sensor_invalid")
+
+    assert fired is False
+    assert irrigated == []
+
+
+@pytest.mark.asyncio
+async def test_dryout_override_sensor_invalid_fires_in_p3_despite_stuck_above_emergency():
+    """The exact log scenario: stuck at 30.5% (> P3 emergency 28%) still triggers a rescue
+    because the last trusted reading (20%) was critically dry."""
+    manager = _cs_manager_with_failsafe()
+    manager._vwc_history = _stuck_sensor_history(stuck_vwc=30.5, trusted_vwc=20.0)
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    preset = {"VWCMin": 56.0, "VWCTarget": 40.0, "VWCMax": 45.0}
+
+    fired = await manager._run_dryout_override(30.5, preset, "p3", "sensor_invalid")
+
+    assert fired is True
+    assert irrigated == [15]
+    assert manager.data_store.getDeep("CropSteering.p3_emergency_count") == 1
+
+
+@pytest.mark.asyncio
+async def test_dryout_override_falls_back_to_persisted_last_irrigation_vwc():
+    """No in-memory trusted history (fresh restart) falls back to the persisted VWC."""
+    manager = _cs_manager_with_failsafe()
+    manager._vwc_history = []
+    manager.data_store.setDeep("CropSteering.lastIrrigationVWC", 18.0)
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    preset = {"VWCMin": 56.0, "VWCTarget": 40.0, "VWCMax": 45.0}
+
+    fired = await manager._run_dryout_override(30.5, preset, "p1", "sensor_invalid")
+
+    assert fired is True
+    assert irrigated == [15]
+    assert manager.data_store.getDeep("CropSteering.p1_emergency_count") == 1
+
+
+@pytest.mark.asyncio
+async def test_dryout_override_respects_max_shots_and_interval():
+    """The rescue shot budget is shared per phase and must be enforced."""
+    manager = _cs_manager_with_failsafe()
+    manager._vwc_history = _stuck_sensor_history(stuck_vwc=30.5, trusted_vwc=20.0)
+    manager.data_store.setDeep("CropSteering.p0_emergency_count", 5)
+    manager.data_store.setDeep(
+        "CropSteering.p0_last_emergency_time", datetime.now() - timedelta(minutes=1)
+    )
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    preset = {"VWCMin": 60.0, "VWCTarget": 62.0, "VWCMax": 65.0}
+
+    fired = await manager._run_dryout_override(30.5, preset, "p0", "sensor_invalid")
+
+    assert fired is False
+    assert irrigated == []
+
+
+@pytest.mark.asyncio
+async def test_dryout_override_dryout_guard_uses_current_vwc():
+    """Non-sensor reasons keep using the live reading (no trusted-VWC substitution)."""
+    manager = _cs_manager_with_failsafe()
+    manager._vwc_history = _stuck_sensor_history(stuck_vwc=30.5, trusted_vwc=20.0)
+
+    irrigated = []
+
+    async def _irrigate(duration=None, target_vwc=None, max_vwc=None, **kwargs):
+        irrigated.append(duration)
+
+    manager._irrigate = _irrigate
+    preset = {"VWCMin": 60.0, "VWCTarget": 62.0, "VWCMax": 65.0}
+
+    # dryout_guard with vwc 4.0 (below ABSOLUTE_VWC_MIN emergency floor) -> fires
+    fired = await manager._run_dryout_override(4.0, preset, "p0", "dryout_guard")
+    assert fired is True
+    assert irrigated == [15]
+
+    # vwc above the emergency level -> no rescue for dryout_guard
+    fired = await manager._run_dryout_override(40.0, preset, "p0", "dryout_guard")
+    assert fired is False
+    assert irrigated == [15]
+
+
 # --- Adaptive VWCTarget (p1_peak_vwc) ---
 
 
