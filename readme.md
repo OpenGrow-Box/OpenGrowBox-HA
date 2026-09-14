@@ -51,20 +51,13 @@ OpenGrowBox features a **modular, production-ready architecture** with clean sep
    # Search for "OpenGrowBox" and install
    ```
 
-2. **Basic Configuration**:
-   ```yaml
-   # configuration.yaml
-   opengrowbox:
-     mainControl: "HomeAssistant"
-   ```
-
-3. **Add Your First Room**:
+2. **Add Your First Room**:
    - Go to OGB Integration in HA
    - Create a "Grow Room" area
    - Add sensors and devices
    - Set targets: 25°C, 60% RH, VPD 1.2
 
-4. **Done!** Your grow room is now automated.
+3. **Done!** Your grow room is now automated.
 
 **[Detailed Setup →](docs/getting_started/INSTALLATION.md)**
 
@@ -220,27 +213,6 @@ opengrowbox:
       temperature_target: 25.0
       humidity_target: 60.0
       co2_target: 800
-```
-
-### Device Setup
-
-```yaml
-# Device mapping with labels
-opengrowbox:
-  devices:
-    temperature_sensor:
-      entity_id: "sensor.grow_room_temperature"
-      capabilities: ["canMeasureTemp"]
-
-    heater:
-      entity_id: "switch.heater"
-      capabilities: ["canHeat"]
-
-    # FridgeGrow device (automatic recognition)
-    fridgegrow_heater:
-      entity_id: "number.fridgegrow_abc123_heater"
-      labels: ["fridgegrow", "heater"]
-      # OGB detects this automatically!
 ```
 
 **[Advanced Configuration →](docs/configuration/CONFIGURATION.md)**
