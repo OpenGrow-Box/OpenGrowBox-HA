@@ -121,6 +121,14 @@ class OGBConsoleManager:
         )
 
         self.register_command(
+            "cs_auto_calib",
+            self.cmd_cs_auto_calib,
+            "Enables/disables automatic VWC calibration in Manual-Transition mode",
+            "cs_auto_calib [enable|disable|status]",
+            ["cs_auto_calib enable", "cs_auto_calib disable", "cs_auto_calib status"],
+        )
+
+        self.register_command(
             "cs_status",
             self.cmd_cs_status,
             "Shows CropSteering status and calibration values",
@@ -653,6 +661,50 @@ class OGBConsoleManager:
 
         # Emit calibration command
         await self.event_manager.emit("VWCCalibrationCommand", command_data)
+
+    async def cmd_cs_auto_calib(self, params: List[str]):
+        """
+        Toggles automatic VWC calibration in Manual-Transition mode.
+        Usage: cs_auto_calib [enable|disable|status]
+        
+        When ENABLED: Auto-calibration runs in Manual-Transition (learns VWCMax/VWCMin)
+        When DISABLED (DEFAULT): Auto-calibration is OFF - preserves user VWCMax/VWCMin settings
+        Automatic mode always runs full auto-calibration regardless of this setting.
+        """
+        action = params[0].lower() if params else "status"
+        
+        if action == "enable":
+            self.data_store.setDeep("CropSteering.DisableAutoCalibration", False)
+            await self._send_response(
+                "🔓 Auto-Calibration ENABLED for Manual-Transition mode.\n"
+                "P1/P2 VWCMax and P3 VWCMin will be auto-calibrated during operation."
+            )
+        elif action == "disable":
+            self.data_store.setDeep("CropSteering.DisableAutoCalibration", True)
+            await self._send_response(
+                "🔒 Auto-Calibration DISABLED for Manual-Transition mode.\n"
+                "Your manual VWCMax/VWCMin settings will be preserved.\n"
+                "Automatic mode still runs full auto-calibration."
+            )
+        elif action == "status":
+            # Default is True (disabled) when key is not set
+            disable_calib = self.data_store.getDeep("CropSteering.DisableAutoCalibration")
+            disabled = True if disable_calib is None else bool(disable_calib)
+            mode = self.data_store.getDeep("CropSteering.Mode") or "Unknown"
+            await self._send_response(
+                f"🔧 Auto-Calibration Override: {'DISABLED' if disabled else 'ENABLED'}\n"
+                f"   Current Mode: {mode}\n"
+                f"   {'Your manual VWC settings are preserved in Manual-Transition.' if disabled else 'P1/P2 VWCMax and P3 VWCMin are auto-calibrated in Manual-Transition.'}\n"
+                f"   Automatic mode always runs full auto-calibration."
+            )
+        else:
+            await self._send_response(
+                "⚠️ Unknown action.\n"
+                "Usage: cs_auto_calib [enable|disable|status]\n"
+                "  enable   - Enable auto-calibration in Manual-Transition\n"
+                "  disable  - Disable auto-calibration in Manual-Transition (preserve manual VWC settings) [DEFAULT]\n"
+                "  status   - Show current state"
+            )
 
     async def cmd_cs_status(self, params: List[str]):
         """Shows CropSteering status and calibration values"""

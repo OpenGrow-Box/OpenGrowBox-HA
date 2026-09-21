@@ -157,6 +157,18 @@ Manual mode comes in two flavours, selected via the CropSteering mode entity:
   at lights-off, P3 → P0 at lights-on, P0 → P1 below VWCMin, P1 → P2 at target/cap/shot-count,
   plus auto-calibration of VWCMax/VWCMin).
 
+> **Auto-Calibration in Manual-Transition**: By default, auto-calibration is **DISABLED** in
+> Manual-Transition mode to preserve user-configured VWCMax/VWCMin settings. This prevents the
+> system from automatically lowering your VWCMax (e.g., from 54% down to 48-52%) which would
+> cause premature P1→P2 transitions before you've completed all your desired shots.
+> 
+> You can toggle this behavior via the console command `cs_auto_calib`:
+> - `cs_auto_calib on` — Disable auto-calibration (default), preserve manual VWC settings
+> - `cs_auto_calib off` — Enable auto-calibration, let system learn VWCMax/VWCMin during operation
+> - `cs_auto_calib status` — Show current state
+>
+> Automatic mode **always** runs full auto-calibration regardless of this setting.
+
 - **Control**: Both flavours use **all user-configured settings** (VWC/EC targets, limits,
   timing) from `CropSteering.Substrate.{phase}.*` paths — **not** the automatic presets or
   plant-stage adjustments
@@ -711,6 +723,28 @@ cs_p2 threshold 25                        # Daily dryback % that triggers P2 (de
 cs_p2 reset                               # Hold P2 back again (clears introduced state)
 ```
 
+#### Console Commands for Auto-Calibration Control (Manual-Transition Mode)
+
+```bash
+# Enable auto-calibration in Manual-Transition mode
+# System will learn VWCMax/VWCMin during operation (like Automatic mode)
+cs_auto_calib enable
+
+# Disable auto-calibration in Manual-Transition mode (DEFAULT)
+# This preserves your manually configured VWCMax/VWCMin settings
+cs_auto_calib disable
+
+# Show current auto-calibration state
+cs_auto_calib status
+```
+
+> **Default Behavior**: In Manual-Transition mode, auto-calibration is **DISABLED by default** (`cs_auto_calib disable`).
+> This means your manually set VWCMax (e.g., 54% for P1) will be preserved and not auto-calibrated down
+> to a lower value (e.g., 48-52%) which would cause premature P1→P2 transitions.
+> 
+> In **Automatic mode**, auto-calibration **always runs** regardless of this setting.
+> In **pure Manual mode**, there is **never** auto-calibration.
+
 `cs_status` additionally shows the steering settings block:
 
 ```
@@ -792,9 +826,11 @@ Calibration values are stored in the runtime DataStore under `CropSteering.Calib
 
 The system automatically calibrates VWC values during normal operation across multiple phases:
 
-> **Mode note**: Auto-calibration runs only in **Automatic** mode and **Manual-Transition** mode.
+> **Mode note**: Auto-calibration runs in **Automatic** mode (always ON) and **Manual-Transition** mode (default: **OFF** — see `cs_auto_calib` console command).
 > In pure **Manual** mode there is **no** auto-calibration — the user is in control and must
 > calibrate manually via `cs_calibrate max` / `cs_calibrate min`.
+>
+> **Default behavior in Manual-Transition**: Auto-calibration is **DISABLED by default** to preserve user-configured VWCMax/VWCMin settings. Enable it with `cs_auto_calib off` if you want the system to learn VWCMax/VWCMin during operation (like Automatic mode).
 
 | Phase | Value | Method | Conditions |
 |-------|-------|--------|------------|

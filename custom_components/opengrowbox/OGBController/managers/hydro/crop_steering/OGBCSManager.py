@@ -1318,6 +1318,36 @@ class OGBCSManager:
         mode = self.data_store.getDeep("CropSteering.ActiveMode") or ""
         return "Manual-Transition" in str(mode)
 
+    def _is_auto_calibration_enabled(self) -> bool:
+        """
+        True when automatic VWC calibration should run.
+
+        In Automatic mode: always True (full auto-calibration).
+        In Manual-Transition mode: checks CropSteering.DisableAutoCalibration setting
+        (default: True = auto-calibration OFF in Manual-Transition).
+        In pure Manual mode: always False (no auto-calibration).
+        
+        Note: If ActiveMode is not set, defaults to Automatic behavior.
+        """
+        active_mode = self.data_store.getDeep("CropSteering.ActiveMode")
+        mode_str = str(active_mode) if active_mode else "Automatic"
+        
+        # Automatic mode always runs full auto-calibration
+        if mode_str == "Automatic":
+            return True
+        
+        # Pure Manual mode never auto-calibrates
+        if not "Manual-Transition" in mode_str:
+            return False
+        
+        # Manual-Transition mode: check user override
+        # Default: True (disabled in Manual-Transition) to preserve user settings
+        # If key is missing/None, treat as True (disabled)
+        disable_calib = self.data_store.getDeep("CropSteering.DisableAutoCalibration")
+        if disable_calib is None:
+            return False  # Default: disabled (preserve user settings)
+        return not bool(disable_calib)
+
     async def _get_sensor_averages(self) -> Optional[Dict[str, Any]]:
         """
         Get averaged sensor data from the GrowMedium objects.
@@ -2752,7 +2782,8 @@ class OGBCSManager:
                     ),
                     haEvent=True,
                 )
-                await self._calibrate_p1_vwc_max(vwc, cap=vwc_max_cap)
+                if self._is_auto_calibration_enabled():
+                    await self._calibrate_p1_vwc_max(vwc, cap=vwc_max_cap)
                 await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
                 return
             else:
@@ -2778,7 +2809,8 @@ class OGBCSManager:
             
             # Only save calibration if VWC reached a reasonable level
             if vwc >= min_vwc_for_stagnation:
-                await self._calibrate_p1_vwc_max(vwc, cap=vwc_max_cap)
+                if self._is_auto_calibration_enabled():
+                    await self._calibrate_p1_vwc_max(vwc, cap=vwc_max_cap)
                 await self._complete_p1_saturation(vwc, vwc, success=True, updated_max=True)
             else:
                 # VWC too low after max attempts - problem detected!
@@ -3138,7 +3170,11 @@ class OGBCSManager:
         Track post-irrigation VWC peaks in P2 for automatic VWCMax calibration.
         When a consistent peak is observed across multiple irrigation cycles,
         save it as the calibrated VWCMax for P2.
+        Only runs when auto-calibration is enabled (Automatic mode, or Manual-Transition with override off).
         """
+        if not self._is_auto_calibration_enabled():
+            return
+            
         tolerance = 2.0
         min_peaks = 3
         min_cycles = 3
@@ -3345,7 +3381,8 @@ class OGBCSManager:
             )  # Reset for next night
 
             # Auto-calibration: track night minimum VWC for VWCMin
-            await self._calibrate_p3_vwc_min(vwc)
+            if self._is_auto_calibration_enabled():
+                await self._calibrate_p3_vwc_min(vwc)
 
             # Emit dryback complete event for AI learning
             night_duration = None
@@ -3964,7 +4001,8 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
         # Calibrate VWCMax from observed saturation VWC
-        await self._calibrate_p1_vwc_max(vwc, cap=user_vwc_max)
+        if self._is_auto_calibration_enabled():
+            await self._calibrate_p1_vwc_max(vwc, cap=user_vwc_max)
 
         # Transition to P2
         await self._set_crop_phase_and_update_selector("p2")
@@ -3987,6 +4025,7 @@ class OGBCSManager:
 
         Mirrors automatic P1: lights off or near lights-off ends saturation
         early so the night dryback can start. Also calibrates VWCMax.
+        Only runs when auto-calibration is enabled.
         """
         # Read user's VWCMax cap before leaving p1 and use it as safety cap.
         p1_settings = self._get_manual_phase_settings("p1")
@@ -3998,7 +4037,8 @@ class OGBCSManager:
         self.data_store.setDeep("CropSteering.phaseStartTime", datetime.now())
 
         # Calibrate VWCMax from observed saturation VWC
-        await self._calibrate_p1_vwc_max(vwc, cap=user_vwc_max)
+        if self._is_auto_calibration_enabled():
+            await self._calibrate_p1_vwc_max(vwc, cap=user_vwc_max)
 
         await self._set_crop_phase_and_update_selector("p3")
 
@@ -4033,9 +4073,11 @@ class OGBCSManager:
         """Complete P3 dryback phase and transition to P0 (triggered by lights-on).
 
         Calibrates VWCMin from consistent night minima, like automatic P3.
+        Only runs when auto-calibration is enabled.
         """
         # Calibrate VWCMin from night dryback minimum
-        await self._calibrate_p3_vwc_min(vwc)
+        if self._is_auto_calibration_enabled():
+            await self._calibrate_p3_vwc_min(vwc)
 
         # Reset P3 state so the next night starts with fresh emergency counters.
         self._reset_p3_state_tracking()
