@@ -125,9 +125,10 @@ class OGBVPDManager:
                         except (ValueError, TypeError):
                             _LOGGER.error(f"Invalid humidity value for {h.get('entity_id')}: {h.get('state')}")
 
-        _LOGGER.warning(
+        _LOGGER.info(
             f"{self.room} VPD-CALC VALUES: "
-            f"temp_count={len(temperatures)}, hum_count={len(humidities)}"
+            f"temp_count={len(temperatures)}, hum_count={len(humidities)} | "
+            f"Temp: {temperatures} --- HUMS: {humidities}"
         )
 
         self.data_store.setDeep("workData.temperature",temperatures)
