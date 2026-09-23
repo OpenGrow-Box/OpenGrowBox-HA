@@ -3576,6 +3576,21 @@ class OGBCSManager:
 
         return False
 
+    async def _refresh_vwc_after_irrigation(self) -> float:
+        """Re-read sensor data after a shot for an up-to-date VWC.
+
+        `CropSteering.vwc_current` is normally refreshed only at the top of the
+        cycle loop, so right after a shot it still holds the pre-irrigation
+        value. A fresh read makes the post-shot target/max check reliable
+        instead of racing against sensor update lag.
+        """
+        sensor_data = await self._get_sensor_averages()
+        if sensor_data and sensor_data.get("vwc") is not None:
+            self.data_store.setDeep("CropSteering.vwc_current", sensor_data["vwc"])
+            self.data_store.setDeep("CropSteering.ec_current", sensor_data.get("ec"))
+            return float(sensor_data["vwc"])
+        return float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+
     async def _manual_cycle(self, phase):
             """Manual time-based cycle (uses USER settings)"""
             _LOGGER.debug(f"{self.room} - CS - Manual {phase}: Started")
@@ -3868,8 +3883,8 @@ class OGBCSManager:
                                     haEvent=True,
                                 )
 
-                                if phase == "p1" and vwc_target > 0:
-                                    current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                                if phase == "p1" and vwc_target > 0 and self._use_auto_transitions():
+                                    current_vwc = await self._refresh_vwc_after_irrigation()
                                     if current_vwc >= vwc_target:
                                         await self._complete_manual_p1(current_vwc, vwc_target)
                                         return
@@ -3910,7 +3925,7 @@ class OGBCSManager:
                                 )
 
                                 if phase == "p1" and vwc_target > 0 and self._use_auto_transitions():
-                                    current_vwc = float(self.data_store.getDeep("CropSteering.vwc_current") or 0)
+                                    current_vwc = await self._refresh_vwc_after_irrigation()
                                     if current_vwc >= vwc_target:
                                         await self._complete_manual_p1(current_vwc, vwc_target)
                                         return
@@ -3919,9 +3934,14 @@ class OGBCSManager:
                                         return
 
                         # Reset counter after full cycle.
-                        # In Manual-Transition hat P1 eigene Transition-Logik,
-                        # in reinem Manual muss P1 (wie P2) den Zähler zurücksetzen.
-                        if phase in ("p1", "p2") and shot_counter >= shot_count:
+                        # Manual-Transition: P1 has its own transition logic
+                        # (max shots -> P2). The P1 counter must NOT be reset
+                        # there, otherwise P1 restarts from zero instead of
+                        # switching to P2. Only pure Manual (and P2) restart
+                        # the cycle.
+                        if shot_counter >= shot_count and (
+                            phase == "p2" or not self._use_auto_transitions()
+                        ):
                             phase_start = self.data_store.getDeep("CropSteering.phaseStartTime")
                             if phase_start:
                                 elapsed = (now - phase_start).total_seconds() / 60

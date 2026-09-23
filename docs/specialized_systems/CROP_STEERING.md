@@ -257,6 +257,8 @@ In **Manual-Transition** mode the selected phase is only the starting point. The
 
 **Why this matters**: You can still force a specific phase for testing or troubleshooting, but the system will not keep irrigating at night or stay stuck in a phase that the plant/environment conditions have already left.
 
+**P1 → P2 hand-over after the last shot**: When P1's shot budget (`Shot_Sum`) is spent, P1 hands over cleanly to P2 — it does **not** restart a fresh P1 cycle. The P1 shot counter is only reset when re-entering P1 (unlike pure Manual, where the counter resets after a full cycle so P1 keeps irrigating). The P1 `VWCTarget`/`VWCMax` checks also re-read the VWC from the sensors immediately after each shot (instead of relying on the possibly stale value cached at the top of the cycle loop), so the P1→P2 transition fires reliably once the target is actually reached.
+
 ## Phase System
 
 ### Phase Overview

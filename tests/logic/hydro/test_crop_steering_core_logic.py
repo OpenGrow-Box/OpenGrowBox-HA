@@ -809,6 +809,123 @@ async def test_pure_manual_p1_stays_p1_when_near_light_off():
     assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
 
 
+def _guard_manual_cycle_state(manager):
+    """Keep pre-seeded shotCounter / phaseStartTime through a _manual_cycle run.
+
+    _manual_cycle resets shotCounter to 0 and phaseStartTime to now at entry;
+    the wrapper preserves the pre-seeded values (only the *initial* entry reset
+    is ignored) so single-iteration tests can exercise the end-of-cycle
+    counter-reset logic without manipulating time inside the loop.
+    """
+    real_set_deep = manager.data_store.setDeep
+    state = {"start_reset_seen": False}
+
+    def _guarded(path, value):
+        if path == "CropSteering.phaseStartTime":
+            return
+        if (
+            path == "CropSteering.shotCounter"
+            and value == 0
+            and not state["start_reset_seen"]
+        ):
+            state["start_reset_seen"] = True
+            return
+        real_set_deep(path, value)
+
+    manager.data_store.setDeep = _guarded
+
+
+@pytest.mark.asyncio
+async def test_manual_transition_p1_last_shot_does_not_reset_counter():
+    """Manual-Transition: after the final P1 shot the counter must NOT be reset
+    (no 'New cycle started'), otherwise the next cycle never sees max shots
+    reached and P1 restarts from zero instead of handing over to P2."""
+    manager = _manual_cycle_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p1",
+                "shotCounter": 4,
+                "phaseStartTime": datetime.now() - timedelta(hours=2),
+            },
+        },
+        mode="Manual-Transition",
+    )
+    _guard_manual_cycle_state(manager)
+
+    # The shot fires (counter 4 -> 5). The end-of-cycle reset must NOT wipe it.
+    await _run_manual_cycle_once(manager, "p1")
+
+    assert manager.data_store.getDeep("CropSteering.shotCounter") == 5
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
+
+
+@pytest.mark.asyncio
+async def test_manual_transition_p1_max_shots_switches_to_p2():
+    """Manual-Transition: once max shots is reached at the top of the loop,
+    P1 hands over to P2 (this is what the now-preserved counter enables)."""
+    manager = _manual_cycle_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {"CropPhase": "p1", "shotCounter": 5},  # == ShotSum
+        },
+        mode="Manual-Transition",
+    )
+    _guard_manual_cycle_state(manager)
+
+    await manager._manual_cycle("p1")
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p2"
+
+
+@pytest.mark.asyncio
+async def test_pure_manual_p1_resets_counter_after_full_cycle():
+    """Pure Manual: P1 keeps cycling and resets its shot counter once max shots
+    and one full interval have elapsed (regression guard - only
+    Manual-Transition must NOT reset the counter)."""
+    manager = _manual_cycle_manager(
+        {
+            "isPlantDay": {"islightON": True},
+            "CropSteering": {
+                "CropPhase": "p1",
+                "shotCounter": 4,
+                "phaseStartTime": datetime.now() - timedelta(hours=2),
+            },
+        },
+        mode="Manual",
+    )
+    _guard_manual_cycle_state(manager)
+
+    await _run_manual_cycle_once(manager, "p1")
+
+    assert manager.data_store.getDeep("CropSteering.shotCounter") == 0
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p1"
+
+
+@pytest.mark.asyncio
+async def test_manual_transition_p1_fresh_vwc_after_shot_switches_to_p2():
+    """Manual-Transition: P1 switches to P2 when a shot pushes VWC to target,
+    using a fresh sensor read after irrigation instead of the stale
+    pre-shot value that was cached at the top of the loop."""
+    manager = _manual_cycle_manager(mode="Manual-Transition")
+
+    calls = {"n": 0}
+
+    async def _sensor():
+        calls["n"] += 1
+        # First read (loop top): below target. Second read (post-shot
+        # refresh): above the default VWCTarget of 65%.
+        vwc = 55.0 if calls["n"] == 1 else 66.0
+        return {"vwc": vwc, "ec": 1.0, "pore_ec": 1.0, "temperature": 25.0, "bulk_ec": 1.0}
+
+    manager._get_sensor_averages = _sensor
+
+    await _run_manual_cycle_once(manager, "p1")
+
+    assert manager.data_store.getDeep("CropSteering.CropPhase") == "p2"
+    assert calls["n"] >= 2
+
+
 @pytest.mark.asyncio
 async def test_manual_p3_emergency_irrigation_when_vwc_too_low():
     """Manual P3 must run conservative emergency irrigation at night, like automatic."""
