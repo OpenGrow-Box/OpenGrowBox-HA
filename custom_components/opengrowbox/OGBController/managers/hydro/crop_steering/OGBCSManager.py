@@ -3487,6 +3487,7 @@ class OGBCSManager:
         self._manual_phase_changed_event.clear()
         try:
             while True:
+                self._manual_phase_changed_event.clear()
                 phase = self.data_store.getDeep("CropSteering.CropPhase") or "p0"
                 phase = self._extract_phase_from_value(phase)
                 _LOGGER.debug(f"{self.room} - Manual runner starting cycle for phase {phase}")

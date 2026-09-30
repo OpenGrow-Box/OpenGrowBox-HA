@@ -394,6 +394,69 @@ async def test_manual_phase_change_event_signals_running_cycle():
 
 
 @pytest.mark.asyncio
+async def test_manual_runner_stale_event_does_not_cancel_fresh_cycle():
+    """A phase-change event left set between cycles must not abort the next cycle's first shot."""
+    import asyncio
+
+    manager = _manual_cycle_manager(mode="Manual-Transition")
+    manager._turn_off_all_drippers = lambda: _noop_coroutine()
+    manager._manual_phase_changed_event = asyncio.Event()
+
+    real_sleep = asyncio.sleep
+    release_first = asyncio.Event()
+    release_next = asyncio.Event()
+    between_cycles = asyncio.Event()
+    calls = []
+    aborted = []
+
+    async def _manual_cycle(phase):
+        calls.append(phase)
+        try:
+            if len(calls) == 1:
+                await release_first.wait()
+            else:
+                await release_next.wait()
+        except asyncio.CancelledError:
+            aborted.append(phase)
+            raise
+
+    async def _controllable_sleep(seconds):
+        if seconds >= 1:
+            await between_cycles.wait()
+            between_cycles.clear()
+        else:
+            await real_sleep(0.001)
+
+    manager._manual_cycle = _manual_cycle
+
+    with patch("asyncio.sleep", _controllable_sleep):
+        runner = asyncio.create_task(manager._run_manual_mode())
+        await real_sleep(0.01)
+        assert calls == ["p1"]
+
+        release_first.set()
+        await real_sleep(0.01)
+        assert between_cycles.is_set() is False
+
+        manager._manual_phase_changed_event.set()
+
+        between_cycles.set()
+        await real_sleep(0.01)
+
+        assert len(calls) >= 2, "runner should have started a fresh p1 cycle"
+        assert aborted == [], f"fresh cycle was aborted: {aborted}"
+
+        release_next.set()
+        await real_sleep(0.01)
+        runner.cancel()
+        try:
+            await runner
+        except asyncio.CancelledError:
+            pass
+        release_next.set()
+
+
+@pytest.mark.asyncio
 async def test_manual_p0_transitions_to_p1_uses_own_vwc_min_in_window():
     """Manual-Transition P0→P1 must use P0's own VWC_Min (like automatic), not P1's."""
     manager = _cs_manager(
