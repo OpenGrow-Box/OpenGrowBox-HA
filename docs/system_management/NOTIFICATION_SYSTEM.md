@@ -455,7 +455,13 @@ Each device gets `reliability_manager` wired via the `DeviceInitialized` event h
 device_ref.reliability_manager = self  # self = OGBFallBackManager instance
 ```
 
-This enables `validate_device_state()` after every `turn_on()` / `turn_off()`, providing an additional async validation layer that checks power consumption after a 5-second delay.
+`turn_on()` / `turn_off()` use it only to store `last_power_before_action` in
+`DeviceReliabilityState`. They do **not** call `validate_device_state()` — the
+retrigger was removed from that path on purpose (it caused light toggling
+loops), so `validate_device_state()` is currently only exercised by its unit
+tests. State drift between OGB and HA is handled separately by
+`OGBOrchestrator._sync_device_states()` every 120s, which corrects the internal
+state and logs it without re-actuating the device.
 
 ### Event Flow
 
@@ -463,8 +469,12 @@ This enables `validate_device_state()` after every `turn_on()` / `turn_off()`, p
 Device.turn_off()
   ├─ sets _commanded_state = "off"
   ├─ stores power_before → DeviceReliabilityState
-  └─ (async) reliability_manager.validate_device_state()
-       └─ waits 5s → reads power → validates → retries if failed
+  └─ (no validate_device_state call - see above)
+
+OGBOrchestrator._sync_device_states() [every 120s]
+  └─ skips devices with an active control lock
+  └─ adopt_actual_state() for devices with _state_resync_pending
+  └─ logs drift, corrects isRunning, never re-issues switch commands
 
 FallBackManager._monitoring_loop() [every 60s]
   └─ _check_runaway_devices()

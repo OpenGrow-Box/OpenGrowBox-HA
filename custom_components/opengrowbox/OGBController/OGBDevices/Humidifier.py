@@ -183,13 +183,13 @@ class Humidifier(Device):
                     await self.set_humidifier_mode(next_mode)
                     self.log_action(f"IncreaseMode: {next_mode}")
             else:
-                if self.isRunning == True:
+                if self.is_already_in_state("on"):
                     self.log_action("Already in Desired State")
                 else:
                     self.log_action("TurnON")
                     await self.turn_on()
         else:
-            if self.isRunning == True:
+            if self.is_already_in_state("on"):
                 self.log_action("Already in Desired State ")
             else:
                 self.log_action("TurnON ")
@@ -221,13 +221,13 @@ class Humidifier(Device):
                     await self.set_humidifier_mode(next_mode)
                     self.log_action(f"ReduceMode: {next_mode}")
             else:
-                if self.isRunning == True:
+                if self.is_already_in_state("on"):
                     self.log_action("TurnOFF")
                     await self.turn_off()
                 else:
                     self.log_action("Already in Desired State")
         else:
-            if self.isRunning == True:
+            if self.is_already_in_state("on"):
                 self.log_action("TurnOFF ")
                 await self.turn_off()
             else:

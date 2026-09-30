@@ -334,26 +334,48 @@ async def setupDevice(self, device_config):
 
 ### State Synchronization
 
+OGB keeps an internal `isRunning` flag per device. It is updated by the
+`state_changed` listener, but it can be stale:
+
+- a command can be lost on flaky (e.g. WiFi) integrations, so OGB believes a
+  device is on while it is actually off
+- for 5 seconds after every command, `_control_lock_until` suppresses adoption
+  of HA state so a just-issued command is not overruled by a stale read
+
+Three methods on `Device` cover this:
+
+| Method | Purpose |
+| --- | --- |
+| `get_actual_state()` | Read the live HA state (`"on"` / `"off"` / `None` if unreachable) |
+| `get_expected_state()` | The state OGB believes the device to be in |
+| `adopt_actual_state()` | Re-derive `isRunning` from HA, bypassing the control lock |
+| `is_already_in_state(desired)` | Decision helper for increase/reduce actions |
+
+`increaseAction` / `reduceAction` must use `is_already_in_state()` rather than
+`self.isRunning`, otherwise a stale flag makes OGB skip a device as "already in
+desired state". If the entity is unreachable the internal flag is used, so
+offline devices keep their previous behaviour.
+
+A state change that arrives while the control lock is active sets
+`_state_resync_pending`. The periodic sync resolves it on a later tick:
+
 ```python
-async def synchronize_device_states(self):
-    """Synchronize all device states with Home Assistant."""
-
-    for device in self.devices:
-        try:
-            # Get current HA state
-            ha_state = await self._get_ha_device_state(device.entity_id)
-
-            # Update device internal state
-            device.update_state(ha_state)
-
-            # Validate state consistency
-            if not device.validate_state():
-                await self._correct_device_state(device)
-
-        except Exception as e:
-            _LOGGER.error(f"State sync failed for {device.name}: {e}")
-            await self._handle_device_error(device, e)
+# OGBOrchestrator._sync_device_states(), runs every 120s (timing_config['device_sync'])
+for device in devices:
+    if device._control_lock_active():
+        continue  # command in flight - retry on a later tick
+    if device._state_resync_pending:
+        device.adopt_actual_state()      # resolve deferred adoption
+    if device.get_expected_state() != device.get_actual_state():
+        await self._resync_device(device, device.get_expected_state())
 ```
+
+The sync only repairs OGB's internal bookkeeping and logs the drift. It
+deliberately does **not** re-issue switch commands: forcing the expected state
+oscillates on flaky integrations. The next VPD cycle decides again with correct
+information.
+
+Coverage: `tests/logic/devices/test_device_state_sync.py`
 
 ## Device Control Interface
 

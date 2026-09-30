@@ -250,33 +250,58 @@ class OGBOrchestrator:
 
         devices = self.data_store.get("devices") or []
         sync_failures = []
-        
+        corrected = []
+
         for device in devices:
             try:
-                # Get expected state
-                expected_state = getattr(device, 'get_expected_state', lambda: None)()
+                if not hasattr(device, "get_expected_state"):
+                    continue
+
+                # Never adopt HA state while the post-command control lock is
+                # active: OGB has just sent a command and the device may not have
+                # flipped yet. Any deferred adoption is retried on a later tick.
+                if device._control_lock_active():
+                    _LOGGER.debug(
+                        f"{self.room} Skipping state sync for {device.deviceName} - "
+                        f"control lock active for {device._get_control_lock_remaining():.1f}s"
+                    )
+                    continue
+
+                # 1) Resolve adoptions that were deferred while the post-command
+                #    control lock was active. These are guaranteed stale.
+                if getattr(device, "_state_resync_pending", False):
+                    device.adopt_actual_state()
+                    _LOGGER.debug(
+                        f"{self.room} Deferred state re-check applied for {device.deviceName}"
+                    )
+
+                # 2) Detect any remaining drift against the live HA state
+                expected_state = device.get_expected_state()
                 if expected_state is None:
                     continue
-                
-                # Get actual state from HA
+
                 actual_state = await self._get_ha_device_state(device)
-                
-                # Detect drift
-                if expected_state != actual_state:
+
+                if actual_state is not None and expected_state != actual_state:
                     _LOGGER.warning(
                         f"{self.room} State drift: {device.deviceName} "
                         f"expected={expected_state} actual={actual_state}"
                     )
-                    
-                    # Attempt re-sync
                     success = await self._resync_device(device, expected_state)
-                    
-                    if not success:
+                    if success:
+                        corrected.append(device.deviceName)
+                    else:
                         sync_failures.append(device.deviceName)
-                        
+
             except Exception as e:
                 _LOGGER.error(f"{self.room} Sync error for device: {e}")
-        
+
+        if corrected:
+            _LOGGER.info(
+                f"{self.room} Device state sync corrected {len(corrected)} device(s): "
+                f"{', '.join(corrected)}"
+            )
+
         # Report sync failures
         if sync_failures:
             await self.event_manager.emit('device_sync_failures', {
@@ -285,52 +310,54 @@ class OGBOrchestrator:
             })
     
     async def _get_ha_device_state(self, device) -> Any:
-        """Get actual device state from Home Assistant."""
+        """Get actual device state from Home Assistant.
+
+        Reads the real entity_ids of the device - not the device name, which is
+        not a valid entity_id and always resolved to None.
+        """
         try:
-            entity_id = getattr(device, 'deviceName', None)
-            if not entity_id:
-                return None
-            
-            state = self.hass.states.get(entity_id)
-            if state:
-                return state.state
+            getter = getattr(device, 'get_actual_state', None)
+            if callable(getter):
+                return getter()
+
+            for entity in (getattr(device, 'switches', None) or []):
+                entity_id = entity.get("entity_id")
+                if entity_id and self.hass:
+                    state = self.hass.states.get(entity_id)
+                    if state:
+                        return state.state
             return None
         except Exception as e:
             _LOGGER.error(f"{self.room} Error getting HA state: {e}")
             return None
-    
-    async def _resync_device(self, device, target_state) -> bool:
-        """Re-sync a device with retry logic."""
-        max_retries = 3
-        device_name = getattr(device, 'deviceName', 'unknown')
-        
-        for attempt in range(max_retries):
-            try:
-                # Attempt to set state
-                if hasattr(device, 'set_state'):
-                    await device.set_state(target_state)
-                elif hasattr(device, 'turn_on') and target_state == 'on':
-                    await device.turn_on()
-                elif hasattr(device, 'turn_off') and target_state == 'off':
-                    await device.turn_off()
-                else:
-                    _LOGGER.warning(f"{self.room} No method to set state for {device_name}")
-                    return False
-                
-                # Wait for state change with exponential backoff
-                await asyncio.sleep(2 ** attempt)
-                
-                # Verify state changed
-                actual = await self._get_ha_device_state(device)
-                if actual == target_state:
-                    _LOGGER.debug(f"{self.room} Re-synced {device_name} on attempt {attempt + 1}")
-                    return True
-                    
-            except Exception as e:
-                _LOGGER.error(f"{self.room} Re-sync attempt {attempt + 1} failed: {e}")
-        
-        return False
-    
+
+    async def _resync_device(self, device, target_state: str) -> bool:
+        """Align the internal state of a device with the real Home Assistant state.
+
+        Deliberately does NOT re-issue switch commands. Forcing the expected
+        state can oscillate on flaky (WiFi) integrations and would block the
+        control loop. The periodic sync only repairs the internal bookkeeping;
+        the next VPD/action cycle then decides again with correct information.
+        """
+        try:
+            if not hasattr(device, 'adopt_actual_state'):
+                _LOGGER.debug(
+                    f"{self.room} {getattr(device, 'deviceName', '?')} has no adopt_actual_state"
+                )
+                return False
+
+            changed = device.adopt_actual_state()
+            if changed:
+                actual = device.get_expected_state()
+                _LOGGER.warning(
+                    f"{self.room} State corrected for {device.deviceName}: "
+                    f"expected={target_state} actual={actual}"
+                )
+            return True
+        except Exception as e:
+            _LOGGER.error(f"{self.room} Re-sync error for {device}: {e}")
+            return False
+
     async def _check_feed_needs(self):
         """Check if feeding is needed."""
         if self.feed_manager:

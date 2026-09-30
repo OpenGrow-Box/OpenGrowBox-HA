@@ -96,7 +96,7 @@ class Cooler(Device):
                 self.log_action("IncreaseAction")
                 await self.turn_on(percentage=newDuty)
         else:
-            if self.isRunning == True:
+            if self.is_already_in_state("on"):
                 self.log_action("Allready in Desired State ")
             else:
                 self.log_action("TurnON ")

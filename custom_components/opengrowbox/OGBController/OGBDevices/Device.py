@@ -67,6 +67,10 @@ class Device:
         self._pre_deadband_duty_cycle = None  # Save state before entering deadband
         self._pre_deadband_is_running = None  # Save running state for non-dimmable devices
 
+        # State sync: set when a HA state change arrived while the control lock
+        # suppressed identifyIfRunningState. The periodic state sync picks this up.
+        self._state_resync_pending = False
+
         self.deviceInit(deviceData)
 
     async def set_duty_cycle(self, target_value: int, log_action_callback=None):
@@ -962,16 +966,22 @@ class Device:
                     self.dataStore.setDeep(capPath, currentCap)
 
     def identifyIfRunningState(self):
-        import time
         # Check if we're within the control lock period (prevents HA state updates
         # from overwriting our recently sent control values)
-        control_lock_until = getattr(self, '_control_lock_until', 0)
-        if control_lock_until and time.time() < control_lock_until:
+        if self._control_lock_active():
+            # Remember that we skipped an adoption. The caller already stored the
+            # fresh value in switches/options, so the information is not lost - but
+            # isRunning stays stale until the periodic state sync re-derives it.
+            self._state_resync_pending = True
             _LOGGER.debug(
-                f"{self.deviceName}: Skipping identifyIfRunningState - control lock active for {control_lock_until - time.time():.1f}s "
+                f"{self.deviceName}: Skipping identifyIfRunningState - control lock active for {self._get_control_lock_remaining():.1f}s "
                 f"(current isRunning={self.isRunning})"
             )
             return
+
+        # Lock is not active: re-derive from the cached values. Any previously
+        # deferred adoption is now resolved.
+        self._state_resync_pending = False
 
         if self.isAcInfinDev:
             for select in self.options:
@@ -1368,6 +1378,145 @@ class Device:
                         _LOGGER.debug(f"{self.deviceName}: Entity {entity_id} is {state.state}, device considered offline")
                         return False
         return True
+
+    def _control_lock_active(self) -> bool:
+        """True while the post-command lock is still suppressing HA state adoption."""
+        control_lock_until = getattr(self, '_control_lock_until', 0)
+        if control_lock_until:
+            import time
+            if time.time() < control_lock_until:
+                return True
+        return False
+
+    def _get_control_lock_remaining(self) -> float:
+        control_lock_until = getattr(self, '_control_lock_until', 0)
+        if not control_lock_until:
+            return 0.0
+        import time
+        return max(0.0, control_lock_until - time.time())
+
+    def get_actual_state(self) -> str | None:
+        """Read the real device state live from the Home Assistant state machine.
+
+        Returns:
+            "on"   - device is powered/running
+            "off"  - device is confirmed off
+            None   - state unknown (entity unavailable, unknown, or not resolvable)
+
+        Prefer this over ``self.isRunning`` for control decisions. ``isRunning`` is
+        an internal flag that can be stale: a command can be lost on flaky
+        (e.g. WiFi) integrations, and a real state change that arrives while the
+        post-command control lock is active is deliberately not adopted.
+        """
+        if not self.hass:
+            return None
+
+        entity_list = self.options if self.isAcInfinDev else self.switches
+        if not entity_list:
+            return None
+
+        offline_state = None
+        for entity in entity_list:
+            entity_id = entity.get("entity_id", "")
+            if not entity_id:
+                continue
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            value = state.state
+            if value in ("on", "open", "opening", "On", "Open"):
+                return "on"
+            if value in ("off", "closed", "closing", "Off", "Closed"):
+                offline_state = "off"
+            else:
+                _LOGGER.debug(f"{self.deviceName}: {entity_id} reports '{value}' - state unknown")
+
+        # A dimmable device with an active dim value is consuming power even if
+        # the switch entity reads off.
+        if self.isDimmable:
+            dim_value = (
+                getattr(self, 'voltage', None)
+                if 'light' in self.deviceType.lower()
+                else getattr(self, 'dutyCycle', None)
+            )
+            if dim_value is not None and dim_value > 0:
+                return "on"
+
+        return offline_state
+
+    def get_expected_state(self) -> str | None:
+        """Return the state OGB believes the device to be in ("on"/"off"/None).
+
+        Used by the periodic device state sync to detect drift against the real
+        Home Assistant state.
+        """
+        if self.isDimmable:
+            dim_value = (
+                getattr(self, 'voltage', None)
+                if 'light' in self.deviceType.lower()
+                else getattr(self, 'dutyCycle', None)
+            )
+            if dim_value is not None and dim_value > 0:
+                return "on"
+        if self.isRunning is True:
+            return "on"
+        if self.isRunning is False:
+            return "off"
+        return None
+
+    def adopt_actual_state(self) -> bool:
+        """Re-derive isRunning from the live HA state, bypassing the control lock.
+
+        Returns True if the internal state was changed by this call. Used by the
+        periodic state sync to recover devices whose state change was lost inside
+        the post-command control lock window.
+        """
+        actual = self.get_actual_state()
+        if actual is None:
+            changed = self.isRunning is not None
+            self.isRunning = None
+            return changed
+        if self.isRunning == (actual == "on"):
+            return False
+        _LOGGER.debug(
+            f"{self.deviceName}: Resyncing isRunning {self.isRunning} -> {actual} from HA state"
+        )
+        self.isRunning = actual == "on"
+        self._state_resync_pending = False
+        self._update_deviceData_in_capabilities()
+        return True
+
+    def is_already_in_state(self, desired_state: str) -> bool:
+        """Whether the device is confirmed to already be in the desired state.
+
+        Reads the live Home Assistant state instead of trusting ``self.isRunning``.
+        The internal flag can be stale: a command may be lost on flaky (e.g. WiFi)
+        integrations, and a real state change arriving while the post-command
+        control lock is active is deliberately not adopted until the periodic
+        state sync runs. Acting on a stale flag makes OGB skip a device it
+        believes is already running.
+
+        If the entity is unreachable the internal flag is used, so offline devices
+        keep their previous behaviour.
+
+        Args:
+            desired_state: "on" or "off"
+        """
+        actual = self.get_actual_state()
+
+        if actual is None:
+            return self.isRunning is (desired_state == "on")
+
+        if (self.isRunning is True) != (actual == "on"):
+            _LOGGER.warning(
+                f"{self.deviceName}: State drift - OGB tracked isRunning={self.isRunning} "
+                f"but HA reports '{actual}'. Correcting internal state."
+            )
+            self.isRunning = actual == "on"
+            self._state_resync_pending = False
+            self._update_deviceData_in_capabilities()
+
+        return actual == desired_state
 
     def _is_entity_enabled(self, entity_id: str) -> bool:
         """
@@ -2029,9 +2178,14 @@ class Device:
     async def turn_off(self, **kwargs):
         """Turns the device off."""
         import time
-        
+
         self._commanded_state = "off"
-        
+
+        # Flag to prevent sensors from overwriting our control value
+        self._in_active_control = True
+        # Set a timestamp for how long to ignore HA state updates (5 seconds)
+        self._control_lock_until = time.time() + 5.0
+
         # Store power before action for reliability validation
         power_before = await self._get_current_power()
         if self.reliability_manager:
@@ -2041,12 +2195,15 @@ class Device:
                 rel[self.deviceName] = DeviceReliabilityState(device_name=self.deviceName)
             if power_before is not None:
                 rel[self.deviceName].last_power_before_action = power_before
-        
-        # Set control lock to prevent HA state updates from overwriting
-        # our recently sent control value (5 second lock)
-        self._control_lock_until = time.time() + 5.0
-        
+
         try:
+            # Check if device is online before proceeding. Without this, OGB sends
+            # shutdown commands to unreachable plugs and optimistically sets
+            # isRunning = False, hiding the fact that the real state is unknown.
+            if not self._is_device_online():
+                _LOGGER.warning(f"{self.deviceName}: Cannot turn off - device is offline/unavailable")
+                return
+
             # === Special case: AcInfinity devices ===
             if self.isAcInfinDev:
                 entity_ids = []
@@ -2406,7 +2563,7 @@ class Device:
         except Exception as e:
             _LOGGER.error(f"Error turning off {self.deviceName}: {e}")
         finally:
-            pass
+            self._in_active_control = False
 
     async def hard_turn_off(self):
         """Forcefully turn off the device by directly calling services on all entities."""
