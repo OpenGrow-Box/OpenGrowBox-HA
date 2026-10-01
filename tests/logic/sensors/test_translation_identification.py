@@ -123,6 +123,42 @@ class TestSensorRemappableTypes:
         assert result == "co2"
 
 
+class TestFrequencySensorsExcluded:
+    """Frequency sensors must never resolve to a climate/remappable type."""
+
+    def test_frequency_not_resolved_as_sensor_type(self):
+        """A _frequency suffix must not match any sensor type (e.g. humidity)."""
+        for entity_id in (
+            "sensor.humidifier_frequency",
+            "sensor.dehumidifier_frequency",
+            "sensor.exhaust_fan_frequency",
+            "sensor.co2_frequency",
+        ):
+            assert resolve_sensor_types(entity_id) == []
+
+    def test_frequency_not_remappable(self):
+        """Frequency sensors must not be remapped to a device sensor type."""
+        for entity_id in (
+            "sensor.humidifier_frequency",
+            "sensor.dehumidifier_frequency",
+            "sensor.exhaust_fan_frequency",
+            "sensor.vent_frequency",
+        ):
+            assert resolve_remappable_sensor_type(entity_id) is None
+
+    def test_humidifier_frequency_not_humidity(self):
+        """Regression: humidifier_frequency previously matched 'hum' -> humidity."""
+        assert resolve_sensor_types("sensor.humidifier_frequency") == []
+        assert resolve_remappable_sensor_type("sensor.humidifier_frequency") is None
+
+    def test_regular_climate_sensors_still_resolve(self):
+        """Guard must not affect normal climate sensors."""
+        assert resolve_sensor_types("sensor.room_temperature") == ["temperature"]
+        assert resolve_sensor_types("sensor.air_humidity") == ["humidity"]
+        assert resolve_remappable_sensor_type("sensor.room_temperature") == "temperature"
+        assert resolve_remappable_sensor_type("sensor.air_humidity") == "humidity"
+
+
 class TestTranslationCache:
     """Test that translation cache contains expected entries."""
 

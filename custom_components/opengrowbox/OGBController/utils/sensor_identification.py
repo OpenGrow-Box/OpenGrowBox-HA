@@ -99,6 +99,11 @@ def resolve_sensor_types(entity_id, labels=None):
 
     object_id = entity_id.split(".", 1)[-1].lower() if entity_id else ""
 
+    # Frequency sensors must never be classified as temp/hum (or any other
+    # remappable type) - they carry no climate value and would pollute VPD.
+    if "frequency" in object_id:
+        return []
+
     # 1) Strongest signal: explicit legacy suffixes in entity_id
     for fallback, sensor_type in ENGLISH_SENSOR_FALLBACKS.items():
         if fallback in object_id or object_id.endswith(fallback.lstrip("_")):
@@ -142,6 +147,8 @@ def resolve_remappable_sensor_type(entity_id, labels=None):
 
     # Legacy compatibility: keep old suffix-based behavior for remap-critical types
     object_id = entity_id.split(".", 1)[-1].lower() if entity_id else ""
+    if "frequency" in object_id:
+        return None
     if "_temperature" in object_id or object_id.endswith("temperature"):
         return "temperature"
     if "_humidity" in object_id or object_id.endswith("humidity"):
