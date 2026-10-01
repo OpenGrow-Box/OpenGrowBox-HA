@@ -724,3 +724,33 @@ async def test_plant_stage_applies_night_limits_at_night():
     assert store.getDeep("vpd.targetedMin") == 0.61
     assert store.getDeep("vpd.targetedMax") == 0.75
   # midpoint of [0.5, 0.85] with 10% tolerance center
+
+
+@pytest.mark.asyncio
+async def test_update_vpd_deadband_zero_is_off():
+    store = FakeDataStore(
+        {
+            "controlOptionData": {
+                "deadband": {"vpdDeadband": 0.05},
+            },
+        }
+    )
+    mgr = _make_config_manager(store)
+    await mgr._update_vpd_deadband(_event_pub(0.0))
+
+    assert store.getDeep("controlOptionData.deadband.vpdDeadband") == 0.0
+
+
+@pytest.mark.asyncio
+async def test_update_vpd_deadband_clamps_negative_to_zero():
+    store = FakeDataStore(
+        {
+            "controlOptionData": {
+                "deadband": {"vpdDeadband": 0.05},
+            },
+        }
+    )
+    mgr = _make_config_manager(store)
+    await mgr._update_vpd_deadband(_event_pub(-0.1))
+
+    assert store.getDeep("controlOptionData.deadband.vpdDeadband") == 0.0

@@ -562,6 +562,10 @@ class OGBActionManager:
             if deadband is None:
                 deadband = 0.05
 
+            # 0.0 (or any value <= 0) means the deadband is disabled
+            if deadband <= 0:
+                return False, ""
+
             if current_vpd is None or target_vpd is None:
                 return False, ""
 

@@ -827,7 +827,8 @@ class OGBModeManager:
             deadband = 0.05
         deviation = abs(float(currentVPD) - float(perfectionVPD))
 
-        if deviation <= deadband:
+        # 0.0 (or any value <= 0) means the deadband is disabled
+        if deadband > 0 and deviation <= deadband:
             # Im Deadband - Smart Deadband Handler aufrufen
             deadband_active, correction_actions = await self._handle_smart_deadband(float(currentVPD), float(perfectionVPD), deadband, "VPD Perfection")
 
@@ -929,7 +930,8 @@ class OGBModeManager:
                 deadband = 0.05
             deviation = abs(currentVPD - targetedVPD)
 
-            if deviation <= deadband:
+            # 0.0 (or any value <= 0) means the deadband is disabled
+            if deadband > 0 and deviation <= deadband:
                 # Im Deadband - Smart Deadband Handler aufrufen
                 deadband_active, correction_actions = await self._handle_smart_deadband(currentVPD, targetedVPD, deadband, "VPD Target")
 

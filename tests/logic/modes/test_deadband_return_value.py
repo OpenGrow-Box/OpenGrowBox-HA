@@ -169,3 +169,66 @@ async def test_handle_targeted_vpd_continues_when_deadband_returns_false():
     # No VPD events should be emitted when deadband is blocked
     vpd_events = [e for e in names if "vpd" in e.lower()]
     assert len(vpd_events) == 0, "Should NOT emit any VPD events when deadband is blocked"
+
+
+@pytest.mark.asyncio
+async def test_vpd_perfection_deadband_zero_disabled():
+    """Test that VPD Perfection skips Smart Deadband when vpdDeadband is 0.0 (off)."""
+
+    data_store = FakeDataStore({
+        "tentMode": "VPD Perfection",
+        "vpd": {
+            "current": 1.10,
+            "perfection": 1.10,  # Exactly at perf - would trigger deadband if enabled
+            "perfectMin": 1.00,
+            "perfectMax": 1.20,
+        },
+        "controlOptionData": {"deadband": {"vpdDeadband": 0.0}},
+        "capabilities": {"canHeat": {"state": True}},
+        "controlOptions": {"nightVPDHold": True},
+        "isPlantDay": {"islightON": True}
+    })
+    event_manager = FakeEventManager()
+    manager = OGBModeManager(None, data_store, event_manager, "test_room")
+
+    # Call handle_vpd_perfection
+    await manager.handle_vpd_perfection()
+
+    # Deadband must NOT be active (0.0 = off)
+    assert data_store.getDeep("controlOptionData.deadband.active") is not True
+
+    # Should NOT emit SmartDeadbandEntered
+    names = [e["event_name"] for e in event_manager.emitted]
+    assert "SmartDeadbandEntered" not in names, "Should NOT enter smart deadband when vpdDeadband is 0.0"
+
+
+@pytest.mark.asyncio
+async def test_targeted_vpd_deadband_zero_disabled():
+    """Test that VPD Target skips Smart Deadband when vpdDeadband is 0.0 (off)."""
+
+    data_store = FakeDataStore({
+        "tentMode": "VPD Target",
+        "vpd": {
+            "current": 1.10,
+            "targeted": 1.10,  # Exactly at target - would trigger deadband if enabled
+            "tolerance": 10,
+            "targetedMin": 1.05,
+            "targetedMax": 1.15,
+        },
+        "controlOptionData": {"deadband": {"vpdDeadband": 0.0}},
+        "capabilities": {"canCool": {"state": True}},
+        "controlOptions": {"nightVPDHold": True},
+        "isPlantDay": {"islightON": True}
+    })
+    event_manager = FakeEventManager()
+    manager = OGBModeManager(None, data_store, event_manager, "test_room")
+
+    # Call handle_targeted_vpd
+    await manager.handle_targeted_vpd()
+
+    # Deadband must NOT be active (0.0 = off)
+    assert data_store.getDeep("controlOptionData.deadband.active") is not True
+
+    # Should NOT emit SmartDeadbandEntered
+    names = [e["event_name"] for e in event_manager.emitted]
+    assert "SmartDeadbandEntered" not in names, "Should NOT enter smart deadband when vpdDeadband is 0.0"

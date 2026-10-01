@@ -892,6 +892,12 @@ Comprehensive test suite in `tests/logic/actions/test_dynamic_fan_logic.py`:
 
 The Smart Deadband has been enhanced with **dynamic behavior**, **predictive logic**, and **energy-saving features**.
 
+> **Disabling the Smart Deadband**: Setting the VPD deadband entity (`OGB_VPDDeadband_*`
+> → `controlOptionData.deadband.vpdDeadband`) to **0.0 kPa** turns the Smart Deadband off.
+> All three gate sites treat a deadband `<= 0` as disabled, so VPD Perfection and VPD Target
+> run full regulation even when `current` is exactly at `target`. Negative values are clamped
+> to `0.0` by the setter.
+
 #### Dynamic Deadband Based on Plant Stage (VPD Perfection only)
 
 ```python

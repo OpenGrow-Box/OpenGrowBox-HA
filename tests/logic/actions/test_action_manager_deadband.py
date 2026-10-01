@@ -90,6 +90,58 @@ async def test_vpd_target_deadband():
 
 
 @pytest.mark.asyncio
+async def test_vpd_deadband_zero_disabled_perfection_mode():
+    """Test that vpdDeadband 0.0 disables the deadband even at exact equality."""
+    data_store = FakeDataStore(
+        {
+            "tentMode": "VPD Perfection",
+            "vpd": {
+                "current": 1.10,
+                "perfection": 1.10,
+            },
+            "controlOptionData": {
+                "deadband": {
+                    "vpdDeadband": 0.0,
+                }
+            }
+        }
+    )
+    event_manager = FakeEventManager()
+    manager = OGBActionManager(None, data_store, event_manager, "test_room")
+
+    in_deadband, reason = manager._is_vpd_in_deadband()
+
+    assert in_deadband is False
+    assert reason == ""
+
+
+@pytest.mark.asyncio
+async def test_vpd_deadband_zero_disabled_target_mode():
+    """Test that vpdDeadband 0.0 disables the deadband in VPD Target mode."""
+    data_store = FakeDataStore(
+        {
+            "tentMode": "VPD Target",
+            "vpd": {
+                "current": 1.10,
+                "targeted": 1.10,
+            },
+            "controlOptionData": {
+                "deadband": {
+                    "vpdDeadband": 0.0,
+                }
+            }
+        }
+    )
+    event_manager = FakeEventManager()
+    manager = OGBActionManager(None, data_store, event_manager, "test_room")
+
+    in_deadband, reason = manager._is_vpd_in_deadband()
+
+    assert in_deadband is False
+    assert reason == ""
+
+
+@pytest.mark.asyncio
 async def test_closed_environment_no_deadband():
     """Test that Closed Environment has no VPD deadband."""
     data_store = FakeDataStore(

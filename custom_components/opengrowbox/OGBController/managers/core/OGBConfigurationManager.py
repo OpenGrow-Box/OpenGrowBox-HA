@@ -515,6 +515,9 @@ class OGBConfigurationManager:
             except (TypeError, ValueError):
                 _LOGGER.warning(f"{self.room}: Invalid VPD deadband value: {value}")
                 return
+            if new_deadband < 0:
+                _LOGGER.warning(f"{self.room}: Clamping negative VPD deadband {new_deadband} to 0.0 (0.0 = deadband off)")
+                new_deadband = 0.0
             self.data_store.setDeep("controlOptionData.deadband.vpdDeadband", new_deadband)
 
     # Plant stage and type methods
