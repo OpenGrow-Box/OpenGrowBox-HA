@@ -15,11 +15,9 @@
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/OpenGrow-Box/OpenGrowBox-HA/issues",
-  "requirements": [
+"requirements": [
      "pymodbus>=3.11.2",
-      "cryptography>=45.0.7",
-     "python-socketio>=5.10.0",
-     "aiohttp>=3.12.15"
+     "python-socketio>=5.10.0"
    ],
    "version": "1.4.2"
 }
