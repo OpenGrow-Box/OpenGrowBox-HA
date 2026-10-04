@@ -69,6 +69,8 @@ DEVICE_TYPE_MAPPING = {
         "tasmota",
         "watertester",
         "wasstertester",
+        "water",
+        "wasser",
         "reservoir",
         "leaf",
     ],
@@ -602,4 +604,33 @@ DEFAULT_DEVICE_COOLDOWNS = {
     "canLight": 1,  # Licht reagiert sofort, aber VPD-Effekt braucht Zeit
     "canCO2": 2,  # CO2 braucht Zeit zur Verteilung
     "canClimate": 2,  # Klima-System braucht Zeit
+}
+
+## Hysteresis/Buffer defaults - single source of truth
+# Read by OGBDampeningActions (dampening), OGBVPDActions (bounds correction),
+# OGBData (datastore default) and the "buffer" console command.
+DEFAULT_BUFFERS = {
+    # Dampening: do not start a device too close to its opposite limit
+    "heaterBuffer": 2.0,
+    "coolerBuffer": 2.0,
+    "humidifierBuffer": 5.0,
+    "dehumidifierBuffer": 5.0,
+    # VPD Perfection bounds: anticipatory correction buffer
+    "vpdPerfectionTempBuffer": 1.5,
+    "vpdPerfectionHumBuffer": 3.0,
+}
+
+## Console friendly alias -> buffer key mapping (device type -> buffer key)
+BUFFER_KEY_BY_TYPE = {
+    "heater": "heaterBuffer",
+    "cooler": "coolerBuffer",
+    "humidifier": "humidifierBuffer",
+    "dehumidifier": "dehumidifierBuffer",
+}
+
+BUFFER_KEY_BY_PERFECTION_CHANNEL = {
+    "temp": "vpdPerfectionTempBuffer",
+    "temperature": "vpdPerfectionTempBuffer",
+    "hum": "vpdPerfectionHumBuffer",
+    "humidity": "vpdPerfectionHumBuffer",
 }

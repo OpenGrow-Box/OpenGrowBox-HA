@@ -4,14 +4,19 @@
 
 This document details the complete action cycle from VPD sensor readings through decision-making to device control actions for VPD-Perfection, VPD-Target, and Drying control modes.
 
-## Air Exchange Cold Guard (Cross-Mode Safety)
+## Environment Guard (Cross-Mode Safety)
 
-To prevent cold ambient air from repeatedly worsening an already cold room,
-OpenGrowBox applies a shared Air Exchange Cold Guard to these capabilities:
+To prevent cold or humid ambient air from repeatedly worsening an already
+unfavourable room, OpenGrowBox applies a shared Environment Guard
+(`OGBEnvironmentGuard`) to these capabilities:
 
 - `canExhaust`
 - `canIntake`
-- `canVentilate`
+- `canWindow`
+
+> **Note**: `canVentilate` is intentionally **not** guarded — ventilation stays
+> available as the air-circulation path even when cold-air exchange is suppressed.
+> Only the caps listed above are rewritten by the guard.
 
 ### Decision Inputs
 
@@ -27,6 +32,39 @@ The guard prefers ambient/outside measurements when available:
 - Learning lockout: after repeated blocked attempts in a short window, a timed lock is set.
 - Hysteresis unlock: lock can clear early once ambient and indoor conditions recover.
 - Safety override: critical O2/CO2 conditions always bypass the cold guard.
+- **Mold hygiene limit**: absolute humidity pressure overrides the cold guard (see below).
+
+### Absolute Mold Hygiene Limit (`MOLD_RISK_HUMIDITY`)
+
+Mold risk is a biological limit, not a user preference, so it is **not** derived
+from the configured `maxHumidity`. A permissive `maxHumidity` (for example 90 %
+for a late stage) must not be able to freeze out air exchange while humidity
+climbs.
+
+- Module constant: `MOLD_RISK_HUMIDITY = 80.0` in `OGBEnvironmentGuard.py`
+- Fires when `tentData.humidity >= 80.0`, independent of `maxHumidity`
+- Decision priority: **ranked above `temp_risk`**, so a cold tent can no longer
+  block air exchange once the hygiene limit is reached
+- Allow reason: `mold_risk_hygiene_limit`, decision priority `high`
+- Also **releases an active guard lock** — the lock exists to preserve heat, and
+  humidity pressure wins over heat preservation
+
+Evaluation order in `_decide_priority()`:
+
+| Rank | Condition | Result |
+|------|-----------|--------|
+| 1 | `humidity >= maxHumidity` | allow (`humidity_emergency_over_max`, emergency) |
+| 2 | `humidity <= minHumidity` | allow (`humidity_emergency_under_min`, emergency) |
+| 3 | `humidity >= MOLD_RISK_HUMIDITY` | **allow (`mold_risk_hygiene_limit`, high)** |
+| 4 | `humidity >= maxHumidity` and source drier | allow (`humidity_benefit_drying_needed`, high) |
+| 5 | warmer source available | allow (`temp_benefit_warming_needed`, high) |
+| 6 | near `minTemp` and source colder | block (`temp_risk_cold_source`, medium) |
+| 7 | near `minHumidity` and source drier | block (`humidity_risk_drying_source`, medium) |
+| 8 | otherwise | allow (`no_risk_detected`, low) |
+
+The same reasons that force an allow also clear a running lock
+(`_HUMIDITY_ALLOW_REASONS`), so humidity pressure cannot be defeated by a lock
+that a previous cold decision armed.
 
 ### Coverage Across Modes
 
@@ -346,6 +384,52 @@ async def reduce_vpd(self, capabilities: Dict[str, Any]):
     # Send to action manager
     await self.action_manager.checkLimitsAndPublicate(action_map)
 ```
+
+#### Bounds Correction Buffers
+
+After the VPD action map is built, `_add_bounds_correction_actions()` checks the
+physical temperature/humidity band and injects a correction action if a value is
+already outside (or close to) the limit. Corrections win over VPD optimisation —
+the action is logged and any opposite VPD action for the same capability is
+removed.
+
+The comparison uses a **buffered threshold**, and the buffer is configurable:
+
+| Bounds branch | Trigger | Buffer key | Default |
+|---------------|---------|-----------|---------|
+| `Temp high` → `canCool` Increase | `temperature > maxTemp - tempBuffer` | `controlOptionData.buffers.vpdPerfectionTempBuffer` | `1.5` |
+| `Temp low` → `canHeat` Increase | `temperature < minTemp + tempBuffer` | `controlOptionData.buffers.vpdPerfectionTempBuffer` | `1.5` |
+| `Humidity high` → `canDehumidify` Increase | `humidity > maxHumidity - humBuffer` | `controlOptionData.buffers.vpdPerfectionHumBuffer` | `3.0` |
+| `Humidity low` → `canHumidify` Increase | `humidity < minHumidity + humBuffer` | `controlOptionData.buffers.vpdPerfectionHumBuffer` | `3.0` |
+
+`DEFAULT_BUFFERS` in `OGBParams.py` is the single source of truth for the default
+values; the datastore default (`OGBData.py`) and both readers
+(`OGBVPDActions`, `OGBDampeningActions`) derive from it. Use the `buffer` console
+command to inspect and change them at runtime (see
+[Configuration Guide → Hysteresis Buffers](../../configuration/CONFIGURATION.md#hysteresis-buffers)).
+
+#### Reported Threshold in the Client Log
+
+The `LogForClient` message reports the **effective (buffered) threshold** together
+with the buffer and the configured limit, so the comparison printed in the log is
+always the comparison that actually ran:
+
+```text
+Perfection-Bounds: Temp high (26.2 > 25.5 [max_temp=27.0°C, buffer=1.5°C])
+```
+
+Here the cooler is engaged because `26.2 > 27.0 - 1.5 = 25.5` — not because
+`26.2 > 27.0`. All four branches use this format:
+
+| Message | Example |
+|---------|---------|
+| `Temp low` | `Perfection-Bounds: Temp low (24.2 < 24.5 [min_temp=23.0°C, buffer=1.5°C])` |
+| `Temp high` | `Perfection-Bounds: Temp high (26.2 > 25.5 [max_temp=27.0°C, buffer=1.5°C])` |
+| `Humidity low` | `Perfection-Bounds: Humidity low (57.0 < 58.0 [min_hum=55.0%, buffer=3.0%])` |
+| `Humidity high` | `Perfection-Bounds: Humidity high (68.0 > 67.0 [max_hum=70.0%, buffer=3.0%])` |
+
+> **Reading the log**: a bound that looks violated but did not trigger an action
+> is simply inside the buffer band. Compare the reported threshold, not the limit.
 
 ## VPD-Target Mode Action Cycle
 

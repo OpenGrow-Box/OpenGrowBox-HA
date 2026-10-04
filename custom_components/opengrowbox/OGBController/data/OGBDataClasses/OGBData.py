@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from ..OGBParams.OGBParams import DEFAULT_BUFFERS
+
 
 @dataclass
 class LightStage:
@@ -313,12 +315,7 @@ class OGBConf:
                 "closedTempDeadband": 0.5,
                 "closedHumidDeadband": 1.5,
             },
-            "buffers": {
-                "heaterBuffer": 2.0,
-                "coolerBuffer": 2.0,
-                "humidifierBuffer": 5.0,
-                "dehumidifierBuffer": 5.0
-            }
+            "buffers": dict(DEFAULT_BUFFERS)
         }
     )
     safety: Dict[str, Any] = field(

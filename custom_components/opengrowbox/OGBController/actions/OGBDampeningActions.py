@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
+from ..data.OGBParams.OGBParams import DEFAULT_BUFFERS
 from ..managers.OGBActionManager import OGBActionManager
 
 if TYPE_CHECKING:
@@ -934,10 +935,11 @@ class OGBDampeningActions:
         max_humidity = tent_data.get("maxHumidity", 80)
         min_humidity = tent_data.get("minHumidity", 40)
 
-        HEATER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.heaterBuffer") or 2.0)
-        COOLER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.coolerBuffer") or 2.0)
-        HUMIDIFIER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.humidifierBuffer") or 5.0)
-        DEHUMIDIFIER_BUFFER = float(self.ogb.dataStore.getDeep("controlOptionData.buffers.dehumidifierBuffer") or 5.0)
+        stored_buffers = self.ogb.dataStore.getDeep("controlOptionData.buffers") or {}
+        HEATER_BUFFER = float(stored_buffers.get("heaterBuffer", DEFAULT_BUFFERS["heaterBuffer"]))
+        COOLER_BUFFER = float(stored_buffers.get("coolerBuffer", DEFAULT_BUFFERS["coolerBuffer"]))
+        HUMIDIFIER_BUFFER = float(stored_buffers.get("humidifierBuffer", DEFAULT_BUFFERS["humidifierBuffer"]))
+        DEHUMIDIFIER_BUFFER = float(stored_buffers.get("dehumidifierBuffer", DEFAULT_BUFFERS["dehumidifierBuffer"]))
 
         # Increase actions: prevent starting device too close to the opposite limit
         # These buffers make sense - don't start devices near their opposite limits

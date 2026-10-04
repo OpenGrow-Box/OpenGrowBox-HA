@@ -7,9 +7,9 @@
 4. [Safety Mechanisms](#safety-mechanisms)
 5. [Dynamic Fan Logic](#dynamic-fan-logic-temperature-aware-fan-control)
 6. [Deadband & Quiet Zone](#deadband--quiet-zone)
-7. [Conflict Resolution](#conflict-resolution)
-8. [Adaptive Cooldown](#adaptive-cooldown)
-9. [Environment Guard Details](#environment-guard-details)
+7. [Dampening and Conflict Resolution](core_concepts/action_cycles/VPD_MODES_COMPLETE_IMPLEMENTATION.md#2-dampening-and-conflict-resolution)
+8. [Adaptive Cooldown](#adaptive-cooldown-behavior)
+9. [Environment Guard Details](core_concepts/action_cycles/ACTION_CYCLE_VPD_MODES.md#environment-guard-cross-mode-safety)
 
 ---
 
@@ -933,6 +933,51 @@ Instead of immediately reducing all devices to minimum, the Smart Deadband now u
 - ✅ Faster response when VPD changes (not everything at minimum)
 - ✅ Less oscillation (gradual changes)
 - ✅ Better energy saving (only reduce what's needed)
+
+#### Deadband Correction Actions
+
+Reducing every device to minimum is not always correct. If a value is outside its
+physical band *while* the VPD sits inside the deadband, the device that corrects
+that value must be pushed back up — otherwise the deadband silently freezes the
+room at an unsafe temperature or humidity.
+
+**Which devices get a correction**
+
+Corrections are only generated in the direction the device actually corrects:
+
+| Condition | Devices activated |
+|-----------|-------------------|
+| `temperature > maxTemp` | `Cooler`, `Exhaust` |
+| `temperature < minTemp` | `Heater` |
+| `humidity > maxHumidity` | `Dehumidifier` |
+| `humidity < minHumidity` | `Humidifier` |
+
+Because a correction device is only ever added when the value is too low for it
+(too cold for a heater, too dry for a humidifier), **every correction action is
+an `Increase`**. The duty cycle is derived from the deviation (30 % / 50 % / 70 %).
+
+> **Note**: `Heater` and `Humidifier` previously mapped to `Reduce` here, which
+> switched an under-temperature heater and an under-humidity humidifier **off** —
+> exactly the wrong direction. They now correctly map to `Increase`.
+
+**Passing corrections through the action chain**
+
+`checkLimitsAndPublicate()` normally re-evaluates the VPD deadband and returns
+early (emitting the quiet-zone idle event) whenever the VPD is inside the
+deadband. Corrections are produced *because* the VPD is inside the deadband, so
+that check would discard precisely the actions it created.
+
+The deadband correction paths therefore call:
+
+```python
+await self.action_manager.checkLimitsAndPublicate(
+    correction_actions, from_deadband_correction=True
+)
+```
+
+The flag only skips the deadband early-return; night-hold, dampening/cooldown,
+environment guard and device execution still run. All other callers keep the
+default (`False`) and are unaffected.
 
 #### Predictive Behavior with Trend Analysis
 

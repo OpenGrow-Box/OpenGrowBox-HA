@@ -670,11 +670,13 @@ class OGBModeManager:
         else:
             duty = 70
         
-        # Action bestimmen (Increase für Cooler/Exhaust/Dehumidifier, Reduce für Heater/Humidifier)
+        # Action bestimmen.
+        # Correction devices are only added when a value is out of its band in the
+        # direction that device corrects, so every device here must Increase.
         action_map = {
-            "Heater": "Reduce",
+            "Heater": "Increase",
             "Cooler": "Increase",
-            "Humidifier": "Reduce",
+            "Humidifier": "Increase",
             "Dehumidifier": "Increase",
             "Exhaust": "Increase",
             "Intake": "Reduce"
@@ -837,13 +839,13 @@ class OGBModeManager:
                 # Process correction actions through action chain
                 if correction_actions:
                     _LOGGER.debug(f"{self.room}: Processing {len(correction_actions)} deadband correction actions through action chain")
-                    await self.action_manager.checkLimitsAndPublicate(correction_actions)
+                    await self.action_manager.checkLimitsAndPublicate(correction_actions, from_deadband_correction=True)
                 return  # Keine normalen VPD Actions ausführen
             # If deadband is NOT active (e.g., night mode without nightVPDHold), continue to normal cycle
         else:
             # Außerhalb Deadband - Reset Deadband State
             self._reset_deadband_state()
-
+        
         # Steuern nur wenn ausserhalb des konfigurierten Min/Max-Bands
         if float(currentVPD) < float(perfectionMinVPD):
             _LOGGER.debug(
@@ -895,7 +897,7 @@ class OGBModeManager:
 
             # Validierung: current/targeted müssen gesetzt sein
             if None in (currentVPD_raw, targetedVPD_raw):
-                _LOGGER.warning(
+                _LOGGER.debug(
                     f"{self.room}: VPD values not initialized (current={currentVPD_raw}, targeted={targetedVPD_raw}, min={min_vpd_raw}, max={max_vpd_raw}, tolerance={tolerance_raw}). Skipping VPD control."
                 )
                 return
@@ -939,7 +941,7 @@ class OGBModeManager:
                     # Process correction actions through action chain
                     if correction_actions:
                         _LOGGER.debug(f"{self.room}: Processing {len(correction_actions)} deadband correction actions through action chain")
-                        await self.action_manager.checkLimitsAndPublicate(correction_actions)
+                        await self.action_manager.checkLimitsAndPublicate(correction_actions, from_deadband_correction=True)
                     return  # Keine normalen VPD Actions ausführen
                 # If deadband is NOT active (e.g., night mode without nightVPDHold), continue to normal cycle
             else:

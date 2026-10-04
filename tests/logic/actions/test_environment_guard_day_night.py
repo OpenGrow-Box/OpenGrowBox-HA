@@ -11,6 +11,7 @@ These tests verify that the environment guard correctly handles:
 import pytest
 
 from custom_components.opengrowbox.OGBController.actions.OGBEnvironmentGuard import (
+    MOLD_RISK_HUMIDITY,
     evaluate_environment_guard,
     _assess_risks,
     _decide_priority,
@@ -365,7 +366,14 @@ def test_plant_stage_cold_guard_uses_stage_min_temp(stage_name, stage_config):
     """Cold guard should use minTemp from the active plant stage."""
     cold_min_temp = stage_config["minTemp"]
     mid_humidity = (stage_config["minHumidity"] + stage_config["maxHumidity"]) // 2
-    
+    # This test exercises the temp_risk branch, so humidity must stay inside
+    # (minHumidity, MOLD_RISK_HUMIDITY):
+    #   - above minHumidity, otherwise the "need to add humidity" allow wins
+    #   - below the hygiene limit, otherwise the mold limit overrides temp_risk
+    #     by design and the cold guard would never be reached
+    mid_humidity = min(mid_humidity, MOLD_RISK_HUMIDITY - 1)
+    assert stage_config["minHumidity"] < mid_humidity < MOLD_RISK_HUMIDITY
+
     data_store = FakeDataStore(
         {
             "plantStage": stage_name,
@@ -672,3 +680,101 @@ def test_closed_environment_plant_stage_humidity_overrides(stage_name, stage_con
     )
 
     assert should_block is False, f"Stage {stage_name}: Critical humidity should override cold ambient"
+
+# ---------------------------------------------------------------------------
+# Absolute humidity hygiene limit (MOLD_RISK_HUMIDITY)
+# ---------------------------------------------------------------------------
+
+
+def _night_store(humidity, max_humidity, temperature=24.5, min_temp=24.0, ambient_temp=20.0):
+    """Night-like setup: tent near minTemp, ambient room colder -> temp_risk."""
+    return FakeDataStore(
+        {
+            "safety": {"environmentGuard": {"blockedCount": 0}},
+            "tentData": {
+                "temperature": temperature,
+                "humidity": humidity,
+                "minTemp": min_temp,
+                "maxTemp": 28.0,
+                "minHumidity": 55.0,
+                "maxHumidity": max_humidity,
+                "AmbientTemp": ambient_temp,
+                "AmbientHum": 60.0,
+            },
+            "controlOptions": {},
+            "capabilities": {"canExhaust": {"state": True}},
+        }
+    )
+
+
+def test_humidity_above_mold_limit_overrides_temp_risk():
+    """85% RH must allow air exchange even when maxHumidity is permissive (90)."""
+    assert MOLD_RISK_HUMIDITY == 80.0
+
+    should_block, metadata = evaluate_environment_guard(
+        _night_store(humidity=85.0, max_humidity=90.0),
+        "test_room",
+        "canExhaust",
+        "Increase",
+        source="test",
+    )
+
+    assert should_block is False
+    assert metadata["reason"] == "mold_risk_hygiene_limit"
+
+
+def test_humidity_exactly_at_mold_limit_overrides_temp_risk():
+    """The hygiene limit is inclusive at 80%."""
+    should_block, metadata = evaluate_environment_guard(
+        _night_store(humidity=80.0, max_humidity=90.0),
+        "test_room",
+        "canExhaust",
+        "Increase",
+        source="test",
+    )
+
+    assert should_block is False
+    assert metadata["reason"] == "mold_risk_hygiene_limit"
+
+
+def test_humidity_below_mold_limit_still_blocks_on_temp_risk():
+    """Regression: normal humidity must keep the temp_risk protection intact."""
+    should_block, metadata = evaluate_environment_guard(
+        _night_store(humidity=65.0, max_humidity=90.0),
+        "test_room",
+        "canExhaust",
+        "Increase",
+        source="test",
+    )
+
+    assert should_block is True
+    assert metadata["reason"] == "temp_risk_cold_source"
+
+
+def test_mold_limit_independent_of_configured_max_humidity():
+    """The hygiene limit must not be reachable by raising maxHumidity."""
+    for max_humidity in (85.0, 90.0, 95.0):
+        should_block, metadata = evaluate_environment_guard(
+            _night_store(humidity=82.0, max_humidity=max_humidity),
+            "test_room",
+            "canExhaust",
+            "Increase",
+            source="test",
+        )
+        assert should_block is False, f"maxHumidity={max_humidity} must not defeat hygiene limit"
+        assert metadata["reason"] == "mold_risk_hygiene_limit"
+
+
+def test_humidity_allow_reason_releases_active_lock():
+    """An active temperature lock must not survive a humidity driven allow."""
+    data_store = _night_store(humidity=85.0, max_humidity=90.0)
+    # Pre-arm a lock that would otherwise block for 60 minutes
+    data_store.setDeep("safety.environmentGuard.lockUntil", 9e12)
+
+    should_block, metadata = evaluate_environment_guard(
+        data_store, "test_room", "canExhaust", "Increase", source="test"
+    )
+
+    assert should_block is False
+    assert metadata["reason"] != "lock_active"
+    assert data_store.getDeep("safety.environmentGuard.blockedCount") == 0

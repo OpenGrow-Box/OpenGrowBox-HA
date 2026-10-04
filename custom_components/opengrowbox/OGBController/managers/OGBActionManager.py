@@ -1124,14 +1124,14 @@ class OGBActionManager:
             debug_type="INFO",
         )
 
-    async def checkLimitsAndPublicate(self, actionMap: List):
+    async def checkLimitsAndPublicate(self, actionMap: List, from_deadband_correction: bool = False):
         """
         Process VPD Perfection actions with clean separation of Core Logic and Dampening.
 
         Flow:
         1. Mode Check (only VPD modes: Perfection, Target, Closed Environment)
         2. Night Hold Check (always)
-        3. Deadband Check (always)
+        3. Deadband Check (always, skipped for deadband correction actions)
         4. Calculate Deviations (always)
         5. Core VPD Logic (always): Buffer zones, VPD context, conflicts
         6. Dampening Features (if enabled): Cooldown, emergency override
@@ -1143,6 +1143,10 @@ class OGBActionManager:
 
         Args:
             actionMap: List of actions to process
+            from_deadband_correction: True when actionMap already is the output of the
+                smart deadband handler. Those corrections exist precisely because the
+                VPD sits inside the deadband, so the deadband check must not discard
+                them again.
         """
         # Skip for ambient room - ambient has no devices to control
         if is_ambient_room(self.room):
@@ -1170,11 +1174,14 @@ class OGBActionManager:
         if not await self._check_vpd_night_hold(actionMap):
             return
 
-        # Check deadband - if VPD is in quiet zone, pause all devices
-        in_deadband, reason = self._is_vpd_in_deadband()
-        if in_deadband:
-            await self._emit_quiet_zone_idle()
-            return
+        # Check deadband - if VPD is in quiet zone, pause all devices.
+        # Deadband correction actions are produced *because* the VPD sits inside the
+        # deadband, so re-checking here would discard exactly those corrections.
+        if not from_deadband_correction:
+            in_deadband, reason = self._is_vpd_in_deadband()
+            if in_deadband:
+                await self._emit_quiet_zone_idle()
+                return
 
         # Get tent data and calculate weighted deviations
         tent_data = self.data_store.get("tentData")
@@ -1607,9 +1614,18 @@ class OGBActionManager:
         (Exhaust Reduce + Intake Increase), the intake Increase is rewritten to
         Reduce so exhaust always dominates and air is pulled through the carbon
         filter instead of leaking unfiltered through gaps.
+
+        An intake increase that the EnvironmentGuard allowed for a humidity or
+        mold-hygiene reason is never rewritten (see HUMIDITY_ALLOW_MARKER).
         """
         if not action_map:
             return action_map
+
+        # Lazy import avoids circular import during module initialization.
+        try:
+            from ..actions.OGBEnvironmentGuard import HUMIDITY_ALLOW_MARKER
+        except ModuleNotFoundError:
+            HUMIDITY_ALLOW_MARKER = "[EnvGuardHumidityAllow]"
 
         guard_enabled = self.data_store.getDeep(
             "controlOptions.negativePressureGuardEnabled", True
@@ -1651,6 +1667,19 @@ class OGBActionManager:
 
             original_action = action_map[intake_index]
             old_message = getattr(original_action, "message", "")
+
+            # The EnvironmentGuard ran before this guard and explicitly allowed this
+            # intake for a humidity/hygiene reason. Keeping the tent under negative
+            # pressure must not cancel the only available remedy for a humidity
+            # emergency, so leave the action untouched.
+            if HUMIDITY_ALLOW_MARKER in (old_message or ""):
+                _LOGGER.debug(
+                    f"{self.room}: NegativePressureGuard kept Intake Increase "
+                    f"(EnvironmentGuard humidity allow-reason; mold hygiene wins "
+                    f"over negative pressure)"
+                )
+                return action_map
+
             new_message = (
                 f"{old_message} [NegativePressureGuard: Intake Increase -> Reduce "
                 f"to maintain negative pressure]"
@@ -1698,7 +1727,11 @@ class OGBActionManager:
 
         # Lazy import avoids circular import during module initialization.
         try:
-            from ..actions.OGBEnvironmentGuard import evaluate_environment_guard
+            from ..actions.OGBEnvironmentGuard import (
+                HUMIDITY_ALLOW_MARKER,
+                evaluate_environment_guard,
+                is_humidity_allow_reason,
+            )
         except ModuleNotFoundError:
             _LOGGER.warning(
                 "%s: OGBEnvironmentGuard module missing, skipping environment guard rewrite",
@@ -1805,6 +1838,22 @@ class OGBActionManager:
                         haEvent=True,
                         debug_type="DEBUG",
                     )
+                if is_humidity_allow_reason(reason):
+                    # This intake increase is the remedy for a humidity/hygiene
+                    # problem. Flag it so the negative-pressure guard, which runs
+                    # right after this one, does not undo it.
+                    old_message = getattr(action, "message", "") or ""
+                    if HUMIDITY_ALLOW_MARKER not in old_message:
+                        new_message = f"{old_message} {HUMIDITY_ALLOW_MARKER}".strip()
+                        try:
+                            action = dataclasses.replace(action, message=new_message)
+                        except TypeError:
+                            action = copy.copy(action)
+                            action.message = new_message
+                        _LOGGER.debug(
+                            f"{self.room}: EnvironmentGuard allowed {cap} for humidity "
+                            f"reason {reason} - marked for NegativePressureGuard"
+                        )
                 guarded_actions.append(action)
 
         return guarded_actions

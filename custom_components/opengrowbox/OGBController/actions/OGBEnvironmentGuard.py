@@ -19,6 +19,44 @@ from typing import Any, Dict, Optional, Tuple
 
 AIR_EXCHANGE_CAPABILITIES = {"canExhaust", "canIntake", "canWindow"}
 
+# Absolute humidity hygiene limit for mold prevention.
+# Deliberately independent of the user configured maxHumidity: mold risk is a
+# biological limit, not a user preference. Above this value air exchange must
+# not be blocked for temperature reasons.
+MOLD_RISK_HUMIDITY = 80.0
+
+# Allow-reasons that make an active lock obsolete.
+_HUMIDITY_ALLOW_REASONS = {
+    "humidity_emergency_over_max",
+    "humidity_emergency_under_min",
+    "humidity_benefit_drying_needed",
+    "mold_risk_hygiene_limit",
+}
+
+# Marker appended to the message of an action that this guard explicitly ALLOWED
+# for a humidity/hygiene reason.
+#
+# The negative-pressure guard (OGBActionManager._apply_negative_pressure_guard)
+# rewrites every "Exhaust Reduce + Intake Increase" combination to
+# "Intake Reduce" to keep the tent under negative pressure. That is correct for
+# the ordinary VPD reduce path, but it must not silently undo the intake while
+# the room is fighting a humidity emergency - fresh air is the only remedy then.
+# The guard verdict cannot be passed through OGBActionPublication (frozen
+# dataclass, fixed field set), so the allow-decision travels in the message, which
+# is the same channel both guards already use for their annotations.
+#
+# The wording is deliberately free of every substring checked by
+# _contains_emergency_hint() ("emergency", "critical", "o2", "safety"): this guard
+# can run twice per cycle (checkLimitsAndPublicateWithDampening applies it before
+# publicationActionHandler applies it again), and a hint word in the message would
+# turn the second pass into a safety override and corrupt the guard state.
+HUMIDITY_ALLOW_MARKER = "[EnvGuardHumidityAllow]"
+
+
+def is_humidity_allow_reason(reason: Any) -> bool:
+    """Return True if this allow-reason is driven by humidity / mold hygiene."""
+    return str(reason or "") in _HUMIDITY_ALLOW_REASONS
+
 
 def _to_float(value: Any) -> Optional[float]:
     """Convert value to float safely."""
@@ -158,6 +196,7 @@ def _assess_risks(
         "humidity_benefit": False,
         "humidity_critical": False,
         "humidity_critical_dry": False,
+        "humidity_mold_risk": False,
         "temp_critical": False,
     }
 
@@ -208,6 +247,12 @@ def _assess_risks(
         and indoor_hum <= min_hum
     )
 
+    # Absolute hygiene limit - independent of max_hum, so it also fires when the
+    # user configured a permissive maxHumidity above MOLD_RISK_HUMIDITY.
+    risk_assessment["humidity_mold_risk"] = (
+        indoor_hum is not None and indoor_hum >= MOLD_RISK_HUMIDITY
+    )
+
     risk_assessment["temp_critical"] = (
         min_temp is not None and indoor_temp <= min_temp
     )
@@ -224,11 +269,12 @@ def _decide_priority(
     Priority hierarchy:
     1. humidity_critical (>= maxHumidity) → ALLOW (override everything, mold prevention)
     2. humidity_critical_dry (<= minHumidity) → ALLOW (need to add humidity)
-    3. humidity_benefit (>= maxHumidity with drier source) → ALLOW (need to dry out)
-    4. temp_benefit (warm air needed) → ALLOW
-    5. temp_risk (too cold, source colder) → BLOCK
-    6. humidity_risk (too dry, source drier) → BLOCK
-    7. No risk → ALLOW
+    3. humidity_mold_risk (>= MOLD_RISK_HUMIDITY) → ALLOW (absolute hygiene limit)
+    4. humidity_benefit (>= maxHumidity with drier source) → ALLOW (need to dry out)
+    5. temp_benefit (warm air needed) → ALLOW
+    6. temp_risk (too cold, source colder) → BLOCK
+    7. humidity_risk (too dry, source drier) → BLOCK
+    8. No risk → ALLOW
 
     Returns: (should_allow, reason, priority_level)
     """
@@ -237,6 +283,9 @@ def _decide_priority(
 
     if risks.get("humidity_critical_dry"):
         return True, "humidity_emergency_under_min", "emergency"
+
+    if risks.get("humidity_mold_risk"):
+        return True, "mold_risk_hygiene_limit", "high"
 
     if risks.get("humidity_benefit"):
         return True, "humidity_benefit_drying_needed", "high"
@@ -408,7 +457,20 @@ def evaluate_environment_guard(
     should_allow, reason, priority_level = _decide_priority(risks, indoor_hum, max_hum, min_hum)
 
     lock_active = lock_until is not None and now < lock_until
-    if lock_active and should_allow and selected_temp is not None and min_temp is not None:
+    # A humidity driven allow-reason makes an active temperature lock obsolete:
+    # the lock exists to preserve heat, but humidity pressure must win.
+    humidity_forces_unlock = reason in _HUMIDITY_ALLOW_REASONS
+    if lock_active and should_allow and humidity_forces_unlock:
+        lock_active = False
+        lock_until = None
+        blocked_count = 0
+        window_start = None
+    elif (
+        lock_active
+        and should_allow
+        and selected_temp is not None
+        and min_temp is not None
+    ):
         unlock_margin = config.get("unlock_margin", 1.2)
         can_unlock = selected_temp >= (indoor_temp - max(0.4, config.get("ambient_delta", 1.2) / 2.0)) and indoor_temp > (min_temp + unlock_margin)
         if can_unlock:

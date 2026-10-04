@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from ..data.OGBParams.OGBParams import DEFAULT_DEVICE_COOLDOWNS
+from ..data.OGBParams.OGBParams import (
+    BUFFER_KEY_BY_PERFECTION_CHANNEL,
+    BUFFER_KEY_BY_TYPE,
+    DEFAULT_BUFFERS,
+    DEFAULT_DEVICE_COOLDOWNS,
+)
 from ..utils.ambient import is_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,7 +97,20 @@ class OGBConsoleManager:
             self.cmd_gcd,
             "Sets or shows the global cooldown for a device capability",
             "gcd <capability> <minutes>",
-            ["gcd light 5", "gcd cover 10"],
+            ["gcd canLight 5", "gcd canCO2 2"],
+        )
+
+        self.register_command(
+            "buffer",
+            self.cmd_buffer,
+            "Shows or sets hysteresis buffers (dampening and VPD Perfection bounds)",
+            "buffer [damper <type> <value> | perfection <temp|humidity> <value>]",
+            [
+                "buffer",
+                "buffer damper cooler 1.5",
+                "buffer perfection temp 2.0",
+                "buffer perfection humidity 4.0",
+            ],
         )
 
         self.register_command(
@@ -444,6 +462,93 @@ class OGBConsoleManager:
         await self.event_manager.emit("AdjustDeviceGCD", gcdAdjustment)
         await self._send_response(
             f"✅ Global Cooldown for '{capability}' set to {minutes} minute(s)."
+        )
+
+    async def cmd_buffer(self, params: List[str]):
+        """
+        Shows or sets hysteresis buffers.
+
+        Usage:
+            buffer
+            buffer damper <type> <value>            type: heater|cooler|humidifier|dehumidifier
+            buffer perfection <channel> <value>     channel: temp|humidity
+        """
+        buffers = self.data_store.getDeep("controlOptionData.buffers") or {}
+
+        def current(key: str) -> float:
+            try:
+                return float(buffers.get(key, DEFAULT_BUFFERS[key]))
+            except (TypeError, ValueError):
+                return float(DEFAULT_BUFFERS[key])
+
+        if not params:
+            response = "🌡️ Current Hysteresis Buffers:\n" + "=" * 52 + "\n"
+            response += "  Dampening (don't start near opposite limit):\n"
+            for type_name, key in BUFFER_KEY_BY_TYPE.items():
+                response += f"    {type_name:<14} : {current(key)}  ({key})\n"
+            response += "  VPD Perfection Bounds (anticipatory correction):\n"
+            for channel in ("temp", "humidity"):
+                key = BUFFER_KEY_BY_PERFECTION_CHANNEL[channel]
+                response += f"    {channel:<14} : {current(key)}  ({key})\n"
+            response += "=" * 52
+            response += "\nExample: buffer damper cooler 1.5"
+            await self._send_response(response)
+            return
+
+        if params[0].lower() in ("-h", "--help", "help"):
+            await self._send_response(
+                "🌡️ Buffer command usage:\n"
+                "  buffer                                Show all buffers\n"
+                "  buffer damper <type> <value>          type: "
+                f"{', '.join(BUFFER_KEY_BY_TYPE)}\n"
+                "  buffer perfection <channel> <value>   channel: temp, humidity\n"
+                "Buffers are applied on the next control cycle, no restart needed."
+            )
+            return
+
+        scope = params[0].lower()
+        if scope == "damper":
+            key_map = BUFFER_KEY_BY_TYPE
+        elif scope == "perfection":
+            key_map = BUFFER_KEY_BY_PERFECTION_CHANNEL
+        else:
+            await self._send_response(
+                f"⚠️ Unknown scope: '{params[0]}'\n" "Valid scopes: damper, perfection"
+            )
+            return
+
+        if len(params) != 3:
+            await self._send_response(
+                f"⚠️ Invalid arguments.\n"
+                f"Usage: buffer {scope} <{'type' if scope == 'damper' else 'channel'}> <value>\n"
+                f"Valid: {', '.join(key_map)}"
+            )
+            return
+
+        target = params[1].lower()
+        if target not in key_map:
+            await self._send_response(
+                f"⚠️ Unknown {'type' if scope == 'damper' else 'channel'}: '{params[1]}'\n"
+                f"Available: {', '.join(key_map)}"
+            )
+            return
+
+        try:
+            value = float(params[2])
+        except ValueError:
+            await self._send_response("⚠️ Buffer value must be a number.")
+            return
+
+        if value < 0:
+            await self._send_response("⚠️ Buffer value must be zero or positive.")
+            return
+
+        key = key_map[target]
+        previous = current(key)
+        buffers[key] = value
+        self.data_store.setDeep("controlOptionData.buffers", buffers)
+        await self._send_response(
+            f"✅ Buffer '{key}' ({scope} {target}) set: {previous} → {value}"
         )
 
     async def cmd_list(self, params: List[str]):

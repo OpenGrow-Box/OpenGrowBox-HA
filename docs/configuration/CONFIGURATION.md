@@ -230,23 +230,138 @@ lower temperature, slightly higher humidity and a lower VPD at night.
   `nightMinHumidity`, `nightMaxHumidity`, `nightVpdRange`) which populate these
   setters automatically.
 
-### Air Exchange Cold Guard (Advanced)
+### Environment Guard (Advanced)
 
-OpenGrowBox can automatically suppress repeated cold-air exchange actions when
-ambient/outside air is too cold for the room's current minimum temperature range.
+OpenGrowBox can automatically suppress air-exchange actions when ambient/outside
+air is too cold or too humid for the room's current range. This avoids cold or
+clammy air entering the tent and stress from a single exchange action.
+
+Guarded capabilities: `canExhaust`, `canIntake`, `canWindow`. `canVentilate` is
+intentionally **not** guarded, since it routes air through a climate device.
 
 Optional tunables (stored in `controlOptions`):
 
-- `airExchangeColdAmbientDelta` (default `1.2` C)
-- `airExchangeColdMinMargin` (default `0.8` C)
-- `airExchangeColdHumidityDelta` (default `15` %RH)
-- `airExchangeColdHumidityMargin` (default `5` %RH)
-- `airExchangeColdWindowMinutes` (default `30`)
-- `airExchangeColdLockMinutes` (default `60`)
-- `airExchangeUnlockMargin` (default `1.2` C)
+- `environmentGuardAmbientDelta` (default `1.2` C)
+- `environmentGuardMinMargin` (default `0.8` C)
+- `environmentGuardHumidityDelta` (default `15` %RH)
+- `environmentGuardHumidityMargin` (default `5` %RH)
+- `environmentGuardWindowMinutes` (default `30`)
+- `environmentGuardLockMinutes` (default `60`)
+- `environmentGuardUnlockMargin` (default `1.2` C)
 
-Runtime state is stored in `safety.airExchangeColdGuard` and includes block count,
+Runtime state is stored in `safety.environmentGuard` and includes block count,
 lock timeout, and last decision metadata for troubleshooting.
+
+#### Absolute Mold Hygiene Limit
+
+Independently of the configured `maxHumidity`, humidity at or above **80 %RH**
+(`MOLD_RISK_HUMIDITY`, not configurable) is treated as a mold hygiene risk.
+
+- The humidity risk outranks the temperature risk, so cold but very humid air is
+  still rejected.
+- At or above the limit, guarded air-exchange actions are allowed so humidity can
+  be brought down.
+- An active guard lock is released while the humidity allow reason is active.
+- At or above `maxHumidity`, the source is also rejected on humidity alone
+  (beneficial drying).
+
+See [VPD Action Cycle Modes → Environment Guard](../core_concepts/action_cycles/ACTION_CYCLE_VPD_MODES.md#environment-guard-cross-mode-safety)
+for the full decision table.
+
+### Hysteresis Buffers
+
+Hysteresis buffers decide **how early** a device reacts before a limit is actually
+reached. They exist to stop short-cycling and to correct values early instead of
+waiting for a hard limit violation.
+
+OpenGrowBox keeps two independent buffer groups, both stored in
+`controlOptionData.buffers`:
+
+#### Dampening buffers
+
+Applied by the action dampening stage. They prevent a device from *starting* too
+close to the opposite limit, so a device is not asked to fight a limit it cannot
+reach.
+
+| Key | Device | Default |
+|-----|--------|---------|
+| `heaterBuffer` | Heater (°C) | `2.0` |
+| `coolerBuffer` | Cooler (°C) | `2.0` |
+| `humidifierBuffer` | Humidifier (%RH) | `5.0` |
+| `dehumidifierBuffer` | Dehumidifier (%RH) | `5.0` |
+
+Example: a `canHeat` Increase is blocked while
+`temperature >= maxTemp - heaterBuffer`, because starting a heater near `maxTemp`
+would only waste energy.
+
+#### VPD Perfection bounds buffers
+
+Applied by the bounds correction stage of VPD Perfection and VPD Target. They
+decide at which offset **outside** the configured band a correction action is
+injected.
+
+| Key | Applies to | Default |
+|-----|-----------|---------|
+| `vpdPerfectionTempBuffer` | Temperature bounds (°C) | `1.5` |
+| `vpdPerfectionHumBuffer` | Humidity bounds (%RH) | `3.0` |
+
+| Bounds branch | Trigger |
+|---------------|---------|
+| `Temp high` → `canCool` Increase | `temperature > maxTemp - vpdPerfectionTempBuffer` |
+| `Temp low` → `canHeat` Increase | `temperature < minTemp + vpdPerfectionTempBuffer` |
+| `Humidity high` → `canDehumidify` Increase | `humidity > maxHumidity - vpdPerfectionHumBuffer` |
+| `Humidity low` → `canHumidify` Increase | `humidity < minHumidity + vpdPerfectionHumBuffer` |
+
+Each trigger logs the **effective threshold** and the buffer to the client log, so
+the comparison shown is the comparison that actually ran:
+
+```text
+Perfection-Bounds: Temp high (26.2 > 25.5 [max_temp=27.0°C, buffer=1.5°C])
+```
+
+> **Tuning note**: these buffers widen or narrow the reaction band. If a bounds
+> action appears to fire "too early" or "too late" in the log, compare the
+> reported threshold against your configured limit — the buffer is the difference.
+> A buffer larger than half of your temperature band effectively disables the
+> device, because the band is then always exceeded on one side.
+
+#### `buffer` console command
+
+Use the console to inspect and change buffers at runtime. Values are applied on the
+next control cycle — **no restart and no reload required**, because both readers
+fetch the values from the datastore on every cycle.
+
+```bash
+# Show all buffers, both groups, with their current values
+buffer
+
+# Show usage
+buffer -h
+```
+
+| Command | Description |
+|---------|-------------|
+| `buffer` | List all buffers with current values |
+| `buffer damper <type> <value>` | Set a dampening buffer. `<type>` = `heater`, `cooler`, `humidifier`, `dehumidifier` |
+| `buffer perfection <channel> <value>` | Set a bounds buffer. `<channel>` = `temp` (alias `temperature`) or `humidity` (alias `hum`) |
+
+Values must be zero or positive. The response reports the transition:
+
+```bash
+$ buffer damper cooler 1.5
+✅ Buffer 'coolerBuffer' (damper cooler) set: 2.0 → 1.5
+
+$ buffer perfection temp 2.0
+✅ Buffer 'vpdPerfectionTempBuffer' (perfection temp) set: 1.5 → 2.0
+
+$ buffer damper bogus 1
+⚠️ Unknown type: 'bogus'
+Available: heater, cooler, humidifier, dehumidifier
+```
+
+Defaults are defined once in `DEFAULT_BUFFERS` (`OGBParams.py`). The datastore
+default (`OGBData.py`) and every reader (`OGBVPDActions`, `OGBDampeningActions`)
+derive from that single definition, so there is no second place to keep in sync.
 
 ### Hydroponic Tank Feed System (Optional)
 

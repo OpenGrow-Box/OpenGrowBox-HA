@@ -9,6 +9,7 @@ and without dampening logic.
 import logging
 from typing import TYPE_CHECKING, Any, Dict
 
+from ..data.OGBParams.OGBParams import DEFAULT_BUFFERS
 from ..managers.OGBActionManager import OGBActionManager
 
 if TYPE_CHECKING:
@@ -137,10 +138,21 @@ class OGBVPDActions:
         # Prüfe ob ownWeights aktiv
         own_weights = self.ogb.dataStore.getDeep("controlOptions.ownWeights", False)
         
-        # Hysterese-Puffer
-        TEMP_BUFFER = 1.5
-        HUM_BUFFER = 3.0
-        
+        # Hysterese-Puffer (Konfiguration, keine Hartcodierung)
+        buffers = self.ogb.dataStore.getDeep("controlOptionData.buffers") or {}
+        TEMP_BUFFER = float(
+            buffers.get("vpdPerfectionTempBuffer", DEFAULT_BUFFERS["vpdPerfectionTempBuffer"])
+        )
+        HUM_BUFFER = float(
+            buffers.get("vpdPerfectionHumBuffer", DEFAULT_BUFFERS["vpdPerfectionHumBuffer"])
+        )
+
+        # Effektive Schwellen (das ist der Wert, der wirklich verglichen wird)
+        temp_low_threshold = min_temp + TEMP_BUFFER if min_temp is not None else None
+        temp_high_threshold = max_temp - TEMP_BUFFER if max_temp is not None else None
+        hum_low_threshold = min_hum + HUM_BUFFER if min_hum is not None else None
+        hum_high_threshold = max_hum - HUM_BUFFER if max_hum is not None else None
+
         correction_actions = []
         
         # Berechne gewichtete Abweichungen wenn ownWeights aktiv
@@ -164,7 +176,7 @@ class OGBVPDActions:
         
         # Temp zu niedrig
         if current_temp is not None and min_temp is not None:
-            if current_temp < (min_temp + TEMP_BUFFER):
+            if current_temp < temp_low_threshold:
                 if own_weights:
                     # Mit Own Weights: Berechne Priorität basierend auf gewichteter Abweichung
                     deviation = weighted_temp_dev
@@ -178,11 +190,11 @@ class OGBVPDActions:
                     if not self._action_exists(action_map, "canHeat", "Increase"):
                         # Safety override: remove opposite VPD action if present
                         action_map = self._remove_opposite_actions(action_map, "canHeat", "Increase")
-                        correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {min_temp})", priority))
+                        correction_actions.append(self._create_action("canHeat", "Increase", f"{context}Bounds: Temp low ({current_temp:.1f} < {temp_low_threshold:.1f} [min_temp={min_temp}°C, buffer={TEMP_BUFFER}°C])", priority))
         
         # Temp zu hoch
         if current_temp is not None and max_temp is not None:
-            if current_temp > (max_temp - TEMP_BUFFER):
+            if current_temp > temp_high_threshold:
                 if own_weights:
                     deviation = weighted_temp_dev
                     priority = self._calculate_dynamic_priority(deviation, True)
@@ -194,11 +206,11 @@ class OGBVPDActions:
                     if not self._action_exists(action_map, "canCool", "Increase"):
                         # Safety override: remove opposite VPD action if present
                         action_map = self._remove_opposite_actions(action_map, "canCool", "Increase")
-                        correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {max_temp})", priority))
+                        correction_actions.append(self._create_action("canCool", "Increase", f"{context}Bounds: Temp high ({current_temp:.1f} > {temp_high_threshold:.1f} [max_temp={max_temp}°C, buffer={TEMP_BUFFER}°C])", priority))
         
         # Humidity zu niedrig
         if current_hum is not None and min_hum is not None:
-            if current_hum < (min_hum + HUM_BUFFER):
+            if current_hum < hum_low_threshold:
                 if own_weights:
                     deviation = weighted_hum_dev
                     priority = self._calculate_dynamic_priority(deviation, True)
@@ -210,11 +222,11 @@ class OGBVPDActions:
                     if not self._action_exists(action_map, "canHumidify", "Increase"):
                         # Safety override: remove opposite VPD action if present
                         action_map = self._remove_opposite_actions(action_map, "canHumidify", "Increase")
-                        correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {min_hum})", priority))
+                        correction_actions.append(self._create_action("canHumidify", "Increase", f"{context}Bounds: Humidity low ({current_hum:.1f} < {hum_low_threshold:.1f} [min_hum={min_hum}%, buffer={HUM_BUFFER}%])", priority))
         
         # Humidity zu hoch
         if current_hum is not None and max_hum is not None:
-            if current_hum > (max_hum - HUM_BUFFER):
+            if current_hum > hum_high_threshold:
                 if own_weights:
                     deviation = weighted_hum_dev
                     priority = self._calculate_dynamic_priority(deviation, True)
@@ -226,7 +238,7 @@ class OGBVPDActions:
                     if not self._action_exists(action_map, "canDehumidify", "Increase"):
                         # Safety override: remove opposite VPD action if present
                         action_map = self._remove_opposite_actions(action_map, "canDehumidify", "Increase")
-                        correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {max_hum})", priority))
+                        correction_actions.append(self._create_action("canDehumidify", "Increase", f"{context}Bounds: Humidity high ({current_hum:.1f} > {hum_high_threshold:.1f} [max_hum={max_hum}%, buffer={HUM_BUFFER}%])", priority))
         
         return action_map + correction_actions
 
