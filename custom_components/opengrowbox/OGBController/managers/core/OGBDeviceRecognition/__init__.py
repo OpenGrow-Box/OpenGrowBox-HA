@@ -997,7 +997,7 @@ class OGBDeviceRecognitionManager:
             
             # Method 1: Search by IP in connections
             if proposal.ip_address and not device:
-                for dev in device_registry.devices.values():
+                for dev in device_registry.devices:
                     if hasattr(dev, 'connections') and dev.connections:
                         for conn in dev.connections:
                             if len(conn) >= 2:
@@ -1012,7 +1012,7 @@ class OGBDeviceRecognitionManager:
             # Method 2: Search by name (partial match)
             if proposal.name and not device:
                 search_name = proposal.name.lower()
-                for dev in device_registry.devices.values():
+                for dev in device_registry.devices:
                     dev_name = (dev.name or "").lower()
                     dev_name_by_user = (dev.name_by_user or "").lower()
                     if search_name in dev_name or search_name in dev_name_by_user:
@@ -1023,7 +1023,7 @@ class OGBDeviceRecognitionManager:
             # Method 3: Search by hostname from raw_data
             if not device and proposal.raw_data and proposal.raw_data.get("hostname"):
                 hostname = proposal.raw_data.get("hostname", "").lower()
-                for dev in device_registry.devices.values():
+                for dev in device_registry.devices:
                     dev_name = (dev.name or "").lower()
                     if hostname in dev_name:
                         device = dev

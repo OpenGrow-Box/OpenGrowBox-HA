@@ -2,7 +2,10 @@ from __future__ import annotations
 import logging
 import asyncio
 from ..data.OGBParams.OGBParams import CAP_MAPPING
-from ..utils.sensor_identification import resolve_remappable_sensor_type
+from ..utils.sensor_identification import (
+    labels_only_enabled,
+    resolve_remappable_sensor_type,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +32,7 @@ class Device:
         self.options = []
         self.sensors = []
         self.ogbsettings = []
+        self.skipped_entities = []
         self.initialization = False
         self.inWorkMode = False
         self.isInitialized = False
@@ -166,6 +170,56 @@ class Device:
     def sensor_count(self) -> int:
         """Returns the count of all sensors."""
         return len(self.sensors)
+
+    def _describe_missing_switches(self) -> str:
+        """Build a diagnostic message for a device that has no switch entities.
+
+        turn_on() cannot do anything without switches, so the log must reveal
+        what the device actually is and which entities were handed to it -
+        otherwise the short-form device name (``dev`` from ``dev_*`` prefixes)
+        gives no clue about type or cause.
+        """
+        def ids(entities):
+            return [e.get("entity_id") for e in entities if e.get("entity_id")]
+
+        platforms = sorted({
+            e.get("platform")
+            for e in (self.switches + self.options + self.sensors + self.skipped_entities)
+            if e.get("platform")
+        })
+
+        flags = []
+        if self.isAcInfinDev:
+            flags.append("ac_infinity")
+        if self.isSpecialDevice:
+            flags.append("special")
+        if self.isDimmable:
+            flags.append("dimmable")
+        if self.voltageFromNumber:
+            flags.append("voltage_from_number")
+        flags_str = ",".join(flags) if flags else "none"
+
+        details = [
+            f"device='{self.deviceName}'",
+            f"type='{self.deviceType}'",
+            f"label='{self.deviceLabel}'",
+            f"room='{self.inRoom}'",
+            f"platforms={platforms or ['unknown']}",
+            f"flags={flags_str}",
+            f"voltage={self.voltage}",
+            f"dutyCycle={self.dutyCycle}",
+            f"isRunning={self.isRunning}",
+            f"isInitialized={self.isInitialized}",
+            f"switches={ids(self.switches)}",
+            f"options={ids(self.options)}",
+            f"sensors={ids(self.sensors)}",
+            f"ogbsettings={ids(self.ogbsettings)}",
+            f"skipped_invalid_value={ids(self.skipped_entities)}",
+        ]
+        return (
+            f"{self.deviceName} has no switch entity to activate/turn on - "
+            f"{' | '.join(details)}"
+        )
 
     def __iter__(self):
         return iter(self.__dict__.items())
@@ -504,15 +558,16 @@ class Device:
 
             if not sensor_type:
                 # Backward-compatible fallback for legacy entity suffixes
-                object_id = entity_id.split(".", 1)[-1].lower()
-                if object_id.endswith("_temperature"):
-                    sensor_type = "temperature"
-                elif object_id.endswith("_humidity"):
-                    sensor_type = "humidity"
-                elif object_id.endswith("_dewpoint") or object_id.endswith("_dew_point"):
-                    sensor_type = "dewpoint"
-                elif object_id.endswith("_co2"):
-                    sensor_type = "co2"
+                if not labels_only_enabled():
+                    object_id = entity_id.split(".", 1)[-1].lower()
+                    if object_id.endswith("_temperature"):
+                        sensor_type = "temperature"
+                    elif object_id.endswith("_humidity"):
+                        sensor_type = "humidity"
+                    elif object_id.endswith("_dewpoint") or object_id.endswith("_dew_point"):
+                        sensor_type = "dewpoint"
+                    elif object_id.endswith("_co2"):
+                        sensor_type = "co2"
 
             if sensor_type:
                 sensor_groups[sensor_type].append(entity)
@@ -793,6 +848,8 @@ class Device:
         """Identify switches and sensors from the list of entities and check invalid values."""
         _LOGGER.debug(f"Identify all given {entitys}")
 
+        self.skipped_entities = []
+
         try:
             for entity in entitys:
 
@@ -826,6 +883,9 @@ class Device:
                     # AcInfinity: register anyway, as the entity will be available later
                     if self.isAcInfinDev and entityID.startswith(("select.", "number.")):
                         self.options.append(entity)
+                    else:
+                        # Remember it so turn_on can report which entities were dropped
+                        self.skipped_entities.append(entity)
                     continue
                         
                 if entityID.startswith(("switch.", "light.", "fan.", "climate.", "humidifier.", "cover.")):
@@ -961,7 +1021,8 @@ class Device:
                         "dimm_value": self._get_dim_value(),
                         "min_duty": getattr(self, 'minDuty', None),
                         "max_duty": getattr(self, 'maxDuty', None),
-                        "minmax_active": getattr(self, 'is_minmax_active', False)
+                        "minmax_active": getattr(self, 'is_minmax_active', False),
+                        "labels": [lbl.get("name", "").lower() for lbl in (self.labelMap or [])],
                     }
                     self.dataStore.setDeep(capPath, currentCap)
 
@@ -1677,7 +1738,7 @@ class Device:
 
             # === Standard devices ===
             if not self.switches:
-                _LOGGER.warning(f"{self.deviceName} has not Switch to Activate or Turn On")
+                _LOGGER.warning(self._describe_missing_switches())
                 return
 
             entity_ids = [switch["entity_id"] for switch in self.switches]

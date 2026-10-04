@@ -1,6 +1,27 @@
 import re
+from datetime import date
 
+from ...const import LABELS_ONLY_SINCE
+from ..data.OGBParams.OGBParams import DEVICE_TYPE_MAPPING
 from ..data.OGBParams.OGBTranslations import SENSOR_TRANSLATIONS
+
+
+def labels_only_enabled(now=None):
+    """Return True once label-only sensor detection is in force."""
+    return (now or date.today()) >= LABELS_ONLY_SINCE
+
+
+SENSOR_DEVICE_KEYWORDS = {
+    keyword
+    for keyword in DEVICE_TYPE_MAPPING.get("Sensor", [])
+    if keyword
+}
+
+
+# Context labels (medium area / room) must never be treated as a sensor type.
+# They are only used for context detection (soil/water/air), but e.g. "soil"
+# is also a moisture translation, which would misclassify a conductivity probe.
+CONTEXT_LABEL_WORDS = {"soil", "substrat", "substrate", "boden", "medium"}
 
 
 REMAPPABLE_SENSOR_TYPES = {"temperature", "humidity", "dewpoint", "co2"}
@@ -18,6 +39,14 @@ ENGLISH_SENSOR_FALLBACKS = {
     "_voltage": "voltage",
     "_current": "current",
 }
+
+
+# Device-control/output metrics (duty cycle, intensity, frequency, ...) that are
+# NOT climate readings and must never be classified as a sensor type. They would
+# otherwise inherit a device label (e.g. "Humidifier" -> humidity via "hum") and
+# pollute the air context used by VPD calculations.
+# NOTE: power/energy stay resolvable - they are valid energy-context types.
+NON_CLIMATE_CONTROL_SUFFIXES = {"duty", "intensity", "frequency"}
 
 
 def _normalize_token(value):
@@ -87,6 +116,17 @@ def _extract_label_candidates(labels):
     return candidates
 
 
+def _has_sensor_device_label(labels):
+    """Return True if any label identifies a Sensor-type device (label gate)."""
+    for label in labels or []:
+        if not isinstance(label, dict):
+            continue
+        for value in (label.get("id"), label.get("name")):
+            if value and _normalize_token(value) in SENSOR_DEVICE_KEYWORDS:
+                return True
+    return False
+
+
 def resolve_sensor_types(entity_id, labels=None):
     """Resolve canonical sensor types with label/translation priority."""
     resolved_types = []
@@ -101,13 +141,22 @@ def resolve_sensor_types(entity_id, labels=None):
 
     # Frequency sensors must never be classified as temp/hum (or any other
     # remappable type) - they carry no climate value and would pollute VPD.
-    if "frequency" in object_id:
+    # Same applies to other device-control metrics (duty, intensity).
+    if any(token in object_id for token in NON_CLIMATE_CONTROL_SUFFIXES):
         return []
 
+    labels_only = labels_only_enabled()
+
+    # Branch logic with the label: in label-only mode, multilingual
+    # entity-name resolution is only allowed when the device carries a
+    # Sensor-type label (the label is the gate).
+    allow_name_matching = not labels_only or _has_sensor_device_label(labels)
+
     # 1) Strongest signal: explicit legacy suffixes in entity_id
-    for fallback, sensor_type in ENGLISH_SENSOR_FALLBACKS.items():
-        if fallback in object_id or object_id.endswith(fallback.lstrip("_")):
-            add(sensor_type)
+    if not labels_only:
+        for fallback, sensor_type in ENGLISH_SENSOR_FALLBACKS.items():
+            if fallback in object_id or object_id.endswith(fallback.lstrip("_")):
+                add(sensor_type)
 
     # If we already have a deterministic remappable type from entity_id,
     # don't let generic labels (e.g. "Ventilation") override it.
@@ -116,9 +165,11 @@ def resolve_sensor_types(entity_id, labels=None):
 
     # 2) Labels/translations
     for candidate in _extract_label_candidates(labels):
+        if _normalize_token(candidate) in CONTEXT_LABEL_WORDS:
+            continue
         add(_match_translation(candidate))
 
-    if not resolved_types:
+    if allow_name_matching and not resolved_types:
         entity_candidates = [object_id]
 
         if object_id:
@@ -130,7 +181,7 @@ def resolve_sensor_types(entity_id, labels=None):
             if resolved_types:
                 break
 
-    if not resolved_types:
+    if not labels_only and not resolved_types:
         for fallback, sensor_type in ENGLISH_SENSOR_FALLBACKS.items():
             if fallback in object_id or object_id.endswith(fallback.lstrip("_")):
                 add(sensor_type)
@@ -145,9 +196,12 @@ def resolve_remappable_sensor_type(entity_id, labels=None):
         if sensor_type in REMAPPABLE_SENSOR_TYPES:
             return sensor_type
 
+    if labels_only_enabled():
+        return None
+
     # Legacy compatibility: keep old suffix-based behavior for remap-critical types
     object_id = entity_id.split(".", 1)[-1].lower() if entity_id else ""
-    if "frequency" in object_id:
+    if any(token in object_id for token in NON_CLIMATE_CONTROL_SUFFIXES):
         return None
     if "_temperature" in object_id or object_id.endswith("temperature"):
         return "temperature"
@@ -160,3 +214,24 @@ def resolve_remappable_sensor_type(entity_id, labels=None):
     if "_leaf" in object_id or object_id.endswith("leaf"):
         return "temperature"
     return None
+
+
+def is_ogb_output_sensor(entity_name) -> bool:
+    """Return True for OGB's own sensor entities.
+
+    OGB writes these itself (ambient/outsite/VPD/avg mirrors) via the
+    ``opengrowbox.update_sensor`` service. They are pure outputs, so they can
+    never be configuration inputs and must not be routed into the
+    configuration manager - doing so logged "Unhandled entity update" for every
+    single update, once per room.
+    """
+    name = str(entity_name or "").strip().lower()
+    return name.startswith("sensor.") and "ogb_" in name
+
+
+def should_route_to_config_manager(entity_name) -> bool:
+    """Return True when an OGB entity update belongs to the configuration manager."""
+    name = str(entity_name or "").strip().lower()
+    if "ogb_" not in name:
+        return False
+    return not is_ogb_output_sensor(name)

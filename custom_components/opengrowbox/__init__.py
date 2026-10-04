@@ -692,12 +692,15 @@ async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
     """
     Clean up orphaned OGB entities from the entity registry.
     
-    Removes entities that are retired or tied to removed config entries.
-    Also removes legacy orphaned devices for retired strainname entities.
+    Removes entities that are no longer provided by any platform or are
+    tied to removed config entries. Also removes legacy orphaned devices
+    for retired strainname entities.
     """
     try:
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
+
+        from .OGBController.utils.entity_cleanup import should_remove_entity
         
         entity_reg = er.async_get(hass)
         device_reg = dr.async_get(hass)
@@ -714,38 +717,33 @@ async def _cleanup_orphaned_entities(hass: HomeAssistant) -> None:
         if not ogb_entities:
             return
         
-        # Define retired entity patterns to remove (version-specific)
-        retired_patterns = [
-            "text.ogb_strainname_",     # Removed in 1.4.2 - strain now via medium
-            "OGB_Feed_Nutrient_",       # Removed in 3.2 - concentration-based dosing
-            "OGB_Feed_Tolerance_",      # Removed in 3.2 - concentration-based dosing
-        ]
-        
-        # Check each entity and remove if orphaned or retired
+        # Check each entity and remove if orphaned
         removed_count = 0
         for entity_id, entry in ogb_entities:
-            # Check for retired pattern match first
-            is_retired = any(pattern in entity_id.lower() for pattern in retired_patterns)
-
-            # Remove entities bound to deleted config entries (true orphan)
             config_entry_id = getattr(entry, "config_entry_id", None)
-            has_invalid_entry = bool(config_entry_id) and config_entry_id not in active_entry_ids
 
-            # Remove if retired pattern OR orphaned config-entry binding
-            should_remove = is_retired or has_invalid_entry
-            
-            if should_remove:
-                try:
-                    entity_reg.async_remove(entity_id)
-                    removed_count += 1
-                    reason = "retired pattern" if is_retired else "orphaned config entry"
-                    _LOGGER.warning(f"🧹 Removed orphaned entity ({reason}): {entity_id}")
-                except Exception as e:
-                    _LOGGER.debug(f"Could not remove {entity_id}: {e}")
+            if not should_remove_entity(
+                disabled=getattr(entry, "disabled", False),
+                config_entry_id=config_entry_id,
+                active_entry_ids=active_entry_ids,
+                has_state=hass.states.get(entity_id) is not None,
+            ):
+                continue
+
+            try:
+                entity_reg.async_remove(entity_id)
+                removed_count += 1
+                if config_entry_id and config_entry_id not in active_entry_ids:
+                    reason = "orphaned config entry"
+                else:
+                    reason = "no longer provided"
+                _LOGGER.warning(f"🧹 Removed orphaned entity ({reason}): {entity_id}")
+            except Exception as e:
+                _LOGGER.debug(f"Could not remove {entity_id}: {e}")
 
         # Remove leftover legacy strainname devices if they no longer have entities.
         removed_devices = 0
-        for device in list(device_reg.devices.values()):
+        for device in list(device_reg.devices):
             identifiers = getattr(device, "identifiers", set()) or set()
             identifier_strings = [str(value).lower() for _, value in identifiers]
             device_name = str(getattr(device, "name", "") or "")
@@ -898,7 +896,7 @@ async def _ensure_room_area_and_assign_hub(hass: HomeAssistant, config_entry: Co
         # This ensures global devices (global_hub, room_selector) get assigned to ambient
         # even when they were created as part of a room's config_entry
         all_ogb_devices = []
-        for device in device_reg.devices.values():
+        for device in device_reg.devices:
             identifiers = getattr(device, "identifiers", set()) or set()
             if any(ident[0] == DOMAIN for ident in identifiers):
                 all_ogb_devices.append(device)
@@ -966,7 +964,7 @@ async def _ensure_global_devices_in_ambient(hass: HomeAssistant) -> None:
         # Get ALL OGB devices with detailed logging
         _LOGGER.debug(f"Searching for global OGB devices in device registry...")
         ogb_devices_updated = 0
-        for device in device_reg.devices.values():
+        for device in device_reg.devices:
             identifiers = getattr(device, "identifiers", set()) or set()
             
             is_token = (DOMAIN, "global_hub") in identifiers

@@ -1,3 +1,5 @@
+from datetime import date
+
 DOMAIN = "opengrowbox"
 VERSION = "1.4.2"
 URL_BASE = "/ogb"
@@ -18,3 +20,8 @@ RELEASE_ASSET_NAME = "opengrowbox.zip"
 # Production:  wss://prem.opengrowbox.net
 #PREM_WS_API = "ws://10.1.1.8:5000"
 PREM_WS_API = "wss://prem.opengrowbox.net"
+
+
+# From this date on, sensor type detection is label-based only.
+# Entity-name/translation/fuzzy recognition is disabled.
+LABELS_ONLY_SINCE = date(2027, 1, 1)

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from ...data.OGBDataClasses.OGBPublications import OGBInitData
+from ...utils.ambient import is_ambient_room
 from ...utils.calcs import calculate_perfect_vpd
 from ...utils.sensorUpdater import _update_specific_number, _update_specific_sensor
 
@@ -353,9 +354,21 @@ class OGBConfigurationManager:
             asyncio.create_task(self._crop_steering_sets(data, entity_key))
             return True
         
-        # Only log if it's a relevant entity we might care about
-        if "ogb_" in entity_key.lower():
-            _LOGGER.warning(f"{self.room}: Unhandled entity update: {original_key}")
+        # Only warn for entities that belong to this room. Every room manager
+        # receives every OGB entity update, so an entity of another room would
+        # otherwise be reported as "unhandled" once per room.
+        lowered_key = entity_key.lower()
+        room_suffix = f"_{self.room.lower().replace(' ', '_')}"
+        if "ogb_" not in lowered_key:
+            return False
+
+        if not lowered_key.endswith(room_suffix):
+            _LOGGER.debug(
+                f"{self.room}: Ignoring update of {original_key} (not a config entity of this room)"
+            )
+            return False
+
+        _LOGGER.warning(f"{self.room}: Unhandled entity update: {original_key}")
         return False
 
     # Core control methods
@@ -451,7 +464,14 @@ class OGBConfigurationManager:
                 raise ValueError("tolerance too small")
         except (TypeError, ValueError):
             tolerance_percent = 10.0
-            _LOGGER.warning(f"{self.room}: No valid VPD tolerance set, using default 10%")
+            if self._is_initialized:
+                _LOGGER.warning(
+                    f"{self.room}: No valid VPD tolerance set, using default 10%"
+                )
+            else:
+                _LOGGER.debug(
+                    f"{self.room}: No valid VPD tolerance set, using default 10% (startup)"
+                )
 
         tolerance_value = target * (tolerance_percent / 100)
         min_vpd = round(target - tolerance_value, 2)
@@ -720,9 +740,14 @@ class OGBConfigurationManager:
                     raise ValueError("tolerance too small")
             except (TypeError, ValueError):
                 tolerance_percent = 10.0
-                _LOGGER.warning(
-                    f"{self.room}: No valid VPD tolerance set, using default 10%"
-                )
+                if self._is_initialized:
+                    _LOGGER.warning(
+                        f"{self.room}: No valid VPD tolerance set, using default 10%"
+                    )
+                else:
+                    _LOGGER.debug(
+                        f"{self.room}: No valid VPD tolerance set, using default 10% (startup)"
+                    )
             tolerance_value = value * (tolerance_percent / 100)
 
             min_vpd = round(value - tolerance_value, 2)
@@ -1659,6 +1684,8 @@ class OGBConfigurationManager:
     # Device configuration methods
     async def _device_self_min_max(self, data):
         """Update device min/max activation flags."""
+        if is_ambient_room(self.room):
+            return
         value = self._string_to_bool(data.newState[0])
         name = data.Name.lower()
         device_type = None
@@ -1716,6 +1743,8 @@ class OGBConfigurationManager:
 
     async def _device_min_max_setter(self, data):
         """Update device min/max settings for voltage and duty cycle limits."""
+        if is_ambient_room(self.room):
+            return
         value = data.newState[0]
         name = data.Name.lower()
 
@@ -1801,6 +1830,8 @@ class OGBConfigurationManager:
 
     async def _device_dimm_step_setter(self, data):
         """Update device dimm step setting (1-10%)."""
+        if is_ambient_room(self.room):
+            return
         value = data.newState[0]
         name = data.Name.lower()
 
@@ -1987,6 +2018,9 @@ class OGBConfigurationManager:
         have already run. So the MediumManager can properly sync (keeping existing plant data)
         instead of creating new empty mediums.
         """
+        if is_ambient_room(self.room):
+            return
+
         value = data.newState[0]
         
         # Skip invalid HA states (unavailable, unknown, etc.)

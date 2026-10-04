@@ -13,6 +13,32 @@ from ...utils.ambient import is_ambient_room, is_not_ambient_room
 _LOGGER = logging.getLogger(__name__)
 
 
+# Device-control/output metrics (duty, power, energy, ...) are not climate
+# readings and must never feed VPD calculations. Only real air temperature and
+# humidity sensors are allowed - defense-in-depth on top of the suffix guard in
+# sensor_identification, e.g. a humidifier's "duty" entity must not appear as
+# humidity just because its device carries a humidity-matching label.
+NON_CLIMATE_CONTROL_SUFFIXES = {
+    "duty",
+    "intensity",
+    "brightness",
+    "frequency",
+    "power",
+    "energy",
+    "voltage",
+    "current",
+}
+
+
+def _is_vpd_climate_entity(entry):
+    """Return True only for genuine climate readings (temp/humidity)."""
+    entity_id = entry.get("entity_id", "")
+    if not entity_id:
+        return False
+    suffix = entity_id.rsplit("_", 1)[-1].lower()
+    return suffix not in NON_CLIMATE_CONTROL_SUFFIXES
+
+
 class OGBVPDManager:
     """Manages Vapor Pressure Deficit (VPD) calculations and sensor data processing."""
 
@@ -91,6 +117,13 @@ class OGBVPDManager:
                             name = t.get("entity_id")
                             label = t.get("label")
                             
+                            # Skip device-control metrics (not real climate data)
+                            if not _is_vpd_climate_entity(t):
+                                _LOGGER.debug(
+                                    f"{self.room} Skipping non-climate entity {name} in temperature group"
+                                )
+                                continue
+                            
                             # Check for impossible temperature values
                             if value <= 0 or value > 40:
                                 _LOGGER.warning(
@@ -110,7 +143,14 @@ class OGBVPDManager:
                         try:
                             value = float(h.get("state"))
                             name = h.get("entity_id")
-                            label = h.get("label")
+                            
+                            # Skip device-control metrics (e.g. a humidifier's
+                            # duty % is not a climate reading)
+                            if not _is_vpd_climate_entity(h):
+                                _LOGGER.debug(
+                                    f"{self.room} Skipping non-climate entity {name} in humidity group"
+                                )
+                                continue
                             
                             # Check for impossible humidity values
                             if value <= 0 or value > 100:
@@ -121,7 +161,7 @@ class OGBVPDManager:
                                 await self._notify_sensor_failure(name, "humidity", value)
                                 continue  # Skip this sensor
                             
-                            humidities.append({"entity_id":name,"value":value,"label":label})
+                            humidities.append({"entity_id":name,"value":value})
                         except (ValueError, TypeError):
                             _LOGGER.error(f"Invalid humidity value for {h.get('entity_id')}: {h.get('state')}")
 
@@ -385,6 +425,13 @@ class OGBVPDManager:
                             name = t.get("entity_id")
                             label = t.get("label")
                             
+                            # Skip device-control metrics (not real climate data)
+                            if not _is_vpd_climate_entity(t):
+                                _LOGGER.debug(
+                                    f"{self.room} Skipping non-climate entity {name} in temperature group"
+                                )
+                                continue
+                            
                             # Check for impossible temperature values
                             if value <= 0 or value > 40:
                                 _LOGGER.warning(
@@ -409,6 +456,14 @@ class OGBVPDManager:
                             value = float(h.get("state"))
                             name = h.get("entity_id")
                             label = h.get("label")
+                            
+                            # Skip device-control metrics (e.g. a humidifier's
+                            # duty % is not a climate reading)
+                            if not _is_vpd_climate_entity(h):
+                                _LOGGER.debug(
+                                    f"{self.room} Skipping non-climate entity {name} in humidity group"
+                                )
+                                continue
                             
                             # Check for impossible humidity values
                             if value <= 0 or value > 100:

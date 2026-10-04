@@ -26,6 +26,7 @@ from ..OGBEnergyManager import OGBEnergyManager
 from ...RegistryListener import OGBRegistryEvenListener
 from .OGBDeviceRecognition import OGBDeviceRecognitionManager
 from ...utils.ambient import is_ambient_room, is_not_ambient_room
+from ...utils.sensor_identification import is_ogb_output_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -299,6 +300,18 @@ class OGBMainController:
         
         # Check if this is an OGB config entity (select, number, etc.)
         if "ogb_" in entity.Name:
+            # OGB's own sensor entities are outputs written by OGB itself
+            # (ambient/outsite/VPD mirrors). They are never configuration
+            # inputs, so routing them to the configuration manager can only
+            # produce "Unhandled entity update" warnings - on every single
+            # update. Ignore them here and do not fall through, otherwise each
+            # write would retrigger VPD calculation.
+            if is_ogb_output_sensor(entity.Name):
+                _LOGGER.debug(
+                    f"{self.room} - Ignoring OGB output sensor update: {entity.Name}"
+                )
+                return
+
             # Route to configuration manager for handling
             if self.config_manager:
                 # Extract entity key from entity name (lowercase, without room suffix in some cases)

@@ -86,13 +86,23 @@ def _bootstrap_homeassistant_stubs():
 
     class _DummyDeviceRegistry:
         def __init__(self):
-            self.devices = {}
+            self._devices = {}
+
+        def add_device(self, device):
+            self._devices[device.id] = device
+
+        def async_get(self, device_id):
+            return self._devices.get(device_id)
 
         def async_update_device(self, *_args, **_kwargs):
             return None
 
         def async_remove_device(self, *_args, **_kwargs):
             return None
+
+        @property
+        def devices(self):
+            return list(self._devices.values())
 
     class _DummyEntityRegistry:
         def __init__(self):
@@ -130,6 +140,16 @@ def _bootstrap_homeassistant_stubs():
         label_module = types.ModuleType("homeassistant.helpers.label_registry")
         label_module.async_get = lambda _hass=None: _DummyLabelRegistry()
         sys.modules["homeassistant.helpers.label_registry"] = label_module
+
+    core_module = sys.modules.get("homeassistant.core")
+    if core_module is None:
+        core_module = types.ModuleType("homeassistant.core")
+
+        def _callback(func):
+            return func
+
+        core_module.callback = _callback
+        sys.modules["homeassistant.core"] = core_module
 
 
 def _bootstrap_pymodbus_stubs():
@@ -191,3 +211,17 @@ def _bootstrap_pymodbus_stubs():
 _bootstrap_opengrowbox_namespace()
 _bootstrap_homeassistant_stubs()
 _bootstrap_pymodbus_stubs()
+
+# socketio is used by the Premium websocket client (not exercised in logic
+# tests); provide a stub so importing the manager packages does not require the
+# third-party install.
+_socketio_module = sys.modules.get("socketio")
+if _socketio_module is None:
+    _socketio_module = types.ModuleType("socketio")
+
+    class _DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    _socketio_module.AsyncClient = _DummyAsyncClient
+    sys.modules["socketio"] = _socketio_module

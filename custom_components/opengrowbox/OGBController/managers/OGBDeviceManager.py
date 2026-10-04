@@ -24,6 +24,7 @@ from ..OGBDevices.FridgeGrow.FridgeGrowDevice import FridgeGrowDevice
 from ..OGBDevices.Ventilation import Ventilation
 from ..OGBDevices.Window import Window
 from ..data.OGBParams.OGBParams import CAP_MAPPING, DEVICE_TYPE_MAPPING
+from ..utils.sensor_identification import labels_only_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -364,7 +365,7 @@ class OGBDeviceManager:
                     break
 
         # Fallback: Name-based identification with priority ordering
-        if not detected_type:
+        if not detected_type and not labels_only_enabled():
             device_name_lower = device_name.lower()
             
             # Check priority types first (special lights before generic Light)

@@ -14,10 +14,61 @@ from homeassistant.helpers.label_registry import \
 
 from .data.OGBDataClasses.OGBPublications import (OGBEventPublication, OGBVPDPublication)
 from .data.OGBParams.OGBParams import (INVALID_VALUES, RELEVANT_KEYWORDS, RELEVANT_PREFIXES)
-from .utils.sensor_identification import resolve_sensor_types
+from .utils.entity_cleanup import is_vanished
+from .utils.sensor_identification import labels_only_enabled, resolve_sensor_types
+from .utils import sensor_identification as sensor_identification_utils
 from .utils.lightTimeHelpers import update_light_state
 
 _LOGGER = logging.getLogger(__name__)
+
+# Suffixes of helper sensors that belong to a device instead of being one.
+# Used to map "sensor.<room>_<device>_power" back to "<device>".
+DEVICE_NAME_HELPER_SENSOR_SUFFIXES = (
+    "_power",
+    "_energy",
+    "_voltage",
+    "_current",
+    "_apparentpower",
+    "_reactivepower",
+    "_power_factor",
+    "_factor",
+    "_temperature",
+    "_humidity",
+    "_dewpoint",
+    "_dew_point",
+    "_co2",
+)
+
+
+def derive_device_name(entity_id: str, room_name: str) -> str:
+    """Derive the OGB device name from an entity_id.
+
+    Entities are grouped by this name and the group name becomes the OGB
+    device name, so a wrong derivation creates phantom devices.
+
+    Room-prefixed entity ids (``sensor.<room>_<device>_power``) are unwrapped
+    first: cutting at the first underscore would otherwise yield the first
+    word of the *room* name (e.g. room "dev_room" -> device "dev") and collapse
+    every entity of that room into a single, switch-less phantom device.
+    Without a room prefix the legacy first-token rule is kept so existing
+    setups keep their device names.
+    """
+    parts = entity_id.split(".", 1)
+    if len(parts) < 2 or not parts[1]:
+        return "Unknown"
+
+    object_id = parts[1]
+
+    room_prefix = f"{str(room_name or '').strip().lower()}_"
+    if room_prefix != "_" and object_id.lower().startswith(room_prefix):
+        object_id = object_id[len(room_prefix):]
+        lowered = object_id.lower()
+        for suffix in DEVICE_NAME_HELPER_SENSOR_SUFFIXES:
+            if lowered.endswith(suffix) and len(object_id) > len(suffix):
+                object_id = object_id[: -len(suffix)]
+                break
+
+    return object_id.split("_")[0] or "Unknown"
 
 
 class OGBRegistryEvenListener:
@@ -27,6 +78,34 @@ class OGBRegistryEvenListener:
         self.data_store = dataStore
         self.event_manager = eventManager
         self.room_name = room
+        self._devices_warned_without_label = set()
+
+    def _warn_device_found_without_label(self, entity, device_labels, devices_in_room):
+        """Log a one-time warning when a device in the room has no labels
+        (label-only detection would silently skip it otherwise)."""
+        if not sensor_identification_utils.labels_only_enabled():
+            return
+        # OGB's own entities (sensor.ogb_*, update.opengrowbox_update_*) must
+        # never trigger the warning - they are internal, not user devices.
+        platform = getattr(entity, "platform", "") or ""
+        entity_id = getattr(entity, "entity_id", "") or ""
+        if platform.lower() == "opengrowbox" or "ogb_" in entity_id:
+            return
+        device_id = getattr(entity, "device_id", None)
+        if not device_id or device_id not in devices_in_room:
+            return
+        if device_labels:
+            return
+        if entity.disabled:
+            return
+        if device_id in self._devices_warned_without_label:
+            return
+        self._devices_warned_without_label.add(device_id)
+        _LOGGER.warning(
+            f"DEVICE FOUND WITHOUT LABEL: '{entity.entity_id}' (device {device_id}) - "
+            f"no labels detected. Sensor detection is label-only since 2027, "
+            f"so add a label (e.g. 'sensor') in Home Assistant to identify this device."
+        )
 
     async def get_entities_by_room_async(self, room_name):
         """Get all entities by room."""
@@ -67,7 +146,7 @@ class OGBRegistryEvenListener:
         return any(any(keyword in label for keyword in modbus_keywords)
                   for label in entity_labels)
 
-    def _matches_sensor_translations(self, entity, label_registry) -> bool:
+    def _matches_sensor_translations(self, entity, label_registry, device_labels=None) -> bool:
         """Return True if a sensor entity matches translated sensor types."""
         entity_id = getattr(entity, "entity_id", "") or ""
         if not entity_id.startswith("sensor."):
@@ -79,7 +158,22 @@ class OGBRegistryEvenListener:
             if label_entry:
                 labels.append({"id": label_id, "name": label_entry.name})
 
+        for device_label in device_labels or []:
+            labels.append(device_label)
+
         return bool(resolve_sensor_types(entity_id, labels))
+
+    def _device_labels_for_entity(self, entity, label_registry, devices_in_room):
+        """Collect device-level labels for the entity's device."""
+        device_labels = []
+        device_id = getattr(entity, "device_id", None)
+        device_info = devices_in_room.get(device_id) if device_id else None
+        if device_info and getattr(device_info, "labels", None):
+            for label_id in device_info.labels:
+                label_entry = label_registry.labels.get(label_id)
+                if label_entry:
+                    device_labels.append({"id": label_id, "name": label_entry.name})
+        return device_labels
 
     async def get_entities_and_devices_by_room(self, room_name):
         """Get all entities and devices by room."""
@@ -93,8 +187,8 @@ class OGBRegistryEvenListener:
         # Get devices
         device_registry = async_get_device_registry(self.hass)
         devices = {
-            device_id: device
-            for device_id, device in device_registry.devices.items()
+            device.id: device
+            for device in device_registry.devices
             if device.area_id == room_name
         }
         _LOGGER.debug(f"Devices in Room '{devices}")
@@ -117,7 +211,7 @@ class OGBRegistryEvenListener:
         device_registry = async_get_device_registry(self.hass)
         devices_in_room = {
             device.id: device
-            for device in device_registry.devices.values()
+            for device in device_registry.devices
             if device.area_id == room_name
         }
 
@@ -159,7 +253,7 @@ class OGBRegistryEvenListener:
         # Log all areas and devices for debugging
         all_areas = set()
         all_devices = []
-        for device in device_registry.devices.values():
+        for device in device_registry.devices:
             if device.area_id:
                 all_areas.add(device.area_id)
             all_devices.append(f"{device.name} (area: {device.area_id})")
@@ -168,7 +262,7 @@ class OGBRegistryEvenListener:
         # Filter devices in room - try exact match first
         devices_in_room = {
             device.id: device
-            for device in device_registry.devices.values()
+            for device in device_registry.devices
             if device.area_id == room_name
         }
 
@@ -176,7 +270,7 @@ class OGBRegistryEvenListener:
         if not devices_in_room:
             devices_in_room = {
                 device.id: device
-                for device in device_registry.devices.values()
+                for device in device_registry.devices
                 if device.area_id and device.area_id.lower() == room_name.lower()
             }
 
@@ -195,19 +289,33 @@ class OGBRegistryEvenListener:
             if not is_ogb_room_entity and entity.device_id not in devices_in_room:
                 return None
 
+            device_labels = self._device_labels_for_entity(
+                entity, label_registry, devices_in_room
+            )
+
             if not (
                 entity.entity_id.startswith(RELEVANT_PREFIXES)
-                or any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
-                or self._matches_sensor_translations(entity, label_registry)
+                or (
+                    not labels_only_enabled()
+                    and any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
+                )
+                or self._matches_sensor_translations(entity, label_registry, device_labels)
             ):
+                self._warn_device_found_without_label(
+                    entity, device_labels, devices_in_room
+                )
                 return None
 
-            parts = entity.entity_id.split(".")
-            device_name = parts[1].split("_")[0] if len(parts) > 1 else "Unknown"
+            device_name = derive_device_name(entity.entity_id, room_name)
 
             # Retry logic for the value
             state_value = None
             for attempt in range(max_retries):
+                if is_vanished(entity.entity_id, entity_registry.entities):
+                    _LOGGER.debug(
+                        f"Entity {entity.entity_id} was removed from the registry while processing, skipping"
+                    )
+                    return None
                 entity_state = self.hass.states.get(entity.entity_id)
                 state_value = entity_state.state if entity_state else None
                 if state_value not in INVALID_VALUES:
@@ -218,6 +326,11 @@ class OGBRegistryEvenListener:
                 await asyncio.sleep(retry_interval)
 
             if state_value in INVALID_VALUES:
+                if is_vanished(entity.entity_id, entity_registry.entities):
+                    _LOGGER.debug(
+                        f"Entity {entity.entity_id} was removed from the registry while processing, skipping"
+                    )
+                    return None
                 # Keep sensor + actuator entities even if value is currently unavailable/unknown.
                 # This is important during startup when some entities report None/unknown briefly,
                 # otherwise device discovery can miss control entities (e.g. special lights).
@@ -262,20 +375,17 @@ class OGBRegistryEvenListener:
 
             # Device labels (for entity)
             device_info = devices_in_room.get(entity.device_id)
-            device_labels = []  # Collect device labels separately
-            if device_info and getattr(device_info, "labels", None):
-                for label_id in device_info.labels:
-                    label_entry = label_registry.labels.get(label_id)
-                    if label_entry:
-                        device_label = {
-                            "id": label_id,
-                            "name": label_entry.name,
-                            "icon": getattr(label_entry, "icon", None),
-                            "color": getattr(label_entry, "color", None),
-                            "scope": "device",
-                        }
-                        labels.append(device_label)
-                        device_labels.append(device_label)
+            for device_label in device_labels:
+                label_entry = label_registry.labels.get(device_label["id"])
+                labels.append(
+                    {
+                        "id": device_label["id"],
+                        "name": device_label["name"],
+                        "icon": getattr(label_entry, "icon", None),
+                        "color": getattr(label_entry, "color", None),
+                        "scope": "device",
+                    }
+                )
 
             device_manufacturer = (
                 getattr(device_info, "manufacturer", "Unknown")
@@ -350,7 +460,7 @@ class OGBRegistryEvenListener:
         # Filter devices in room
         devices_in_room = {
             device.id: device
-            for device in device_registry.devices.values()
+            for device in device_registry.devices
             if device.area_id == room_name
         }
 
@@ -373,20 +483,34 @@ class OGBRegistryEvenListener:
                 if not has_modbus_labels:
                     return None  # No Modbus labels -> ignore
 
+            device_labels = self._device_labels_for_entity(
+                entity, label_registry, devices_in_room
+            )
+
             if not (
                 entity.entity_id.startswith(RELEVANT_PREFIXES)
-                or any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
-                or self._matches_sensor_translations(entity, label_registry)
+                or (
+                    not labels_only_enabled()
+                    and any(keyword in entity.entity_id for keyword in RELEVANT_KEYWORDS)
+                )
+                or self._matches_sensor_translations(entity, label_registry, device_labels)
             ):
+                self._warn_device_found_without_label(
+                    entity, device_labels, devices_in_room
+                )
                 return None
 
             # Extract device name from `entity_id`
-            parts = entity.entity_id.split(".")
-            device_name = parts[1].split("_")[0] if len(parts) > 1 else "Unknown"
+            device_name = derive_device_name(entity.entity_id, room_name)
 
             # Retry logic for the value
             state_value = None
             for attempt in range(max_retries):
+                if is_vanished(entity.entity_id, entity_registry.entities):
+                    _LOGGER.debug(
+                        f"Entity {entity.entity_id} was removed from the registry while processing, skipping"
+                    )
+                    return None
                 entity_state = self.hass.states.get(entity.entity_id)
                 state_value = entity_state.state if entity_state else None
                 if state_value not in INVALID_VALUES:
@@ -431,20 +555,17 @@ class OGBRegistryEvenListener:
 
             # Device labels (for entity)
             device_info = devices_in_room.get(entity.device_id)
-            device_labels = []  # Collect device labels separately
-            if device_info and getattr(device_info, "labels", None):
-                for label_id in device_info.labels:
-                    label_entry = label_registry.labels.get(label_id)
-                    if label_entry:
-                        device_label = {
-                            "id": label_id,
-                            "name": label_entry.name,
-                            "icon": getattr(label_entry, "icon", None),
-                            "color": getattr(label_entry, "color", None),
-                            "scope": "device",
-                        }
-                        labels.append(device_label)
-                        device_labels.append(device_label)
+            for device_label in device_labels:
+                label_entry = label_registry.labels.get(device_label["id"])
+                labels.append(
+                    {
+                        "id": device_label["id"],
+                        "name": device_label["name"],
+                        "icon": getattr(label_entry, "icon", None),
+                        "color": getattr(label_entry, "color", None),
+                        "scope": "device",
+                    }
+                )
 
             device_manufacturer = (
                 getattr(device_info, "manufacturer", "Unknown")

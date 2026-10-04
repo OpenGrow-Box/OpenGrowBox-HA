@@ -11,7 +11,7 @@ from ..data.OGBParams.OGBParams import (SENSOR_CONTEXTS,
                                     extract_context_from_entity,
                                     get_sensor_config)
 from ..utils.calcs import calc_light_to_ppfd_dli
-from ..utils.sensor_identification import resolve_sensor_types
+from ..utils.sensor_identification import labels_only_enabled, resolve_sensor_types
 from ..utils.lightTimeHelpers import hours_between
 from ..utils.sensorUpdater import _update_specific_sensor
 
@@ -203,6 +203,8 @@ class Sensor:
                 if medium_label:
                     context = "soil"
                     _LOGGER.debug(f"[{self.room}] Sensor {entity_id} hat medium_label '{medium_label}' -> soil context (trotz unbekanntem Typ)")
+                elif labels_only_enabled():
+                    context = "other"
                 else:
                     context = extract_context_from_entity(entity_id) or "other"
             else:
@@ -725,6 +727,21 @@ class Sensor:
             new_value: Der neue Wert
         """
         try:
+            # Fahrenheit to Celsius conversion (live updates)
+            if sensor_config["sensor_type"] == "temperature" and isinstance(
+                new_value, (int, float)
+            ):
+                ha_state = self.hass.states.get(sensor_config["entity_id"])
+                if (
+                    ha_state
+                    and ha_state.attributes.get("unit_of_measurement") == "°F"
+                ):
+                    _LOGGER.debug(
+                        f"[{self.room}] 🌡️ Fahrenheit sensor detected: "
+                        f"{sensor_config['entity_id']}, converting {new_value}°F to Celsius"
+                    )
+                    new_value = round((float(new_value) - 32) * 5 / 9, 1)
+
             sensor_config["state"] = new_value
 
             # Wenn numerischer Wert: Kalibrierung und Validierung

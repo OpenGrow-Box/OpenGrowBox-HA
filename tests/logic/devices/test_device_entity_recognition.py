@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 
 import pytest
 
@@ -117,6 +118,31 @@ def test_identify_device_name_fallback_window(monkeypatch):
     )
 
     assert detected.deviceType == "Window"
+
+
+def test_identify_device_water_label_as_sensor_in_label_only_mode(monkeypatch):
+    """Water-labeled device must be recognized as Sensor via label, even in
+    label-only mode where the name fallback is disabled."""
+    manager = OGBDeviceManager.__new__(OGBDeviceManager)
+    manager.event_manager = object()
+    manager.data_store = object()
+    manager.room = "dev_room"
+    manager.hass = None
+    monkeypatch.setattr(manager, "get_device_class", lambda _dtype: DummyDevice)
+    manager_module = importlib.import_module(
+        "custom_components.opengrowbox.OGBController.managers.OGBDeviceManager"
+    )
+    monkeypatch.setattr(manager_module, "labels_only_enabled", lambda now=None: True)
+
+    detected = asyncio.run(
+        manager.identify_device(
+            "devwatertester",
+            [{"entity_id": "switch.devwatertester", "value": "off"}],
+            [{"id": "water", "name": "Water"}],
+        )
+    )
+
+    assert detected.deviceType == "Sensor"
 
 
 # ── Camera device identification tests ──────────────────────────────────────
