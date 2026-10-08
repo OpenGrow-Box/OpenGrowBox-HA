@@ -11,11 +11,61 @@ from ..data.OGBParams.OGBParams import (SENSOR_CONTEXTS,
                                     extract_context_from_entity,
                                     get_sensor_config)
 from ..utils.calcs import calc_light_to_ppfd_dli
-from ..utils.sensor_identification import labels_only_enabled, resolve_sensor_types
+from ..utils.sensor_identification import (CLIMATE_SENSOR_TYPES,
+                                            CONTEXT_LABEL_WORDS,
+                                            labels_only_enabled,
+                                            resolve_sensor_types)
 from ..utils.lightTimeHelpers import hours_between
 from ..utils.sensorUpdater import _update_specific_sensor
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_entity_scoped(label) -> bool:
+    return isinstance(label, dict) and label.get("entity") is not None
+
+
+def select_medium_label_id(labels):
+    """Return the id of the medium label with the highest priority.
+
+    ``labelMap`` lists the device labels first (see OGBDeviceManager), so a
+    plain "first match" would always pick the device-level label and silently
+    ignore the per-entity substrate. The scope decides, not the position.
+    """
+    for entity_scoped in (True, False):
+        for label in labels or []:
+            if not isinstance(label, dict) or _is_entity_scoped(label) != entity_scoped:
+                continue
+            label_id = str(label.get("id") or "").lower()
+            if "medium" in label_id:
+                return label_id
+    return None
+
+
+def select_medium_label_names(labels):
+    """Return the entity-scoped label names that may name a grow medium.
+
+    Only entity labels qualify: they are the ones the user sets per sensor to
+    say "this probe measures coco_1". Device labels describe the probe class and
+    context words ("Soil") describe neither, so both are left to the legacy
+    index fallback.
+
+    The label *id* cannot be used for matching: Home Assistant keeps the id of a
+    renamed label, so ``coco_1`` still carries the id ``medium_2`` and would
+    resolve to the second medium.
+    """
+    names = []
+    for label in labels or []:
+        if not isinstance(label, dict) or not _is_entity_scoped(label):
+            continue
+        name = label.get("name")
+        if not name:
+            continue
+        if str(name).lower().strip() in CONTEXT_LABEL_WORDS:
+            continue
+        if name not in names:
+            names.append(name)
+    return names
 
 
 class Sensor:
@@ -57,6 +107,10 @@ class Sensor:
         self.isRunning = None
         self._alert_active = False
         self.isInitialized = False
+
+        # Entities already reported as wrongly assigned to the air context, so
+        # the warning is emitted once per entity instead of every init cycle.
+        self._warned_air_context_mismatch = set()
 
         self.medium_label = self._extract_medium_label(deviceLabel)
         self.ppfdDLI_label = None
@@ -187,8 +241,9 @@ class Sensor:
             ]
             label_ids = [lbl["id"].lower() for lbl in entity_labels if lbl.get("id")]
 
-            # Medium ermitteln
-            medium_label = next((lid for lid in label_ids if "medium" in lid), None)
+            # Medium ermitteln: Scope-Prioritaet, nicht Reihenfolge in labelMap
+            medium_label = select_medium_label_id(entity_labels)
+            medium_label_names = select_medium_label_names(entity_labels)
 
             # 1. Sensor-Typen zuerst bestimmen (für Kontext-Ermittlung benötigt)
             # Use merged labels (entity labels + device-level labels), not only entry labels.
@@ -235,6 +290,24 @@ class Sensor:
                     # WICHTIG: sensor_type an extract_context_from_entity übergeben!
                     context = extract_context_from_entity(entity_id, primary_sensor_type) or "other"
 
+            # Der "air"-Kontext ist ausschließlich für echte Klimagrößen
+            # reserviert: VPD liest daraus temperature/humidity. Eine Entity mit
+            # einem anderen eindeutigen Typ (energy, water_level, ...) darf dort
+            # nicht auftauchen - sonst verfälscht sie die VPD-Berechnung.
+            if (
+                context == "air"
+                and sensor_types
+                and not set(sensor_types) & CLIMATE_SENSOR_TYPES
+            ):
+                context = "other"
+                if entity_id not in self._warned_air_context_mismatch:
+                    self._warned_air_context_mismatch.add(entity_id)
+                    _LOGGER.warning(
+                        f"[{self.room}] ⚠️ {entity_id} ({', '.join(sensor_types)}) "
+                        f"lag im air-Kontext, ist aber keine Klimagröße "
+                        f"-> nach 'other' verschoben"
+                    )
+
             # Sensoren registrieren
             for sensor_type in sensor_types:
                 sensor_entry = {
@@ -242,6 +315,7 @@ class Sensor:
                     "value": value,
                     "platform": platform,
                     "medium_label": medium_label,
+                    "medium_label_names": list(medium_label_names),
                     "context": context,
                 }
 
@@ -533,6 +607,7 @@ class Sensor:
                     "entity_id": entity_id,
                     "sensor_type": sensor_type,
                     "medium_label": effective_label,
+                    "medium_label_names": sensor_config.get("medium_label_names") or [],
                     "room": self.room,
                     "value": current_value,
                     "unit": sensor_config.get("unit", ""),

@@ -113,6 +113,43 @@ Your Room Name/
 - **Entity organization:** Sensors, switches, numbers properly categorized
 - **Friendly names:** Auto-generated for dashboard display
 
+### Labels vs Entity Names (Sensor Types)
+
+A **label** describes a *device* (`Humidifier`, `Befeuchter`), while the sensor
+type of an individual entity is taken from the **entity itself**.
+
+Resolution order for a sensor's type:
+
+1. The entity's own id (`sensor.x_humidity` → humidity)
+2. Entity-scoped labels
+3. Device-scoped labels — **last resort only**
+
+This order matters because every entity of a humidifier would otherwise inherit
+the `humidity` type from its device label, including pure metering entities. A
+Tasmota plug labelled `Humidifier` reports `today/s_consumption`,
+`this_month/s_consumption` and `signal_level`; these resolve to `energy` and
+`water_level` and are **never** treated as air readings.
+
+**Metric entities are excluded from the air context and therefore from VPD.**
+Entities whose id contains a metering or diagnostic token — energy, power,
+consumption, voltage, current, signal, rssi, level, brightness, uptime, duration,
+counter, status, mode, cost, tariff — are moved to the `other` context. This
+covers English and German terms (`verbrauch`, `leistung`, `energie`, `spannung`,
+`strom`, `laufzeit`, `zähler`).
+
+An explicit climate token always wins, so a device whose *name* contains such a
+word (`power_tent_temperature`) is still recognised as a temperature sensor.
+
+If you see a warning like:
+
+```text
+⚠️ sensor.x_today/s_consumption (energy) lag im air-Kontext, ist aber keine Klimagröße -> nach 'other' verschoben
+```
+
+that entity was being used for VPD before; the message confirms it is now
+excluded. Only real air temperature and humidity sensors should appear in the
+air context.
+
 ## Web Interface Access
 
 ### Configuration Options

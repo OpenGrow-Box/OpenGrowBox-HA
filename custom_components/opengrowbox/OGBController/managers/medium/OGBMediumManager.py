@@ -11,6 +11,7 @@ Full implementation with:
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -375,11 +376,69 @@ class OGBMediumManager:
         except Exception as e:
             _LOGGER.error(f"[{self.room}] Error handling PlantStageChange: {e}", exc_info=True)
 
+    def _resolve_medium_index(
+        self,
+        medium_label: Optional[str],
+        candidate_names: Optional[List[str]],
+        entity_id: Optional[str] = None,
+    ) -> Optional[int]:
+        """Bind a sensor to a medium: exact label name first, legacy index second.
+
+        The label *name* is what the user edits ("coco_1"). The label *id* is a
+        Home Assistant slug that keeps its original number after a rename, so
+        ``coco_1`` still carries the id ``medium_2`` - parsing digits from the id
+        would bind the sensor to ``coco_2`` instead.
+        """
+        names = [str(name) for name in candidate_names or [] if name]
+        for name in names:
+            for index, medium in enumerate(self.media):
+                if medium.name.lower() == name.lower():
+                    return index
+
+        # Legacy path: the label was never renamed, so its name/id still carries
+        # the medium number ("Medium_1", "medium_1_2", ...). Keeps existing
+        # installations working when no medium matches the label name.
+        for source in names + ([medium_label] if medium_label else []):
+            match = re.search(r"medium[_\-]?(\d+)", str(source).lower())
+            if not match:
+                continue
+            index = int(match.group(1)) - 1
+            if 0 <= index < len(self.media):
+                if names:
+                    _LOGGER.warning(
+                        f"[{self.room}] ⚠️ Medium label {names[0]!r} (entity {entity_id}) "
+                        f"matches no medium - available: {[m.name for m in self.media]}. "
+                        f"Falling back to legacy index {index} -> {self.media[index].name}. "
+                        f"Rename the label so it equals the medium name."
+                    )
+                return index
+        return None
+
+    def _detach_from_other_media(self, entity_id: str, keep_index: int) -> bool:
+        """Remove an entity from every medium except ``keep_index``.
+
+        A restore brings back the persisted assignment, which may no longer match
+        the current labels. Without this an entity would live in two media at once
+        and both would aggregate its readings.
+        """
+        detached = False
+        for index, medium in enumerate(self.media):
+            if index == keep_index:
+                continue
+            if medium.unregister_sensor(entity_id):
+                detached = True
+                _LOGGER.debug(
+                    f"[{self.room}] {entity_id} von Medium {medium.name} entfernt "
+                    f"(gehoert zu {self.media[keep_index].name})"
+                )
+        return detached
+
     async def _process_sensor_registration(self, data: Dict[str, Any]):
         """Actually process a sensor registration (called after init or from queue)."""
         entity_id = data.get("entity_id")
         sensor_type = data.get("sensor_type")
         medium_label = data.get("medium_label")
+        medium_label_names = data.get("medium_label_names") or []
         room = data.get("room")
         value = data.get("value")
         unit = data.get("unit")
@@ -391,53 +450,39 @@ class OGBMediumManager:
             )
             return
 
-        # Extract medium number from label (e.g. "medium_1", "medium1", "Medium-1" -> 1)
-        # Handles: medium_1, medium-1, medium1, Medium_1, MEDIUM_1, etc.
-        try:
-            import re
-            # Normalize to lowercase and extract the number
-            label_lower = medium_label.lower()
-            match = re.search(r'medium[_\-]?(\d+)', label_lower)
-            if match:
-                medium_number = int(match.group(1))
-            else:
-                # Default to medium 1 if no number found (e.g., just "medium")
-                medium_number = 1
-            medium_index = medium_number - 1  # Array is 0-based
-            _LOGGER.debug(f"[{self.room}] Extracted medium_index={medium_index} from label '{medium_label}'")
-        except (ValueError, IndexError) as e:
-            _LOGGER.error(
-                f"Could not extract medium number from label: {medium_label} - {e}"
+        medium_index = self._resolve_medium_index(
+            medium_label, medium_label_names, entity_id
+        )
+        if medium_index is None:
+            _LOGGER.warning(
+                f"[{self.room}] ⚠️ SENSOR NOT REGISTERED: {entity_id} ({sensor_type}) - "
+                f"label {medium_label_names or medium_label} matches none of the media "
+                f"{[m.name for m in self.media]}"
             )
             return
 
-        # Check if medium exists
-        if 0 <= medium_index < len(self.media):
-            medium = self.media[medium_index]
+        medium = self.media[medium_index]
 
-            sensor_data = {
-                "entity_id": entity_id,
-                "sensor_type": sensor_type,
-                "value": value,
-                "unit": unit,
-                "context": context,
-                "room": room,
-                "medium_label": medium_label,
-            }
+        sensor_data = {
+            "entity_id": entity_id,
+            "sensor_type": sensor_type,
+            "value": value,
+            "unit": unit,
+            "context": context,
+            "room": room,
+            "medium_label": medium_label,
+        }
 
-            await medium.register_sensor(sensor_data)
-            self._entity_to_medium_index[entity_id] = medium_index
+        self._detach_from_other_media(entity_id, medium_index)
 
-            _LOGGER.debug(
-                f"[{self.room}] ✅ SENSOR REGISTERED: {entity_id} ({sensor_type}/{context}) -> Medium {medium.name} (Index {medium_index})"
-            )
+        await medium.register_sensor(sensor_data)
+        self._entity_to_medium_index[entity_id] = medium_index
 
-            self._save_mediums_to_store()
-        else:
-            _LOGGER.error(
-                f"[{self.room}] ❌ SENSOR REGISTRATION FAILED: Medium index {medium_index} does not exist. "
-                f"Available media: {len(self.media)}. Sensor: {entity_id}, Label: {medium_label}"
-            )
+        _LOGGER.debug(
+            f"[{self.room}] ✅ SENSOR REGISTERED: {entity_id} ({sensor_type}/{context}) -> Medium {medium.name} (Index {medium_index})"
+        )
+
+        self._save_mediums_to_store()
 
     async def _on_unregister_sensor(self, data):
         """Removes a sensor from a medium."""

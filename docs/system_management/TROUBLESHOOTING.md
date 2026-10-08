@@ -159,6 +159,64 @@ curl http://localhost:8123/api/states | jq '.[] | select(.entity_id | contains("
 - Move sensors away from heat sources
 - Verify sensor accuracy with known standards
 
+### **"Humidity and VPD look completely wrong"**
+
+**Symptoms:**
+- `OGB_AVGHumidity` far below or above every real sensor in the room
+- VPD jumps after a restart and the humidifier/dehumidifier runs the wrong way
+- Room average sits between values no single sensor reports
+
+**Debug:**
+```bash
+# The VPD manager prints exactly what it averaged
+grep "VPD-CALC VALUES" /config/home-assistant.log
+
+# Rejected readings are called out explicitly
+grep -E "CRITICAL: Sensor|implausible|deviates too far" /config/home-assistant.log
+```
+
+**Causes:**
+- A **non-climate entity in the air context** — e.g. a Tasmota plug labelled
+  `Humidifier` contributing `signal_level` as if it were a humidity reading.
+  A constant `2.0` averaged with `79.5` and `81.9` yields `54.47` instead of
+  `80.7`, which turns a VPD of ~0.55 kPa into 1.29 kPa and makes the control
+  act on the wrong direction of error.
+- A sensor that is in range but not plausible (Gate 2) or disagrees with its
+  siblings (Gate 3)
+
+**Solutions:**
+- Check which entities appear in the `HUMS:` / `Temp:` list of
+  `VPD-CALC VALUES` — only real air sensors belong there
+- Read the `CRITICAL:` warning: it names the entity, the value and the band
+  that was violated. Offending readings are already excluded from the average.
+- If the entity should have been a climate sensor, fix its entity id or its
+  device label (see [Labels vs Entity Names](../configuration/CONFIGURATION.md))
+
+### **"Medium moisture is over 100 %"**
+
+**Symptoms:**
+- `current_moisture` of a medium shows hundreds of percent
+- Watering/crop steering reacts to an impossible value
+
+**Debug:**
+```bash
+grep "erlaubt sind 0-100" /config/home-assistant.log
+```
+
+**Causes:**
+- A sensor registered as `moisture` that actually measures something else —
+  conductivity probes are the usual suspect. Averaging
+  `(72 + 37.65 + 542 + 953) / 4` produces `401 %`.
+- Sensors bound to the wrong medium after a label rename, so readings from
+  different probes are mixed in one medium
+
+**Solutions:**
+- The out-of-range reading is dropped and logged once per sensor; fix the
+  sensor typing or the medium label so the sensor is classified correctly
+- Verify each medium lists only its own sensors in the terminal — an entity
+  belongs to exactly one medium and is detached from the others on registration
+- See [Medium Management](../specialized_systems/MEDIUM_MANAGEMENT.md#sensor-to-medium-association)
+
 ## 🎛️ Device Control Issues
 
 ### **"Devices not responding to OGB commands"**

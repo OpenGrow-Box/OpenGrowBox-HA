@@ -3,9 +3,17 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 _LOGGER = logging.getLogger(__name__)
+
+# Plausibility limits for aggregated values. A reading outside its range cannot
+# be a real measurement of that type; averaging it would silently turn a sensor
+# misclassification (e.g. a conductivity probe typed as "moisture") into a
+# visible but meaningless value such as 400 % substrate moisture.
+AGGREGATE_VALUE_RANGES: Dict[str, Tuple[float, float]] = {
+    "moisture": (0.0, 100.0),
+}
 
 
 class MediumType(Enum):
@@ -351,6 +359,10 @@ class GrowMedium:
             "illuminance": ReadingHistory(self.SENSOR_HISTORY_LIMIT),
             "battery": ReadingHistory(self.SENSOR_HISTORY_LIMIT),
         }
+
+        # Out-of-range readings are reported once per (sensor_type, entity) so a
+        # permanently mis-wired probe does not flood the log.
+        self._warned_aggregate_range: set = set()
 
         # Mapping: entity_id -> sensor_type
         self.registered_sensors: Dict[str, List[str]] = (
@@ -704,6 +716,7 @@ class GrowMedium:
         if not entity_ids:
             return
 
+        value_range = AGGREGATE_VALUE_RANGES.get(sensor_type)
         valid_values: List[float] = []
         for entity_id in entity_ids:
             reading = self.sensor_readings.get(entity_id)
@@ -715,6 +728,19 @@ class GrowMedium:
             # Ignore 0 values - they are treated as invalid defaults
             if numeric_value == 0:
                 continue
+            if value_range is not None:
+                lower, upper = value_range
+                if not lower <= numeric_value <= upper:
+                    warn_key = (sensor_type, entity_id)
+                    if warn_key not in self._warned_aggregate_range:
+                        self._warned_aggregate_range.add(warn_key)
+                        _LOGGER.warning(
+                            f"[{self.room}] Medium {self.name}: {entity_id} liefert "
+                            f"{numeric_value} fuer '{sensor_type}', erlaubt sind "
+                            f"{lower:g}-{upper:g} -> Wert verworfen (Typisierungs- "
+                            f"oder Zuordnungsfehler pruefen)"
+                        )
+                    continue
             valid_values.append(numeric_value)
 
         if not valid_values:
@@ -839,6 +865,23 @@ class GrowMedium:
         
         return True  # Value actually changed
 
+    def _clear_current_value(self, sensor_type: str) -> None:
+        """Reset the aggregated current_* field once its last sensor is gone.
+
+        Without this a medium keeps showing a value that no sensor delivers any
+        more, e.g. after a sensor has been re-bound to a different medium.
+        """
+        if sensor_type == "ph":
+            self.current_ph = None
+        elif sensor_type == "ec":
+            self.current_ec = None
+        elif sensor_type == "moisture":
+            self.current_moisture = None
+        elif sensor_type in ("temperature", "temp"):
+            self.current_temp = None
+        elif sensor_type in ("light", "illuminance"):
+            self.current_light = None
+
     def unregister_sensor(self, entity_id: str) -> bool:
         """Entfernt einen Sensor von diesem Medium."""
         if entity_id in self.sensor_type_map:
@@ -850,6 +893,10 @@ class GrowMedium:
                 self.registered_sensors[sensor_type].remove(entity_id)
             self.sensor_readings.pop(entity_id, None)
             self.sensor_type_map.pop(entity_id, None)
+            if self.registered_sensors.get(sensor_type):
+                self._update_aggregated_value(sensor_type)
+            else:
+                self._clear_current_value(sensor_type)
             _LOGGER.debug(f"Medium {self.name}: Sensor {entity_id} entfernt")
             return True
         return False

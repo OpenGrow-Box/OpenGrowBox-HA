@@ -243,7 +243,13 @@ VPD Manager.handle_new_vpd()
         ↓
 Collect Temperature/Humidity Sensors
         ↓
-Validate and Average Readings
+Gate 1: entity filter        (_is_vpd_climate_entity)
+        ↓
+Gate 2: value plausibility   (climate_reading_reject_reason)
+        ↓
+Gate 3: group outlier check  (_reject_climate_outliers)
+        ↓
+Average Readings
         ↓
 Apply Leaf Temperature Offset
         ↓
@@ -259,6 +265,61 @@ Emit Mode Selection Event
         ↓
 Trigger Control Actions
 ```
+
+### Air Reading Gates
+
+Three independent gates decide whether a reading may feed VPD. Each one alone
+would have caught a different class of the bugs reported in the field.
+
+#### Gate 1 — Entity filter (`_is_vpd_climate_entity`)
+
+Decides *whether the entity is a climate sensor at all*. It runs
+`is_non_climate_metric_entity()` over **every token** of the entity id, not only
+the last underscore segment, because Tasmota reports energy counters as
+`sensor.x_today/s_consumption` where the meaningful token is not final.
+Device-control metrics (duty, power, consumption, signal, …) never reach the
+air context — see [Labels vs Entity Names](../configuration/CONFIGURATION.md).
+
+#### Gate 2 — Value plausibility (`climate_reading_reject_reason`)
+
+Decides *whether the number itself can be a measurement*. Two bands:
+
+| Type | Domain (impossible) | Plausible band |
+|------|---------------------|----------------|
+| `humidity` | `<= 0` or `> 100` | `< 5` or `> 100` |
+| `temperature` | `<= 0` or `> 40` | `< 2` or `> 40` |
+| any | NaN / ±inf | rejected before both bands |
+
+The domain band existed before; the **plausible band is new**. It exists because
+`2.0` is mathematically a valid humidity but never occurs in a grow tent — a
+constant signal metric leaked into the humidity group and was averaged as 2 %
+relative humidity. NaN is rejected explicitly because `NaN <= 0` and `NaN > 100`
+are both `False`, so a plain range comparison lets it straight through.
+
+A rejection logs a `CRITICAL:` warning and raises the sensor-failure
+notification (30-minute cooldown per entity), then the reading is skipped.
+
+#### Gate 3 — Group outlier check (`_reject_climate_outliers`)
+
+Decides *whether the reading agrees with its siblings*. Runs **after** every
+device contributed and **before** the average is taken, on groups of at least
+`MIN_OUTLIER_GROUP_SIZE` (3) readings:
+
+- median of the group is computed
+- readings deviating more than the tolerance are dropped
+  (`humidity`: 30 percentage points, `temperature`: 8 °C)
+- dropped readings get a `CRITICAL:` warning and a notification
+
+With fewer than three readings there is nothing trustworthy to compare against,
+so the group is used as-is — a lone correct sensor must never be dropped.
+
+#### What the gates prevented
+
+| Symptom | Gate |
+|---------|------|
+| `heatertent_signal_level` counted as humidity (`hum_count=3` instead of 2) | 1 |
+| Constant `2.0` averaged as 2 % RH → `Hum=54.47` instead of 80.7, `VPD=1.29` instead of ~0.55, humidifier switched on while the tent was too humid | 2 |
+| A wrong-but-in-range value drifting the room average | 3 |
 
 ## Control Mode Integration
 
@@ -366,26 +427,27 @@ analytics_data = {
 
 ### Data Validation
 
+Air readings are validated by `climate_reading_reject_reason()` before they are
+averaged (see [Air Reading Gates](#air-reading-gates)):
+
 ```python
-def validate_sensor_reading(self, reading, sensor_type):
-    """Validate sensor reading against expected ranges."""
-    ranges = {
-        "temperature": {"min": -50, "max": 100},
-        "humidity": {"min": 0, "max": 100},
-        "vpd": {"min": 0, "max": 5.0},
-        "ph": {"min": 0, "max": 14},
-        "ec": {"min": 0, "max": 10},
-    }
+CLIMATE_DOMAIN_RANGES = {"temperature": (0.0, 40.0), "humidity": (0.0, 100.0)}
+CLIMATE_PLAUSIBLE_RANGES = {"temperature": (2.0, 40.0), "humidity": (5.0, 100.0)}
 
-    if sensor_type not in ranges:
-        return True
-
-    try:
-        value = float(reading)
-        return ranges[sensor_type]["min"] <= value <= ranges[sensor_type]["max"]
-    except (ValueError, TypeError):
-        return False
+def climate_reading_reject_reason(sensor_type, entity_id, value):
+    """Return a log message when a reading must not feed VPD, else None."""
+    if not math.isfinite(value):
+        return f"Sensor {entity_id} reports a non-finite {sensor_type} of {value}"
+    if value <= domain[0] or value > domain[1]:
+        return f"... impossible {sensor_type} of {value} (valid range: ...)"
+    if value < plausible[0] or value > plausible[1]:
+        return f"... implausible {sensor_type} of {value} (plausible range: ...)"
+    return None
 ```
+
+Other contexts keep their own bounds, e.g. `GrowMedium` validates aggregated
+soil readings against `AGGREGATE_VALUE_RANGES` (`moisture: 0–100`) so a
+misclassified probe can never surface as a 400 % moisture value.
 
 ## Performance Optimization
 
@@ -448,6 +510,22 @@ sensor_config = {
 #### Inconsistent VPD Values
 - **Cause**: Sensor averaging issues or calibration problems
 - **Solution**: Validate sensor ranges and calibration offsets
+
+#### Humidity far off / humidifier runs the wrong way
+- **Cause**: A non-climate entity in the humidity group, or a value that is in
+  range but not plausible (a constant `2` averaged next to `79.5` and `81.9`
+  drags the room average to `54.47` and the VPD from ~0.55 kPa to 1.29 kPa)
+- **Solution**: Look for `CRITICAL: Sensor ... reports implausible humidity` or
+  `... deviates too far from the room median` in the log. The offending entity
+  is already excluded; check its device label and entity id if it should have
+  been a real humidity sensor.
+
+#### Medium moisture above 100 %
+- **Cause**: A sensor registered as `moisture` that actually measures something
+  else (conductivity probes are the usual suspect), averaged without a bound
+- **Solution**: Look for `Medium <name>: <entity> liefert <value> fuer
+  'moisture', erlaubt sind 0-100 -> Wert verworfen`. Fix the sensor typing or
+  the medium label — see [Medium Management](../specialized_systems/MEDIUM_MANAGEMENT.md).
 
 #### Missing Sensor Data
 - **Cause**: HA entity unavailable or misconfigured

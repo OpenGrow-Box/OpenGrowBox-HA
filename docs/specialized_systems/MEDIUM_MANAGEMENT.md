@@ -120,53 +120,60 @@ HYDROPONIC_PROPERTIES = {
 
 ### Sensor-to-Medium Association
 
+A sensor reaches a medium through the **medium label** carried by its entity.
+The label *name* is what the user edits (`coco_1`), while the label *id* is a
+Home Assistant slug that keeps its original number after a rename — `coco_1`
+can still carry the id `medium_2`. Binding therefore resolves in three stages
+(`OGBMediumManager._resolve_medium_index`):
+
+1. **Exact name match** — a candidate label name equals a medium name
+   (case-insensitive). This is the stage that keeps renamed media working.
+2. **Legacy index** — a `medium[_-]?<n>` pattern in the label name or id, used
+   only for installations whose labels were never renamed. If label names
+   existed but none matched, a warning tells the user to rename the label.
+3. **No binding** — the registration is skipped with
+   `⚠️ SENSOR NOT REGISTERED`, rather than silently attaching the sensor to an
+   arbitrary medium.
+
 ```python
-async def register_sensor_to_medium(self, sensor_id: str, medium_id: str):
-    """Register a sensor to a specific growing medium."""
+medium_index = self._resolve_medium_index(medium_label, medium_label_names, entity_id)
+if medium_index is None:
+    _LOGGER.warning(f"... SENSOR NOT REGISTERED: {entity_id} ...")
+    return
 
-    # Validate sensor and medium exist
-    if sensor_id not in self.available_sensors:
-        raise ValueError(f"Sensor {sensor_id} not found")
-
-    if medium_id not in self.mediums:
-        raise ValueError(f"Medium {medium_id} not found")
-
-    # Register association
-    if medium_id not in self.medium_sensors:
-        self.medium_sensors[medium_id] = []
-
-    if sensor_id not in self.medium_sensors[medium_id]:
-        self.medium_sensors[medium_id].append(sensor_id)
-
-        # Emit registration event
-        await self.event_manager.emit("SensorMediumRegistered", {
-            "room": self.room,
-            "sensor_id": sensor_id,
-            "medium_id": medium_id
-        })
-
-        _LOGGER.debug(f"[{self.room}] Registered sensor {sensor_id} to medium {medium_id}")
+# An entity belongs to exactly one medium.
+self._detach_from_other_media(entity_id, medium_index)
+self.media[medium_index].register_sensor(sensor_data)
 ```
+
+#### One Entity, One Medium
+
+Startup restores the persisted assignments first, but the current labels may
+have changed in the meantime. `_detach_from_other_media()` therefore removes the
+entity from **every other medium** before it is registered to the resolved one.
+Without it an entity would live in two media at once and both would aggregate
+its readings — which is how a single probe ended up in `coco_1` *and* `coco_2`
+and produced a nonsense average.
+
+`GrowMedium.unregister_sensor()` recomputes the aggregated `current_*` value for
+the remaining sensors, or clears it when no sensor of that type is left.
 
 ### Sensor Data Routing
 
+Routing is driven by the same registration: the entity id stored in
+`registered_sensors[sensor_type]` determines which medium updates its
+`current_*` field on every reading.
+
 ```python
-async def route_sensor_data(self, sensor_data: Dict[str, Any]):
-    """Route sensor data to appropriate medium handlers."""
-
-    sensor_id = sensor_data.get("sensor_id")
-    sensor_type = sensor_data.get("type")
-    value = sensor_data.get("value")
-
-    # Find which medium this sensor belongs to
-    medium_id = self.find_medium_for_sensor(sensor_id)
-
-    if not medium_id:
-        _LOGGER.warning(f"No medium found for sensor {sensor_id}")
-        return
-
-    # Route data to medium-specific processing
-    await self.process_medium_sensor_data(medium_id, sensor_type, value)
+# OGBMediumManager._process_sensor_registration
+medium_index = self._resolve_medium_index(medium_label, medium_label_names, entity_id)
+...
+await medium.update_sensor_reading_async({
+    "entity_id": entity_id,
+    "sensor_type": sensor_type,
+    "value": value,
+    ...
+})
 ```
 
 ## Sensor Readings as Source of Truth
@@ -186,7 +193,24 @@ class GrowMedium:
 
 - For each sensor type, the latest value from **every registered sensor** of that type is collected.
 - `None`, `unavailable`, `unknown` and **`0` values are ignored** (0 is treated as an uninitialised default rather than a valid measurement).
+- Values are checked against `AGGREGATE_VALUE_RANGES` (`moisture: 0–100`). An
+  out-of-range value is dropped with a one-time warning per sensor instead of
+  entering the average.
 - The remaining valid values are averaged and stored in the matching `current_*` field.
+- When the last sensor of a type is unregistered, the `current_*` field is
+  cleared rather than left stale.
+
+#### Why the range guard exists
+
+A sensor typed as `moisture` but actually measuring conductivity reports values
+in the hundreds. Averaging `(72 + 37.65 + 542 + 953) / 4` produced a visible
+**401 % substrate moisture**, which then fed watering decisions. The guard turns
+that into a log line pointing at the misclassification:
+
+```text
+Medium coco_1: sensor.sensormec_conductivity liefert 953.0 fuer 'moisture',
+erlaubt sind 0-100 -> Wert verworfen (Typisierungs- oder Zuordnungsfehler pruefen)
+```
 
 ### Persistence
 

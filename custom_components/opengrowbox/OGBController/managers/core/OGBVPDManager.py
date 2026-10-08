@@ -9,34 +9,115 @@ from ...utils.sensorUpdater import (_update_specific_number,
                                   update_sensor_via_service)
 from ...data.OGBDataClasses.OGBPublications import OGBInitData, OGBVPDPublication, OGBModeRunPublication
 from ...utils.ambient import is_ambient_room, is_not_ambient_room
+from ...utils.sensor_identification import (NON_CLIMATE_CONTROL_TOKENS,
+                                            is_non_climate_metric_entity)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 # Device-control/output metrics (duty, power, energy, ...) are not climate
 # readings and must never feed VPD calculations. Only real air temperature and
-# humidity sensors are allowed - defense-in-depth on top of the suffix guard in
-# sensor_identification, e.g. a humidifier's "duty" entity must not appear as
+# humidity sensors are allowed - defense-in-depth on top of the type resolution
+# in sensor_identification, e.g. a humidifier's "duty" entity must not appear as
 # humidity just because its device carries a humidity-matching label.
-NON_CLIMATE_CONTROL_SUFFIXES = {
-    "duty",
-    "intensity",
-    "brightness",
-    "frequency",
-    "power",
-    "energy",
-    "voltage",
-    "current",
-}
+NON_CLIMATE_CONTROL_SUFFIXES = NON_CLIMATE_CONTROL_TOKENS
 
 
 def _is_vpd_climate_entity(entry):
-    """Return True only for genuine climate readings (temp/humidity)."""
+    """Return True only for genuine climate readings (temp/humidity).
+
+    The check runs over every token of the entity_id rather than only the last
+    underscore-separated segment: Tasmota reports energy counters as
+    "sensor.x_today/s_consumption", where the meaningful token ("consumption")
+    is not the final segment. A previous last-token-only comparison let exactly
+    those entities through into the humidity group.
+    """
     entity_id = entry.get("entity_id", "")
     if not entity_id:
         return False
-    suffix = entity_id.rsplit("_", 1)[-1].lower()
-    return suffix not in NON_CLIMATE_CONTROL_SUFFIXES
+    return not is_non_climate_metric_entity(entity_id)
+
+
+# Hard measurement domain: a value outside this range cannot be a real sensor
+# reading at all. This is the original guard, unchanged.
+CLIMATE_DOMAIN_RANGES = {
+    "temperature": (0.0, 40.0),
+    "humidity": (0.0, 100.0),
+}
+
+# Plausibility band inside the domain. A grow tent never runs at 2% relative
+# humidity - a value stuck there is a stale, stuck or foreign metric that
+# slipped into the climate group. The domain check alone only catches values
+# that are mathematically impossible, so domain-legal nonsense (2%, 45%, ...)
+# used to reach the average untouched.
+CLIMATE_PLAUSIBLE_RANGES = {
+    "temperature": (2.0, 40.0),
+    "humidity": (5.0, 100.0),
+}
+
+# A reading must not deviate further than this from the median of its own
+# group. Only applied when the group holds at least MIN_OUTLIER_GROUP_SIZE
+# readings: with fewer readings there is nothing trustworthy to compare against,
+# and a lone correct sensor must never be dropped.
+MIN_OUTLIER_GROUP_SIZE = 3
+CLIMATE_OUTLIER_TOLERANCE = {
+    "temperature": 8.0,   # °C
+    "humidity": 30.0,     # percentage points
+}
+
+
+def climate_reading_reject_reason(sensor_type, entity_id, value):
+    """Return a log message when a reading must not feed VPD, else None.
+
+    Two layers: the hard domain (values that cannot be measured at all) and a
+    plausibility band inside it (values that are in range but never occur in a
+    grow tent). ``value`` is expected to be a float - non numeric states are
+    handled by the caller's try/except.
+    """
+    domain = CLIMATE_DOMAIN_RANGES.get(sensor_type)
+    plausible = CLIMATE_PLAUSIBLE_RANGES.get(sensor_type)
+    if domain is None or plausible is None:
+        return None
+    # NaN compares False against every bound, so it would slip through both
+    # ranges below and poison the average (and the sorted() median as well).
+    if not math.isfinite(value):
+        return f"Sensor {entity_id} reports a non-finite {sensor_type} of {value}"
+    if value <= domain[0] or value > domain[1]:
+        return (
+            f"Sensor {entity_id} reports impossible {sensor_type} of {value} "
+            f"(valid range: {domain[0]:g}-{domain[1]:g})"
+        )
+    if value < plausible[0] or value > plausible[1]:
+        return (
+            f"Sensor {entity_id} reports implausible {sensor_type} of {value} "
+            f"(plausible range: {plausible[0]:g}-{plausible[1]:g})"
+        )
+    return None
+
+
+def drop_climate_outliers(readings, sensor_type):
+    """Split readings into (kept, dropped) based on the group median.
+
+    A sensor that agrees with neither its domain nor its siblings (a stuck
+    "signal_level" reading 2.0 next to 79.5 and 81.9) would otherwise drag the
+    room average far away from reality. Returns ``(readings, [])`` whenever the
+    group is too small to judge or the type has no tolerance defined.
+    """
+    tolerance = CLIMATE_OUTLIER_TOLERANCE.get(sensor_type)
+    if not tolerance or len(readings) < MIN_OUTLIER_GROUP_SIZE:
+        return readings, []
+
+    values = sorted(float(r["value"]) for r in readings)
+    mid = len(values) // 2
+    median = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+    kept, dropped = [], []
+    for reading in readings:
+        if abs(float(reading["value"]) - median) > tolerance:
+            dropped.append(reading)
+        else:
+            kept.append(reading)
+    return kept, dropped
 
 
 class OGBVPDManager:
@@ -124,11 +205,13 @@ class OGBVPDManager:
                                 )
                                 continue
                             
-                            # Check for impossible temperature values
-                            if value <= 0 or value > 40:
+                            # Domain + plausibility check
+                            reject = climate_reading_reject_reason(
+                                "temperature", name, value
+                            )
+                            if reject:
                                 _LOGGER.warning(
-                                    f"CRITICAL: Sensor {name} reports impossible temperature "
-                                    f"of {value}°C - likely sensor failure!"
+                                    f"{self.room} CRITICAL: {reject} - likely sensor failure!"
                                 )
                                 await self._notify_sensor_failure(name, "temperature", value)
                                 continue  # Skip this sensor
@@ -152,11 +235,13 @@ class OGBVPDManager:
                                 )
                                 continue
                             
-                            # Check for impossible humidity values
-                            if value <= 0 or value > 100:
+                            # Domain + plausibility check
+                            reject = climate_reading_reject_reason(
+                                "humidity", name, value
+                            )
+                            if reject:
                                 _LOGGER.warning(
-                                    f"CRITICAL: Sensor {name} reports impossible humidity "
-                                    f"of {value}% - likely sensor failure!"
+                                    f"{self.room} CRITICAL: {reject} - likely sensor failure!"
                                 )
                                 await self._notify_sensor_failure(name, "humidity", value)
                                 continue  # Skip this sensor
@@ -164,6 +249,10 @@ class OGBVPDManager:
                             humidities.append({"entity_id":name,"value":value})
                         except (ValueError, TypeError):
                             _LOGGER.error(f"Invalid humidity value for {h.get('entity_id')}: {h.get('state')}")
+
+        # Cross-check the readings against each other before averaging
+        temperatures = await self._reject_climate_outliers(temperatures, "temperature")
+        humidities = await self._reject_climate_outliers(humidities, "humidity")
 
         _LOGGER.warning(
             f"{self.room} VPD-CALC VALUES: "
@@ -337,6 +426,24 @@ class OGBVPDManager:
                 _LOGGER.debug(f"Same-VPD: {vpdPub} currentVPD:{currentVPD}, lastStoreVPD:{lastVpd}")
                 await update_sensor_via_service(self.room,vpdPub,self.hass)
 
+    async def _reject_climate_outliers(self, readings, sensor_type):
+        """Drop readings that deviate from the room median and alert on them.
+
+        Must run after every device contributed its readings and before the
+        average is taken, otherwise a single foreign metric still skews the
+        result.
+        """
+        kept, dropped = drop_climate_outliers(readings, sensor_type)
+        for entry in dropped:
+            name = entry.get("entity_id", "unknown")
+            value = entry.get("value")
+            _LOGGER.warning(
+                f"{self.room} CRITICAL: Sensor {name} reports {sensor_type} of {value} "
+                f"that deviates too far from the room median - excluded from VPD"
+            )
+            await self._notify_sensor_failure(name, sensor_type, value)
+        return kept
+
     async def _notify_sensor_failure(self, entity_id: str, sensor_type: str, value: float):
         """Send critical notification for sensor with impossible values.
         
@@ -432,11 +539,13 @@ class OGBVPDManager:
                                 )
                                 continue
                             
-                            # Check for impossible temperature values
-                            if value <= 0 or value > 40:
+                            # Domain + plausibility check
+                            reject = climate_reading_reject_reason(
+                                "temperature", name, value
+                            )
+                            if reject:
                                 _LOGGER.warning(
-                                    f"CRITICAL: Sensor {name} reports impossible temperature "
-                                    f"of {value}°C - likely sensor failure!"
+                                    f"{self.room} CRITICAL: {reject} - likely sensor failure!"
                                 )
                                 await self._notify_sensor_failure(name, "temperature", value)
                                 continue
@@ -465,11 +574,13 @@ class OGBVPDManager:
                                 )
                                 continue
                             
-                            # Check for impossible humidity values
-                            if value <= 0 or value > 100:
+                            # Domain + plausibility check
+                            reject = climate_reading_reject_reason(
+                                "humidity", name, value
+                            )
+                            if reject:
                                 _LOGGER.warning(
-                                    f"CRITICAL: Sensor {name} reports impossible humidity "
-                                    f"of {value}% - likely sensor failure!"
+                                    f"{self.room} CRITICAL: {reject} - likely sensor failure!"
                                 )
                                 await self._notify_sensor_failure(name, "humidity", value)
                                 continue
@@ -481,6 +592,10 @@ class OGBVPDManager:
                             _LOGGER.error(
                                 f"Invalid humidity value for {h.get('entity_id')}: {h.get('state')}"
                             )
+
+        # Cross-check the readings against each other before averaging
+        temperatures = await self._reject_climate_outliers(temperatures, "temperature")
+        humidities = await self._reject_climate_outliers(humidities, "humidity")
 
         # Store work data
         self.data_store.setDeep("workData.temperature", temperatures)
