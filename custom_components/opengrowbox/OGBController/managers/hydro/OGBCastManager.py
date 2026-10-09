@@ -192,6 +192,44 @@ class OGBCastManager:
             # Only stop CS operations when NOT switching to Crop-Steering
             await self.CropSteeringManager.stop_all_operations()
 
+    async def _force_all_hydro_pumps_off(self):
+        """Turn OFF every hydro (canPump) and retrieve (canRetrieve) pump individually.
+
+        A broadcast action without a Device is ignored by Pump._handle_pump_event,
+        so each pump must be addressed by name. Also clears the pump registry and
+        drops any task references so nothing keeps cycling.
+        """
+        seen = set()
+        capabilities = [
+            self.data_store.getDeep("capabilities.canPump") or {},
+            self.data_store.getDeep("capabilities.canRetrieve") or {},
+        ]
+        for cap in capabilities:
+            for dev_id in cap.get("devEntities", []) or []:
+                if dev_id in seen:
+                    continue
+                seen.add(dev_id)
+                try:
+                    await self.event_manager.emit(
+                        "PumpAction",
+                        OGBHydroAction(
+                            Name=self.room, Action="off", Device=dev_id, Cycle=False
+                        ),
+                    )
+                    await self.event_manager.emit(
+                        "RetrieveAction",
+                        OGBRetrieveAction(
+                            Name=self.room, Action="off", Device=dev_id, Cycle=False
+                        ),
+                    )
+                    _LOGGER.debug(f"[{self.room}] Force OFF hydro/retrieve pump: {dev_id}")
+                except Exception as e:
+                    _LOGGER.error(
+                        f"[{self.room}] Failed to force OFF pump {dev_id}: {e}"
+                    )
+
+        self.active_pumps.clear()
+
     async def _ensure_retrieve_system(self, primary_mode: str):
         """Ensure retrieve system is running alongside the primary hydro mode."""
         retrieve_config = self.data_store.getDeep("Hydro.Retrieve")
@@ -277,10 +315,31 @@ class OGBCastManager:
             intervall = None
             duration = None
 
+        # CRITICAL: "Disabled" (and "OFF") must be a complete no-op for the whole
+        # hydro subsystem. This runs BEFORE any timing validation so a disabled mode
+        # can never start a pump, the retrieve loop or the air pump — even with stale
+        # interval/duration values still present in the data store.
+        if mode in ("Disabled", "OFF"):
+            await self._cancel_all_tasks(skip_crop_steering=False)
+            self.data_store.setDeep("Hydro.Active", False)
+            self.data_store.setDeep("CropSteering.Active", False)
+            self.data_store.setDeep("Hydro.R_Active", False)
+            await self._force_all_hydro_pumps_off()
+            await self._ensure_air_pump(False)
+            await self.event_manager.emit("LogForClient", {
+                "Name": self.room,
+                "Mode": mode,
+                "Cycle": False,
+                "Active": False,
+                "Type": "HYDRO",
+                "Message": "Hydro mode is disabled" if mode == "Disabled" else "Hydro mode is OFFLINE",
+            }, haEvent=True, debug_type="INFO")
+            return
+
         # Hydro and Plant-Watering both require timing values.
         # - Hydro mode: interval = cycle pause, duration = on-time
         # - Plant-Watering sensor mode: interval = safety cooldown, duration = max shot length
-        timing_required = mode in ("Hydro", "Plant-Watering", "OFF")
+        timing_required = mode in ("Hydro", "Plant-Watering")
         if timing_required and (
             intervall is None or duration is None or intervall <= 0 or duration <= 0
         ):
@@ -300,13 +359,7 @@ class OGBCastManager:
         skip_cs = (mode == "Crop-Steering")
         await self._cancel_all_tasks(skip_crop_steering=skip_cs)
 
-        if mode == "OFF":
-            sysmessage = "Hydro mode is OFFLINE"
-            self.data_store.setDeep("Hydro.Active", False)
-            await self.event_manager.emit("PumpAction", {"action": "off"})
-            await self._ensure_air_pump(False)
-
-        elif mode == "Hydro":
+        if mode == "Hydro":
             sysmessage = "Hydro mode active"
             self.data_store.setDeep("Hydro.Active", True)
             self.data_store.setDeep("Hydro.Mode", mode)
@@ -378,7 +431,16 @@ class OGBCastManager:
         log_prefix: str = "Hydro",
     ):
         """Handle hydro pump operations - for mistpump, waterpump, aeropump, dwcpump, rdwcpump."""
-        
+
+        # SAFETY: hydro cycle pumps may only run when Hydro.Mode is explicitly "Hydro".
+        # Any other mode (e.g. Disabled/OFF) must hard-stop all pumps.
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        if hydro_mode != "Hydro":
+            _LOGGER.debug(f"{self.room} hydro_Mode blocked - Hydro.Mode={hydro_mode}")
+            await self._force_all_hydro_pumps_off()
+            self.data_store.setDeep("Hydro.Active", False)
+            return
+
         _LOGGER.debug(f"🔍 {self.room} hydro_Mode called: cycle={cycle}, interval={interval}, duration={duration}")
         _LOGGER.debug(f"🔍 {self.room} pumpDevices: {pumpDevices}")
 
@@ -491,6 +553,15 @@ class OGBCastManager:
         cycle: bool = True,
         log_prefix: str = "Plant Watering",
     ):
+        # SAFETY: plant-watering may only run when Hydro.Mode is "Plant-Watering".
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        if hydro_mode != "Plant-Watering":
+            _LOGGER.debug(
+                f"{self.room} hydro_PlantWatering blocked - Hydro.Mode={hydro_mode}"
+            )
+            await self._force_all_hydro_pumps_off()
+            return
+
         try:
             duration_value = float(duration)
         except (TypeError, ValueError):
@@ -526,6 +597,25 @@ class OGBCastManager:
         isActive = self.data_store.getDeep("Hydro.R_Active")
         PumpDevices = self.data_store.getDeep("capabilities.canPump")
         cycle = True
+
+        # Retrieve is only valid alongside a water-based primary mode.
+        # If Hydro.Mode is anything else (Disabled/OFF/Crop-Steering/Config/None),
+        # never start it and actively stop any running retrieve loop.
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        if hydro_mode not in ("Hydro", "Plant-Watering"):
+            if self._retrive_task is not None:
+                self._retrive_task.cancel()
+                try:
+                    await self._retrive_task
+                except asyncio.CancelledError:
+                    pass
+                self._retrive_task = None
+            await self._force_all_hydro_pumps_off()
+            self.data_store.setDeep("Hydro.R_Active", False)
+            _LOGGER.debug(
+                f"{self.room} Hydro Retrieve blocked - Hydro.Mode={hydro_mode}"
+            )
+            return
 
         # Convert and validate values (0 or None means not configured)
         try:
@@ -743,6 +833,16 @@ class OGBCastManager:
         log_prefix: str = "Retrive",
     ):
         """Handle retrive pump operations - only for retrievepump devices."""
+
+        # SAFETY: retrieve may only run alongside Hydro / Plant-Watering.
+        hydro_mode = self.data_store.getDeep("Hydro.Mode")
+        if hydro_mode not in ("Hydro", "Plant-Watering"):
+            _LOGGER.debug(
+                f"{self.room} retrive_Mode blocked - Hydro.Mode={hydro_mode}"
+            )
+            await self._force_all_hydro_pumps_off()
+            self.data_store.setDeep("Hydro.R_Active", False)
+            return
 
         active_pumps = await self._find_retrieve_pumps(pumpDevices)
 

@@ -1479,7 +1479,7 @@ class OGBConfigurationManager:
             return
 
         value = data.newState[0]
-        if value == "OFF":
+        if value in ("OFF", "Disabled"):
             self.data_store.setDeep("Hydro.Active", False)
             self.data_store.setDeep("Hydro.Mode", value)
             # Only emit if initialized (after first_start)
@@ -2084,7 +2084,7 @@ class OGBConfigurationManager:
         current_value = self.data_store.getDeep("Hydro.R_Duration")
         if current_value != value:
             self.data_store.setDeep("Hydro.R_Duration", value)
-            await self.event_manager.emit("HydroModeRetriveChange", value)
+            await self.event_manager.emit("HydroModeRetrieveChange", value)
 
     async def _update_hydro_retrieve_intervall(self, data):
         """
@@ -2094,7 +2094,7 @@ class OGBConfigurationManager:
         current_value = self.data_store.getDeep("Hydro.R_Intervall")
         if current_value != value:
             self.data_store.setDeep("Hydro.R_Intervall", value)
-            await self.event_manager.emit("HydroModeRetriveChange", value)
+            await self.event_manager.emit("HydroModeRetrieveChange", value)
 
     async def _update_feed_nutrient_w_ml(self, data):
         """
