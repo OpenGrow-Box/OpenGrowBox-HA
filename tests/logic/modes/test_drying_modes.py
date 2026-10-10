@@ -8,6 +8,7 @@ from tests.logic.helpers import FakeDataStore, FakeEventManager
 from custom_components.opengrowbox.OGBController.actions.DryingActions import DryingActions
 from custom_components.opengrowbox.OGBController.data.OGBDataClasses.OGBData import OGBConf
 from custom_components.opengrowbox.OGBController.utils.calcs import (
+    calc_Dry5Days_vpd,
     calc_humidity_from_dew_point,
     calculate_dew_point,
 )
@@ -566,6 +567,58 @@ class TestHumidityFromDewPoint:
     def test_invalid_input_returns_none(self):
         assert calc_humidity_from_dew_point(20, None) is None
         assert calc_humidity_from_dew_point("x", 10) is None
+
+
+_DEFAULT_MODES = OGBConf(hass=None).drying["modes"]
+_DEFAULT_MODE_PHASES = [
+    (mode, phase) for mode, cfg in _DEFAULT_MODES.items() for phase in cfg["phase"]
+]
+
+
+class TestDefaultPhasesRunnable:
+    """Every phase of every shipped drying mode must be executable from the defaults."""
+
+    @pytest.mark.parametrize("mode,phase", _DEFAULT_MODE_PHASES)
+    @pytest.mark.asyncio
+    async def test_phase_runs_from_defaults(self, mode, phase, caplog):
+        drying = OGBConf(hass=None).drying
+        phases = drying["modes"][mode]["phase"]
+
+        # Start the clock inside the phase under test
+        elapsed_hours = 1
+        for name in ("start", "halfTime", "endTime"):
+            if name == phase:
+                break
+            elapsed_hours += phases[name]["durationHours"]
+        drying["currentDryMode"] = mode
+        drying["mode_start_time"] = (datetime.now() - timedelta(hours=elapsed_hours)).isoformat()
+        drying["isRunning"] = True
+
+        temperature, humidity = 10.0, 60.0  # far below every default target temperature
+        dew_point = calculate_dew_point(temperature, humidity)
+        data_store = FakeDataStore({
+            "drying": drying,
+            "tentData": {"temperature": temperature, "humidity": humidity, "dewpoint": dew_point},
+            "vpd": {"current": calc_Dry5Days_vpd(temperature, humidity)},
+        })
+        event_manager = FakeEventManager()
+        event_manager.emitted_events = []
+        original_emit = event_manager.emit
+
+        async def tracked_emit(event_name, data=None, **kwargs):
+            event_manager.emitted_events.append((event_name, data))
+            return await original_emit(event_name, data, **kwargs)
+
+        event_manager.emit = tracked_emit
+        actions = DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
+
+        with caplog.at_level("ERROR"):
+            await getattr(actions, f"handle_{mode}")(drying["modes"][mode])
+
+        errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+        assert not errors, errors
+        events = [e[0] for e in event_manager.emitted_events]
+        assert "Increase Heater" in events
 
 
 class TestOwnDry:
