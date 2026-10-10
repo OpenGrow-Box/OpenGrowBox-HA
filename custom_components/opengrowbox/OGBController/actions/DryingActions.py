@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
-from ..utils.calcs import calc_Dry5Days_vpd, calc_dew_vpd
+from ..utils.calcs import calc_Dry5Days_vpd, calc_dew_vpd, calc_humidity_from_dew_point
 
 if TYPE_CHECKING:
     from ..managers.OGBgcdManager import OGBgcdManager
@@ -463,15 +463,19 @@ class DryingActions:
         target_temp = current_phase.get("targetTemp")
         target_humidity = current_phase.get("targetHumidity")
 
-        if target_temp is None or target_humidity is None:
-            _LOGGER.error(f"{self.name}: Phase missing targetTemp or targetHumidity")
-            return
-
         try:
-            target_temp = float(target_temp)
-            target_humidity = float(target_humidity)
+            target_temp = float(target_temp) if target_temp is not None else None
+            target_humidity = float(target_humidity) if target_humidity is not None else None
         except (ValueError, TypeError):
             _LOGGER.error(f"{self.name}: Invalid phase targets for DewBased")
+            return
+
+        # DewBased phases are defined by targetTemp + targetDewPoint; derive the humidity target from them
+        if target_humidity is None and target_temp is not None:
+            target_humidity = calc_humidity_from_dew_point(target_temp, current_phase.get("targetDewPoint"))
+
+        if target_temp is None or target_humidity is None:
+            _LOGGER.error(f"{self.name}: Phase needs targetTemp and either targetHumidity or targetDewPoint: {current_phase}")
             return
 
         tempTolerance = 1
