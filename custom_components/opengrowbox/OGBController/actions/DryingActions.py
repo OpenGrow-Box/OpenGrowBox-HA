@@ -244,15 +244,11 @@ class DryingActions:
             if current_temp < target_temp:
                 _LOGGER.warning(f"{self.name}: ElClassico TEMP LOW - {current_temp}°C < {target_temp}°C → Heater ON, Cooler OFF")
                 finalActionMap["Increase Heater"] = True
-                finalActionMap["Reduce Exhaust"] = True
                 finalActionMap["Reduce Cooler"] = True
-                finalActionMap["Increase Ventilation"] = True
             else:
                 _LOGGER.warning(f"{self.name}: ElClassico TEMP HIGH - {current_temp}°C > {target_temp}°C → Cooler ON, Heater OFF")
                 finalActionMap["Increase Cooler"] = True
-                finalActionMap["Increase Exhaust"] = True
                 finalActionMap["Reduce Heater"] = True
-                finalActionMap["Reduce Ventilation"] = True
 
         # Check humidity independently
         hum_ok = abs(current_hum - target_hum) <= humTolerance

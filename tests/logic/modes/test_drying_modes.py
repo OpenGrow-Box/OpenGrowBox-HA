@@ -161,6 +161,55 @@ class TestElClassico:
         assert "Increase Dehumidifier" not in events
     
     @pytest.mark.asyncio
+    async def test_elclassico_hot_ambient_humidity_low_exhaust_not_deadlocked(self, drying_actions):
+        """Exhaust-only box: warm air (temp high) must not override the humidity branch.
+
+        Humidity drops below target - tolerance, so the exhaust has to be reduced
+        even though the temperature is still above target.
+        """
+        drying_actions.data_store.setDeep("tentData.temperature", 22.0)  # target 20 +/- 1 -> high
+        drying_actions.data_store.setDeep("tentData.humidity", 59.0)  # target 62 +/- 2 -> low
+        phase_config = drying_actions.data_store.getDeep("drying.modes.ElClassico")
+
+        await drying_actions.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions.event_manager.emitted_events]
+        assert "Reduce Exhaust" in events
+        assert "Increase Exhaust" not in events
+        assert "Increase Ventilation" in events
+        assert "Reduce Ventilation" not in events
+
+    @pytest.mark.asyncio
+    async def test_elclassico_cold_ambient_humidity_high_exhaust_not_deadlocked(self, drying_actions):
+        """Temp low + humidity high: exhaust is driven by humidity only."""
+        drying_actions.data_store.setDeep("tentData.temperature", 18.0)  # low
+        drying_actions.data_store.setDeep("tentData.humidity", 65.0)  # high
+        phase_config = drying_actions.data_store.getDeep("drying.modes.ElClassico")
+
+        await drying_actions.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions.event_manager.emitted_events]
+        assert "Increase Exhaust" in events
+        assert "Reduce Exhaust" not in events
+        assert "Increase Ventilation" in events
+        assert "Reduce Ventilation" not in events
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("temperature", [17.0, 23.0])
+    async def test_elclassico_temperature_only_does_not_touch_exhaust_or_ventilation(self, drying_actions, temperature):
+        """Temperature deviation alone must not emit any exhaust/ventilation action."""
+        drying_actions.data_store.setDeep("tentData.temperature", temperature)
+        drying_actions.data_store.setDeep("tentData.humidity", 62.0)  # in tolerance
+        phase_config = drying_actions.data_store.getDeep("drying.modes.ElClassico")
+
+        await drying_actions.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions.event_manager.emitted_events]
+        assert events, "temperature deviation should still trigger heater/cooler actions"
+        for action in ("Increase Exhaust", "Reduce Exhaust", "Increase Ventilation", "Reduce Ventilation"):
+            assert action not in events
+
+    @pytest.mark.asyncio
     async def test_elclassico_halfTime_phase(self, drying_actions):
         """Test ElClassico halfTime phase with different targets."""
         # Set start time 25 hours ago (in halfTime phase)
