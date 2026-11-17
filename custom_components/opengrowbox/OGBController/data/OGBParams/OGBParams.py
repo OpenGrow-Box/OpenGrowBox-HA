@@ -31,6 +31,8 @@ RELEVANT_KEYWORDS = (
     "_moisture",
     "_reservoir",
     "_ultrasonic",
+    "_plantdist",
+    "_plant_distance",
     "_ec",
     "_ph",
     "_conductivity",
@@ -73,9 +75,16 @@ DEVICE_TYPE_MAPPING = {
         "wasser",
         "reservoir",
         "leaf",
+        "plantdist",
+        "plant_distance",
+        "plantdistance",
+        "planttolight",
+        "distance",
+        "ultrasonic",
     ],
     "Exhaust": ["exhaust", "abluft"],
     "Intake": ["intake", "zuluft"],
+    "Lift": ["lift", "hublift", "lamp_lift", "lamplift"],
     "Window": ["window", "fenster", "cover", "shutter"],
     "Ventilation": ["vent", "vents", "venti", "ventilation", "inlet"],
     "Dehumidifier": ["dehumidifier", "entfeuchter"],
@@ -124,6 +133,7 @@ CAP_MAPPING = {
     "canDoor": ["door"],
     "canExhaust": ["exhaust"],
     "canIntake": ["intake"],
+    "canLift": ["lift"],
     "canLight": ["light"],
     "canCO2": ["co2"],
     "canPump": ["pump"],
@@ -375,6 +385,21 @@ SENSOR_TYPES = {
             }
         },
     },
+    "plant_distance": {
+        "unit": "cm",
+        "device_class": "distance",
+        "state_class": "measurement",
+        "precision": 1,
+        "contexts": {
+            "other": {
+                "min_value": 0,
+                "max_value": 500,
+                "optimal_min": 20,
+                "optimal_max": 60,
+                "name": "Plant Distance",
+            }
+        },
+    },
     "battery": {
         "unit": "%",
         "device_class": "battery",
@@ -513,6 +538,9 @@ def extract_context_from_entity(entity_id, sensor_type=None):
         # Energy sensors
         "power": "energy",
         "energy": "energy",
+
+        # Tent / lamp distance sensors (ultrasonic)
+        "plant_distance": "other",
     }
 
     # Falls Sensor-Typ bekannt und in Fixed-Liste: verwende den

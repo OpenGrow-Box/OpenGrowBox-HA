@@ -39,7 +39,7 @@ Supported Languages (31):
 - Thai (TH)
 - Esperanto (EO)
 
-Supported Sensor Types (20):
+Supported Sensor Types (21):
 ----------------------------
 - temperature: Air/ambient temperature
 - humidity: Air humidity / relative humidity
@@ -59,6 +59,7 @@ Supported Sensor Types (20):
 - battery: Battery level
 - weight: Scale/weight measurements
 - water_level: Tank/reservoir level
+- plant_distance: Distance from lamp to plant canopy (ultrasonic/distance)
 - flow: Flow rate
 - water_temperature: Nutrient/water temperature
 - voltage: Electrical voltage
@@ -818,6 +819,30 @@ SENSOR_TRANSLATIONS = {
         "reservoir",
         "tank",
         "pegel",
+    ],
+    "plant_distance": [
+        "plantdist",
+        "plant_dist",
+        "plantdistance",
+        "plant_distance",
+        "planttolight",
+        "plant_to_light",
+        "plantdistancetolight",
+        "plant_distance_to_light",
+        "plantdisttolight",
+        "distance_to_light",
+        "lamp_distance",
+        "lampdist",
+        "lamplift_distance",
+        "canopy_distance",
+        "canopydist",
+        "hangheight",
+        "hang_height",
+        "distance",
+        "distanz",
+        "abstand",
+        "ultrasonic",
+        "ultraschall",
     ],
     "flow": [
         "flow",

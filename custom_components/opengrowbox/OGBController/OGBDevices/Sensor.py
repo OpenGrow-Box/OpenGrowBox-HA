@@ -401,7 +401,21 @@ class Sensor:
                         _LOGGER.debug(f"[{self.room}] Initial temperature stored: {temp_numeric}")
                     except (ValueError, TypeError) as e:
                         _LOGGER.error(f"[{self.room}] Failed to store initial temperature: {e}")
-            
+
+            # Store plant/lamp distance independently (sensor may never fire state_changed)
+            for sensor_context in ("other", "air", "water", "leaf"):
+                for distance_sensor in self.sensorReadings.get(sensor_context, {}).get("plant_distance", []):
+                    distance_value = distance_sensor.get("last_reading") or distance_sensor.get("state")
+                    if distance_value is not None:
+                        try:
+                            await self._store_plant_distance(
+                                distance_sensor["entity_id"],
+                                float(distance_value),
+                                distance_sensor,
+                            )
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.error(f"[{self.room}] Failed to store initial plant distance: {e}")
+
         except Exception as e:
             _LOGGER.error(
                 f"Fehler bei Initialisierung von Sensor {self.deviceName}: {e}"
@@ -648,6 +662,12 @@ class Sensor:
                         f"({sensor_config['sensor_type']} / {sensor_config['context']})"
                     )
 
+                    # Plant/lamp distance sensors (ultrasonic) are handled like the
+                    # reservoir sensor: store the distance and emit a dedicated event.
+                    if sensor_config["sensor_type"] == "plant_distance":
+                        await self._store_plant_distance(entity_id, numeric_value, sensor_config)
+                        return
+
                     # Emit MediumSensorUpdate for sensors that are registered to a medium
                     # soil context = substrate sensors, medium_label = explicitly tagged sensors
                     # water context is for HYDRO tank sensors, NOT medium sensors
@@ -847,6 +867,40 @@ class Sensor:
 
         except Exception as e:
             _LOGGER.error(f"Error updating {sensor_config['entity_id']}: {e}")
+
+    async def _store_plant_distance(self, entity_id, value, sensor_config=None):
+        """Store a plant/lamp distance reading and emit PlantDistanceUpdate.
+
+        Mirrors the reservoir level handling: the raw distance is kept in the
+        datastore under tentData so managers and the UI can read it.
+        """
+        unit = ""
+        if self.hass:
+            ha_state = self.hass.states.get(entity_id)
+            if ha_state:
+                unit = ha_state.attributes.get("unit_of_measurement") or ""
+        if not unit and sensor_config:
+            unit = sensor_config.get("unit", "") or ""
+
+        now = datetime.now().isoformat()
+        self.data_store.setDeep("tentData.plantDistance", value)
+        self.data_store.setDeep("tentData.plantDistanceUnit", unit)
+        self.data_store.setDeep("tentData.plantDistanceLastUpdate", now)
+
+        await self.event_manager.emit(
+            "PlantDistanceUpdate",
+            {
+                "entity_id": entity_id,
+                "value": value,
+                "unit": unit,
+                "room": self.room,
+                "timestamp": now,
+            },
+        )
+
+        _LOGGER.debug(
+            f"[{self.room}] Plant distance updated: {entity_id} = {value} {unit}"
+        )
 
     def getSensorValue(self, sensor_type, context=None, event_data=None):
         """

@@ -79,11 +79,16 @@ Labels are defined in `OGBParams.py` and used by the `OGBDeviceManager` to ident
 | `inlet` | Ventilation | Air inlet |
 | `window` | Window | Window opener |
 | `fenster` | Window | Window (German) |
+| `lift` | Lift | Plant lift (lamp height) |
+| `hublift` | Lift | Plant lift (German) |
+| `lamp_lift` | Lift | Lamp lift |
+| `lamplift` | Lift | Lamp lift (alt) |
 
 **Example:**
 ```json
 {"name": "exhaust"}
 {"name": "intake"}
+{"name": "lift"}
 ```
 
 ---
@@ -237,6 +242,10 @@ Feed pump behavior:
 | `ppfd` | Sensor | Photosynthetic photon flux |
 | `dli` | Sensor | Daily light integral |
 | `reservoir` | Sensor | Reservoir level sensor |
+| `plantdist` | Sensor | Lamp-to-canopy distance (recommended) |
+| `plant_distance` | Sensor | Plant distance sensor |
+| `distance` | Sensor | Generic distance sensor |
+| `ultrasonic` | Sensor | Ultrasonic distance sensor |
 | `ogb` | Sensor | OpenGrowBox sensor |
 | `govee` | Sensor | Govee brand sensor |
 | `ens160` | Sensor | ENS160 air quality |
@@ -248,7 +257,11 @@ Feed pump behavior:
 ```json
 {"name": "temperature"}
 {"name": "reservoir"}
+{"name": "plantdist"}
 ```
+
+**Plant distance:** use `plantdist` for the lamp-to-canopy ultrasonic sensor.
+See [Lift System](../specialized_systems/LIFT_SYSTEM.md) for details.
 
 ---
 
@@ -306,6 +319,7 @@ Capabilities determine what actions a device can perform:
 | `canDehumidify` | dehumidifier |
 | `canVentilate` | ventilation, window |
 | `canWindow` | window |
+| `canLift` | lift |
 | `canDoor` | door |
 | `canExhaust` | exhaust |
 | `canIntake` | intake |
@@ -474,6 +488,6 @@ Then reload OpenGrowBox or restart Home Assistant.
 
 ---
 
-**Last Updated:** April 2025
-**Version:** 1.2
+**Last Updated:** 2026
+**Version:** 1.3
 **Status:** Production Ready
