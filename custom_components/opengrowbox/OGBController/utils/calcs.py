@@ -157,6 +157,21 @@ def calculate_dew_point(temp, humidity):
     return round(dew_point, 2)
 
 
+# Inverse of calculate_dew_point: relative humidity (%) for a temperature and dew point
+def calc_humidity_from_dew_point(temp, dew_point):
+    try:
+        temp = float(temp)
+        dew_point = float(dew_point)
+    except (ValueError, TypeError):
+        return None
+
+    a = 17.27
+    b = 237.7
+
+    humidity = 100 * math.exp((a * dew_point) / (b + dew_point) - (a * temp) / (b + temp))
+    return round(min(humidity, 100.0), 2)
+
+
 # Berechne DewPointVPD (Based on Dewpoint/TEMP)
 def calc_dew_vpd(air_temp, dew_point):
     try:

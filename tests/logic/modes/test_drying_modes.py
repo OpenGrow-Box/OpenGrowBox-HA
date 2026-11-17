@@ -6,6 +6,12 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from tests.logic.helpers import FakeDataStore, FakeEventManager
 from custom_components.opengrowbox.OGBController.actions.DryingActions import DryingActions
+from custom_components.opengrowbox.OGBController.data.OGBDataClasses.OGBData import OGBConf
+from custom_components.opengrowbox.OGBController.utils.calcs import (
+    calc_Dry5Days_vpd,
+    calc_humidity_from_dew_point,
+    calculate_dew_point,
+)
 
 
 class _FakeCooldownManager:
@@ -160,6 +166,55 @@ class TestElClassico:
         assert "Increase Humidifier" not in events
         assert "Increase Dehumidifier" not in events
     
+    @pytest.mark.asyncio
+    async def test_elclassico_hot_ambient_humidity_low_exhaust_not_deadlocked(self, drying_actions):
+        """Exhaust-only box: warm air (temp high) must not override the humidity branch.
+
+        Humidity drops below target - tolerance, so the exhaust has to be reduced
+        even though the temperature is still above target.
+        """
+        drying_actions.data_store.setDeep("tentData.temperature", 22.0)  # target 20 +/- 1 -> high
+        drying_actions.data_store.setDeep("tentData.humidity", 59.0)  # target 62 +/- 2 -> low
+        phase_config = drying_actions.data_store.getDeep("drying.modes.ElClassico")
+
+        await drying_actions.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions.event_manager.emitted_events]
+        assert "Reduce Exhaust" in events
+        assert "Increase Exhaust" not in events
+        assert "Increase Ventilation" in events
+        assert "Reduce Ventilation" not in events
+
+    @pytest.mark.asyncio
+    async def test_elclassico_cold_ambient_humidity_high_exhaust_not_deadlocked(self, drying_actions):
+        """Temp low + humidity high: exhaust is driven by humidity only."""
+        drying_actions.data_store.setDeep("tentData.temperature", 18.0)  # low
+        drying_actions.data_store.setDeep("tentData.humidity", 65.0)  # high
+        phase_config = drying_actions.data_store.getDeep("drying.modes.ElClassico")
+
+        await drying_actions.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions.event_manager.emitted_events]
+        assert "Increase Exhaust" in events
+        assert "Reduce Exhaust" not in events
+        assert "Increase Ventilation" in events
+        assert "Reduce Ventilation" not in events
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("temperature", [17.0, 23.0])
+    async def test_elclassico_temperature_only_does_not_touch_exhaust_or_ventilation(self, drying_actions, temperature):
+        """Temperature deviation alone must not emit any exhaust/ventilation action."""
+        drying_actions.data_store.setDeep("tentData.temperature", temperature)
+        drying_actions.data_store.setDeep("tentData.humidity", 62.0)  # in tolerance
+        phase_config = drying_actions.data_store.getDeep("drying.modes.ElClassico")
+
+        await drying_actions.handle_ElClassico(phase_config)
+
+        events = [e[0] for e in drying_actions.event_manager.emitted_events]
+        assert events, "temperature deviation should still trigger heater/cooler actions"
+        for action in ("Increase Exhaust", "Reduce Exhaust", "Increase Ventilation", "Reduce Ventilation"):
+            assert action not in events
+
     @pytest.mark.asyncio
     async def test_elclassico_halfTime_phase(self, drying_actions):
         """Test ElClassico halfTime phase with different targets."""
@@ -404,6 +459,166 @@ class TestDewBased:
         
         events = [e[0] for e in drying_actions.event_manager.emitted_events]
         assert "Increase Dehumidifier" in events
+
+
+class TestDewBasedDefaults:
+    """DewBased must work with the shipped defaults (targetTemp + targetDewPoint, no targetHumidity)."""
+
+    @pytest.fixture
+    def drying_actions(self):
+        drying = OGBConf(hass=None).drying
+        drying["currentDryMode"] = "DewBased"
+        drying["mode_start_time"] = datetime.now().isoformat()
+        drying["isRunning"] = True
+        data_store = FakeDataStore({
+            "drying": drying,
+            "tentData": {"temperature": 20.0, "humidity": 61.0, "dewpoint": 12.25},
+        })
+        event_manager = FakeEventManager()
+        event_manager.emitted_events = []
+        original_emit = event_manager.emit
+
+        async def tracked_emit(event_name, data=None, **kwargs):
+            event_manager.emitted_events.append((event_name, data))
+            return await original_emit(event_name, data, **kwargs)
+
+        event_manager.emit = tracked_emit
+        return DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
+
+    def _events(self, drying_actions):
+        return [e[0] for e in drying_actions.event_manager.emitted_events]
+
+    @pytest.mark.asyncio
+    async def test_default_phase_has_no_target_humidity(self, drying_actions):
+        """Guards the premise of these tests: defaults only define the dew point."""
+        phase = drying_actions.data_store.getDeep("drying.modes.DewBased.phase.start")
+        assert "targetHumidity" not in phase
+        assert "targetDewPoint" in phase
+
+    @pytest.mark.asyncio
+    async def test_defaults_on_target_emit_no_actions(self, drying_actions):
+        await drying_actions.handle_DewBased(drying_actions.data_store.getDeep("drying.modes.DewBased"))
+
+        assert self._events(drying_actions) == []
+
+    @pytest.mark.asyncio
+    async def test_defaults_too_dry_humidifies(self, drying_actions):
+        drying_actions.data_store.setDeep("tentData.humidity", 50.0)
+        drying_actions.data_store.setDeep("tentData.dewpoint", calculate_dew_point(20.0, 50.0))
+
+        await drying_actions.handle_DewBased(drying_actions.data_store.getDeep("drying.modes.DewBased"))
+
+        events = self._events(drying_actions)
+        assert "Increase Humidifier" in events
+        assert "Increase Dehumidifier" not in events
+
+    @pytest.mark.asyncio
+    async def test_defaults_too_humid_dehumidifies(self, drying_actions):
+        drying_actions.data_store.setDeep("tentData.humidity", 72.0)
+        drying_actions.data_store.setDeep("tentData.dewpoint", calculate_dew_point(20.0, 72.0))
+
+        await drying_actions.handle_DewBased(drying_actions.data_store.getDeep("drying.modes.DewBased"))
+
+        events = self._events(drying_actions)
+        assert "Increase Dehumidifier" in events
+        assert "Increase Exhaust" in events
+
+    @pytest.mark.asyncio
+    async def test_defaults_temperature_only_leaves_exhaust_alone(self, drying_actions):
+        drying_actions.data_store.setDeep("tentData.temperature", 24.0)
+        # humidity and dew point stay on target so only the temperature branch is active
+
+        await drying_actions.handle_DewBased(drying_actions.data_store.getDeep("drying.modes.DewBased"))
+
+        events = self._events(drying_actions)
+        assert "Increase Cooler" in events
+        for action in ("Increase Exhaust", "Reduce Exhaust", "Reduce Ventilation"):
+            assert action not in events
+
+    @pytest.mark.asyncio
+    async def test_explicit_target_humidity_wins_over_dew_point(self, drying_actions):
+        phase = drying_actions.data_store.getDeep("drying.modes.DewBased.phase.start")
+        phase["targetHumidity"] = 40.0  # data at 61 % is now far too humid
+
+        await drying_actions.handle_DewBased(drying_actions.data_store.getDeep("drying.modes.DewBased"))
+
+        assert "Increase Dehumidifier" in self._events(drying_actions)
+
+    @pytest.mark.asyncio
+    async def test_phase_without_any_humidity_target_is_skipped(self, drying_actions):
+        phase = drying_actions.data_store.getDeep("drying.modes.DewBased.phase.start")
+        del phase["targetDewPoint"]
+
+        await drying_actions.handle_DewBased(drying_actions.data_store.getDeep("drying.modes.DewBased"))
+
+        assert self._events(drying_actions) == []
+
+
+class TestHumidityFromDewPoint:
+    def test_matches_default_dew_points_at_20c(self):
+        assert calc_humidity_from_dew_point(20, 12.25) == pytest.approx(61.0, abs=0.5)
+        assert calc_humidity_from_dew_point(20, 11.1) == pytest.approx(56.6, abs=0.5)
+
+    @pytest.mark.parametrize("temp,hum", [(15, 40), (20, 62), (25, 80)])
+    def test_round_trips_with_calculate_dew_point(self, temp, hum):
+        dew = calculate_dew_point(temp, hum)
+        assert calc_humidity_from_dew_point(temp, dew) == pytest.approx(hum, abs=0.5)
+
+    def test_invalid_input_returns_none(self):
+        assert calc_humidity_from_dew_point(20, None) is None
+        assert calc_humidity_from_dew_point("x", 10) is None
+
+
+_DEFAULT_MODES = OGBConf(hass=None).drying["modes"]
+_DEFAULT_MODE_PHASES = [
+    (mode, phase) for mode, cfg in _DEFAULT_MODES.items() for phase in cfg["phase"]
+]
+
+
+class TestDefaultPhasesRunnable:
+    """Every phase of every shipped drying mode must be executable from the defaults."""
+
+    @pytest.mark.parametrize("mode,phase", _DEFAULT_MODE_PHASES)
+    @pytest.mark.asyncio
+    async def test_phase_runs_from_defaults(self, mode, phase, caplog):
+        drying = OGBConf(hass=None).drying
+        phases = drying["modes"][mode]["phase"]
+
+        # Start the clock inside the phase under test
+        elapsed_hours = 1
+        for name in ("start", "halfTime", "endTime"):
+            if name == phase:
+                break
+            elapsed_hours += phases[name]["durationHours"]
+        drying["currentDryMode"] = mode
+        drying["mode_start_time"] = (datetime.now() - timedelta(hours=elapsed_hours)).isoformat()
+        drying["isRunning"] = True
+
+        temperature, humidity = 10.0, 60.0  # far below every default target temperature
+        dew_point = calculate_dew_point(temperature, humidity)
+        data_store = FakeDataStore({
+            "drying": drying,
+            "tentData": {"temperature": temperature, "humidity": humidity, "dewpoint": dew_point},
+            "vpd": {"current": calc_Dry5Days_vpd(temperature, humidity)},
+        })
+        event_manager = FakeEventManager()
+        event_manager.emitted_events = []
+        original_emit = event_manager.emit
+
+        async def tracked_emit(event_name, data=None, **kwargs):
+            event_manager.emitted_events.append((event_name, data))
+            return await original_emit(event_name, data, **kwargs)
+
+        event_manager.emit = tracked_emit
+        actions = DryingActions(data_store, event_manager, "test_room", cooldown_manager=_fake_cooldown_manager())
+
+        with caplog.at_level("ERROR"):
+            await getattr(actions, f"handle_{mode}")(drying["modes"][mode])
+
+        errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+        assert not errors, errors
+        events = [e[0] for e in event_manager.emitted_events]
+        assert "Increase Heater" in events
 
 
 class TestOwnDry:

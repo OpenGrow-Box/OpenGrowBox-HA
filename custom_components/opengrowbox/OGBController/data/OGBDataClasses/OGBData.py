@@ -608,13 +608,13 @@ class OGBConf:
                             "durationHours": 48,
                         },
                         "halfTime": {
-                            "maxTemp": 23.3,
+                            "targetTemp": 23.3,
                             "targetHumidity": 52,
                             "targetVPD": 1.39,
                             "durationHours": 24,
                         },
                         "endTime": {
-                            "maxTemp": 23.9,
+                            "targetTemp": 23.9,
                             "targetHumidity": 50,
                             "targetVPD": 1.5,
                             "durationHours": 48,
