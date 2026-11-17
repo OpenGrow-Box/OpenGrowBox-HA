@@ -251,3 +251,50 @@ dose_full_recipe:
       description: The room/tent name for which the full recipe should be dosed.
       required: true
       example: FlowerTent
+
+esp_link_remove:
+  name: OGB-ESP trennen
+  description: Entfernt die Verbindung; der ESP regelt nach dem Timeout wieder selbst.
+  fields:
+    host:
+      name: Adresse
+      description: Adresse wie bei esp_link_add.
+      required: true
+      example: 192.168.1.50
+      selector:
+        text:
+
+esp_link_status:
+  name: OGB-ESP Status
+  description: Liefert alle OGB-ESP-Verbindungen mit Zustand (ok/offline/auth_failed), Modus, Heartbeat-Alter und den Bereichen des ESP samt passendem HA-Raum (gleicher Name).
+
+esp_link_set_mode:
+  name: OGB-ESP Steuermodus
+  description: Setzt den Steuermodus des ESP-Mesh (local = ESP regelt, external = HA/OGB API, free = keine Automatik).
+  fields:
+    host:
+      name: Adresse
+      required: true
+      example: 192.168.1.50
+      selector:
+        text:
+    mode:
+      name: Modus
+      required: true
+      example: external
+      selector:
+        select:
+          options:
+            - local
+            - external
+            - free
+    source:
+      name: Quelle
+      description: Nur bei external.
+      required: false
+      default: global
+      selector:
+        select:
+          options:
+            - global
+            - ogb_api

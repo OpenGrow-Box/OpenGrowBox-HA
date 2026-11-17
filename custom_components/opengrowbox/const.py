@@ -25,3 +25,8 @@ PREM_WS_API = "wss://prem.opengrowbox.net"
 # From this date on, sensor type detection is label-based only.
 # Entity-name/translation/fuzzy recognition is disabled.
 LABELS_ONLY_SINCE = date(2027, 1, 1)
+# OGB-ESP links (global, see esp_link.py). host/api_key: per-room keys of an earlier version,
+# only read once to move them to the global list.
+CONF_ESP_HOST = "esp_host"
+CONF_ESP_API_KEY = "esp_api_key"
+ESP_HEARTBEAT_INTERVAL_S = 10

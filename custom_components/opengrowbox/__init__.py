@@ -18,6 +18,7 @@ from .const import (
     DOMAIN,
     FRONTEND_EXTRA_MODULE_URL,
 )
+from . import esp_link
 from .coordinator import OGBIntegrationCoordinator
 from .frontend import async_register_frontend
 from .ha_config_status import (
@@ -650,6 +651,12 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await coordinator.startOGB()
 
+    # Heartbeat to a linked OGB-ESP (pauses the ESP's local control while HA is in charge)
+    try:
+        await esp_link.async_attach_entry(hass, config_entry)
+    except Exception as e:
+        _LOGGER.error(f"OGB-ESP link could not be started: {e}")
+
     # Ensure matching HA Area exists and attach room hub device to it.
     await _ensure_room_area_and_assign_hub(hass, config_entry)
 
@@ -991,6 +998,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
     """Unload the OpenGrowBox config entry."""
     _LOGGER.debug(f"🛑 Unloading OpenGrowBox integration for entry {config_entry.entry_id}")
     
+    await esp_link.async_detach_entry(hass, config_entry.entry_id)
+
     # Get coordinator before unloading platforms
     coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
     
