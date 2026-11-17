@@ -18,6 +18,7 @@ from ..OGBDevices.Light import Light
 from ..OGBDevices.LightFarRed import LightFarRed
 from ..OGBDevices.LightUV import LightUV
 from ..OGBDevices.LightSpectrum import LightBlue, LightRed
+from ..OGBDevices.Lift import Lift
 from ..OGBDevices.ModbusDevice import OGBModbusDevice
 from ..OGBDevices.Pump import Pump
 from ..OGBDevices.FridgeGrow.FridgeGrowDevice import FridgeGrowDevice
@@ -262,6 +263,7 @@ class OGBDeviceManager:
             "LightUV",      # Must match before "Light"
             "LightBlue",    # Must match before "Light"
             "LightRed",     # Must match before "Light"
+            "Lift",         # Must match before "Window" (both may use cover entities)
         ]
 
         # FRIDGEGROW CHECK: If device has "fridgegrow" or "plantalytix" label,
@@ -431,6 +433,7 @@ class OGBDeviceManager:
             "Intake": Intake,
             "Ventilation": Ventilation,
             "Window": Window,
+            "Lift": Lift,
             "Heater": Heater,
             "Cooler": Cooler,
             "LightFarRed": LightFarRed,
@@ -639,6 +642,7 @@ class OGBDeviceManager:
             "LightUV",
             "LightBlue",
             "LightRed",
+            "Lift",
             "Window",
             "Door",
         ]

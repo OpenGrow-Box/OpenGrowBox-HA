@@ -1575,6 +1575,9 @@ class OGBActionManager:
                 elif actionCap == "canWindow":
                     await self.event_manager.emit(f"{actionType} Ventilation", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Window (via Ventilation) executed.")
+                elif actionCap == "canLift":
+                    await self.event_manager.emit(f"{actionType} Lift", event_data)
+                    _LOGGER.debug(f"{self.room}: {actionType} Lift executed." + (f" Value: {action_value}" if action_value else ""))
                 elif actionCap == "canHumidify":
                     await self.event_manager.emit(f"{actionType} Humidifier", event_data)
                     _LOGGER.debug(f"{self.room}: {actionType} Humidifier executed." + (f" Value: {action_value}" if action_value else ""))

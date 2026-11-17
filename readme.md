@@ -252,6 +252,7 @@ opengrowbox:
 - **[VPD Control](docs/core_concepts/action_cycles/VPD_MODES_COMPLETE_IMPLEMENTATION.md)** - Climate automation
 - **[Hydroponics](docs/specialized_systems/HYDRO_FEEDING_SYSTEM.md)** - Nutrient management
 - **[Crop Steering](docs/specialized_systems/CROP_STEERING.md)** - Growth optimization
+- **[Plant Lift](docs/specialized_systems/LIFT_SYSTEM.md)** - Lamp height control
 
 ### 🧪 Premium Features
 - **[AI & Analytics](docs/premium_features/PREMIUM_FEATURES_OVERVIEW.md)** - Advanced capabilities

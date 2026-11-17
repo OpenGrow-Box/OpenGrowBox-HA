@@ -44,6 +44,7 @@ General behaviour:
 **Control Tuning** |||
 | `gcd` | Sets or shows the global cooldown for a device capability | `gcd <capability> <minutes>` |
 | `buffer` | Shows or sets hysteresis buffers | `buffer [damper <type> <value> \| perfection <temp\|humidity> <value>]` |
+| `lift` | Shows or sets the Lift actuator configuration | `lift [<key> <value> \| reset]` |
 **Capability Calibration** |||
 | `cap_calibrate` | Starts capability calibration | `cap_calibrate <capability>` |
 | `cap_cal_status` | Shows capability calibration status and stored results | `cap_cal_status` |
@@ -182,6 +183,51 @@ from the datastore on every control cycle, so changes apply immediately — no
 restart and no reload. Defaults live once in `DEFAULT_BUFFERS` (`OGBParams.py`).
 
 See also [Configuration → Hysteresis Buffers](configuration/CONFIGURATION.md#hysteresis-buffers).
+
+### `lift` — Lift Actuator Configuration
+
+Shows or sets the closed-loop / safety parameters of the plant lift
+(`DeviceMinMax.Lift`). Changes apply on the next action — no restart and no
+reload.
+
+```bash
+lift                          # show current configuration (with defaults)
+lift -h                       # usage + key list
+lift maxDistanceCM 150        # soft upper bound (lamp-to-canopy distance, cm)
+lift minDistanceCM 20         # soft lower bound (lamp in the canopy guard)
+lift settleTimeSec 2          # wait after each step
+lift maxIterations 20         # hard step budget per move
+lift reset                    # reset every value back to the defaults
+```
+
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `minPosition` / `maxPosition` | Hard actuator travel bounds (%) | `0` / `100` |
+| `positionStep` | Step size per move (%) | `5` |
+| `settleTimeSec` | Wait after each step before re-reading the sensor | `2` |
+| `pulseDurationSec` | Relay pulse length (switch actuators only) | `1` |
+| `toleranceCM` | Target tolerance (cm) | `1` |
+| `minDistanceCM` | Refuse to lower at/below this distance | `0` (off) |
+| `maxDistanceCM` | Refuse to raise at/above this distance | `0` (off) |
+| `fullTravelTimeSec` | Estimated time for 0→100% (lock/ETA) | `30` |
+| `maxRuntimeSec` | Hard runtime cap per move | `60` |
+| `maxIterations` | Step budget per move (int) | `20` |
+| `noProgressLimit` | Stop after N steps without distance change (int) | `3` |
+| `sensorMaxAgeSec` | Reject stale sensor readings | `0` (off) |
+
+Keys are case-insensitive. Integer keys (`maxIterations`, `noProgressLimit`) are
+stored as integers.
+
+```text
+$ lift maxDistanceCM 150
+✅ Lift 'maxDistanceCM' set: 0 → 150
+
+$ lift bogus 1
+⚠️ Unknown key: 'bogus'
+Available: minPosition, maxPosition, positionStep, ...
+```
+
+See also [Plant Lift System](specialized_systems/LIFT_SYSTEM.md).
 
 ---
 

@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+from ..OGBDevices.Lift import Lift
 
 from ..data.OGBParams.OGBParams import (
     BUFFER_KEY_BY_PERFECTION_CHANNEL,
@@ -15,6 +16,25 @@ from ..utils.ambient import is_ambient_room
 
 _LOGGER = logging.getLogger(__name__)
 
+
+# Lift configuration keys exposed by the "lift" console command.
+# Maps the lower-cased key to (storage key in DeviceMinMax.Lift, default).
+_LIFT_CONFIG_KEYS = {
+    "minposition": ("minPosition", Lift.DEFAULT_MIN_POSITION),
+    "maxposition": ("maxPosition", Lift.DEFAULT_MAX_POSITION),
+    "positionstep": ("positionStep", Lift.DEFAULT_STEP),
+    "settletimesec": ("settleTimeSec", Lift.DEFAULT_SETTLE_TIME),
+    "pulsedurationsec": ("pulseDurationSec", Lift.DEFAULT_PULSE_DURATION),
+    "tolerancecm": ("toleranceCM", Lift.DEFAULT_TOLERANCE_CM),
+    "mindistancecm": ("minDistanceCM", Lift.DEFAULT_MIN_DISTANCE_CM),
+    "maxdistancecm": ("maxDistanceCM", Lift.DEFAULT_MAX_DISTANCE_CM),
+    "fulltraveltimessec": ("fullTravelTimeSec", Lift.DEFAULT_FULL_TRAVEL_TIME),
+    "maxruntimesec": ("maxRuntimeSec", Lift.DEFAULT_MAX_RUNTIME),
+    "maxiterations": ("maxIterations", Lift.DEFAULT_MAX_ITERATIONS),
+    "noprogresslimit": ("noProgressLimit", Lift.DEFAULT_NO_PROGRESS_LIMIT),
+    "sensormaxagecsec": ("sensorMaxAgeSec", Lift.DEFAULT_SENSOR_MAX_AGE),
+}
+_LIFT_INTEGER_KEYS = {"maxiterations", "noprogresslimit"}
 
 @dataclass
 class CommandInfo:
@@ -274,6 +294,19 @@ class OGBConsoleManager:
             "Resets all energy consumption data (daily, weekly, monthly)",
             "reset_costs [today|week|month|all]",
             ["reset_costs", "reset_costs today", "reset_costs all"],
+        )
+
+        self.register_command(
+            "lift",
+            self.cmd_lift,
+            "Shows or sets the plant Lift actuator configuration",
+            "lift [<key> <value> | reset]",
+            [
+                "lift",
+                "lift maxDistanceCM 150",
+                "lift minDistanceCM 30",
+                "lift reset",
+            ],
         )
 
     def register_command(
@@ -549,6 +582,98 @@ class OGBConsoleManager:
         self.data_store.setDeep("controlOptionData.buffers", buffers)
         await self._send_response(
             f"✅ Buffer '{key}' ({scope} {target}) set: {previous} → {value}"
+        )
+
+
+    @staticmethod
+    def _fmt_lift_value(value) -> str:
+        """Render a lift config value without a trailing '.0' for integers."""
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if numeric.is_integer():
+            return str(int(numeric))
+        return f"{numeric:g}"
+
+    async def cmd_lift(self, params: List[str]):
+        """Shows or sets the Lift actuator configuration (DeviceMinMax.Lift).
+
+        Usage:
+            lift                          Show current configuration
+            lift <key> <value>            Set a single value
+            lift reset                    Reset all values to defaults
+        """
+        stored = self.data_store.getDeep("DeviceMinMax.Lift") or {}
+        if not isinstance(stored, dict):
+            stored = {}
+
+        def effective(key: str, default) -> float:
+            raw = stored.get(key, default)
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return float(default)
+
+        if not params:
+            response = "🛗 Lift Configuration (DeviceMinMax.Lift):\n" + "=" * 52 + "\n"
+            for _alias, (key, default) in _LIFT_CONFIG_KEYS.items():
+                response += f"  {key:<18} : {self._fmt_lift_value(effective(key, default))}\n"
+            response += "=" * 52
+            response += "\nExample: lift maxDistanceCM 150"
+            await self._send_response(response)
+            return
+
+        first = params[0].lower()
+
+        if first in ("-h", "--help", "help"):
+            await self._send_response(
+                "🛗 Lift command usage:\n"
+                "  lift                       Show current configuration\n"
+                "  lift <key> <value>         Set a value\n"
+                "  lift reset                 Reset to defaults\n"
+                "Keys: " + ", ".join(key for key, _d in _LIFT_CONFIG_KEYS.values())
+            )
+            return
+
+        if first in ("reset", "default", "defaults"):
+            self.data_store.setDeep("DeviceMinMax.Lift", {})
+            await self._send_response("✅ Lift configuration reset to defaults.")
+            return
+
+        if len(params) != 2:
+            await self._send_response(
+                "⚠️ Invalid arguments.\n"
+                "Usage: lift <key> <value>\n"
+                "Use 'lift -h' for the full key list."
+            )
+            return
+
+        alias = first
+        if alias not in _LIFT_CONFIG_KEYS:
+            await self._send_response(
+                f"⚠️ Unknown key: '{params[0]}'\n"
+                "Available: " + ", ".join(key for key, _d in _LIFT_CONFIG_KEYS.values())
+            )
+            return
+
+        key, default = _LIFT_CONFIG_KEYS[alias]
+
+        try:
+            value = float(params[1])
+        except ValueError:
+            await self._send_response("⚠️ Value must be a number.")
+            return
+
+        if alias in _LIFT_INTEGER_KEYS:
+            value = int(value)
+
+        previous = effective(key, default)
+        stored[key] = value
+        self.data_store.setDeep("DeviceMinMax.Lift", stored)
+        await self._send_response(
+            f"✅ Lift '{key}' set: {self._fmt_lift_value(previous)} → "
+            f"{self._fmt_lift_value(value)}"
         )
 
     async def cmd_list(self, params: List[str]):
